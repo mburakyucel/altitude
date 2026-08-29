@@ -1,16 +1,20 @@
 [Unit]
-Description=Altitude — coordinator server and web app (altd)
-After=network-online.target wg-quick@wg0.service
+Description=Altitude — coordinator server and web app (altd) on the WireGuard address
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+WorkingDirectory=%h/Projects/agent-orchestrator
 ExecStart=%h/Projects/agent-orchestrator/bin/alt serve
 Restart=on-failure
 RestartSec=5
 Environment=ALTITUDE_HOST=10.88.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Runs as the real user on purpose: `claude -p` needs ~/.claude (subscription auth) and the repos.
+# Reachability through the tunnel is the auth; TLS comes from the pocketbook's local CA (already trusted on the phone).
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=default.target

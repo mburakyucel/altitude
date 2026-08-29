@@ -74,6 +74,7 @@ def main(argv=None) -> None:
     sub.add_parser("backlog")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
+    ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
     config.ensure_root()
@@ -181,6 +182,8 @@ def main(argv=None) -> None:
         from altitude import server; server.main(host=args.host, port=args.port); return
     if c == "install-statusline":
         from altitude import server; out(server.install_statusline()); return
+    if c == "tls-init":
+        from altitude import server; out(server.tls_init(args.ip)); return
 
 
 if __name__ == "__main__":

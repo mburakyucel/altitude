@@ -23,6 +23,8 @@
 - **2026-08-29** — Design complete (docs/*.md, 33 decisions). Build started in the design session. Stage 0: name settled (Altitude), docs renamed, git initialised, private repo created.
 - **2026-08-29 (later)** — Stages 1–9 written (~1.9k lines Python + web). Verified: lifecycle test, CLI, cap hook, a real L3 turn, server endpoints + page. Not yet verified: proposal agent, `claude --bg` dispatch through the server, verify-report against GitHub, Codex critic.
 
+- **2026-08-29 (evening)** — TLS over WireGuard (reusing the pocketbook CA; verified https 200 with that CA), user systemd unit, `alt tls-init`, `/ca.crt`. `docs/ROADMAP.md` written and mirrored to GitHub issues (`roadmap`, `m:*`, `idea` labels). First e2e task (`add-tests-for-the-rules-ledger-parser`) dispatched through the live server; L2 wrote roadmap first, one Sonnet L1, Codex reviewer — result pending.
+
 ## Decisions made while building (mirrored into `DECISIONS.md` when they matter beyond the build)
 
 - The **server runs the proposal agent** for every requested M/L task and gives L3 a `proposal-ready` turn; L3 never calls it (keeps L3 turns short, one writer). Same for dispatch: approved tasks are launched by the timer when WIP/quota allow.

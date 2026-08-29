@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import mimetypes
+import ssl
 import subprocess
 import threading
 import time
@@ -253,6 +254,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(config.WEB / parts[0])
             if parts[0] == "digest.wav":
                 return self._file(config.ROOT / "digest.wav", "audio/wav")
+            if parts[0] == "ca.crt":  # the local CA, for installing on a phone once
+                return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
             if parts[0] != "api":
                 return self._json({"error": "not found"}, 404)
             api = parts[1] if len(parts) > 1 else ""
@@ -450,8 +453,42 @@ def main(host: str | None = None, port: int | None = None) -> None:
         host = "127.0.0.1"
         srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True
-    log(f"altd listening on http://{host}:{port}")
+    scheme = "http"
+    crt, key = config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key"
+    if config.TLS and crt.is_file() and key.is_file():
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(crt, key)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        scheme = "https"
+    elif config.TLS:
+        log(f"no certificate in {config.TLS_DIR} — serving plain http (run `alt tls-init` for https)")
+    log(f"altd listening on {scheme}://{host}:{port}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def tls_init(ip: str | None = None) -> dict:
+    """Self-signed local CA + server certificate for the WireGuard address (same recipe as the pocketbook's make-certs.sh:
+    EC P-256, CA 10 years, server cert 397 days because iOS rejects longer). Idempotent for the CA."""
+    d = config.ROOT / "tls" if config.TLS_DIR == config._POCKETBOOK_TLS and not (config._POCKETBOOK_TLS / "ca.key").exists() else config.TLS_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    ip = ip or config.HOST
+    run = lambda *a: subprocess.run(list(a), cwd=str(d), check=True, capture_output=True, text=True)  # noqa: E731
+    if not (d / "ca.crt").exists():
+        run("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "ca.key")
+        run("openssl", "req", "-x509", "-new", "-key", "ca.key", "-sha256", "-days", "3650", "-out", "ca.crt",
+            "-subj", "/CN=Altitude local CA", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+    run("openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "server.key")
+    run("openssl", "req", "-new", "-key", "server.key", "-subj", "/CN=altitude", "-out", "server.csr")
+    ext = d / "server.ext"
+    ext.write_text(f"basicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:{ip},IP:127.0.0.1,DNS:localhost\n")
+    run("openssl", "x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial", "-days", "397", "-sha256",
+        "-out", "server.crt", "-extfile", str(ext))
+    (d / "server.csr").unlink(missing_ok=True); ext.unlink(missing_ok=True)
+    for f in ("ca.key", "server.key"):
+        (d / f).chmod(0o600)
+    end = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", str(d / "server.crt")], capture_output=True, text=True).stdout.strip()
+    return {"dir": str(d), "ip": ip, "server_cert": end, "phone": f"open http://{ip}:{config.PORT}/ca.crt once (with ALTITUDE_TLS=0) or install ca.crt by other means, then trust it in the phone's certificate settings"}

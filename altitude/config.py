@@ -19,6 +19,11 @@ CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 HOST = os.environ.get("ALTITUDE_HOST", "10.88.0.1")
 PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
+# TLS (decision 34): reuse the pocketbook's local CA + server cert for 10.88.0.1 when present (the phone already trusts it);
+# otherwise `alt tls-init` makes an equivalent pair under ~/.altitude/tls. ALTITUDE_TLS=0 forces plain http.
+_POCKETBOOK_TLS = HOME / ".local/state/tutor/tls"
+TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", str(_POCKETBOOK_TLS if (_POCKETBOOK_TLS / "server.crt").exists() else ROOT / "tls"))).expanduser()
+TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
 CONTEXT_WINDOW = 200_000          # tokens; used to turn usage into a percentage
 CONTEXT_WARN = 0.55               # decision 12
