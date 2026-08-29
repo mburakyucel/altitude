@@ -125,8 +125,28 @@ def poll(project: str) -> list[dict]:
         if t["state"] != "running":
             continue
         a = agents.get(t.get("session_id")) or by_id.get(t.get("agent_id"))
+        live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
+        prev = S.read_json(live_p, {}) or {}
         live = {"status": a.get("status"), "state": a.get("state")} if a else None
+        idle_since = None
+        if a and a.get("status") == "idle" and a.get("state") != "done":
+            idle_since = prev.get("idle_since") or S.now()
         if a is None or a.get("state") == "done" or a.get("status") == "exited":
             finished.append({"task": t, "agent": a})
-        S.write_json(config.MONITOR_DIR / f"live-{project}--{t['slug']}.json", {"at": S.now(), "agent": live})
+        elif idle_since and _seconds_since(idle_since) > IDLE_NEEDS_INPUT_SECONDS:
+            finished.append({"task": t, "agent": a, "needs_input": True})
+            idle_since = None
+        S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": idle_since})
     return finished
+
+
+IDLE_NEEDS_INPUT_SECONDS = 150
+
+
+def _seconds_since(iso: str) -> float:
+    from datetime import datetime
+    import time
+    try:
+        return time.time() - datetime.fromisoformat(iso).timestamp()
+    except ValueError:
+        return 0.0

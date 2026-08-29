@@ -88,6 +88,13 @@ def run_proposal_flow(project: str, slug: str) -> None:
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    if item.get("needs_input"):
+        a = item.get("agent") or {}
+        reason = f"L2 is idle without a report — probably waiting for a permission or a question. Attach: `claude attach {a.get('id', '')}`; or answer via the card (Resume sends your note into the session)."
+        T.block(project, slug, reason)
+        T.fyi(project, slug, f"{slug}: L2 idle {dispatch.IDLE_NEEDS_INPUT_SECONDS}s without finishing — needs input? attach {a.get('id', '')}")
+        log(f"[{project}/{slug}] L2 idle → blocked (needs input)")
+        return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})
