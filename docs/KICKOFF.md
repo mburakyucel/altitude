@@ -1,9 +1,10 @@
-# KICKOFF — brief for the build session
+# KICKOFF — brief for a build session
 
-*Written 2026-08-29 at the end of the design session. Hand this file to a fresh Claude Code session started in this repo; it is the whole instruction. Read order, then the decisions to honour, then the build list, then the verified facts you can rely on without re-checking.*
+*Written 2026-08-29 at the end of the design session; the build started the same day in that session. **Current state is in `docs/PROGRESS.md` — read it first**, then this file. The phase-0 list below is kept as the reference for what "complete" means; the progress table says what is actually done.*
 
 ## Read, in this order
 
+0. `docs/PROGRESS.md` — what exists, what was verified, what was deviated from, what is next.
 1. `docs/ROLES.md` — the binding altitude contract (what reaches Burak, what each level owns). Personas are generated from it.
 2. `docs/ARCHITECTURE.md` — **v1 is authoritative**; Appendix A is deferred and must not be built.
 3. `docs/DECISIONS.md` — 30 decisions; settled ones (1, 15, 29, 10, 30) are not up for debate, proposed ones are the default unless building reveals a real problem (then say so in the report, do not silently deviate).
