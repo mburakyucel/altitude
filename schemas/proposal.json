@@ -1,0 +1,17 @@
+{"type":"object","additionalProperties":false,"required":["summary","approach","class","estimate","decision_needed","always_list_hits","files","verification","citations"],
+ "properties":{
+  "summary":{"type":"string","description":"Two sentences: what and why."},
+  "approach":{"type":"string","description":"The plan in ≤ 12 lines, concrete."},
+  "alternatives":{"type":"array","items":{"type":"object","required":["option","why_not"],"properties":{"option":{"type":"string"},"why_not":{"type":"string"}}}},
+  "class":{"type":"string","enum":["S","M","L"]},
+  "estimate":{"type":"object","required":["turns","subagent_launches"],"properties":{"turns":{"type":"integer"},"subagent_launches":{"type":"integer"},"l1_count":{"type":"integer"},"model_tiers":{"type":"string"}}},
+  "envelope":{"type":"object","properties":{"l1_in_flight":{"type":"integer"},"subagent_launches":{"type":"integer"},"max_turns":{"type":"integer"}}},
+  "decision_needed":{"type":"boolean"},
+  "question":{"type":"string"},
+  "options":{"type":"array","items":{"type":"string"},"description":"Recommended first; 2–4 items."},
+  "always_list_hits":{"type":"array","items":{"type":"string","enum":["money","infra","iam","migration","deploy","scope","product","rules"]}},
+  "files":{"type":"array","items":{"type":"string"}},
+  "verification":{"type":"string","description":"How done will be checked: tests, run, deploy check."},
+  "risks":{"type":"array","items":{"type":"string"}},
+  "citations":{"type":"array","items":{"type":"string"},"description":"Controlling decisions / doc sections relied on."}
+ }}

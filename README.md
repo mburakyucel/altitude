@@ -21,3 +21,15 @@ Status 2026-08-29: **Burak decided to build** (decision 15 settled); settled sin
 - `~/Projects/voice-tutor` — local Kokoro TTS and the Stop-hook speaker (audio channel).
 
 - [docs/KICKOFF.md](docs/KICKOFF.md) — **start here in the build session**: read order, decisions to honour, phase-0 build list (web app and self-improvement loop included), verified facts, constraints, first milestone.
+
+## Run
+
+```
+make run                      # altd on 127.0.0.1:8890 (open http://127.0.0.1:8890)
+make install-service          # user systemd unit on 10.88.0.1:8890 — reachable from the phone over WireGuard
+bin/alt project add <name> --path ~/Projects/<name> --stacks python,cdk   # or press "Start L3" on the Projects tab
+bin/alt -p <name> chat "…"    # talk to L3 from a terminal; the page does the same with streaming
+bin/alt install-statusline    # optional: wraps ~/.claude/statusline.sh so the seat quota shows on the Monitor tab (edits ~/.claude/settings.json)
+```
+
+Layout: `altitude/` (stdlib package: state, tasks, engines, l3, propose, dispatch, verify, improve, monitor, digest, intake, server) · `bin/alt` · `personas/` · `rules/{global,stacks}/` · `schemas/` · `templates/` · `hooks/` · `web/` · `systemd/` · `docs/`. Runtime state: `~/.altitude/` (`projects.json`, `<project>/{STATE.md,l3.json,chat.jsonl,inbox.jsonl,tasks/,archive/,incidents/}`, `monitor/`, `incidents.jsonl`).

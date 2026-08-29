@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""alt — the Altitude CLI. Thin: state operations go through the library under a lock; serving is `alt serve`."""
+from __future__ import annotations
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from altitude import config, state as S, tasks as T  # noqa: E402
+
+ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
+
+
+def _project(args) -> str:
+    p = getattr(args, "project", None) or os.environ.get("ALTITUDE_PROJECT")
+    if not p:
+        sys.exit("alt: --project or ALTITUDE_PROJECT required")
+    return p
+
+
+def _stdin_or_file(args) -> str:
+    if getattr(args, "file", None):
+        return Path(args.file).read_text()
+    if getattr(args, "text", None) and args.text != "-":
+        return args.text
+    return sys.stdin.read()
+
+
+def out(obj) -> None:
+    print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(prog="alt")
+    ap.add_argument("--project", "-p")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
+    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--stacks", default=""); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
+    ps.add_parser("list"); ps.add_parser("discover")
+    r = ps.add_parser("remove"); r.add_argument("name")
+
+    sub.add_parser("state")
+    t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file")
+    pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--option", action="append")
+    ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
+    aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
+    for name in ("reject", "park", "block"):
+        x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
+    for name in ("resume", "unpark", "show", "events"):
+        x = ts.add_parser(name); x.add_argument("slug")
+    dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
+    br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
+    ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
+
+    f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
+    sub.add_parser("decisions"); sub.add_parser("agents"); sub.add_parser("digest"); sub.add_parser("monitor")
+    pp = sub.add_parser("propose"); pp.add_argument("slug"); pp.add_argument("--critic", action="store_true"); pp.add_argument("--model")
+    dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
+    vf = sub.add_parser("verify"); vf.add_argument("slug")
+    pl = sub.add_parser("poll")
+    ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat")
+    sub.add_parser("l3-reset")
+    ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
+    inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[]); inew.add_argument("--generalizable", default="unknown"); inew.add_argument("--mechanism", default="incident-only"); inew.add_argument("--scope", default="project")
+    ics.add_parser("list")
+    ru = sub.add_parser("rule"); rus = ru.add_subparsers(dest="rcmd", required=True)
+    rp = rus.add_parser("propose"); rp.add_argument("--incident", required=True); rp.add_argument("--title", required=True); rp.add_argument("--text", required=True); rp.add_argument("--mechanism", default="rule", choices=["rule", "instruction", "skill", "incident-only"]); rp.add_argument("--scope", default="project", choices=["project", "stack", "global"]); rp.add_argument("--stack"); rp.add_argument("--where", default=""); rp.add_argument("--prevents", default=""); rp.add_argument("--effect", default="")
+    rus.add_parser("list"); rus.add_parser("audit-input")
+    ideas = sub.add_parser("idea"); ideas.add_argument("text")
+    sub.add_parser("backlog")
+    sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
+    sub.add_parser("install-statusline")
+
+    args = ap.parse_args(argv)
+    config.ensure_root()
+    c = args.cmd
+    if c == "project":
+        P = config.load_projects()
+        if args.pcmd == "add":
+            path = Path(args.path or (config.PROJECT_ROOTS[0] / args.name)).expanduser()
+            if not path.is_dir():
+                sys.exit(f"alt: {path} is not a directory")
+            P[args.name] = {"path": str(path), "stacks": [s for s in args.stacks.split(",") if s], "approval": args.approval, "wip": args.wip}
+            config.save_projects(P); config.project_dir(args.name).mkdir(parents=True, exist_ok=True); S.regen_state_md(args.name); out(P[args.name])
+        elif args.pcmd == "remove":
+            P.pop(args.name, None); config.save_projects(P); out("removed")
+        elif args.pcmd == "discover":
+            out(config.discover_projects())
+        else:
+            out(P)
+        return
+    if c == "state":
+        print(S.regen_state_md(_project(args))); return
+    if c == "task":
+        p = _project(args); tc = args.tcmd
+        if tc == "new":
+            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source))
+        elif tc == "propose":
+            out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR))
+        elif tc == "approve":
+            out(T.approve(p, args.slug, args.option, actor=ACTOR, note=args.note))
+        elif tc == "auto-approve":
+            out(T.auto_approve(p, args.slug, args.reason))
+        elif tc == "reject":
+            out(T.reject(p, args.slug, args.reason, actor=ACTOR))
+        elif tc == "park":
+            out(T.park(p, args.slug, args.reason, actor=ACTOR))
+        elif tc == "block":
+            out(T.block(p, args.slug, args.reason, actor=ACTOR))
+        elif tc == "resume":
+            out(T.resume(p, args.slug, actor=ACTOR))
+        elif tc == "unpark":
+            out(T.unpark(p, args.slug, actor=ACTOR))
+        elif tc == "done":
+            out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
+        elif tc == "brief":
+            out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
+        elif tc == "show":
+            out(S.load_task(p, args.slug))
+        elif tc == "events":
+            out(S.read_events(p, args.slug))
+        elif tc == "list":
+            out([{k: t.get(k) for k in ("slug", "class", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
+        return
+    if c == "fyi":
+        out(T.fyi(_project(args), args.slug, args.text, actor=ACTOR)); return
+    if c == "decisions":
+        from altitude import digest; out(digest.queue()); return
+    if c == "digest":
+        from altitude import digest; print(digest.text()); return
+    if c == "agents":
+        from altitude import engines; out(engines.claude_agents()); return
+    if c == "monitor":
+        from altitude import monitor; out({"quota": monitor.quota(), "sessions": monitor.sessions()}); return
+    if c == "propose":
+        from altitude import propose; p = _project(args)
+        res = propose.run_proposal(p, args.slug, model=args.model)
+        if args.critic or S.load_task(p, args.slug)["class"] == "L":
+            res["critique"] = propose.run_critic(p, args.slug)
+        out(res); return
+    if c == "dispatch":
+        from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return
+    if c == "verify":
+        from altitude import verify; out(verify.verify(_project(args), args.slug)); return
+    if c == "poll":
+        from altitude import dispatch; out(dispatch.poll(_project(args))); return
+    if c == "chat":
+        from altitude import l3
+        res = l3.turn(_project(args), _stdin_or_file(args), trigger=args.trigger, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
+        print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}); return
+    if c == "l3-reset":
+        from altitude import l3; l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
+    if c == "incident":
+        from altitude import improve; p = _project(args)
+        if args.icmd == "new":
+            out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause, tags=args.tag,
+                                     generalizable=args.generalizable, mechanism=args.mechanism, scope=args.scope, actor=ACTOR))
+        else:
+            out([r for r in improve.index() if r["project"] == p])
+        return
+    if c == "rule":
+        from altitude import improve, rules; p = _project(args)
+        if args.rcmd == "propose":
+            out(improve.propose_rule(p, incident=args.incident, title=args.title, text=args.text, mechanism=args.mechanism, scope=args.scope,
+                                     stack=args.stack, where=args.where, prevents=args.prevents, effect=args.effect, actor=ACTOR))
+        elif args.rcmd == "audit-input":
+            out(improve.audit_input(p))
+        else:
+            proj = config.project(p)
+            out(rules.global_rules() + rules.stack_rules(proj.get("stacks", [])) + rules.project_rules(config.project_path(p)))
+        return
+    if c == "idea":
+        from altitude import intake; res = intake.idea(_project(args), args.text, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
+    if c == "backlog":
+        from altitude import intake; res = intake.backlog(_project(args), on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
+    if c == "serve":
+        from altitude import server; server.main(host=args.host, port=args.port); return
+    if c == "install-statusline":
+        from altitude import server; out(server.install_statusline()); return
+
+
+if __name__ == "__main__":
+    main()

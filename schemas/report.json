@@ -1,0 +1,15 @@
+{"type":"object","additionalProperties":false,"required":["landed","review","deviations","decisions","fyi","blocked","follow_ups","spend"],
+ "properties":{
+  "landed":{"type":"object","required":["prs","main_runs","deploy"],"properties":{
+    "prs":{"type":"array","items":{"type":"object","required":["number","merged"],"properties":{"number":{"type":"integer"},"title":{"type":"string"},"merged":{"type":"boolean"},"merge_sha":{"type":"string"}}}},
+    "main_runs":{"type":"array","items":{"type":"object","required":["id","conclusion"],"properties":{"id":{"type":"string"},"conclusion":{"type":"string"}}}},
+    "deploy":{"type":"string","description":"healthy | not-applicable | failed: <why>"}}},
+  "review":{"type":"array","items":{"type":"object","required":["tag","disposition"],"properties":{"tag":{"type":"string"},"severity":{"type":"string"},"summary":{"type":"string"},"disposition":{"type":"string","enum":["fixed","dismissed"]},"reason":{"type":"string"}}}},
+  "deviations":{"type":"array","items":{"type":"object","required":["choice","default_taken"],"properties":{"choice":{"type":"string"},"default_taken":{"type":"string"},"reversible":{"type":"boolean"}}}},
+  "decisions":{"type":"array","items":{"type":"object","required":["question","options"],"properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}}}},
+  "fyi":{"type":"array","items":{"type":"string"}},
+  "blocked":{"type":"string","description":"Empty if not blocked; otherwise the exact missing item."},
+  "follow_ups":{"type":"array","items":{"type":"string"}},
+  "spend":{"type":"object","required":["turns","subagent_launches","retries"],"properties":{"turns":{"type":"integer"},"subagent_launches":{"type":"integer"},"retries":{"type":"integer"},"model_tiers":{"type":"string"},"reverts":{"type":"integer"}}},
+  "roadmap_complete":{"type":"boolean"}
+ }}

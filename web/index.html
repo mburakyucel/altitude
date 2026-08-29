@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1216">
+<title>Altitude</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand" onclick="go('inbox')">▲ Altitude</div>
+  <div id="quota" class="quota">quota ?</div>
+</header>
+<main id="view"></main>
+<nav>
+  <button data-tab="inbox" onclick="go('inbox')">Inbox<span id="badge-inbox" class="badge"></span></button>
+  <button data-tab="projects" onclick="go('projects')">Projects</button>
+  <button data-tab="chat" onclick="go('chat')">Chat</button>
+  <button data-tab="monitor" onclick="go('monitor')">Monitor</button>
+  <button data-tab="listen" onclick="go('listen')">Listen</button>
+</nav>
+<div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()"><div class="modal-body" id="modal-body"></div></div>
+<script src="/app.js"></script>
+</body>
+</html>

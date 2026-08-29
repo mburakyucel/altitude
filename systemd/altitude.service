@@ -1,0 +1,16 @@
+[Unit]
+Description=Altitude — coordinator server and web app (altd)
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/Projects/agent-orchestrator/bin/alt serve
+Restart=on-failure
+RestartSec=5
+Environment=ALTITUDE_HOST=10.88.0.1
+Environment=ALTITUDE_PORT=8890
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
