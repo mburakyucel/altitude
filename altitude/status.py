@@ -64,6 +64,7 @@ def status(project: str, slug: str) -> dict:
 
     ``wip_hold`` is only the file-lease reason, a read-only subset of the
     dispatcher's state-advancing ``dispatch.wip_hold`` check.
+    ``paths`` is a raw staging lease; ``hold_paths`` is its narrowed hold lease.
     """
     errors: list[str] = []
     out = {
@@ -141,10 +142,11 @@ def status(project: str, slug: str) -> dict:
             _error(errors, "lease", e)
 
     try:
-        out["other_leases"] = dispatch.leases(project, exclude=slug)
-        # ``paths`` is the raw staging lease; ``hold_paths`` is the narrowed lease used for holds.
-        for other in out["other_leases"]:
+        other_leases = []
+        for other in dispatch.leases(project, exclude=out["slug"]):
             other["hold_paths"] = dispatch.narrow(other["paths"])
+            other_leases.append(other)
+        out["other_leases"] = other_leases
     except Exception as e:
         _error(errors, "other_leases", e)
 
@@ -155,9 +157,9 @@ def status(project: str, slug: str) -> dict:
 
     if task:
         try:
+            mine = dispatch.narrow(out["lease"])
             for other in out["other_leases"]:
-                hit = dispatch.paths_overlap(dispatch.narrow(out["lease"]),
-                                             dispatch.narrow(other["paths"]))
+                hit = dispatch.paths_overlap(mine, other.get("hold_paths", []))
                 if hit:
                     out["wip_hold"] = f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
                     break
