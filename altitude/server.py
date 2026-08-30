@@ -19,6 +19,10 @@ from . import config, digest, dispatch, engines, git_policy, improve, intake, l3
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
+PROPOSAL_MAX_ATTEMPTS = 3
+STALE_PROPOSAL_FAILURE = (
+    "proposal attempt ended before validation completed (the proposal engine or server process stopped)"
+)
 
 
 def log(msg: str) -> None:
@@ -93,6 +97,57 @@ def _record_l3_turn(project: str, slug: str, pid: int | None) -> None:
         S.save_task(project, t)
 
 
+def _current_proposal_error(task: dict) -> str | None:
+    """Return the failure recorded by this proposal attempt, not one carried from an earlier retry."""
+    failure = task.get("proposal_error") or {}
+    message = str(failure.get("message") or "").strip()
+    started = str(task.get("proposal_started") or "")
+    recorded = str(failure.get("at") or "")
+    return message if message and started and recorded >= started else None
+
+
+def _begin_proposal_attempt(project: str, slug: str) -> int:
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        task["proposal_attempts"] = int(task.get("proposal_attempts", 0)) + 1
+        S.save_task(project, task)
+        return task["proposal_attempts"]
+
+
+def _park_exhausted_proposal(project: str, slug: str) -> bool:
+    task = S.load_task(project, slug)
+    if int(task.get("proposal_attempts", 0)) < PROPOSAL_MAX_ATTEMPTS or not _current_proposal_error(task):
+        return False
+    parked = T.park_failed_proposal(project, slug, PROPOSAL_MAX_ATTEMPTS, actor="altd")
+    if parked:
+        log(f"[{project}/{slug}] proposal failed after {parked['proposal_attempts']} attempts → parked")
+    return bool(parked)
+
+
+def _resume_stale_proposal(project: str, slug: str, key: str) -> bool:
+    """Resume one dead proposal flow, unless its third failed attempt is terminal."""
+    has_proposal = (S.task_dir(project, slug) / "proposal.json").exists()
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "requested":
+            return False
+        # A dead engine/process still spent the attempt. Give the retry (or terminal park) useful context instead of
+        # letting an attempt with no validation record disappear from the cap. A completed on-disk proposal is reused.
+        if not has_proposal and not _current_proposal_error(task):
+            task["proposal_error"] = {"message": STALE_PROPOSAL_FAILURE, "at": S.now()}
+        exhausted = (int(task.get("proposal_attempts", 0)) >= PROPOSAL_MAX_ATTEMPTS
+                     and bool(_current_proposal_error(task)))
+        if not exhausted:
+            task["proposal_started"] = None
+        task["proposal_turn"] = None  # its turn is dead; the resume below is the only one
+        S.save_task(project, task)
+    if exhausted:
+        _park_exhausted_proposal(project, slug)
+        return False
+    log(f"[{project}/{slug}] proposal flow resumed (previous run did not finish)")
+    return spawn(key, run_proposal_flow, project, slug)
+
+
 # ---- workflows the timers and buttons trigger --------------------------------
 
 def start_l3(project: str) -> None:
@@ -164,8 +219,14 @@ def run_proposal_flow(project: str, slug: str) -> None:
         p = S.read_json(tdir / "proposal.json")
         log(f"[{project}/{slug}] proposal reused from disk")
     else:
+        _begin_proposal_attempt(project, slug)
         log(f"[{project}/{slug}] proposal agent")
-        p = propose.run_proposal(project, slug)
+        try:
+            p = propose.run_proposal(project, slug)
+        except Exception:
+            _park_exhausted_proposal(project, slug)
+            raise
+    T.clear_proposal_failure(project, slug)
     crit = None
     if task["class"] == "L" or (p.get("always_list_hits") and task["class"] == "M"):
         cj, pj = tdir / "critique.json", tdir / "proposal.json"
@@ -485,14 +546,9 @@ def tick() -> None:
                     # a flow that is not running in this process died with the previous server: resume at once if the
                     # proposal is on disk, otherwise wait 30 min in case an orphaned proposal agent is still writing it
                     stale = started and not alive and (has_proposal or dispatch._seconds_since(started) > 1800)
-                    if not started or stale:
-                        if stale:
-                            with S.project_lock(project):
-                                t2 = S.load_task(project, t["slug"])
-                                t2["proposal_started"] = None
-                                t2["proposal_turn"] = None  # its turn is dead; the resume below is the only one
-                                S.save_task(project, t2)
-                            log(f"[{project}/{t['slug']}] proposal flow resumed (previous run did not finish)")
+                    if stale:
+                        _resume_stale_proposal(project, t["slug"], key)
+                    elif not started:
                         spawn(key, run_proposal_flow, project, t["slug"])
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
@@ -803,7 +859,12 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "dispatch":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
                 elif action == "propose":
-                    t = S.load_task(project, slug); t["proposal_started"] = None; S.save_task(project, t)
+                    with S.project_lock(project):
+                        t = S.load_task(project, slug)
+                        t["proposal_started"] = None
+                        t.pop("proposal_error", None)
+                        t["proposal_attempts"] = 0
+                        S.save_task(project, t)
                     spawn(f"propose:{project}:{slug}", run_proposal_flow, project, slug)
                 elif action == "verify":
                     return self._json(verify.verify(project, slug))
