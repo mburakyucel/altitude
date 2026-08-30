@@ -72,7 +72,7 @@ def run_critic(project: str, slug: str) -> dict:
     prompt = ((config.PERSONAS / "critic.md").read_text() + "\n\n## Request\n" + (d / "request.md").read_text()
               + "\n\n## Proposal\n" + (d / "proposal.md").read_text()
               + "\n\nAnswer as JSON per the output schema.")
-    res = engines.codex_exec(prompt, cwd=config.project_path(project, effort=config.CODEX_EFFORT.get("critic")), schema=config.SCHEMAS / "critic.json")
+    res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json", effort=config.CODEX_EFFORT.get("critic"))
     res["engine"] = "codex"
     if res["structured"] is None:
         # decision 36: no silent fallback to the same engine — the other-engine critique is the point. Raise it.
