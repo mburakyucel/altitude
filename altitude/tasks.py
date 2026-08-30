@@ -280,6 +280,8 @@ def resume(project: str, slug: str, actor: str = "altd", **ev) -> dict:
 def done(project: str, slug: str, actor: str = "l3", digest: str = "") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if "done" not in TRANSITIONS.get(task["state"], set()):
+            raise TransitionError(f"{slug}: {task['state']} → done is not allowed")
         d = S.task_dir(project, slug)
         if digest:
             S.atomic_write(d / "digest.md", digest.rstrip() + "\n")

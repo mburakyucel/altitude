@@ -349,7 +349,8 @@ def resume_stranded_reports(project: str) -> None:
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
-        if not (S.task_dir(project, t["slug"]) / "report.json").exists():
+        report_path = S.task_dir(project, t["slug"]) / "report.json"
+        if not report_path.exists():
             continue
         key = f"finished:{project}:{t['slug']}"
         with _bg_guard:
@@ -357,6 +358,13 @@ def resume_stranded_reports(project: str) -> None:
                 continue
         v = t.get("verified") or {"verdict": "missing", "problems": ["no verified report on the task"], "signals": [],
                                   "spend": {}, "prs": t.get("prs", []), "report": {}}
+        try:
+            report = S.read_json(report_path)
+        except (OSError, ValueError):
+            report = None
+        if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
+                and not report.get("blocked")):
+            t = T.report(project, t["slug"], v)
         log(f"[{project}/{t['slug']}] report turn resumed (previous run did not finish)")
         spawn(key, report_turn, project, t, v)
 
