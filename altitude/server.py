@@ -76,8 +76,9 @@ def run_proposal_flow(project: str, slug: str) -> None:
         p = propose.run_proposal(project, slug)
     crit = None
     if task["class"] == "L" or (p.get("always_list_hits") and task["class"] == "M"):
-        if (tdir / "critique.json").exists():
-            crit = S.read_json(tdir / "critique.json")
+        cj, pj = tdir / "critique.json", tdir / "proposal.json"
+        if cj.exists() and pj.exists() and cj.stat().st_mtime >= pj.stat().st_mtime:  # a critique of *this* proposal
+            crit = S.read_json(cj)
         else:
             log(f"[{project}/{slug}] critic")
             crit = propose.run_critic(project, slug)
@@ -100,12 +101,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
         if n < 2:
             with S.project_lock(project):
                 t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
-            for old in ("proposal.md", "proposal.json", "critique.json"):
+            for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
                 src = S.task_dir(project, slug) / old
                 if src.exists():
                     src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
-                    if old == "critique.json":
-                        S.write_json(src, S.read_json(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}")))  # keep the latest critique for the reviser
             T.unpark(project, slug, actor="altd")
             log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
             return

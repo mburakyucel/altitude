@@ -11,13 +11,16 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
     d = S.task_dir(project, slug)
     request = (d / "request.md").read_text()
     prior = ""
-    if (d / "proposal.md").exists():
-        prior = "\n\n## Previous proposal (Burak asked for a revision; his note is in events.log)\n" + (d / "proposal.md").read_text()[:6000]
+    prev = sorted(d.glob("proposal-v*.md"), key=lambda p: int(p.stem.split("-v")[1]))
+    prev_md = (d / "proposal.md") if (d / "proposal.md").exists() else (prev[-1] if prev else None)
+    if prev_md:
+        prior = "\n\n## Previous proposal (being revised)\n" + prev_md.read_text()[:6000]
         ev = [e for e in S.read_events(project, slug) if e.get("answer", "").lower().startswith("revise")]
         if ev and ev[-1].get("note"):
             prior += f"\n\nBurak's revision note: {ev[-1]['note']}"
-        if (d / "critique.json").exists():  # the other engine's issues with the previous proposal — address each explicitly
-            c = S.read_json(d / "critique.json", {}) or {}
+        crits = sorted(d.glob("critique-v*.json"), key=lambda p: int(p.stem.split("-v")[1]))
+        if crits:  # the other engine's issues with the previous proposal — address each explicitly
+            c = S.read_json(crits[-1], {}) or {}
             if c.get("issues"):
                 prior += "\n\n## Critic's issues with the previous proposal (verdict: %s) — address every one, say how\n" % c.get("verdict") + "\n".join(
                     f"- [{i.get('severity')}] {i.get('claim')}" + (f" — fix: {i.get('fix')}" if i.get("fix") else "") for i in c["issues"])
