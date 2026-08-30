@@ -1,5 +1,9 @@
 """Decision 39: a blocked task queued to resume keeps its file lease until it can run."""
+import contextlib
+import io
+import json
 import os
+import runpy
 import sys
 import tempfile
 import unittest
@@ -20,9 +24,9 @@ class TestResumeHold(unittest.TestCase):
         self.project = f"resume-hold-{self._number}"
         self.repo = _TMP / self.project / "repo"
         self.repo.mkdir(parents=True)
-        projects = config.load_projects()
-        projects[self.project] = {"name": self.project, "path": str(self.repo), "stacks": ["python"], "wip": 20}
-        config.save_projects(projects)
+        config.save_projects({self.project: {
+            "name": self.project, "path": str(self.repo), "stacks": ["python"], "wip": 20,
+        }})
 
         self.resumed = []
         self.stopped = []
@@ -76,7 +80,11 @@ class TestResumeHold(unittest.TestCase):
     def test_due_resume_uses_stored_answer_after_holder_finishes(self):
         holder = self._task("active lease", "running", "bin/alt", "2026-01-01T00:00:00+00:00")
         blocked = self._task("waiting resume", "blocked", "bin/alt", "2026-01-02T00:00:00+00:00")
+        blocked["blocked_reason"] = "Which envelope should I use?"
+        S.save_task(self.project, blocked)
         dispatch.resume_blocked(self.project, blocked["slug"], "Keep the raised envelope.", prefix="Altitude: ")
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_question"],
+                         "Which envelope should I use?")
         holder["state"] = "done"
         S.save_task(self.project, holder)
 
@@ -87,9 +95,20 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(task["state"], "running")
         self.assertEqual(self.resumed[0]["text"],
                          "Altitude: Keep the raised envelope.\nContinue from your progress file; finish to *done* and rewrite the report.")
+        self.assertEqual(task["blocked_question"], "Which envelope should I use?")
         self.assertNotIn("resume_after", task)
         self.assertNotIn("resume_answer", task)
         self.assertNotIn("resume_prefix", task)
+
+    def test_non_lease_resume_hold_uses_generic_waiting_wording(self):
+        blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
+        engines.usage_hold = lambda: "2026-01-03T00:00:00+00:00"
+
+        result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue later.")
+
+        waiting = "waiting: usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
+        self.assertEqual(result["waiting"], waiting)
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_reason"], waiting)
 
     def test_resume_without_overlap_reattaches_immediately(self):
         self._task("unrelated holder", "running", "altitude/other.py", "2026-01-01T00:00:00+00:00")
@@ -116,6 +135,16 @@ class TestResumeHold(unittest.TestCase):
         self.assertIn("blocked with a pending resume", dispatch.wip_hold(self.project, pending_target) or "")
         self.assertIsNone(dispatch.wip_hold(self.project, plain_target))
 
+    def test_older_approved_candidate_is_held_by_pending_resume_lease(self):
+        candidate = self._task("older candidate", "approved", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
+        pending = self._task("pending holder", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
+        pending["resume_after"] = "2026-01-03T00:00:00+00:00"
+        S.save_task(self.project, pending)
+
+        hold = dispatch.wip_hold(self.project, candidate)
+
+        self.assertIn(f"`{pending['slug']}` is blocked with a pending resume", hold or "")
+
     def test_overlapping_pending_resumes_choose_oldest_without_deadlock(self):
         oldest = self._task("oldest resume", "blocked", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         youngest = self._task("youngest resume", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
@@ -133,6 +162,43 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(S.load_task(self.project, oldest["slug"])["state"], "running")
         self.assertEqual(S.load_task(self.project, youngest["slug"])["state"], "blocked")
         self.assertTrue(S.load_task(self.project, youngest["slug"])["resume_after"])
+
+    def test_cli_resume_payloads_for_deferred_and_running(self):
+        main = runpy.run_path(str(Path(__file__).resolve().parent.parent / "bin" / "alt"))["main"]
+        blocked = self._task("cli resume", "blocked", "altitude/cli.py", "2026-01-01T00:00:00+00:00")
+        original = dispatch.resume_blocked
+
+        def invoke(fake):
+            dispatch.resume_blocked = fake
+            output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(output):
+                    main(["--project", self.project, "task", "resume", blocked["slug"], "--answer", "Continue."])
+            finally:
+                dispatch.resume_blocked = original
+            return json.loads(output.getvalue())
+
+        def deferred(project, slug, answer, prefix=""):
+            task = S.load_task(project, slug)
+            task["blocked_reason"] = "waiting: usage limit: test window"
+            S.save_task(project, task)
+            return {"deferred": True}
+
+        deferred_payload = invoke(deferred)
+        self.assertEqual(deferred_payload["state"], "blocked")
+        self.assertTrue(deferred_payload["deferred"])
+        self.assertEqual(deferred_payload["waiting"], "waiting: usage limit: test window")
+
+        def resumed(project, slug, answer, prefix=""):
+            task = S.load_task(project, slug)
+            task["state"] = "running"
+            S.save_task(project, task)
+            return {"deferred": False, "agent": {"id": "new-cli-agent"}}
+
+        running_payload = invoke(resumed)
+        self.assertEqual(running_payload["state"], "running")
+        self.assertFalse(running_payload["deferred"])
+        self.assertEqual(running_payload["agent"], "new-cli-agent")
 
 
 if __name__ == "__main__":

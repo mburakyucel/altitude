@@ -182,9 +182,12 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
     if task["state"] == "blocked":
         hold = wip_hold(project, task)
         if hold:
-            waiting = f"waiting for lease: {hold.removeprefix('file lease: ')}"
+            waiting = (f"waiting for lease: {hold.removeprefix('file lease: ')}"
+                       if hold.startswith("file lease: ") else f"waiting: {hold}")
             with S.project_lock(project):
                 task = S.load_task(project, slug)
+                if "blocked_question" not in task:
+                    task["blocked_question"] = task.get("blocked_reason")
                 task["resume_answer"] = answer
                 task["resume_prefix"] = prefix
                 task["resume_after"] = S.now()
@@ -415,9 +418,10 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
         return "one rule-application task at a time (they edit the same ledger)"
     if task:
         mine = narrow(task_paths(project, task))  # hold lease: top-level directory claims do not hold anyone
+        mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
         for other in _lease_tasks(project, exclude=task["slug"]):
             pending_resume = other["state"] == "blocked"
-            if pending_resume and _resume_order(other) >= _resume_order(task):
+            if pending_resume and mine_pending and _resume_order(other) >= _resume_order(task):
                 continue  # among overlapping queued resumes, the deterministic oldest task proceeds first
             hit = paths_overlap(mine, narrow(task_paths(project, other)))
             if hit:
