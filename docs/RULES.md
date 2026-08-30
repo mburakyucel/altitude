@@ -55,3 +55,12 @@
 - effect: the chat is usable as the entry point again (his words, 2026-08-30 05:24Z)
 - status: probation
 - text: Chat is a conversation with Burak on his phone, not a log. A chat reply answers what he asked in a few plain sentences: what changed and what he needs to do, nothing else. No ids, slugs, file paths, rule or decision numbers or spend figures in chat text: those go in FYIs, digests, the detail of a card and the task folder. Server-triggered turns (proposal-ready, report-landed, reconcile, audit, backlog) are not chat: their output is the card, the digest or the FYI, and the closing text is at most two plain sentences saying what happened and whether anything waits on him.
+
+## R-012 — A resumed worker needs a fresh report generation
+- scope: project
+- where: CLAUDE.md
+- origin: I-032 (altitude)
+- prevents:
+- effect:
+- status: probation
+- text: When a blocked L2 is resumed, record the resume generation or timestamp and ignore every report artifact older than it; both Claude and Codex resume regressions must prove the old blocked report cannot be ingested again.
