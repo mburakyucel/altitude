@@ -63,6 +63,8 @@ def main(argv=None) -> None:
     rs.add_argument("slug"); rs.add_argument("--launches", type=int); rs.add_argument("--turns", type=int)
     rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or the granted cap")
     sz = ts.add_parser("size", help="decision 53: set (or override) a requested task's class"); sz.add_argument("slug"); sz.add_argument("cls", choices=list(S.CLASSES)); sz.add_argument("--why", required=True); sz.add_argument("--paths")
+    tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
+    tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
@@ -165,6 +167,18 @@ def main(argv=None) -> None:
             out(T.unpark(p, args.slug, actor=ACTOR))
         elif tc == "size":
             out(T.set_class(p, args.slug, args.cls, args.why, paths=[x for x in (args.paths or "").split(",") if x.strip()], actor=ACTOR))
+        elif tc == "paths":
+            declared = [x.strip() for x in args.paths.split(",") if x.strip()]
+            if not declared:
+                sys.exit("alt task paths: no paths named")
+            with S.project_lock(p):
+                task = S.load_task(p, args.slug)
+                previous = task.get("paths") or []
+                task["paths"] = declared
+                S.save_task(p, task)
+                S.append_event(p, args.slug, "paths", by=ACTOR, previous=previous, paths=declared)
+            S.regen_state_md(p)
+            out(task)
         elif tc == "hold-merge":
             if not args.off and not args.why:
                 sys.exit("alt task hold-merge: --why <reason> (or --off)")
@@ -213,6 +227,8 @@ def main(argv=None) -> None:
         try:
             out(land.land(args.message, project=args.project, pr_title=args.pr_title, pr_body_file=args.pr_body_file,
                           merge=args.merge, wait=args.wait, paths=args.paths, base=args.base, dry_run=args.dry_run))
+        except land.EmptyLeaseError as e:
+            sys.exit(str(e))
         except land.LandError as e:
             sys.exit(f"alt land: {e}")
         return
