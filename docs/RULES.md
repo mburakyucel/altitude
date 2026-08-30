@@ -57,6 +57,15 @@
 - status: probation
 - text: Chat is a conversation with Burak on his phone, not a log. A chat reply answers what he asked in a few plain sentences: what changed and what he needs to do, nothing else. No ids, slugs, file paths, rule or decision numbers or spend figures in chat text: those go in FYIs, digests, the detail of a card and the task folder. Server-triggered turns (proposal-ready, report-landed, reconcile, audit, backlog) are not chat: their output is the card, the digest or the FYI, and the closing text is at most two plain sentences saying what happened and whether anything waits on him.
 
+## R-008 — Verified blocked-task closure mismatch
+- scope: project
+- where: the owning section
+- origin: I-028 (altitude)
+- prevents: 
+- effect: 
+- status: probation
+- text: Incident-only: the stranded-report recovery path handed L3 a verifier-clean blocked record that the lifecycle cannot close; fix and regress this exact transition without adding a standing guardrail.
+
 ## R-010 — Codex L2 dispatch proves both write roots
 - scope: project
 - where: CLAUDE.md
