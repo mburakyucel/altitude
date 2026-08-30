@@ -1,5 +1,6 @@
 """Cross-project Decision queue, WIP, digest text, Kokoro rendering (ARCHITECTURE §6)."""
 from __future__ import annotations
+import os
 import subprocess
 from pathlib import Path
 
@@ -50,19 +51,26 @@ def text() -> str:
 
 
 def speak(txt: str) -> Path | None:
-    """Render with Kokoro through voice-tutor's speak.py --stdin-text; returns the audio path if it worked."""
-    speak_py = Path.home() / "Projects" / "voice-tutor" / "hooks" / "speak.py"
+    """Render the digest with the local Kokoro server (the same OpenAI-shaped endpoint voice-tutor's speak.py streams
+    from — that script has no file output, so altd calls the server itself). Returns the wav path; faults are raised."""
+    import json as _json
+    import urllib.request
     from . import improve
-    if not speak_py.exists():
-        improve.system_fault("tts", f"voice-tutor speak.py not found at {speak_py}")
-        return None
+    url = os.environ.get("TTS_URL", "http://127.0.0.1:8880/v1/audio/speech")
+    voice = os.environ.get("TTS_VOICE", "af_heart")
     out = config.ROOT / "digest.wav"
+    body = _json.dumps({"model": "kokoro", "input": txt, "voice": voice, "response_format": "wav"}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        p = subprocess.run(["python3", str(speak_py), "--stdin-text", "--out", str(out)], input=txt, text=True, timeout=300, capture_output=True)
-    except (subprocess.SubprocessError, OSError) as e:
-        improve.system_fault("tts", f"speak.py failed: {e}")
+        with urllib.request.urlopen(req, timeout=300) as r:
+            data = r.read()
+    except Exception as e:  # noqa: BLE001 — network/HTTP/timeout: one fault, no fallback (decision 36)
+        improve.system_fault("tts", f"{url}: {e}")
         return None
-    if p.returncode != 0 or not out.exists():
-        improve.system_fault("tts", f"speak.py exit {p.returncode}: {(p.stderr or '')[-300:]}")
+    if not data.startswith(b"RIFF"):
+        improve.system_fault("tts", f"{url}: response is not a WAV ({len(data)} bytes, starts {data[:12]!r})")
         return None
+    tmp = out.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, out)
     return out
