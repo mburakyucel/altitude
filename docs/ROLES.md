@@ -86,16 +86,17 @@ Rules that follow from it, for every level:
 
 ## Model and cost tiering (settled — decision 38, Burak 2026-08-30)
 
-The principle: **judgment per token goes up the stack; volume per token goes down it** — and **Fable is the scarce window**: it is what Burak's own sessions run on, so Altitude never spends it on research, proposals, documentation, reviews or routine coordination.
+Principle: **judgement gets the strongest model; coding gets at least Opus; only reading gets less.** L3 volume is small next to L1 volume, so Fable at the top is cheap; Fable at the bottom is the dynamic call.
 
-| Role | Default (`config.MODELS`) | Notes |
+| Role | Default (`config.MODELS`) | Who decides the exception |
 |---|---|---|
-| L3 | Opus | frequent short turns; Opus is plenty for coordination and post-mortems |
-| Proposal agent / research / docs | Opus | never Fable |
-| Critic | Codex (other engine) | no same-engine fallback (decision 36) |
-| L2 | Opus | a task may carry `model: fable` (`alt task new --model fable`, by Burak or by the L3 with a stated reason) for genuinely hard reasoning |
-| L1 | Sonnet for mechanical sub-briefs; Opus for novel or wide-blast-radius ones | picked per sub-brief by the L2 (novelty × blast radius rubric); Codex as an alternate L1 when Claude quota is tight |
-| Reviewer | Sonnet or the other engine | never the author's session |
+| L3 | **Fable** | — |
+| L2 | Opus; **Fable when the task is complex** (novel, architectural, L-class with design choices) | the L3 at task creation (`alt task new --model fable`, reason in the request), or Burak |
+| L1 | **Opus for coding**; **Fable for novel / design-heavy / wide-blast-radius sub-briefs**; Sonnet for pure research or documentation sub-briefs | the L2 per sub-brief (novelty × blast radius rubric) |
+| Reviewer | Opus, or the other engine | the L2 |
+| Proposal agent | Opus | — |
+| Documentation research, surveys, changelog reading | Sonnet or Opus, **never Fable** | whoever spawns it |
+| Critic | Codex (other engine, no same-engine fallback — decision 36) | — |
 
 ## Enforcement (so this is a contract, not a wish)
 

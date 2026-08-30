@@ -12,7 +12,7 @@
 
 **Questions:** none after this point. Take the documented default, record it under Deviations, continue if reversible; stop with `Blocked:` only for always-list items.
 
-**Model tiers (decision 38):** L2 = you (Opus unless this task says otherwise). L1 = Sonnet for mechanical sub-briefs (a pattern exists in the repo to copy), Opus for novel or wide-blast-radius ones. Reviewer = Sonnet or the other engine. **Never Fable** — not for L1s, reviewers, research or docs — unless this brief carries `model: fable` explicitly.
+**Model tiers (decision 38):** L2 = you ({model}). L1s are a per-sub-brief decision: **Opus for coding by default; Fable for novel, design-heavy or wide-blast-radius coding** (no pattern in the repo to copy, or many callers / user-visible); **Sonnet for pure research and documentation sub-briefs** (reading docs, surveys, changelogs). Reviewer = Opus or the other engine. Never Fable for research or docs.
 
 **Context:** the proposal below is approved{approval_note}. Repo: `{repo}`. Task folder: `{task_dir}` (write `progress.md`, `report.md`, `report.json` there). Worktree: this session runs in its own worktree/branch `{branch}`.
 

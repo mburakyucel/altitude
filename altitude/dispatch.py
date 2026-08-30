@@ -30,6 +30,7 @@ def build_brief(project: str, slug: str) -> str:
                     "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when review is addressed and CI is green."}.get(policy, policy)
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
+        model=task.get("model") or config.MODELS["l2"],
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
         l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
         verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),

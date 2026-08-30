@@ -12,10 +12,12 @@ class TestModels(unittest.TestCase):
         config.ensure_root()
         config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix(), "stacks": []}})
 
-    def test_defaults_never_fable(self):
-        self.assertNotIn("fable", config.MODELS.values())
-        self.assertEqual(config.MODELS["l3"], "opus")
-        self.assertEqual(config.MODELS["l1"], "sonnet")
+    def test_tiers(self):
+        self.assertEqual(config.MODELS["l3"], "fable")            # judgement at the top
+        self.assertEqual(config.MODELS["l1"], "opus")             # coding at least Opus
+        self.assertEqual(config.MODELS["l1_hard"], "fable")       # dynamic per sub-brief
+        for k in ("proposal", "research"):
+            self.assertNotEqual(config.MODELS[k], "fable")        # research/docs never Fable
 
     def test_task_carries_explicit_model_only(self):
         t = T.new("p", "plain", "S", "r", actor="burak")
