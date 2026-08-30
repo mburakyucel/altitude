@@ -26,6 +26,7 @@ Status 2026-08-29: **Burak decided to build** (decision 15 settled); settled sin
 
 ```
 make run                      # altd on 127.0.0.1:8890 (open http://127.0.0.1:8890)
+# Executive override: `alt task approve <slug>` on a requested task (or the *build now* button) skips the proposal/critic loop and dispatches
 make install-service          # user systemd unit on https://10.88.0.1:8890 — reachable from the phone over WireGuard
                               # (ufw: sudo ufw allow in on wg0 to any port 8890 proto tcp — the pocketbook installers only opened 8080/8443)
 bin/alt project add <name> --path ~/Projects/<name> --stacks python,cdk   # or press "Start L3" on the Projects tab

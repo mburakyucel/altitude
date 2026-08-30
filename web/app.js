@@ -77,6 +77,7 @@ function taskCard(p, t) {
   if (t.blocked_reason) extra.push("blocked: " + t.blocked_reason);
   const btns = [];
   if (t.state === "requested") btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','propose')">propose</button>`);
+  if (["requested","parked","proposed"].includes(t.state)) btns.push(`<button class="btn small primary" title="Executive override: approve as requested and dispatch now, skipping the proposal/critic loop" onclick="act('${p}','${t.slug}','build')">build now</button>`);
   if (t.state === "approved") btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','dispatch')">dispatch</button>`);
   if (t.state === "parked") btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','unpark')">unpark</button>`);
   if (["running","blocked"].includes(t.state)) btns.push(`<button class="btn small" onclick="messageL2('${p}','${t.slug}')">message L2</button>`);

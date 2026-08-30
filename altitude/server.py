@@ -405,6 +405,14 @@ class Handler(BaseHTTPRequestHandler):
                 reason = o.get("reason") or f"{action} by Burak"
                 if action == "park":
                     T.park(project, slug, reason, actor="burak")
+                elif action == "build":  # executive override (Burak): approve as requested and dispatch now, skipping proposal/critic
+                    if t["state"] == "parked":
+                        T.unpark(project, slug, actor="burak")
+                    t = S.load_task(project, slug)
+                    opt = 0 if (t.get("decision") or {}).get("options") else None
+                    res = T.approve(project, slug, opt, actor="burak", note="build now: Burak skipped the proposal loop (executive override)")
+                    log(f"[{project}/{slug}] build now (override) → {res['state']}")
+                    spawn(f"dispatch:{project}", dispatch_waiting, project)
                 elif action == "unpark":
                     T.unpark(project, slug, actor="burak")
                 elif action == "reject":
