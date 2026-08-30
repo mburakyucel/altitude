@@ -1,5 +1,6 @@
 """Rule ledgers (decision 14/32): parse RULES.md files, compile active rules into persona/brief sections."""
 from __future__ import annotations
+import os
 import re
 from pathlib import Path
 
@@ -67,9 +68,25 @@ def compiled_persona(level: str, project: str) -> Path:
     return out
 
 
-def next_id(path: Path, prefix: str = "R") -> str:
+def next_id(path: Path, prefix: str = "R", pending: Path | None = None) -> str:
     ids = [int(r["id"].split("-")[1]) for r in parse_ledger(path) if r["id"].startswith(prefix)]
+    if pending is not None and pending.is_dir():
+        pat = re.compile(rf"^{re.escape(prefix)}-(\d+)\.md$")
+        for f in pending.iterdir():
+            m = pat.match(f.name)
+            if m:
+                ids.append(int(m.group(1)))
     return f"{prefix}-{(max(ids) + 1) if ids else 1:03d}"
+
+
+def write_pending(directory: Path, rid: str, text: str) -> Path:
+    """Reserve a pending draft without clobbering an existing one (I-003)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{rid}.md"
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    return path
 
 
 def render_entry(rid: str, title: str, **f) -> str:
