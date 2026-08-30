@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8fafc" />
     <title>Altitude</title>
     <script>
       // Apply the persisted theme before first paint ("system" follows the OS scheme).
@@ -11,7 +12,10 @@
         var dark =
           t === "dark" ||
           (t !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
-        if (dark) document.documentElement.dataset.theme = "dark";
+        if (dark) {
+          document.documentElement.dataset.theme = "dark";
+          document.querySelector('meta[name="theme-color"]').content = "#0f172a";
+        }
       } catch (e) {}
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -20,8 +24,8 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <script type="module" crossorigin src="/assets/index-D-LQbzEx.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BDcDILXU.css">
+    <script type="module" crossorigin src="/assets/index-Cj-hlGdN.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D6SYMHla.css">
   </head>
   <body>
     <div id="root"></div>
