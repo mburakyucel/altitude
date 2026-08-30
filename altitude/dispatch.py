@@ -58,6 +58,8 @@ def build_brief(project: str, slug: str) -> str:
     env = task["envelope"]
     dec = task.get("decision") or {}
     approval_note = f" — Burak chose: {dec['chosen']}" if dec.get("chosen") else ""
+    if dec.get("chosen") and dec.get("detail"):  # decision 46: the card is short; the conditions behind it travel with the brief
+        approval_note += f"\n\nBehind the card (the L3's reasoning and conditions — binding where they say so):\n{dec['detail']}"
     policy = proj.get("approval", "default")
     merge_policy = {"default": "S/M: merge when review is addressed and CI is green. L and any always-list class (money, infra, IAM, migrations, deploy workflow): open the PR and stop.",
                     "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when review is addressed and CI is green."}.get(policy, policy)

@@ -11,9 +11,9 @@ import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -120,7 +120,9 @@ def run_proposal_flow(project: str, slug: str) -> None:
                   if crit.get("verdict") == "unavailable" else
                   f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json.") if crit else "")
               + "\n\nApply the Decision rule. Then run exactly one of: "
-              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\"` (card for Burak), "
+              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\" --detail \"…\"` "
+              "(card for Burak — decision 46: the question is the dilemma in ≤ 2 plain sentences, options ≤ 8 words each with the recommended "
+              "first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
@@ -451,6 +453,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:
                 return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
+            if api == "ref" and len(parts) > 3:
+                try:
+                    return self._json(refs.resolve(parts[2], unquote(parts[3])))
+                except KeyError as e:
+                    return self._json({"error": f"unknown reference {e}"}, 404)
             if api == "rules" and len(parts) > 2:
                 proj = config.project(parts[2])
                 return self._json({"global": rules.global_rules(), "stack": rules.stack_rules(proj.get("stacks", [])),

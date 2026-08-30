@@ -2,7 +2,7 @@
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const age = (iso) => { if(!iso) return ""; const s=(Date.now()-new Date(iso).getTime())/1000; return s<3600?`${Math.floor(s/60)}m`:s<86400?`${Math.floor(s/3600)}h`:`${Math.floor(s/86400)}d`; };
-const state = { tab: "inbox", project: null, overview: null, timer: null };
+const state = { tab: "inbox", project: null, overview: null, timer: null, cards: {} };
 try { state.tab = localStorage.getItem("alt.tab") || "inbox"; state.project = localStorage.getItem("alt.project") || null; } catch (e) {}
 const api = async (path, body) => { const r = await fetch(path, body ? {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)} : {}); const j = await r.json(); if (j.error) throw new Error(j.error); return j; };
 
@@ -30,11 +30,29 @@ async function loadOverview() {
   return o;
 }
 
+/* References a card or a file mentions (I-007, R-003, decision 31) open the ledger entry on tap — the card itself stays plain (decision 46). */
+const REF_RE = /\b(I-\d{3}|R-\d{3})\b|\b[Dd]ecisions?\s*#?\s*(\d+)\b|DECISIONS\.md\s*#(\d+)/g;
+function linkify(html, project) {
+  return html.replace(REF_RE, (m, id, d1, d2) => { const ref = id || ("decision " + (d1 || d2)); return `<a href="#" class="ref" onclick="openRef('${project}','${ref}');return false">${m}</a>`; });
+}
+async function openRef(project, ref) {
+  try { const r = await api(`/api/ref/${encodeURIComponent(project)}/${encodeURIComponent(ref)}`);
+    openModal(`<div class="row"><span class="pill">${esc(r.kind)}</span><b class="grow">${esc(r.title)}</b><button class="btn small" onclick="closeModal()">close</button></div><div class="detail">${linkify(esc(r.text), project)}</div>`);
+  } catch (e) { alert(e.message); }
+}
 function decisionCard(i) {
+  state.cards[i.project + "/" + i.slug] = i;
   const opts = (i.options || []).map((o, n) => `<button class="btn ${n===0?'primary':''}" onclick="decide('${i.project}','${i.slug}',${n})">${esc(o)}</button>`).join("");
   return `<div class="card ${i.kind}"><div class="row"><span class="pill ${i.class}">${i.class}</span><b class="grow">${esc(i.title)}</b><span class="muted small">${esc(i.project)} · ${age(i.asked)}</span></div>
-    <div style="margin:6px 0">${esc(i.question)}</div><div class="options">${opts}</div>
-    <div class="row" style="margin-top:6px"><input id="note-${i.slug}" placeholder="note (optional, goes with your choice)"><button class="btn small" onclick="openTask('${i.project}','${i.slug}')">details</button></div></div>`;
+    <div style="margin:6px 0">${linkify(esc(i.question), i.project)}</div><div class="options">${opts}</div>
+    <div class="row" style="margin-top:6px"><input id="note-${i.slug}" placeholder="note (optional, goes with your choice)">${i.detail?`<button class="btn small" onclick="openDetail('${i.project}','${i.slug}')">why</button>`:""}<button class="btn small" onclick="openTask('${i.project}','${i.slug}')">files</button></div></div>`;
+}
+function openDetail(project, slug) {
+  const i = state.cards[project + "/" + slug]; if (!i) return;
+  openModal(`<div class="row"><span class="pill ${i.class}">${i.class}</span><b class="grow">${esc(i.title)}</b><button class="btn small" onclick="closeModal()">close</button></div>
+    <div style="margin:6px 0">${linkify(esc(i.question), project)}</div><ol>${(i.options||[]).map(o=>`<li>${esc(o)}</li>`).join("")}</ol>
+    <h3>Reasoning</h3><div class="detail">${linkify(esc(i.detail), project)}</div>
+    <div class="row" style="margin-top:8px"><button class="btn small" onclick="openTask('${project}','${slug}')">task files</button></div>`);
 }
 
 async function renderInbox(v) {
@@ -117,7 +135,7 @@ async function messageL2(project, slug) { const text = prompt("Message to the L2
 
 async function openTask(project, slug) {
   const t = await api(`/api/task/${encodeURIComponent(project)}/${encodeURIComponent(slug)}`);
-  const files = Object.entries(t.files || {}).map(([k, v]) => `<details ${k==='report'||k==='proposal'?'open':''}><summary>${k}.md</summary><pre>${esc(v)}</pre></details>`).join("");
+  const files = Object.entries(t.files || {}).map(([k, v]) => `<details ${k==='report'||k==='proposal'?'open':''}><summary>${k}.md</summary><pre>${linkify(esc(v), project)}</pre></details>`).join("");
   openModal(`<div class="row"><span class="pill ${t.class}">${t.class}</span><span class="pill ${t.state}">${t.state}</span><b class="grow">${esc(t.title)}</b><button class="btn small" onclick="closeModal()">close</button></div>
     <div class="muted small">${esc(slug)} · dispatch ${esc(t.dispatch_id||"—")} · session ${esc((t.session_id||"—").slice(0,8))} · worktree ${esc(t.worktree||"—")}${t.dispatch_id?`<br>attach: <code>claude attach ${esc(t.agent_id||"")}</code>`:""}</div>
     ${t.critique?`<details><summary>critique (${esc(t.critique.verdict)})</summary><pre>${esc(JSON.stringify(t.critique,null,1))}</pre></details>`:""}

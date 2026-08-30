@@ -29,3 +29,5 @@ pre{background:#0b0e12;border:1px solid var(--line);border-radius:9px;padding:10
 details summary{cursor:pointer;color:var(--muted)}
 .tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:8px}.tabs .btn.on{border-color:var(--accent);color:var(--accent)}
 a{color:var(--accent)}
+.detail{white-space:pre-wrap;font-size:13px;line-height:1.45}
+a.ref{color:var(--accent);text-decoration:underline dotted}

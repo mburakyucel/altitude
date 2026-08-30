@@ -2,7 +2,35 @@
 from __future__ import annotations
 from pathlib import Path
 
+import re
+
 from . import config, state as S
+
+# ---- decision 46: the card is executive — the dilemma in ≤ 2 plain sentences, options ≤ 8 words, the rest in detail ----
+CARD_QUESTION_MAX = 280
+CARD_OPTION_MAX = 80
+CARD_JARGON = re.compile(r"\bI-\d{3}\b|\bR-\d{3}\b|\bdecisions?[- ]?#?\d+\b|\b[\w/.-]+\.(?:py|js|md|json|ts|yaml|yml|toml)\b|`", re.I)
+
+
+def check_card(question: str, options: list[str] | None) -> list[str]:
+    """What is wrong with a card, in the L3's terms (empty list = fine). Burak reads it on a phone with no ledger in his head."""
+    probs = []
+    if len(question) > CARD_QUESTION_MAX:
+        probs.append(f"question is {len(question)} chars (max {CARD_QUESTION_MAX}): the dilemma in ≤ 2 plain sentences; the rest goes in --detail")
+    if CARD_JARGON.search(question):
+        probs.append("question names an incident/decision/rule id, a file or code: plain words only; ids and files go in --detail")
+    for o in options or []:
+        if len(o) > CARD_OPTION_MAX:
+            probs.append(f"option '{o[:32]}…' is {len(o)} chars (max {CARD_OPTION_MAX}): a label of ≤ 8 words; conditions go in --detail")
+        elif CARD_JARGON.search(o):
+            probs.append(f"option '{o[:32]}…' names an id, file or code: plain words only")
+    return probs
+
+
+def short_reason(reason: str, limit: int = 200) -> str:
+    """The first sentence of a block reason, for the card; the whole reason stays in detail."""
+    first = re.split(r"(?<=[.!?])\s|\s[—–-]\s|:\s`", reason.strip(), maxsplit=1)[0].strip()
+    return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 TRANSITIONS = {
     "requested": {"proposed", "rejected", "parked", "approved"},   # approved: S-class auto (decision 13)
@@ -71,8 +99,12 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
 
 
 def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = None,
-            question: str | None = None, options: list[str] | None = None, actor: str = "l3") -> dict:
-    """Attach a proposal. If it needs Burak, `question`/`options` create the Decision card."""
+            question: str | None = None, options: list[str] | None = None, actor: str = "l3", detail: str | None = None) -> dict:
+    """Attach a proposal. If it needs Burak, `question`/`options` create the Decision card; `detail` carries the reasoning."""
+    if question:
+        probs = check_card(question, options)
+        if probs:
+            raise TransitionError("card rejected (decision 46 — the card is executive): " + "; ".join(probs))
     with S.project_lock(project):
         task = S.load_task(project, slug)
         d = S.task_dir(project, slug)
@@ -87,7 +119,7 @@ def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = N
                 task["envelope"].update({k: v for k, v in env.items() if k in task["envelope"] and v is not None})
         if question:
             task["decision"] = {"question": question, "options": options or ["Approve", "Revise", "Park"],
-                                "asked": S.now(), "chosen": None}
+                                "asked": S.now(), "chosen": None, "detail": detail}
         else:
             task["decision"] = None
         return _move(project, task, "proposed", actor, needs_decision=bool(question))
@@ -254,9 +286,10 @@ def decisions(project: str) -> list[dict]:
         if t["state"] == "proposed" and t.get("decision") and not t["decision"].get("chosen"):
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
                         "question": t["decision"]["question"], "options": t["decision"]["options"],
-                        "asked": t["decision"].get("asked"), "kind": "decision"})
+                        "asked": t["decision"].get("asked"), "kind": "decision", "detail": t["decision"].get("detail")})
         elif t["state"] == "blocked" and not t.get("resume_after"):  # held by Altitude (decision 44) is not a decision
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
-                        "question": f"Blocked: {t.get('blocked_reason') or '?'}", "options": ["Resume", "Park", "Reject"],
-                        "asked": t.get("updated"), "kind": "blocked"})
+                        "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
+                        "options": ["Resume", "Park", "Reject"], "asked": t.get("updated"), "kind": "blocked",
+                        "detail": t.get("blocked_reason")})
     return out
