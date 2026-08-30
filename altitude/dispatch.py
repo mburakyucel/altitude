@@ -45,7 +45,8 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
         "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
-               "ALTITUDE_SESSION_KEY": session_key}}
+               "ALTITUDE_SESSION_KEY": session_key,
+               "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": str(int(config.CONTEXT_ACT * 100))}}  # decision 12, also for resumed sessions
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p

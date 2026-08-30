@@ -15,6 +15,9 @@ def clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     env["PATH"] = env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    # decision 12: every Claude process Altitude launches (L3 turns, proposal/critic, L2 --bg and the L1s it spawns)
+    # auto-compacts at the act line — percent of the window *used*, verified in `-p` and `--bg` sessions
+    env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(int(config.CONTEXT_ACT * 100))
     return env
 
 
