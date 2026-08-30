@@ -152,7 +152,13 @@ def main(argv=None) -> None:
                     answer = f"Envelope raised to {args.launches} subagent launches. " + answer
                 from altitude import dispatch
                 res = dispatch.resume_blocked(p, args.slug, answer, prefix="Altitude: ")
-                out({"slug": args.slug, "state": "running", "agent": (res.get("agent") or {}).get("id"), "envelope": S.load_task(p, args.slug)["envelope"]})
+                resumed = S.load_task(p, args.slug)
+                if res.get("deferred"):
+                    out({"slug": args.slug, "state": "blocked", "deferred": True,
+                         "waiting": resumed.get("blocked_reason"), "envelope": resumed["envelope"]})
+                else:
+                    out({"slug": args.slug, "state": "running", "deferred": False,
+                         "agent": (res.get("agent") or {}).get("id"), "envelope": resumed["envelope"]})
             else:
                 out(T.resume(p, args.slug, actor=ACTOR))
         elif tc == "unpark":
