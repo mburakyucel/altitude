@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from . import config, dispatch, l1, state as S, verify
+from . import config, dispatch, git_policy, l1, state as S, verify
 
 
 _TASK_FIELDS = (
@@ -72,8 +72,14 @@ def status(project: str, slug: str) -> dict:
         **{field: None for field in _TASK_FIELDS},
         "envelope": None, "counts": None, "envelope_file": None, "l1_runs": None,
         "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
-        "report_json": None, "prs": [], "main_run": None, "errors": errors,
+        "repository": None, "report_json": None, "prs": [], "main_run": None, "errors": errors,
     }
+
+    try:
+        repo = config.project_path(project)
+        out["repository"] = git_policy.inspect_repository(repo).as_dict()
+    except Exception as e:
+        _error(errors, "repository", e)
 
     try:
         task = S.load_task(project, slug)

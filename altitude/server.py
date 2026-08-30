@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, mechanize, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, mechanize, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -937,6 +937,12 @@ def install_statusline() -> dict:
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance runs "current main"; a smoke/test altd must not clear the flag (I-013)
+        try:
+            git_policy.service_preflight(config.REPO)
+            git_policy.require_hooks_installed(config.REPO)
+        except git_policy.GitPolicyError as e:
+            log(f"service startup refused: {e}")
+            raise SystemExit(1) from e
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     host = host or config.HOST
     port = port or config.PORT

@@ -32,14 +32,23 @@ class TestL1PatchNote(unittest.TestCase):
 
                 with ExitStack() as stack:
                     stack.enter_context(mock.patch.object(route, "pick_engine", pick_engine))
-                    stack.enter_context(mock.patch.object(S, "load_task", return_value={"envelope": {"l1_in_flight": 1}}))
+                    stack.enter_context(mock.patch.object(
+                        S, "load_task", return_value={"envelope": {"l1_in_flight": 1}, "worktree": str(root)}
+                    ))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
                     stack.enter_context(mock.patch.object(l1, "list_runs", return_value=[]))
                     stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
                     stack.enter_context(mock.patch.object(l1, "save", return_value=None))
-                    stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="test-branch\n")))
+                    stack.enter_context(mock.patch.object(
+                        l1, "_git", return_value=SimpleNamespace(stdout="test-branch\n", stderr="", returncode=0)
+                    ))
+                    stack.enter_context(mock.patch.object(l1.git_policy, "capture_origin_sha", return_value="a" * 40))
+                    stack.enter_context(mock.patch.object(l1.git_policy, "commits_missing_task_trailer", return_value=[]))
                     stack.enter_context(mock.patch.object(l1.subprocess, "Popen", return_value=SimpleNamespace(pid=123)))
-                    rec = l1.start("project", "task", brief, role=role, engine=engine, cwd=str(root))
+                    rec = l1.start(
+                        "project", "task", brief, role=role, engine=engine,
+                        cwd=str(root) if role == "reviewer" else None,
+                    )
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])

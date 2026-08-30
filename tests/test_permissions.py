@@ -509,7 +509,9 @@ class TestConsumers(unittest.TestCase):
 
         live = [{"name": f"widgets/{slug}-1", "id": "a2", "sessionId": "new-sid", "state": "running", "startedAt": 2}]
         with mock.patch.object(engines, "claude_resume_bg", side_effect=fake_resume), \
-                mock.patch.object(engines, "claude_agents", return_value=live):
+                mock.patch.object(engines, "claude_agents", return_value=live), \
+                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                mock.patch.object(dispatch, "_validate_task_worktree"):
             dispatch.resume_session("widgets", slug, "carry on")
         self.assertEqual(Path(seen["settings"]), p)
         st = seen["on_disk"]

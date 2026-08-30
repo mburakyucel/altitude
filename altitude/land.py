@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config, dispatch, state as S
+from . import config, dispatch, git_policy, state as S
 
 CHECK_POLL_SECONDS = 15
 TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -99,7 +99,7 @@ def _inside(path: str, lease: list[str]) -> bool:
     return any(p == l or p.startswith(l + "/") for l in map(norm, lease))
 
 
-def _push(root: Path, branch: str) -> None:
+def _push(root: Path, branch: str, base: str, task_ref: str) -> None:
     """`git push -u origin <branch>`; on a non-fast-forward, exactly one `git pull --rebase` and one re-push."""
     p = _git(root, "push", "-u", "origin", branch, timeout=300)
     if p.returncode == 0:
@@ -113,6 +113,16 @@ def _push(root: Path, branch: str) -> None:
         raise LandError("git pull --rebase failed — if it stopped on conflicts the worktree is now mid-rebase: "
                         "resolve and `git rebase --continue`, or `git rebase --abort`, then re-run alt land: "
                         f"{((r.stderr or '') + (r.stdout or '')).strip()[-300:]}")
+    try:
+        missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
+    except git_policy.GitPolicyError as exc:
+        raise LandError(f"cannot revalidate provenance after rebase: {exc}") from exc
+    if missing:
+        sample = ", ".join(sha[:12] for sha in missing[:5])
+        raise LandError(
+            f"rebased branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
+            "stopping before the second push"
+        )
     p2 = _git(root, "push", "-u", "origin", branch, timeout=300)
     if p2.returncode != 0:
         raise LandError(f"push failed again after one rebase — stopping, not retrying: "
@@ -204,10 +214,12 @@ def _checks_state(root: Path, number: int) -> str:
     return "skipped" if buckets <= {"skipping"} else "pass"
 
 
-def _merge(root: Path, branch: str, number: int, base: str) -> tuple[bool, dict | None]:
+def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) -> tuple[bool, dict | None]:
     """Squash-merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
-    local half (a worktree holds the branch) after the merge itself succeeded."""
-    m = _run(["gh", "pr", "merge", str(number), "--squash", "--delete-branch"], root, timeout=300)
+    local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
+    PR head changed after the commit whose provenance and checks this invocation validated."""
+    m = _run(["gh", "pr", "merge", str(number), "--squash", "--delete-branch",
+              "--match-head-commit", expected_head], root, timeout=300)
     after = _pr_view(root, branch) or {}
     if after.get("state") != "MERGED":
         raise LandError(f"gh pr merge #{number}: "
@@ -265,6 +277,25 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
               "the PR will be opened but not merged")
+    if task is None or not project or not slug:
+        raise LandError(
+            f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
+            "pass `--project` or run from the dispatch environment"
+        )
+    fetched = _git(root, "fetch", "-q", "origin", base)
+    if fetched.returncode != 0:
+        raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
+    task_ref = f"{project}/{slug}"
+    try:
+        missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
+    except git_policy.GitPolicyError as exc:
+        raise LandError(f"cannot verify commit provenance: {exc}") from exc
+    if missing:
+        sample = ", ".join(sha[:12] for sha in missing[:5])
+        raise LandError(
+            f"branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
+            "refusing before staging, pushing, or contacting GitHub"
+        )
     if paths is not None:
         lease = [p.strip() for p in paths.split(",") if p.strip()]
         if not lease:
@@ -323,8 +354,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note(f"committed {commit[:7]} ({len(staged)} path(s))")
         else:
             _note("staged changes match HEAD — nothing to commit")
-    _push(root, branch)
-    task_ref = f"{project}/{slug}" if project and slug else "(unresolved)"
+    _push(root, branch, base, task_ref)
+    pushed_head = _need(_git(root, "rev-parse", "HEAD"), "cannot capture the validated PR head")
     pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
     checks = _checks_state(root, number)
@@ -335,7 +366,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     merged, main_run = pr.get("state") == "MERGED", None
     if merge and not merged:
         if checks == "pass":
-            merged, main_run = _merge(root, branch, number, base)
+            merged, main_run = _merge(root, branch, number, base, pushed_head)
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,

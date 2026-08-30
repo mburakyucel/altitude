@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, engines, improve, route, state as S, tasks as T
+from . import config, engines, git_policy, improve, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
@@ -112,6 +112,48 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     if any(r["name"] == name for r in runs):
         raise T.TransitionError(f"run {name!r} already exists")
     base = Path(cwd) if cwd else Path(task.get("worktree") or config.project_path(project))
+    if role == "implementer":
+        parent_branch = _git(base, "rev-parse", "--abbrev-ref", "HEAD")
+        branch_name = (parent_branch.stdout or "").strip() if parent_branch.returncode == 0 else ""
+        if not branch_name or branch_name == "HEAD":
+            raise T.TransitionError(f"cannot launch a write-capable L1 from detached or unreadable HEAD in {base}")
+        if branch_name in ("main", "master"):
+            raise T.TransitionError(
+                f"cannot launch a write-capable L1 directly on protected branch {branch_name!r}; use a task worktree"
+            )
+        if cwd:
+            registered = {str(Path(p).resolve()) for p in (
+                [task.get("worktree")] + [run.get("worktree") for run in runs]
+            ) if p}
+            if str(base.resolve()) not in registered:
+                raise T.TransitionError(
+                    f"--cwd {base} is not this task's registered L2 or L1 worktree"
+                )
+            project_repo = config.project_path(project)
+            base_common = (_git(base, "rev-parse", "--git-common-dir").stdout or "").strip()
+            repo_common = (_git(project_repo, "rev-parse", "--git-common-dir").stdout or "").strip()
+            if not base_common or not repo_common or (base / base_common).resolve() != (project_repo / repo_common).resolve():
+                raise T.TransitionError(f"--cwd {base} is not a worktree of the {project!r} repository")
+        fetched = _git(base, "fetch", "-q", "origin", "main")
+        if fetched.returncode != 0:
+            raise T.TransitionError(
+                f"cannot validate L1 parent against origin/main: {(fetched.stderr or fetched.stdout).strip()[:300]}"
+            )
+        try:
+            origin_sha = git_policy.capture_origin_sha(base, "main")
+            parent_sha = (_git(base, "rev-parse", "HEAD").stdout or "").strip()
+            if not parent_sha:
+                raise T.TransitionError(f"cannot capture the L1 parent commit in {base}")
+            missing = git_policy.commits_missing_task_trailer(
+                base, "main", f"{project}/{slug}", head=parent_sha, origin_sha=origin_sha
+            )
+        except git_policy.GitPolicyError as exc:
+            raise T.TransitionError(f"cannot validate L1 parent provenance: {exc}") from exc
+        if missing:
+            sample = ", ".join(sha[:12] for sha in missing[:5])
+            raise T.TransitionError(
+                f"L1 parent has commit(s) without exact `Altitude-Task: {project}/{slug}` provenance: {sample}"
+            )
     if role == "implementer" and not cwd:
         common = _git(base, "rev-parse", "--git-common-dir").stdout.strip()
         if not common:
@@ -119,7 +161,7 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
         repo_root = (base / common).resolve().parent  # `.git` comes back relative to `base`
         short = slug[:30]
         wt, branch = repo_root / ".claude" / "worktrees" / f"{short}-{name}", f"l1/{short}-{name}"
-        r = _git(base, "worktree", "add", "-b", branch, str(wt), "HEAD")
+        r = _git(base, "worktree", "add", "-b", branch, str(wt), parent_sha)
         if r.returncode != 0:
             raise T.TransitionError(f"git worktree add failed: {(r.stderr or r.stdout).strip()[:300]}")
         workdir = wt
@@ -133,6 +175,12 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     (runs_dir(project, slug) / f"{name}.prompt.md").write_text(prompt)
     key = ("reviewer" if role == "reviewer" else "l1") + ("_codex" if choice["engine"] == "codex" else "")
     model = model or config.MODELS.get(key)
+    if role == "implementer" and cwd:
+        current = (_git(base, "rev-parse", "HEAD").stdout or "").strip()
+        if current != parent_sha:
+            raise T.TransitionError(
+                f"--cwd HEAD moved during validation ({parent_sha[:12]} → {current[:12] or 'unreadable'}); retry"
+            )
     rec = {"n": n, "name": name, "role": role, "engine": choice["engine"], "why": choice["why"], "model": model,
            "worktree": str(workdir), "branch": branch, "brief": str(brief), "started": S.now(), "pid": None, "done": None, "result": None}
     save(project, slug, rec)

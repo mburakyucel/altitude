@@ -1,0 +1,251 @@
+"""Repository policy tests use real repositories, refs, hooks, and pushes."""
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from altitude import git_policy  # noqa: E402
+
+
+class TestGitPolicy(unittest.TestCase):
+    def setUp(self):
+        if not shutil.which("git"):
+            self.skipTest("git not available")
+        self.tmp = Path(tempfile.mkdtemp(prefix="alt-git-policy-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.remote = self.tmp / "origin.git"
+        self.command("git", "init", "--bare", "-q", str(self.remote))
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.git("init", "-q")
+        self.git("symbolic-ref", "HEAD", "refs/heads/main")
+        self.configure(self.repo)
+        (self.repo / "README.md").write_text("initial\n")
+        self.git("add", "README.md")
+        self.git("commit", "-q", "-m", "initial")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.git("push", "-q", "-u", "origin", "main")
+        self.command("git", "--git-dir", str(self.remote), "symbolic-ref", "HEAD", "refs/heads/main")
+
+    def command(self, *args, cwd=None, check=True, input_text=None):
+        result = subprocess.run(
+            list(args), cwd=str(cwd) if cwd else None, input=input_text,
+            capture_output=True, text=True,
+        )
+        if check:
+            self.assertEqual(result.returncode, 0, f"{' '.join(args)}: {result.stderr or result.stdout}")
+        return result
+
+    def git(self, *args, check=True, input_text=None):
+        return self.command(
+            "git", "-C", str(self.repo), *args, check=check, input_text=input_text,
+        )
+
+    def configure(self, repo):
+        self.command("git", "-C", str(repo), "config", "user.email", "test@example.invalid")
+        self.command("git", "-C", str(repo), "config", "user.name", "Test User")
+        self.command("git", "-C", str(repo), "config", "commit.gpgsign", "false")
+
+    def commit_file(self, name, content, message, *, no_verify=False):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        self.git("add", name)
+        args = ["commit", "-q"]
+        if no_verify:
+            args.append("--no-verify")
+        args.extend(["-m", message])
+        self.git(*args)
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def advance_remote(self):
+        other = self.tmp / f"other-{len(list(self.tmp.glob('other-*')))}"
+        self.command("git", "clone", "-q", str(self.remote), str(other))
+        self.configure(other)
+        marker = other / "remote.txt"
+        marker.write_text(marker.read_text() + "next\n" if marker.exists() else "next\n")
+        self.command("git", "-C", str(other), "add", "remote.txt")
+        self.command("git", "-C", str(other), "commit", "-q", "-m", "remote advance")
+        self.command("git", "-C", str(other), "push", "-q", "origin", "main")
+        return self.command("git", "-C", str(other), "rev-parse", "HEAD").stdout.strip()
+
+    def test_inspection_does_not_fetch_and_reports_local_commits_oldest_first(self):
+        initial = self.git("rev-parse", "HEAD").stdout.strip()
+        self.advance_remote()
+        stale = git_policy.inspect_repository(self.repo)
+        self.assertTrue(stale.determinate)
+        self.assertEqual(stale.head, initial)
+        self.assertEqual(stale.origin_sha, initial)
+        self.assertEqual((stale.ahead, stale.behind), (0, 0))
+
+        self.git("reset", "--hard", "-q", "HEAD")
+        first = self.commit_file("one.txt", "one\n", "local one")
+        second = self.commit_file("two.txt", "two\n", "local two")
+        state = git_policy.inspect_repository(self.repo)
+        self.assertEqual((state.ahead, state.behind), (2, 0))
+        self.assertEqual(state.local_only_shas, (first, second))
+        self.assertEqual(state.oldest_local_sha, first)
+        self.assertEqual(state.shas, state.local_only_shas)
+        self.assertEqual(state.oldest, first)
+        self.assertEqual(state.as_dict()["shas"], [first, second])
+        self.assertEqual(state.as_dict()["oldest"], first)
+
+    def test_missing_origin_is_indeterminate_and_capture_refuses(self):
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        state = git_policy.inspect_repository(self.repo)
+        self.assertFalse(state.determinate)
+        self.assertIn("missing origin/main", state.error)
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "missing origin/main"):
+            git_policy.capture_origin_sha(self.repo)
+
+    def test_fetch_exact_base_accepts_equal_and_refuses_behind_dirty_and_ahead(self):
+        expected = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(git_policy.fetch_and_require_exact_base(self.repo), expected)
+
+        self.advance_remote()
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "behind"):
+            git_policy.fetch_and_require_exact_base(self.repo)
+        self.git("merge", "--ff-only", "origin/main")
+
+        (self.repo / "dirty.txt").write_text("dirty\n")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "uncommitted"):
+            git_policy.fetch_and_require_exact_base(self.repo)
+        (self.repo / "dirty.txt").unlink()
+
+        self.commit_file("ahead.txt", "ahead\n", "local ahead")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "ahead"):
+            git_policy.fetch_and_require_exact_base(self.repo)
+
+    def test_service_preflight_allows_equal_or_behind_and_refuses_other_states(self):
+        equal = git_policy.service_preflight(self.repo)
+        self.assertEqual((equal.ahead, equal.behind), (0, 0))
+
+        self.advance_remote()
+        self.git("fetch", "-q", "origin", "main")
+        behind = git_policy.service_preflight(self.repo)
+        self.assertEqual((behind.ahead, behind.behind), (0, 1))
+
+        self.commit_file("local.txt", "local\n", "local divergence")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "diverged"):
+            git_policy.service_preflight(self.repo)
+
+    def test_commit_trailers_are_exact_and_head_may_be_another_branch(self):
+        base_sha = git_policy.capture_origin_sha(self.repo)
+        self.git("checkout", "-q", "-b", "task")
+        good = self.commit_file(
+            "good.txt", "good\n", "good change\n\nAltitude-Task: demo/fix",
+        )
+        bad = self.commit_file(
+            "bad.txt", "bad\n", "bad change\n\nAltitude-Task: demo/fix-extra",
+        )
+        duplicate = self.commit_file(
+            "duplicate.txt", "duplicate\n",
+            "ambiguous change\n\nAltitude-Task: demo/fix\nAltitude-Task: demo/other",
+        )
+        self.git("checkout", "-q", "main")
+
+        missing = git_policy.commits_missing_task_trailer(
+            self.repo, "main", "demo/fix", head="task", origin_sha=base_sha,
+        )
+        self.assertEqual(missing, [bad, duplicate])
+        self.assertNotIn(good, missing)
+
+    def test_install_hooks_is_idempotent_and_refuses_an_existing_different_path(self):
+        expected = Path(__file__).resolve().parent.parent / "hooks"
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "not installed"):
+            git_policy.require_hooks_installed(self.repo)
+        first = git_policy.install_hooks(self.repo)
+        second = git_policy.install_hooks(self.repo)
+        self.assertEqual(first, expected.resolve())
+        self.assertEqual(second, first)
+        self.assertEqual(git_policy.require_hooks_installed(self.repo), first)
+        self.assertEqual(self.git("config", "--local", "--get", "core.hooksPath").stdout.strip(), str(first))
+
+        self.git("config", "--local", "core.hooksPath", ".git/other-hooks")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "refusing to overwrite"):
+            git_policy.install_hooks(self.repo)
+
+    def test_pre_commit_and_pre_merge_hooks_block_main_and_master_but_allow_topic(self):
+        initial = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("update-ref", "refs/remotes/origin/master", initial)
+        self.git("branch", "master", "origin/master")
+        git_policy.install_hooks(self.repo)
+        (self.repo / "blocked.txt").write_text("blocked\n")
+        self.git("add", "blocked.txt")
+        blocked = self.git("commit", "-m", "blocked on main", check=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("pre-commit on main is blocked", blocked.stderr)
+
+        self.git("checkout", "-q", "-b", "topic")
+        allowed = self.git("commit", "-m", "allowed on topic", check=False)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+        self.git("checkout", "-q", "main")
+        merge_blocked = self.git("merge", "--no-ff", "topic", "-m", "merge topic", check=False)
+        self.assertNotEqual(merge_blocked.returncode, 0)
+        self.assertIn("pre-merge-commit on main is blocked", merge_blocked.stderr)
+        self.git("merge", "--abort")
+
+        self.git("checkout", "-q", "master")
+        (self.repo / "master.txt").write_text("master\n")
+        self.git("add", "master.txt")
+        master_commit = self.git("commit", "-m", "blocked on master", check=False)
+        self.assertNotEqual(master_commit.returncode, 0)
+        self.assertIn("pre-commit on master is blocked", master_commit.stderr)
+        self.git("reset", "--hard", "-q", "HEAD")
+        master_merge = self.git("merge", "--no-ff", "topic", "-m", "merge topic", check=False)
+        self.assertNotEqual(master_merge.returncode, 0)
+        self.assertIn("pre-merge-commit on master is blocked", master_merge.stderr)
+        self.git("merge", "--abort")
+
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "-b", "integration")
+        merge_allowed = self.git("merge", "--no-ff", "topic", "-m", "merge topic", check=False)
+        self.assertEqual(merge_allowed.returncode, 0, merge_allowed.stderr)
+
+    def test_pre_push_blocks_main_and_master_and_allows_topic(self):
+        git_policy.install_hooks(self.repo)
+        self.git("checkout", "-q", "-b", "topic")
+        self.commit_file("topic.txt", "topic\n", "topic commit")
+        blocked = self.git("push", "origin", "topic:main", check=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("pushing refs/heads/main directly is blocked", blocked.stderr)
+
+        master_blocked = self.git("push", "origin", "topic:master", check=False)
+        self.assertNotEqual(master_blocked.returncode, 0)
+        self.assertIn("pushing refs/heads/master directly is blocked", master_blocked.stderr)
+
+        allowed = self.git("push", "-u", "origin", "topic", check=False)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        remote_topic = self.command(
+            "git", "--git-dir", str(self.remote), "rev-parse", "refs/heads/topic",
+        ).stdout.strip()
+        self.assertEqual(remote_topic, self.git("rev-parse", "topic").stdout.strip())
+
+    def test_reference_transaction_rejects_local_base_moves_but_allows_fetched_remote_head(self):
+        git_policy.install_hooks(self.repo)
+        self.git("checkout", "-q", "-b", "topic")
+        topic = self.commit_file("topic.txt", "topic\n", "topic commit")
+
+        forced = self.git("branch", "-f", "main", "topic", check=False)
+        self.assertNotEqual(forced.returncode, 0)
+        self.assertIn("protected branch update blocked", forced.stderr)
+        self.git("checkout", "-q", "main")
+        fast_forward = self.git("merge", "--ff-only", "topic", check=False)
+        self.assertNotEqual(fast_forward.returncode, 0)
+        self.assertIn("protected branch update blocked", fast_forward.stderr)
+
+        self.git("push", "-q", "origin", "topic")
+        self.command("git", "--git-dir", str(self.remote), "update-ref", "refs/heads/main", topic)
+        self.git("fetch", "-q", "origin", "main")
+        allowed = self.git("merge", "--ff-only", "origin/main", check=False)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), topic)
+
+
+if __name__ == "__main__":
+    unittest.main()
