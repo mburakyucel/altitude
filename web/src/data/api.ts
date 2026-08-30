@@ -105,7 +105,10 @@ export const WipSchema = z
     machine: z.number(),
     limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
-    waiting: z.array(z.object({ project: z.string(), slug: z.string() }).passthrough()),
+    // why: "dispatch" (state approved) or "resume" (blocked with resume_after) — digest.py wip().
+    waiting: z.array(
+      z.object({ project: z.string(), slug: z.string(), why: z.string().nullish() }).passthrough(),
+    ),
   })
   .passthrough();
 
@@ -140,6 +143,9 @@ export const TaskRowSchema = z
     class: z.string().nullish(),
     title: z.string().nullish(),
     updated: z.string().nullish(),
+    // Set to the usage-limit reset timestamp when Altitude holds a blocked L2 to resume it
+    // itself (server.py on_l2_finished), cleared back to null on resume (dispatch.py).
+    resume_after: z.string().nullish(),
     live: z.unknown().nullish(),
     progress_tail: z.unknown().nullish(),
     has: z.record(z.string(), z.boolean()).nullish(),
@@ -169,6 +175,7 @@ export const TaskViewSchema = z
     state: z.string().nullish(),
     class: z.string().nullish(),
     title: z.string().nullish(),
+    resume_after: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
     critique: z.unknown().nullish(),

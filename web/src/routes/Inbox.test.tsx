@@ -86,6 +86,36 @@ describe("Inbox", () => {
     });
   });
 
+  // A task Altitude is holding (blocked + resume_after) leaves the Decisions queue and joins the
+  // waiting list; "(resume)" is what tells you nobody has to dispatch it by hand.
+  it("marks a waiting entry Altitude will resume itself", async () => {
+    const waiting = {
+      ...overview,
+      queue: [],
+      wip: {
+        per_project: { altitude: 1 },
+        machine: 1,
+        waiting: [
+          { project: "altitude", slug: "held-task", why: "resume" },
+          { project: "altitude", slug: "next-up", why: "dispatch" },
+        ],
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/api/overview")
+          ? jsonResponse(waiting)
+          : jsonResponse({ error: "not found" }, 404),
+      ),
+    );
+    renderApp({ route: "/" });
+
+    expect(
+      await screen.findByText("Waiting: altitude/held-task (resume), altitude/next-up"),
+    ).toBeInTheDocument();
+  });
+
   it("shows the empty state when nothing is queued", async () => {
     vi.stubGlobal(
       "fetch",

@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -73,6 +73,13 @@ function mockFetch() {
   return fetchMock;
 }
 
+/** The <article> a task title link sits in — the element carrying the card's styling. */
+function cardFor(title: HTMLElement): HTMLElement {
+  const card = title.closest("article");
+  if (!card) throw new Error("task title is not inside a card");
+  return card;
+}
+
 describe("Project", () => {
   it("renders the L3 card, the task list and the launch counter as 'launches N · cap M'", async () => {
     mockFetch();
@@ -128,6 +135,54 @@ describe("Project", () => {
       slug: "fix-timer",
       text: "check the toast timer",
     });
+  });
+
+  // A blocked task with resume_after is held by Altitude, not stuck on you: it says so and keeps
+  // the neutral card. A blocked task without one is still a real block, danger border and all.
+  it("separates a held task from a blocked one", async () => {
+    const held = {
+      slug: "held-task",
+      state: "blocked",
+      class: "M",
+      title: "Held task",
+      updated: ago(3),
+      blocked_reason: "usage limit: the subscription window is exhausted, resets 2026-08-30T02:00",
+      resume_after: "2026-08-30T02:00",
+    };
+    const stuck = {
+      slug: "stuck-task",
+      state: "blocked",
+      class: "M",
+      title: "Stuck task",
+      updated: ago(4),
+      blocked_reason: "the test suite will not run",
+      resume_after: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/project/altitude"))
+          return jsonResponse({ ...project, tasks: [held, stuck], decisions: [] });
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+    renderApp({ route: "/projects/altitude" });
+
+    const heldCard = cardFor(await screen.findByRole("link", { name: "Held task" }));
+    expect(
+      within(heldCard).getByText(
+        /^queued: Altitude resumes this L2 itself when the WIP \/ one-rule-task-at-a-time hold clears \(usage limit: /,
+      ),
+    ).toBeInTheDocument();
+    expect(within(heldCard).queryByText(/^blocked: /)).toBeNull();
+    expect(heldCard).not.toHaveClass("border-danger/40");
+
+    const stuckCard = cardFor(screen.getByRole("link", { name: "Stuck task" }));
+    expect(within(stuckCard).getByText("blocked: the test suite will not run")).toBeInTheDocument();
+    expect(within(stuckCard).queryByText(/one-rule-task-at-a-time/)).toBeNull();
+    expect(stuckCard).toHaveClass("border-danger/40");
   });
 
   it("creates a new task with the chosen class", async () => {

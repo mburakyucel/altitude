@@ -79,14 +79,23 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   const prs = arr(raw.prs);
   if (prs.length > 0) meta.push(`PRs ${prs.map((n) => `#${String(n)}`).join(" ")}`);
   const blockedReason = str(raw.blocked_reason);
-  if (blockedReason) meta.push(`blocked: ${blockedReason}`);
+  // A blocked task carrying resume_after is *held* by Altitude, not stuck on you: it says so in
+  // words and keeps the neutral card, so only a real block gets the danger border.
+  const held = state === "blocked" && Boolean(task.resume_after);
+  if (held) {
+    meta.push(
+      `queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold clears (${blockedReason})`,
+    );
+  } else if (blockedReason) {
+    meta.push(`blocked: ${blockedReason}`);
+  }
 
   const progress = str(task.progress_tail);
   const canMessage = ["running", "blocked"].includes(state);
   const canPark = ["requested", "proposed", "approved", "blocked", "reported"].includes(state);
 
   return (
-    <article className={`card space-y-3 ${state === "blocked" ? "border-danger/40" : ""}`}>
+    <article className={`card space-y-3 ${state === "blocked" && !held ? "border-danger/40" : ""}`}>
       <div className="flex flex-wrap items-center gap-2">
         {task.class ? <span className="pill">{task.class}</span> : null}
         <span className="pill">{state}</span>

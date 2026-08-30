@@ -98,6 +98,9 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const worktree = str(task["worktree"]);
   const branch = str(task["branch"]);
   const blockedReason = str(task["blocked_reason"]);
+  // Held by Altitude (blocked + resume_after) reads as queued, not as something you must unstick:
+  // it gets the sentence and the neutral colour, never the danger line.
+  const held = state === "blocked" && Boolean(task.resume_after);
   const model = str(task["model"]);
   const spendUsed = spend["subagent_launches_hook"] ?? spend["subagent_launches_reported"];
   const cap = envelope["subagent_launches"] ?? spend["cap"];
@@ -139,7 +142,14 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
           {model ? ` · model ${model}` : ""}
         </p>
         {agentId ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
-        {blockedReason ? <p className="text-body text-danger">Blocked: {blockedReason}</p> : null}
+        {held ? (
+          <p className="text-body text-ink-2">
+            Queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold
+            clears ({blockedReason})
+          </p>
+        ) : blockedReason ? (
+          <p className="text-body text-danger">Blocked: {blockedReason}</p>
+        ) : null}
       </header>
 
       {hasEnvelope ? (

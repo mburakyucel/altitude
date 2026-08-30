@@ -48,6 +48,22 @@ const running = {
 
 const proposed = { ...running, state: "proposed", live: null };
 
+const held = {
+  ...running,
+  state: "blocked",
+  live: null,
+  blocked_reason: "usage limit: the subscription window is exhausted, resets 2026-08-30T02:00",
+  resume_after: "2026-08-30T02:00",
+};
+
+const stuck = {
+  ...running,
+  state: "blocked",
+  live: null,
+  blocked_reason: "the test suite will not run",
+  resume_after: null,
+};
+
 function stub(task: unknown) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
@@ -150,6 +166,31 @@ describe("Task", () => {
     await user.type(screen.getByLabelText("Reason"), "waiting on the API");
     expect(park).toBeEnabled();
     expect(reject).toBeEnabled();
+  });
+
+  // Held by Altitude (blocked + resume_after) is queued, not stuck on you: the sentence says who
+  // resumes it, and the line drops the danger colour a real block keeps.
+  it("reads a held task as queued rather than blocked", async () => {
+    stub(held);
+    renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    const line = screen.getByText(
+      /^Queued: Altitude resumes this L2 itself when the WIP \/ one-rule-task-at-a-time hold clears \(usage limit: /,
+    );
+    expect(line).toHaveClass("text-ink-2");
+    expect(line).not.toHaveClass("text-danger");
+    expect(screen.queryByText(/^Blocked: /)).toBeNull();
+  });
+
+  it("keeps the danger line for a blocked task with no resume", async () => {
+    stub(stuck);
+    renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    const line = screen.getByText("Blocked: the test suite will not run");
+    expect(line).toHaveClass("text-danger");
+    expect(document.body.textContent).not.toContain("one-rule-task-at-a-time");
   });
 
   it("messages the L2 while the task is running", async () => {

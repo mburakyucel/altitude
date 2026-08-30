@@ -82,7 +82,10 @@ function Running({ wip }: { wip: Wip }) {
       ) : null}
       {wip.waiting.length > 0 ? (
         <p className="text-meta text-muted">
-          Waiting: {wip.waiting.map((w) => `${w.project}/${w.slug}`).join(", ")}
+          Waiting:{" "}
+          {wip.waiting
+            .map((w) => `${w.project}/${w.slug}${w.why === "resume" ? " (resume)" : ""}`)
+            .join(", ")}
         </p>
       ) : null}
     </section>
