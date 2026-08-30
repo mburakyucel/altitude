@@ -8,6 +8,7 @@ resumable. The rotation such a turn was about to make is persisted before it run
 rotates the very same session again (`l3-rotate old=e9aa9612`, once per restart).
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -203,6 +204,66 @@ class TestRotationIsPersistedBeforeTheTurn(unittest.TestCase):
         self.assertEqual(len(rotations), 1, "one rotation per session, not one per restart")
         self.assertEqual(l3.info(PROJECT)["session_id"], "f00d1234")
         self.assertEqual(l3.info(PROJECT)["turns"], 1, "a rotated session counts turns from zero")
+
+
+class TestServerTurnPromptsAreConversation(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        register()
+
+    def test_server_prompts_put_details_in_records_without_reply_budgets(self):
+        prompts: dict[str, str] = {}
+        originals = (l3.turn, server.spawn, l3.info, l3.save_info,
+                     server.improve.index, server.improve.audit_input)
+
+        def capture(project, prompt, trigger=None, **kwargs):
+            prompts[trigger] = prompt
+            return {"_turn_started_at": S.now()}
+
+        def immediately(key, fn, *args):
+            fn(*args)
+            return True
+
+        proposal_slug = "r007-proposal-prompt"
+        proposal_dir = S.task_dir(PROJECT, proposal_slug)
+        proposal_dir.mkdir(parents=True, exist_ok=True)
+        S.write_json(proposal_dir / "proposal.json", {"summary": "s", "decision_needed": True,
+                                                       "always_list_hits": [], "estimate": {"turns": 1}})
+        S.save_task(PROJECT, {"slug": proposal_slug, "title": proposal_slug, "class": "M", "state": "requested",
+                              "created": ago(7200), "updated": ago(7200), "proposal_started": None,
+                              "proposal_turn": None})
+        report_slug = "r007-report-prompt"
+        report_task = {"slug": report_slug, "title": report_slug, "class": "L", "state": "reported",
+                       "created": ago(7200), "updated": ago(60), "l3_handled": None}
+        S.save_task(PROJECT, report_task)
+
+        l3.turn = capture
+        server.spawn = immediately
+        l3.info = lambda project: {"session_id": "audit-session"}
+        l3.save_info = lambda project, info: None
+        server.improve.index = lambda: []
+        server.improve.audit_input = lambda project: {}
+        try:
+            server.start_l3(PROJECT)
+            server.run_proposal_flow(PROJECT, proposal_slug)
+            server.report_turn(PROJECT, report_task, {"verdict": "blocked", "problems": [], "signals": [],
+                                                       "spend": {}, "prs": [], "report": {}})
+            server.weekly_audit(PROJECT)
+        finally:
+            (l3.turn, server.spawn, l3.info, l3.save_info,
+             server.improve.index, server.improve.audit_input) = originals
+
+        self.assertEqual(set(prompts), {"start", "proposal-ready", "report-landed", "audit"})
+        reply_budget = re.compile(r"≤\s*\d+\s+(?:plain\s+)?(?:sentences|lines)")
+        for trigger, prompt in prompts.items():
+            matches = reply_budget.findall(prompt)
+            self.assertEqual(matches, ["≤ 2 plain sentences"] if trigger == "proposal-ready" else [], trigger)
+            self.assertIn("ids, slugs, decision or rule numbers, file names, code, and spend figures", prompt)
+            self.assertIn("the card `--detail`, the digest, the FYI, or the task folder", prompt)
+            self.assertIn("not in the reply text", prompt)
+        self.assertIn("a few plain sentences", prompts["start"])
+        for trigger in ("proposal-ready", "report-landed", "audit"):
+            self.assertIn("at most two plain sentences", prompts[trigger])
 
 
 if __name__ == "__main__":

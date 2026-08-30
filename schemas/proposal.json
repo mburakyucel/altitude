@@ -152,6 +152,7 @@
   },
   "files": {
    "type": "array",
+   "description": "Name each repo file as one bare repo-relative path (a file or narrow directory); put any explanation in `approach`, and brace groups and comma lists are not accepted. A file outside the repo is named by its absolute, `~`/`$`-prefixed, or `<...>` placeholder path and is recorded, not leased. A new repo-relative path must end with a space followed by `(new)`; `(new file)`, `(NEW)`, `(created)`, and `foo.ts(new)` are not accepted.",
    "items": {
     "type": "string"
    }

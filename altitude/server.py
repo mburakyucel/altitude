@@ -96,8 +96,11 @@ def _record_l3_turn(project: str, slug: str, pid: int | None) -> None:
 # ---- workflows the timers and buttons trigger --------------------------------
 
 def start_l3(project: str) -> None:
+    # [R-007] The start reply is a conversation with Burak, not a turn log.
     l3.turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
-                     "then say in ≤4 sentences what this project is, what is in flight, and what you would need from Burak. Run no other commands.",
+                     "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
+                     "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+                     "the digest, the FYI, or the task folder — not in the reply text. Run no other commands.",
             trigger="start")
 
 
@@ -176,6 +179,7 @@ def run_proposal_flow(project: str, slug: str) -> None:
                 return
             log(f"[{project}/{slug}] critic")
             crit = propose.run_critic(project, slug)
+    # [R-007] The proposal-ready output belongs in the card or task record, not a turn-log reply.
     header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
               f"Proposal says decision_needed={p.get('decision_needed')}, always-list hits={p.get('always_list_hits')}, "
               f"estimate={p.get('estimate')}."
@@ -188,7 +192,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
               "the one question in plain words, options ≤ 8 words each with the recommended first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
-              "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
+              "If the critic says revise and you agree, `alt task park` with the reason and say what should change. "
+              "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+              "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
+              "and whether anything waits on Burak.")
     # Burak (or the L3 in a chat turn) may have parked, approved, rejected or proposed the task while the proposal and
     # the critic ran (incident I-008): re-read the state and skip the turn rather than talk to the L3 about a task that
     # has already been decided. proposal.json stays on disk; clearing proposal_started lets tick() re-run the flow
@@ -327,13 +334,17 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                 log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                 return
     inc = improve.index()
+    # [R-007] The report-landed substance belongs in the task record, not a turn-log reply.
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
               f"Read <task_dir>/report.md if you need more. Incidents in other projects (for scope decisions): "
               f"{json.dumps([{k: r.get(k) for k in ('project', 'id', 'tags')} for r in inc[-20:]])}\n\n"
               "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
-              "then the post-mortem pass (incident + right-sized rule, or one line saying nothing went wrong).")
+              "then the post-mortem pass (incident + right-sized rule, or one line saying nothing went wrong). "
+              "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+              "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
+              "and whether anything waits on Burak.")
     res = l3.turn(project, header, trigger="report-landed")
     if (res or {}).get("limited"):
         log(f"[{project}/{slug}] report turn held: {res['error']}")  # not stamped: re-run when the window reopens
@@ -462,10 +473,14 @@ def weekly_audit(project: str) -> None:
     inf["last_audit"] = S.now()
     l3.save_info(project, inf)
     data = improve.audit_input(project)
+    # [R-007] The audit substance belongs in rule records and FYIs, not a turn-log reply.
     spawn(f"audit:{project}", l3.turn, project,
           "Weekly rule audit. Input (rules with their incidents, recent incidents, cross-project promotion candidates):\n"
           + json.dumps(data)[:12000] + "\n\nFor each probation/active rule: recurred? exercised? origin still true? Retire, tighten, or keep — "
-          "each retirement/tightening via `alt rule propose` (FYI-with-veto). Propose promotions only where two projects share a tag. ≤10 lines.",
+          "each retirement/tightening via `alt rule propose` (FYI-with-veto). Propose promotions only where two projects share a tag. "
+          "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+          "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
+          "and whether anything waits on Burak.",
           "audit")
 
 
@@ -495,6 +510,23 @@ def timer_loop() -> None:
 
 # ---- HTTP -------------------------------------------------------------------
 
+class _HeadWriter:
+    """Pass GET's headers through while dropping its entity body."""
+
+    def __init__(self, wfile):
+        self._wfile = wfile
+        self.drop = False
+
+    def __getattr__(self, name):
+        return getattr(self._wfile, name)
+
+    def write(self, data):
+        return len(data) if self.drop else self._wfile.write(data)
+
+    def flush(self):
+        return self._wfile.flush()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "altd/0.1"
 
@@ -505,8 +537,21 @@ class Handler(BaseHTTPRequestHandler):
         if ip not in self._seen_clients:
             self._seen_clients.add(ip)
             log(f"first request from {ip}: {self.command} {self.path}")
-        if "/api/" not in (args[0] if args else ""):
-            return
+
+    def end_headers(self) -> None:
+        super().end_headers()
+        if self.command == "HEAD" and getattr(self, "_head", False):
+            self.wfile.drop = True
+
+    def do_HEAD(self) -> None:
+        wfile = self.wfile
+        self.wfile = _HeadWriter(wfile)
+        self._head = True
+        try:
+            self.do_GET()
+        finally:
+            self._head = False
+            self.wfile = wfile
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, default=str).encode()

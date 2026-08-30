@@ -71,6 +71,7 @@ class TestLand(unittest.TestCase):
         self.ghdir.mkdir()
         self._setenv("PATH", f"{ghbin}:{os.environ.get('PATH', '')}")
         self._setenv("FAKE_GH_DIR", str(self.ghdir))
+        self._setenv("ALTITUDE_HOME", str(config.ROOT))
         self._setenv("ALTITUDE_PROJECT", "demo")
         self._setenv("ALTITUDE_TASK", "fix-x")
         d = S.tasks_dir("demo") / "fix-x"
@@ -354,14 +355,25 @@ class TestLand(unittest.TestCase):
             land.land("fix: conflict again", cwd=self.repo, wait=0)
         self.assertEqual(self.git("log", "--all", "-S", "<<<<<<<", "--oneline").strip(), "")
 
-    def test_resolved_task_with_empty_lease_refuses(self):
+    def test_resolved_task_with_empty_lease_fails_loudly(self):
         d = S.tasks_dir("demo") / "fix-x"
         (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
         self.leased_change()
         (self.repo / "secrets.env").write_text("x\n")
-        with self.assertRaisesRegex(land.LandError, "lease is empty"):
-            land.land("msg", cwd=self.repo, wait=0)
+        cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
+        p = subprocess.run([sys.executable, str(cli), "land", "--message", "msg", "--wait", "0"],
+                           cwd=self.repo, capture_output=True, text=True)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn(f"task demo/fix-x {land.EMPTY_LEASE_MESSAGE}", p.stderr)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_explicit_paths_override_empty_task_lease(self):
+        d = S.tasks_dir("demo") / "fix-x"
+        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
+        self.leased_change()
+        res = land.land("fix: explicit lease", cwd=self.repo, wait=0, paths="src")
+        self.assertEqual(res["lease"], ["src"])
+        self.assertEqual(res["staged"], ["src/thing.py"])
 
     def test_absolute_lease_entry_still_matches(self):
         d = S.tasks_dir("demo") / "fix-x"

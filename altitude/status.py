@@ -71,7 +71,7 @@ def status(project: str, slug: str) -> dict:
         "project": project, "slug": slug,
         **{field: None for field in _TASK_FIELDS},
         "envelope": None, "counts": None, "envelope_file": None, "l1_runs": None,
-        "lease": [], "other_leases": [], "hold": None, "wip_hold": None,
+        "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
         "report_json": None, "prs": [], "main_run": None, "errors": errors,
     }
 
@@ -155,14 +155,15 @@ def status(project: str, slug: str) -> dict:
     except Exception as e:
         _error(errors, "hold", e)
 
+    try:
+        out["gate"] = ("github-actions" if (config.project_path(project) / ".github" / "workflows").is_dir()
+                       else "local-suite")
+    except Exception as e:
+        _error(errors, "gate", e)
+
     if task:
         try:
-            mine = dispatch.narrow(out["lease"])
-            for other in out["other_leases"]:
-                hit = dispatch.paths_overlap(mine, other.get("hold_paths", []))
-                if hit:
-                    out["wip_hold"] = f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
-                    break
+            out["wip_hold"] = dispatch.hold_conflict(out["lease"], out["other_leases"])
         except Exception as e:
             _error(errors, "wip_hold", e)
 
@@ -221,6 +222,8 @@ def status(project: str, slug: str) -> dict:
     out["prs"] = prs
 
     if not merge_candidates:
+        return out
+    if out["gate"] == "local-suite":
         return out
     newest_sha = max(merge_candidates)[2]
     try:

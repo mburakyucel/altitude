@@ -4,6 +4,59 @@ import json
 from pathlib import Path
 
 from . import config, engines, route, state as S, tasks as T
+from .dispatch import _expand_entry, _split_top_level
+
+
+def _normalise_proposal_files(project: str, proposal: dict) -> None:
+    """Store expanded bare paths, rejecting entries that cannot name files at the proposal base."""
+    repo = config.project_path(project)
+    normalised = []
+    for raw_entry in proposal.get("files") or []:
+        entry = str(raw_entry).strip()
+        if entry and entry[:1] in "/~$<":
+            expanded = _expand_entry(entry)
+            normalised.append(expanded[0] if len(expanded) == 1 else entry)
+            continue
+        parts = _split_top_level(entry)
+        if len(parts) > 1:  # _expand_entry's literal-path fast path intentionally preserves a plain comma list.
+            expanded_with_new = []
+            for part in parts:
+                part = part.strip()
+                if part and part[:1] in "/~$<":
+                    host_paths = _expand_entry(part)
+                    normalised.append(host_paths[0] if len(host_paths) == 1 else part)
+                    continue
+                part_paths = _expand_entry(part)
+                if not part_paths:
+                    raise RuntimeError(
+                        f"proposal files entry {(part or entry)!r} is invalid: it expands to no repo-relative paths"
+                    )
+                expanded_with_new.extend((path, part.endswith(" (new)"), part) for path in part_paths)
+        else:
+            expanded = _expand_entry(entry)
+            expanded_with_new = [(path, entry.endswith(" (new)"), entry) for path in expanded]
+        if not expanded_with_new:
+            raise RuntimeError(f"proposal files entry {entry!r} is invalid: it expands to no repo-relative paths")
+        for path, is_new, source in expanded_with_new:
+            while path.startswith("./"):
+                path = path[2:]
+            relative = Path(path)
+            malformed = not path or any(char.isspace() for char in path) or any(char in path for char in "*{}()")
+            if malformed or relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(f"proposal files entry {source!r} is invalid: {path!r} is not a bare repo-relative path")
+            if not is_new and not (repo / relative).exists():
+                raise RuntimeError(
+                    f"proposal files entry {source!r} is invalid: {path!r} does not exist at proposal base {repo}"
+                )
+            normalised.append(path)
+    proposal["files"] = normalised
+
+
+def _record_proposal_error(project: str, slug: str, error: Exception) -> None:
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        task["proposal_error"] = {"message": str(error), "at": S.now()}
+        S.save_task(project, task)
 
 
 def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
@@ -30,6 +83,11 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         prior += ("\n\nThis is revision %d. Produce a corrected proposal, not a defence of the previous one. Burak's feedback (the "
                   "'## Burak's feedback' sections of the request and the revision note above) is binding: address every point and open "
                   "the summary with what changed because of it." % (task.get("revisions", 0) + task.get("feedback_rounds", 0) + 1))
+    failure = task.get("proposal_error") or {}
+    if failure.get("message"):  # the stale-run retry is a fresh session, so carry its only validation context in the prompt
+        fix = ("Fix this validation failure in addition to everything above." if prev_md else  # a revision run's brief above is
+               "Correct only this validation failure and otherwise produce a full proposal.")  # binding; "only this" would contradict it
+        prior += "\n\n## Previous proposal run rejected by validation\n" + failure["message"] + "\n\n" + fix
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
     choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
@@ -41,13 +99,18 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
                                    permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
                                    max_turns=60, timeout=1200)
-    if res["error"] and not res["structured"]:
-        raise RuntimeError(res["error"])
-    p = res["structured"] or {}
+    try:
+        if res["error"] and not res["structured"]:
+            raise RuntimeError(res["error"])
+        p = res["structured"] or {}
+        _normalise_proposal_files(project, p)
+    except Exception as error:  # noqa: BLE001 — a malformed engine payload raises AttributeError, not RuntimeError, and would
+        _record_proposal_error(project, slug, error)  # otherwise leave the stale-run retry replaying the identical prompt forever
+        raise
     S.write_json(d / "proposal.json", p)
     S.atomic_write(d / "proposal.md", render_proposal_md(p))
     with S.project_lock(project):
-        t2 = S.load_task(project, slug); t2["proposal_engine"] = choice["engine"]; S.save_task(project, t2)
+        t2 = S.load_task(project, slug); t2["proposal_engine"] = choice["engine"]; t2.pop("proposal_error", None); S.save_task(project, t2)
     S.append_event(project, slug, "proposal", turns=res["turns"], cost=res["cost"], cls=p.get("class"), engine=choice["engine"],
                    why=choice["why"], decision_needed=p.get("decision_needed"), hits=p.get("always_list_hits"))
     return p
