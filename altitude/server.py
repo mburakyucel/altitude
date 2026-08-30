@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -49,6 +49,47 @@ def spawn(key: str, fn, *a) -> bool:
         _bg[key] = t
         t.start()
         return True
+
+
+def _pid_alive(pid) -> bool:
+    """Is a recorded subprocess still running? An unknown or unsignalable pid counts as alive.
+
+    Fails towards waiting (I-011): a false "alive" costs one tick of patience, a false "dead" costs a second
+    L3 turn on a task that already has one.
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _turn_in_flight(task: dict) -> bool:
+    """Is the L3 turn recorded on this task still running (possibly from a previous altd)?
+
+    Bounded by the engine's own turn timeout: the kill timer lives in the process that started the turn, so
+    after a restart nothing else bounds it, and a recycled pid must never strand the task for good.
+    """
+    rec = task.get("proposal_turn") or {}
+    if not _pid_alive(rec.get("pid")):
+        return False
+    return dispatch._seconds_since(rec.get("started") or "") <= config.L3_TURN_TIMEOUT
+
+
+def _record_l3_turn(project: str, slug: str, pid: int | None) -> None:
+    """Note (pid) or clear (None) the proposal-ready L3 turn's subprocess in the task's status.json.
+
+    Same idea as the session_id/agent_id dispatch records for L2 workers (ce856bb): the child survives altd,
+    so the record on disk — not a thread in this process — is what says whether it is still running.
+    """
+    with S.project_lock(project):
+        t = S.load_task(project, slug)
+        t["proposal_turn"] = {"pid": int(pid), "started": S.now()} if pid else None
+        S.save_task(project, t)
 
 
 # ---- workflows the timers and buttons trigger --------------------------------
@@ -120,7 +161,9 @@ def run_proposal_flow(project: str, slug: str) -> None:
                   if crit.get("verdict") == "unavailable" else
                   f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json.") if crit else "")
               + "\n\nApply the Decision rule. Then run exactly one of: "
-              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\"` (card for Burak), "
+              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\" --context \"…\" --detail \"…\"` "
+              "(card for Burak — decision 46: --context is the situation in ≤ 2 plain sentences (what is wrong, what the proposal does), --question is "
+              "the one question in plain words, options ≤ 8 words each with the recommended first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
@@ -138,7 +181,11 @@ def run_proposal_flow(project: str, slug: str) -> None:
         log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
         t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
     else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
-        res = l3.turn(project, header, trigger="proposal-ready")
+        try:
+            res = l3.turn(project, header, trigger="proposal-ready",
+                          on_start=lambda pid: _record_l3_turn(project, slug, pid))
+        finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
+            _record_l3_turn(project, slug, None)
         turn_start = _turn_started_at(project, header)
         if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
             log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
@@ -297,6 +344,11 @@ def tick() -> None:
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
                     alive = (_bg.get(key) or threading.Thread()).is_alive()
+                    # the L3 turn a previous altd started outlives it, so "no thread in this process" is not proof
+                    # the flow is over: while its recorded pid is alive the turn is still in flight, and resuming
+                    # would run a second one on the same task (incident I-011)
+                    if not alive and _turn_in_flight(t):
+                        continue
                     has_proposal = (S.task_dir(project, t["slug"]) / "proposal.json").exists()
                     # a flow that is not running in this process died with the previous server: resume at once if the
                     # proposal is on disk, otherwise wait 30 min in case an orphaned proposal agent is still writing it
@@ -304,7 +356,10 @@ def tick() -> None:
                     if not started or stale:
                         if stale:
                             with S.project_lock(project):
-                                t2 = S.load_task(project, t["slug"]); t2["proposal_started"] = None; S.save_task(project, t2)
+                                t2 = S.load_task(project, t["slug"])
+                                t2["proposal_started"] = None
+                                t2["proposal_turn"] = None  # its turn is dead; the resume below is the only one
+                                S.save_task(project, t2)
                             log(f"[{project}/{t['slug']}] proposal flow resumed (previous run did not finish)")
                         spawn(key, run_proposal_flow, project, t["slug"])
             dispatch_waiting(project)
@@ -479,6 +534,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:
                 return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
+            if api == "ref" and len(parts) > 3:
+                try:
+                    return self._json(refs.resolve(parts[2], unquote(parts[3])))
+                except KeyError as e:
+                    return self._json({"error": f"unknown reference {e}"}, 404)
             if api == "rules" and len(parts) > 2:
                 proj = config.project(parts[2])
                 return self._json({"global": rules.global_rules(), "stack": rules.stack_rules(proj.get("stacks", [])),

@@ -98,10 +98,13 @@ def clean_env() -> dict:
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
-                 settings: Path | None = None, extra_env: dict | None = None, on_text=None,
+                 settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error; `limited` (a reset
-    time) when the subscription window is exhausted — the call is not even made while a hold is in force."""
+    time) when the subscription window is exhausted — the call is not even made while a hold is in force.
+
+    `on_start(pid)` is called the moment the child exists. The turn outlives altd (systemd KillMode=process,
+    ce856bb), so its pid is the only evidence a *restarted* altd has that the turn is still running (I-011)."""
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
@@ -129,6 +132,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
+    if on_start:
+        on_start(proc.pid)
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
