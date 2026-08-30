@@ -11,7 +11,7 @@ _TMP = Path(tempfile.mkdtemp(prefix="altitude-ctx-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 os.environ["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = "30"  # a stray override in the parent must not reach children
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, dispatch, tasks as T  # noqa: E402
+from altitude import config, engines, dispatch, permissions, tasks as T  # noqa: E402
 
 
 class TestContextWindow(unittest.TestCase):
@@ -31,11 +31,13 @@ class TestContextWindow(unittest.TestCase):
         env = engines.clean_env()
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
         p = engines.claude_settings()
-        self.assertEqual(json.loads(p.read_text()), {"autoCompactWindow": 300_000})
+        self.assertEqual(json.loads(p.read_text()),
+                         {"autoCompactWindow": 300_000, "permissions": permissions.permissions_block()})  # I-064 rides along
         T.new("altitude", "ctx-task", "S", "req")
         sp = dispatch.session_settings("altitude", "ctx-task", "key")
         st = json.loads(sp.read_text())
         self.assertEqual(st["autoCompactWindow"], 300_000)
+        self.assertEqual(st["permissions"], permissions.permissions_block())
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", st.get("env", {}))
 
 

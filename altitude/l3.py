@@ -4,13 +4,13 @@ import json
 import threading
 from pathlib import Path
 
-from . import config, engines, rules, state as S
+from . import config, engines, permissions, rules, state as S
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
-ALLOWED_TOOLS = ("Read,Grep,Glob,Bash(alt *),Bash(git log*),Bash(git diff --stat*),Bash(gh pr view*),"
-                 "Bash(gh pr list*),Bash(gh issue *),Bash(gh run *),Agent")
+# I-064: the Bash rules come from the one renderer (altitude/permissions.py); only the non-Bash tools are named here.
+ALLOWED_TOOLS = permissions.allowed_tools(extra=("Read", "Grep", "Glob", "Agent"))
 
 
 def lock(project: str) -> threading.Lock:

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, rules, state as S, tasks as T
+from . import config, engines, permissions, rules, state as S, tasks as T
 
 
 def project_never_list(repo: Path) -> str:
@@ -84,7 +84,8 @@ def build_brief(project: str, slug: str) -> str:
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-dispatch settings passed with --settings: hooks that enforce the envelope, nothing global."""
+    """Per-dispatch settings passed with --settings: hooks that enforce the envelope and the shared permission allowlist
+    (I-064, from the one renderer), nothing else global."""
     hooks = config.HOOKS
     settings = {"hooks": {
         "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]},
@@ -92,7 +93,8 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
-        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}  # decision 49: the 300k umbrella, also for resumed sessions
+        "autoCompactWindow": config.AUTOCOMPACT_WINDOW,  # decision 49: the 300k umbrella, also for resumed sessions
+        "permissions": permissions.permissions_block()}  # I-064: the same allowlist every other Claude launch carries
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p

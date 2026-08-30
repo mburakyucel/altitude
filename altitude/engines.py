@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config
+from . import config, permissions
 
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends; L1 applies the same default cap to the artifacts it exposes.
@@ -144,9 +144,10 @@ def clean_env() -> dict:
 
 def claude_settings() -> Path:
     """The settings every Claude launch without a per-dispatch file gets (decision 49): auto-compact at the 300k umbrella,
-    stated explicitly rather than inherited from ~/.claude/settings.json. Rewritten when the number changes."""
+    stated explicitly rather than inherited from ~/.claude/settings.json, and the permission allowlist (I-064) from the
+    one renderer. Rewritten when either changes."""
     p = config.ROOT / "claude-settings.json"
-    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW}
+    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW, "permissions": permissions.permissions_block()}
     try:
         cur = json.loads(p.read_text())
     except (OSError, ValueError):
