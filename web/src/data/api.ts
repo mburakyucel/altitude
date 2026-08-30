@@ -1,0 +1,479 @@
+import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
+import { useOptimisticMutation } from "./useOptimisticMutation";
+
+/**
+ * The one place the UI talks to altd. One fetch wrapper, one zod schema per endpoint
+ * (lenient at the edges: unknown keys pass through, optional fields are nullish, enum-like
+ * strings stay plain strings so a new server value never breaks the page), one query hook
+ * per GET endpoint (20s polling, paused while a chat stream is open), and mutation hooks
+ * over useOptimisticMutation for every POST.
+ *
+ * Paths are interpolated raw (no encodeURIComponent): the server matches path parts without
+ * percent-decoding, and project/task names are slugs.
+ */
+
+/** Typed error: HTTP status plus the server's {"error": ...} message when present. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error) return body.error;
+  } catch {
+    // body was not JSON
+  }
+  return `HTTP ${res.status}`;
+}
+
+export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init?.body != null ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
+  });
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  return (await res.json()) as T;
+}
+
+function post<T = unknown>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+// ---- polling ---------------------------------------------------------------------------
+
+let chatStreaming = false;
+
+/** streamChat() sets this; exported so the chat route can pause polling around a stream. */
+export function setChatStreaming(on: boolean): void {
+  chatStreaming = on;
+}
+
+export function isChatStreaming(): boolean {
+  return chatStreaming;
+}
+
+const pollInterval = () => (chatStreaming ? false : 20_000);
+
+// ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
+
+export const QuotaSchema = z
+  .object({
+    known: z.boolean(),
+    five_hour: z.number().nullish(),
+    seven_day: z.number().nullish(),
+    at: z.number().nullish(),
+  })
+  .passthrough();
+
+export const DecisionSchema = z
+  .object({
+    project: z.string(),
+    slug: z.string(),
+    kind: z.string().nullish(),
+    class: z.string().nullish(),
+    title: z.string().nullish(),
+    question: z.string().nullish(),
+    asked: z.string().nullish(),
+    options: z.array(z.string()).nullish(),
+  })
+  .passthrough();
+
+export const FyiSchema = z
+  .object({
+    project: z.string(),
+    at: z.string().nullish(),
+    text: z.string(),
+    slug: z.string().nullish(),
+  })
+  .passthrough();
+
+export const WipSchema = z
+  .object({
+    per_project: z.record(z.string(), z.number()),
+    machine: z.number(),
+    limit_project: z.number().nullish(),
+    limit_machine: z.number().nullish(),
+    waiting: z.array(z.object({ project: z.string(), slug: z.string() }).passthrough()),
+  })
+  .passthrough();
+
+export const ProjectRowSchema = z
+  .object({
+    name: z.string(),
+    folder: z.string().nullish(),
+    path: z.string().nullish(),
+    managed: z.boolean(),
+    git: z.boolean().nullish(),
+    counts: z.record(z.string(), z.number()).nullish(),
+    l3: z.record(z.string(), z.unknown()).nullish(),
+    hold: z.unknown().nullish(),
+  })
+  .passthrough();
+
+export const OverviewSchema = z
+  .object({
+    projects: z.array(ProjectRowSchema),
+    queue: z.array(DecisionSchema),
+    fyis: z.array(FyiSchema),
+    wip: WipSchema,
+    quota: QuotaSchema,
+    now: z.string().nullish(),
+  })
+  .passthrough();
+
+export const TaskRowSchema = z
+  .object({
+    slug: z.string(),
+    state: z.string().nullish(),
+    class: z.string().nullish(),
+    title: z.string().nullish(),
+    updated: z.string().nullish(),
+    live: z.unknown().nullish(),
+    progress_tail: z.unknown().nullish(),
+    has: z.record(z.string(), z.boolean()).nullish(),
+  })
+  .passthrough();
+
+export const ProjectViewSchema = z
+  .object({
+    name: z.string(),
+    config: z.record(z.string(), z.unknown()).nullish(),
+    l3: z.record(z.string(), z.unknown()).nullish(),
+    busy: z.boolean().nullish(),
+    tasks: z.array(TaskRowSchema),
+    archive: z.array(TaskRowSchema).nullish(),
+    inbox: z.array(z.record(z.string(), z.unknown())).nullish(),
+    decisions: z.array(z.record(z.string(), z.unknown())).nullish(),
+    log: z.array(z.record(z.string(), z.unknown())).nullish(),
+    incidents: z.array(z.record(z.string(), z.unknown())).nullish(),
+    hold: z.unknown().nullish(),
+    state_md: z.string().nullish(),
+  })
+  .passthrough();
+
+export const TaskViewSchema = z
+  .object({
+    slug: z.string(),
+    state: z.string().nullish(),
+    class: z.string().nullish(),
+    title: z.string().nullish(),
+    files: z.record(z.string(), z.string()).nullish(),
+    events: z.array(z.record(z.string(), z.unknown())).nullish(),
+    critique: z.unknown().nullish(),
+    report_json: z.unknown().nullish(),
+    live: z.unknown().nullish(),
+  })
+  .passthrough();
+
+export const SessionSchema = z
+  .object({
+    kind: z.string(),
+    session_id: z.string().nullish(),
+    project: z.string().nullish(),
+    slug: z.string().nullish(),
+    context_percent: z.number().nullish(),
+    engine: z.string().nullish(),
+    context_state: z.string().nullish(),
+    state: z.string().nullish(),
+    at: z.unknown().nullish(),
+  })
+  .passthrough();
+
+export const MonitorSchema = z
+  .object({
+    quota: QuotaSchema,
+    sessions: z.array(SessionSchema),
+    agents: z.unknown().nullish(),
+  })
+  .passthrough();
+
+export const DigestSchema = z
+  .object({
+    text: z.string().nullish(),
+    audio: z.boolean(),
+  })
+  .passthrough();
+
+export const ChatMessageSchema = z
+  .object({
+    at: z.string().nullish(),
+    role: z.string(),
+    text: z.string(),
+  })
+  .passthrough();
+
+export const ChatViewSchema = z
+  .object({
+    history: z.array(ChatMessageSchema),
+    busy: z.boolean(),
+    l3: z.record(z.string(), z.unknown()).nullish(),
+  })
+  .passthrough();
+
+/** Every ledger section is a list of rule rows (altitude/rules.py), not prose. */
+const LedgerRules = z.array(z.record(z.string(), z.unknown())).nullish();
+
+export const RulesSchema = z
+  .object({
+    global: LedgerRules,
+    stack: LedgerRules,
+    project: LedgerRules,
+    incidents: LedgerRules,
+  })
+  .passthrough();
+
+export type Quota = z.infer<typeof QuotaSchema>;
+export type Decision = z.infer<typeof DecisionSchema>;
+export type Fyi = z.infer<typeof FyiSchema>;
+export type Wip = z.infer<typeof WipSchema>;
+export type ProjectRow = z.infer<typeof ProjectRowSchema>;
+export type Overview = z.infer<typeof OverviewSchema>;
+export type TaskRow = z.infer<typeof TaskRowSchema>;
+export type ProjectView = z.infer<typeof ProjectViewSchema>;
+export type TaskView = z.infer<typeof TaskViewSchema>;
+export type Session = z.infer<typeof SessionSchema>;
+export type MonitorView = z.infer<typeof MonitorSchema>;
+export type DigestView = z.infer<typeof DigestSchema>;
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type ChatView = z.infer<typeof ChatViewSchema>;
+export type RulesView = z.infer<typeof RulesSchema>;
+
+// ---- query hooks (20s polling) ---------------------------------------------------------
+
+export function useOverview() {
+  return useQuery({
+    queryKey: ["overview"],
+    queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
+    refetchInterval: pollInterval,
+  });
+}
+
+export function useProject(name: string) {
+  return useQuery({
+    queryKey: ["project", name],
+    queryFn: async () => ProjectViewSchema.parse(await api(`/api/project/${name}`)),
+    refetchInterval: pollInterval,
+    enabled: Boolean(name),
+  });
+}
+
+export function useTask(project: string, slug: string) {
+  return useQuery({
+    queryKey: ["task", project, slug],
+    queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
+    refetchInterval: pollInterval,
+    enabled: Boolean(project && slug),
+  });
+}
+
+export function useMonitor() {
+  return useQuery({
+    queryKey: ["monitor"],
+    queryFn: async () => MonitorSchema.parse(await api("/api/monitor")),
+    refetchInterval: pollInterval,
+  });
+}
+
+export function useDigest() {
+  return useQuery({
+    queryKey: ["digest"],
+    queryFn: async () => DigestSchema.parse(await api("/api/digest")),
+    refetchInterval: pollInterval,
+  });
+}
+
+export function useChat(project: string, limit = 60) {
+  return useQuery({
+    queryKey: ["chat", project],
+    queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
+    refetchInterval: pollInterval,
+    enabled: Boolean(project),
+  });
+}
+
+export function useRules(project: string) {
+  return useQuery({
+    queryKey: ["rules", project],
+    queryFn: async () => RulesSchema.parse(await api(`/api/rules/${project}`)),
+    refetchInterval: pollInterval,
+    enabled: Boolean(project),
+  });
+}
+
+// ---- mutation hooks --------------------------------------------------------------------
+
+export interface DecideInput {
+  project: string;
+  slug: string;
+  /** Index into the decision's options list (the server does int(option)). */
+  option: number;
+  note?: string;
+}
+
+export function useDecide() {
+  return useOptimisticMutation<DecideInput, unknown, Overview>({
+    mutationFn: (input) => post("/api/decide", input),
+    queryKey: ["overview"],
+    update: (cached, input) =>
+      cached && {
+        ...cached,
+        queue: cached.queue.filter((d) => d.project !== input.project || d.slug !== input.slug),
+      },
+    failureMessage: "Couldn't record the decision — it was put back.",
+  });
+}
+
+export interface TaskActionInput {
+  project: string;
+  slug: string;
+  action: string;
+  reason?: string;
+  title?: string;
+  class?: string;
+  request?: string;
+}
+
+export function useTaskAction(project: string) {
+  return useOptimisticMutation<TaskActionInput, unknown, ProjectView>({
+    mutationFn: (input) => post("/api/task/action", input),
+    queryKey: ["project", project],
+    update: () => undefined,
+    failureMessage: "Task action failed.",
+  });
+}
+
+export interface ProjectAddInput {
+  name: string;
+  path?: string;
+  /** Comma-separated stack names, as the server expects. */
+  stacks?: string;
+  approval?: string;
+  wip?: number;
+}
+
+export function useProjectAdd() {
+  return useOptimisticMutation<ProjectAddInput, unknown, Overview>({
+    mutationFn: (input) => post("/api/project/add", input),
+    queryKey: ["overview"],
+    update: () => undefined,
+    failureMessage: "Couldn't add the project.",
+  });
+}
+
+export function useProjectRemove() {
+  return useOptimisticMutation<{ name: string }, unknown, Overview>({
+    mutationFn: (input) => post("/api/project/remove", input),
+    queryKey: ["overview"],
+    update: () => undefined,
+    failureMessage: "Couldn't remove the project.",
+  });
+}
+
+export interface L2MessageInput {
+  project: string;
+  slug: string;
+  text: string;
+}
+
+export function useL2Message(project: string) {
+  return useOptimisticMutation<L2MessageInput, unknown, ProjectView>({
+    mutationFn: (input) => post("/api/l2/message", input),
+    queryKey: ["project", project],
+    update: () => undefined,
+    failureMessage: "Couldn't send the message to the L2.",
+  });
+}
+
+export function useL3Reset(project: string) {
+  return useOptimisticMutation<void, unknown, ChatView>({
+    mutationFn: () => post("/api/l3/reset", { project }),
+    queryKey: ["chat", project],
+    update: () => undefined,
+    failureMessage: "Couldn't reset the L3 session.",
+  });
+}
+
+export function useDigestSpeak() {
+  return useOptimisticMutation<void, unknown, DigestView>({
+    mutationFn: () => post("/api/digest/speak", {}),
+    queryKey: ["digest"],
+    update: () => undefined,
+    failureMessage: "Couldn't start the digest audio.",
+  });
+}
+
+// ---- chat streaming --------------------------------------------------------------------
+
+export interface ChatDone {
+  session_id?: string | null;
+  context_percent?: number | null;
+  turns?: number | null;
+  cost?: unknown;
+  error?: string | null;
+}
+
+/**
+ * POST /api/chat and stream the NDJSON reply: {"t": "..."} lines feed onText, the final
+ * {"done": {...}} is returned (the caller surfaces done.error). Polling is paused for the
+ * duration. Non-2xx throws ApiError — 409 means "L3 is busy": toast it, do not retry.
+ */
+export async function streamChat(
+  project: string,
+  text: string,
+  onText: (chunk: string) => void,
+): Promise<ChatDone> {
+  setChatStreaming(true);
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project, text }),
+    });
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+    if (!res.body) throw new ApiError(res.status, "no response body");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let done: ChatDone = {};
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      let parsed: { t?: unknown; done?: ChatDone };
+      try {
+        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone };
+      } catch {
+        return; // tolerate a torn line
+      }
+      if (typeof parsed.t === "string") onText(parsed.t);
+      if (parsed.done) done = parsed.done;
+    };
+
+    for (;;) {
+      const { value, done: eof } = await reader.read();
+      if (eof) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    handleLine(buffer);
+    return done;
+  } finally {
+    setChatStreaming(false);
+  }
+}

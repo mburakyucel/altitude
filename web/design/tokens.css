@@ -1,0 +1,80 @@
+/* Design tokens — canonical values from docs/UX.md (settled 2026-08-23/24; dark palette + sizes revised 2026-08-25 for WCAG AA).
+ * The build consumes THESE variables; docs/UX.md is the prose spec, this file is the code spec.
+ * Dashboard world: light by default, [data-theme="dark"] flips it.
+ * Session world (lobby, session room): always dark — apply the dark values unconditionally, no toggle.
+ * Every token has a value in BOTH blocks below (or is theme-independent): a token missing from the
+ * dark block leaks its light value into dark subtrees — that is the bug the 2026-08-25 revision fixed.
+ * Contrast floor: every text token ≥ 4.5:1 on both --page and --surface of its theme (WCAG AA).
+ */
+
+:root {
+  /* Type */
+  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace; /* transcripts, timers, evidence quotes */
+  --text-label: 11px;   /* uppercase labels ONLY (letter-spacing 0.06–0.08em); never running text */
+  --text-meta: 13px;    /* meta, captions, secondary lines (12–13 in the spec; the build pins 13) */
+  --text-body: 14px;
+  --text-card-title: 17px;  /* 17–18px */
+  --text-page-title: 24px;  /* 22–24px */
+  --text-hero: 28px;
+  /* weights: 400 / 500 / 600; tabular-nums only in columns and timers */
+
+  /* Spacing & shape — 4px base scale: 4/8/12/16/20/24/32 */
+  --radius-card: 8px;    /* cards & buttons */
+  --radius-input: 6px;
+  --radius-pill: 999px;
+  --target-min: 44px;    /* minimum interactive target */
+  --sidebar-w: 232px;
+  --drawer-w: 420px;     /* 400–480px range */
+
+  /* Color — light (dashboard default) */
+  --page: #f8fafc;
+  --surface: #ffffff;
+  --border: #e2e8f0;
+  --hairline: #f1f5f9;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;      /* 4.8:1 on surface (was #94a3b8 — 2.6:1; slate-400 is a placeholder gray, not a text color) */
+  --accent: #4f46e5;          /* fills: buttons, active borders, meter cells */
+  --accent-hover: #4338ca;
+  --accent-text: #4f46e5;     /* accent as TEXT (links, active tabs, "live") — the fill color is not readable on dark */
+  --accent-tint: #eef2ff;
+  --accent-tint-border: #c7d2fe;
+  --success-text: #166534;
+  --success-bg: #dcfce7;
+  --danger: #dc2626;
+
+  /* Data colors (CVD-validated; legend always shown with the meter; text never wears data color) */
+  --data-verified: #4f46e5;
+  --data-claimed: #d97706;          /* same on both surfaces */
+  --data-track: #e0e7ff;            /* unfilled meter cell */
+  --chip-claimed-text: #92400e;
+  --chip-claimed-bg: #fef3c7;
+  --chip-claimed-border: #fde68a;
+}
+
+[data-theme="dark"] {
+  /* Color — dark (dashboard dark + session world) */
+  --page: #0f172a;
+  --surface: #1e293b;
+  --border: #334155;
+  --hairline: #263244;        /* between surface and border (was #1e293b = surface: nav hover and dividers vanished) */
+  --text-primary: #e2e8f0;
+  --text-secondary: #cbd5e1;  /* 9.8:1 on surface (was #94a3b8) */
+  --text-muted: #94a3b8;      /* 5.7:1 on surface (was #64748b — 3.0:1, illegible at meta size) */
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-text: #a5b4fc;     /* 8.3:1 on surface (the fill #6366f1 is 3.3:1 as text) */
+  --accent-tint: #2a345c;     /* ≈ 18% accent over surface — visibly lifted from #1e293b (indigo-950 was not) */
+  --accent-tint-border: #3730a3;
+  --success-text: #86efac;
+  --success-bg: #14532d;
+  --danger: #f87171;
+
+  --data-verified: #6366f1;
+  --data-claimed: #d97706;
+  --data-track: #312e58;
+  --chip-claimed-text: #fcd34d;
+  --chip-claimed-bg: #451a03;
+  --chip-claimed-border: #92400e;
+}

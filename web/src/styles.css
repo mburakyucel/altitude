@@ -1,0 +1,221 @@
+@import "tailwindcss";
+@import "../design/tokens.css";
+
+/* Map the design tokens into Tailwind theme keys. `inline` makes utilities emit var() references
+ * resolved at use time, so [data-theme="dark"] flips every utility without dark: variants. */
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-mono);
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-hairline: var(--hairline);
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-text);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-tint-border: var(--accent-tint-border);
+  --color-success: var(--success-text);
+  --color-success-bg: var(--success-bg);
+  --color-danger: var(--danger);
+  --radius-card: var(--radius-card);
+  --radius-input: var(--radius-input);
+  --radius-pill: var(--radius-pill);
+  --text-label: var(--text-label);
+  --text-meta: var(--text-meta);
+  --text-body: var(--text-body);
+  --text-card-title: var(--text-card-title);
+  --text-page-title: var(--text-page-title);
+  --text-hero: var(--text-hero);
+}
+
+@layer base {
+  html {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: var(--text-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+  }
+  a {
+    color: var(--accent-text);
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 20px;
+  }
+  .label {
+    font-size: var(--text-label);
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    font-size: var(--text-label);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: var(--target-min);
+    padding: 0 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-primary:not(:disabled):hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-secondary);
+  }
+  .field {
+    width: 100%;
+    min-height: var(--target-min);
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+    background: var(--surface);
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: var(--radius-card);
+    color: var(--text-secondary);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .nav-item:hover {
+    background: var(--hairline);
+    color: var(--text-primary);
+  }
+  .nav-item[aria-current="page"] {
+    background: var(--accent-tint);
+    color: var(--accent-text);
+  }
+  .bar {
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: var(--hairline);
+    overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+  .toast {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+    overflow: hidden;
+    animation: toast-in 240ms ease-out;
+  }
+  .toast-timer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: var(--accent);
+    animation: toast-drain linear forwards;
+    animation-duration: var(--dwell);
+  }
+  .toast-timer[data-paused="true"] {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toast-drain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: toast-fade 160ms ease-out;
+  }
+  @keyframes toast-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
