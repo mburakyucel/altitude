@@ -1,6 +1,7 @@
 """L1 runs (decisions 45, 47): `alt l1 run` starts an implementer or a reviewer on either engine, detached, in its own
 worktree; `alt l1 wait` collects the result. The L2 no longer spawns L1s through Claude Code's Agent tool, so the
-engine is Altitude's choice (by quota), the in-flight cap is enforced here, and every run leaves a record."""
+engine is Altitude's choice (by quota), the in-flight cap is enforced here, and every run leaves a record. Raw stream
+artifacts are local diagnostic evidence: cite their paths, never paste their contents into a PR, issue, or report."""
 from __future__ import annotations
 import os
 import re
@@ -24,7 +25,7 @@ FOOTER = ("\n\n---\nWhen you are finished, print exactly one final line `RESULT:
           "landed or why you stopped>`. Do not merge. Do not spawn agents or subagents.")
 POLL = 5
 # Raw engine artifacts are capped at 2 MiB per stream. Truncated files retain both ends and state the exact byte drop.
-RAW_OUTPUT_CAP = 2 * 1024 * 1024
+RAW_OUTPUT_CAP = engines.RAW_CAPTURE_CAP
 _CODEX_SANDBOX_MARKERS = ("uid map", "loopback", "RTM_NEWADDR", "Operation not permitted")
 _SANDBOX_WORDS = ("bwrap", "bubblewrap", "sandbox", "landlock", "seccomp")
 _DENIAL_WORDS = ("denied", "not permitted", "permission", "blocked", "refused", "could not create", "cannot create")
@@ -32,20 +33,7 @@ _DENIAL_WORDS = ("denied", "not permitted", "permission", "blocked", "refused", 
 
 def _cap_raw_output(output: str | bytes | None) -> tuple[bytes, bool]:
     data = output if isinstance(output, bytes) else (output or "").encode("utf-8", errors="replace")
-    already_truncated = b"[altitude: raw output truncated;" in data
-    if len(data) <= RAW_OUTPUT_CAP:
-        return data, already_truncated
-    dropped = len(data) - RAW_OUTPUT_CAP
-    while True:
-        notice = f"\n\n[altitude: raw output truncated; {dropped} bytes dropped]\n\n".encode()
-        kept = max(0, RAW_OUTPUT_CAP - len(notice))
-        exact = len(data) - kept
-        if exact == dropped:
-            break
-        dropped = exact
-    head = kept // 2
-    tail = kept - head
-    return data[:head] + notice + (data[-tail:] if tail else b""), True
+    return engines.cap_raw(data, RAW_OUTPUT_CAP)
 
 
 def _codex_sandbox_denial(output: str | None) -> str | None:
@@ -206,6 +194,7 @@ def exec_run(project: str, slug: str, name: str) -> dict:
             raw_paths[stream] = str(path)
         except OSError as e:
             err = f"{err or ''}\nraw {stream} persistence failed: {type(e).__name__}: {e}".strip()
+    # `raw` publishes local diagnostic evidence paths only: cite them, never paste their contents into external reports.
     raw_info = ({**raw_paths, "truncated": raw_stdout_truncated or raw_stderr_truncated or stdout_capped or stderr_capped}
                 if any(raw_paths.values()) else None)
     persisted_stdout = stdout_data.decode("utf-8", errors="replace")
@@ -214,10 +203,13 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     summary = m.group(1).strip() if m else None
     denial = None
     if rec["engine"] == "codex":
-        denial = (_codex_sandbox_denial(persisted_stderr) or _codex_sandbox_denial(persisted_stdout)
-                  or _codex_sandbox_denial(err) or _codex_sandbox_denial(text))
-        if not denial and (summary is None or "no pr" in summary.lower()):
-            denial = _codex_sandbox_stop(summary or text[-1500:])
+        scan_raw_evidence = summary is None or "no pr" in summary.lower() or res.get("returncode") not in (None, 0)
+        if scan_raw_evidence:
+            denial = _codex_sandbox_denial(persisted_stderr) or _codex_sandbox_denial(persisted_stdout)
+            if not denial:
+                denial = _codex_sandbox_stop(summary or text[-1500:])
+        if not denial:
+            denial = _codex_sandbox_denial(err) or _codex_sandbox_denial(text)
     if denial:
         try:
             improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
@@ -237,6 +229,7 @@ def exec_run(project: str, slug: str, name: str) -> dict:
 
 
 def _compact(r: dict) -> dict:
+    """Return the L2 view; ``raw`` paths point to local-only diagnostic evidence."""
     res = r.get("result") or {}
     compact = {k: r.get(k) for k in ("name", "role", "engine", "why", "model", "branch", "worktree", "started", "done")} | {
         "pr": res.get("pr"), "summary": res.get("summary"), "error": res.get("error"), "usage": res.get("usage"),

@@ -17,16 +17,34 @@ from . import config
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
 
 
+def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
+    """Cap raw bytes, retaining the head and tail with an exact drop notice."""
+    total = len(data) if total is None else total
+    if total <= cap:
+        return data, False
+    dropped = total - cap
+    while True:
+        notice = f"\n\n[altitude: raw output truncated; {dropped} bytes dropped]\n\n".encode()
+        kept = max(0, cap - len(notice))
+        exact = total - kept
+        if exact == dropped:
+            break
+        dropped = exact
+    head = kept // 2
+    tail = kept - head
+    return data[:head] + notice + (data[-tail:] if tail else b""), True
+
+
 class _BoundedRawCapture:
     """Collect at most ``cap`` bytes, retaining the head and tail with an exact drop notice."""
 
-    def __init__(self, cap: int = RAW_CAPTURE_CAP):
-        self.cap = cap
+    def __init__(self, cap: int | None = None):
+        self.cap = RAW_CAPTURE_CAP if cap is None else cap
         self.total = 0
         self.head = bytearray()
         self.tail = bytearray()
-        self.head_limit = cap // 2
-        self.tail_limit = cap - self.head_limit
+        self.head_limit = self.cap // 2
+        self.tail_limit = self.cap - self.head_limit
 
     def add(self, text: str) -> None:
         data = text.encode("utf-8", errors="replace")
@@ -41,21 +59,8 @@ class _BoundedRawCapture:
                 del self.tail[:len(self.tail) - self.tail_limit]
 
     def render(self) -> tuple[str, bool]:
-        if self.total <= self.cap:
-            data = bytes(self.head + self.tail)
-            return data.decode("utf-8", errors="replace"), False
-        dropped = self.total - self.cap
-        while True:
-            notice = f"\n\n[altitude: raw output truncated; {dropped} bytes dropped]\n\n".encode()
-            kept = max(0, self.cap - len(notice))
-            exact = self.total - kept
-            if exact == dropped:
-                break
-            dropped = exact
-        head_bytes = kept // 2
-        tail_bytes = kept - head_bytes
-        data = bytes(self.head[:head_bytes]) + notice + bytes(self.tail[-tail_bytes:] if tail_bytes else b"")
-        return data.decode("utf-8", errors="replace"), True
+        data, truncated = cap_raw(bytes(self.head + self.tail), self.cap, total=self.total)
+        return data.decode("utf-8", errors="replace"), truncated
 
 # ---- usage limit (decision 44): the subscription window closing is a hold with a reset time, not a failure ----------
 LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)

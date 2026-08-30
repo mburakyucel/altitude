@@ -22,6 +22,8 @@ def _response(**overrides):
         "returncode": 0,
         "raw_stdout": "",
         "raw_stderr": "",
+        "raw_stdout_truncated": False,
+        "raw_stderr_truncated": False,
     }
     response.update(overrides)
     return response
@@ -110,6 +112,19 @@ class TestL1RawOutput(unittest.TestCase):
             "task": "task",
         }])
 
+    def test_landed_pr_ignores_bwrap_line_in_raw_stream(self):
+        event = {"type": "item.completed", "item": {
+            "type": "command_execution",
+            "aggregated_output": "bwrap: setting up uid map: Operation not permitted",
+        }}
+        response = _response(text="RESULT: PR #42 — landed", raw_stdout=json.dumps(event) + "\n")
+
+        rec, _run_dir, faults = self._run(response)
+
+        self.assertEqual(rec["result"]["pr"], 42)
+        self.assertEqual(rec["result"]["summary"], "PR #42 — landed")
+        self.assertEqual(faults, [])
+
     def test_clean_raw_output_does_not_report_sandbox_fault(self):
         response = _response(raw_stdout="normal engine event\n", raw_stderr="ordinary warning\n")
 
@@ -117,6 +132,13 @@ class TestL1RawOutput(unittest.TestCase):
 
         self.assertEqual(rec["result"]["summary"], "no PR — engine stopped")
         self.assertEqual(faults, [])
+
+    def test_notice_literal_does_not_report_truncation(self):
+        response = _response(raw_stdout="echo '[altitude: raw output truncated; 7 bytes dropped]'\n")
+
+        rec, _run_dir, _faults = self._run(response)
+
+        self.assertFalse(rec["result"]["raw"]["truncated"])
 
     def test_engine_exception_still_leaves_raw_artifacts(self):
         failure = RuntimeError("engine crashed")
@@ -169,6 +191,41 @@ class TestL1RawOutput(unittest.TestCase):
 
         self.assertEqual(result["raw_stdout"], json.dumps(event) + "\n")
         self.assertEqual(result["raw_stderr"], "claude diagnostic\n")
+
+    def test_claude_print_caps_raw_stdout_with_runtime_constant(self):
+        raw = "HEAD" + ("x" * 300) + "TAIL"
+        cap = 120
+
+        class FakeProcess:
+            pid = 123
+            returncode = 0
+
+            def __init__(self):
+                self.stdin = io.StringIO()
+                self.stdout = io.StringIO(raw)
+                self.stderr = io.StringIO()
+
+            def wait(self):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+
+        with mock.patch.object(engines, "RAW_CAPTURE_CAP", cap), \
+             mock.patch.object(engines, "usage_hold", return_value=None), \
+             mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: FakeProcess()):
+            result = engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
+
+        rendered = result["raw_stdout"]
+        self.assertLessEqual(len(rendered.encode()), cap)
+        self.assertTrue(rendered.startswith("HEAD"))
+        self.assertTrue(rendered.endswith("TAIL"))
+        match = re.search(r"\[altitude: raw output truncated; (\d+) bytes dropped\]", rendered)
+        self.assertIsNotNone(match)
+        notice = match.group(0)
+        kept = len(rendered.encode()) - len(notice.encode()) - 4
+        self.assertEqual(int(match.group(1)), len(raw.encode()) - kept)
+        self.assertTrue(result["raw_stdout_truncated"])
 
 
 if __name__ == "__main__":
