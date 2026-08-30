@@ -690,7 +690,8 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
-    (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)  # this process now runs current main
+    if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance runs "current main"; a smoke/test altd must not clear the flag (I-013)
+        (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     host = host or config.HOST
     port = port or config.PORT
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
