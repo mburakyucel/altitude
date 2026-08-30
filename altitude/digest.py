@@ -28,7 +28,9 @@ def fyis(limit: int = 30) -> list[dict]:
 def wip() -> dict:
     per = {p: sum(1 for t in S.list_tasks(p) if t["state"] == "running") for p in config.load_projects()}
     return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT, "limit_machine": config.WIP_PER_MACHINE,
-            "waiting": [{"project": p, "slug": t["slug"]} for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "approved"]}
+            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "approved" else "resume"}
+                        for p in config.load_projects() for t in S.list_tasks(p)
+                        if t["state"] == "approved" or (t["state"] == "blocked" and t.get("resume_after"))]}
 
 
 def text() -> str:

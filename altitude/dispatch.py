@@ -1,6 +1,7 @@
 """Dispatch an L2 as `claude --bg` in a worktree; poll `claude agents`; notice done (ARCHITECTURE §5)."""
 from __future__ import annotations
 import json
+from datetime import datetime, timezone
 import re
 from pathlib import Path
 
@@ -15,6 +16,38 @@ def project_never_list(repo: Path) -> str:
         if lines:
             return "; ".join(l[:160] for l in lines[:8])
     return "no changes outside the brief; no weakened guardrails; high-impact classes: open the PR and stop"
+
+
+JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
+
+
+def _git_branch(worktree: str | Path) -> str | None:
+    """The branch git reports for `worktree`, or None if it is absent, detached or git failed."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=15)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    b = (r.stdout or "").strip()
+    return b if r.returncode == 0 and b and b != "HEAD" else None
+
+
+def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str | None = None) -> str:
+    """The branch `claude --bg -w <slug>` really checks out — `worktree-<slug>`, never the bare slug.
+
+    The harness records the real name in `~/.claude/jobs/<agent_id>/state.json` (`worktreeBranch`); before an agent id
+    exists the name is derived and confirmed against the worktree itself. Every failure degrades to the derived name:
+    a wrong branch in the brief is bad, a dispatch that dies reading a state file is worse."""
+    derived = f"worktree-{slug}"
+    if agent_id:
+        try:
+            st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
+            b = (st.get("worktreeBranch") or "").strip() if isinstance(st, dict) else ""
+            if b:
+                return b
+        except (OSError, ValueError, AttributeError):
+            pass
+    return (_git_branch(worktree) or derived) if worktree else derived
 
 
 def build_brief(project: str, slug: str) -> str:
@@ -36,7 +69,8 @@ def build_brief(project: str, slug: str) -> str:
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
         l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
         verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
-        branch=slug, proposal=proposal, **{"class": task["class"]})
+        branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
+        proposal=proposal, **{"class": task["class"]})
     stack = rules.compile_section(rules.stack_rules(proj.get("stacks", [])), "Stack rules")
     return text + ("\n" + stack if stack else "")
 
@@ -92,7 +126,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
     worktree = str(config.project_path(project) / ".claude" / "worktrees" / slug)
     T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent.get("sessionId"), agent_id=agent.get("id"),
-               worktree=worktree, branch=agent.get("branch") or slug)
+               worktree=worktree, branch=worktree_branch(slug, worktree, agent.get("id")))
     if agent.get("sessionId"):
         S.write_json(config.MONITOR_DIR / f"session-{agent['sessionId']}.json",
                      {"project": project, "slug": slug, "dispatch_id": dispatch_id, "level": "l2"})
@@ -122,7 +156,7 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
                                    max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
                                    extra_env=l2_env(project, task))
-    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done")]
+    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
     if not live:
         raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
     new = max(live, key=lambda a: a.get("startedAt") or 0)
@@ -135,10 +169,29 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     return res
 
 
-def resume_blocked(project: str, slug: str, answer: str) -> dict:
-    res = resume_session(project, slug, f"Burak's answer: {answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
+def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ") -> dict:
+    task = S.load_task(project, slug)
+    if task.get("agent_id"):  # the idle worker that stopped at the block keeps nothing the transcript does not
+        engines.claude_stop(task["agent_id"])
+    res = resume_session(project, slug, f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
     T.resume(project, slug, answer=answer)
     return res
+
+
+def resume_due(project: str) -> list[str]:
+    """Tasks blocked by an exhausted window come back by themselves once it reopens — oldest first, WIP-throttled."""
+    if engines.usage_hold():
+        return []
+    now, back = S.now(), []
+    due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
+    for t in sorted(due, key=lambda t: t.get("created") or ""):
+        if wip_hold(project, t):
+            continue  # a lease or the improve-serialization rule holds this one; a younger unrelated task may still go
+        resume_blocked(project, t["slug"], "The usage window has reopened; Altitude held you, nothing is wrong with the task.", prefix="")
+        with S.project_lock(project):
+            t2 = S.load_task(project, t["slug"]); t2["resume_after"] = None; S.save_task(project, t2)
+        back.append(t["slug"])
+    return back
 
 
 def _norm(p: str) -> str:
@@ -172,7 +225,23 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
             for t in S.list_tasks(project) if t["state"] == "running" and t["slug"] != exclude]
 
 
+def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
+    """What the worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) and when — the limit message
+    lands here, and "resets 8pm" only means something relative to the moment it was written."""
+    if not agent_id:
+        return "", None
+    p = JOBS_DIR / str(agent_id) / "state.json"
+    try:
+        st = json.loads(p.read_text())
+        return (str(st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+    except (OSError, ValueError):
+        return "", None
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    held = engines.usage_hold()
+    if held:
+        return f"usage limit: subscription window exhausted, resets {held}"
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
     if task and task.get("source") == "improve" and any(t.get("source") == "improve" for t in running):
@@ -219,6 +288,12 @@ def poll(project: str) -> list[dict]:
         live = {"status": a.get("status"), "state": a.get("state")} if a else None
         idle_since = None
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
+            detail, at = job_detail(a.get("id"))
+            lim = engines.usage_limit_in(detail, now=at)
+            if lim:  # decision 44: the worker is waiting for the window, not for a human
+                finished.append({"task": t, "agent": a, "limited": lim})
+                S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
+                continue
             idle_since = prev.get("idle_since") or S.now()
         died = a is not None and a.get("state") == "failed" and not has_report
         if died:  # worker gone before a report: raised as a system fault by the server, never read as "still running"
@@ -244,33 +319,99 @@ def _seconds_since(iso: str) -> float:
         return 0.0
 
 
-def cleanup_after_done(project: str, task: dict) -> list[str]:
-    """After `done`: drop the L2 background session and any worktree whose branch is fully merged into origin/main."""
+RESTART_PENDING = "restart-pending.json"
+DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded at start; everything else is read per use
+
+
+def pull_after_done(project: str, task: dict) -> list[str]:
+    """Self-deploy (decision 43): when a project's checkout *is* the deployment — Altitude's own repo — fast-forward it to
+    origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
+    changes need a restart: those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here."""
     import subprocess
+    proj = config.project(project)
+    if not proj.get("self_deploy", project == "altitude"):
+        return []
+    repo = config.project_path(project)
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        if br != "main":
+            return [f"self-deploy skipped: checkout on {br!r}, not main"]
+        pull = subprocess.run(["git", "pull", "-q", "--ff-only", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        if pull.returncode != 0:
+            T.fyi(project, task.get("slug"), f"self-deploy: `git pull --ff-only` failed in {repo}: {(pull.stderr or pull.stdout).strip()[:200]}")
+            return [f"self-deploy: pull failed: {(pull.stderr or pull.stdout).strip()[:120]}"]
+        new = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        if new == head:
+            return []
+        files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
+    except (subprocess.SubprocessError, OSError) as e:
+        from . import improve
+        improve.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        return [f"self-deploy: git error: {e}"]
+    code = [f for f in files if f.startswith(DEPLOY_DIRS)]
+    notes = [f"self-deploy: main {head[:7]} → {new[:7]} ({len(files)} files)"]
+    if code:
+        pend_p = config.MONITOR_DIR / RESTART_PENDING
+        pend = S.read_json(pend_p, {}) or {}
+        pend = {"since": pend.get("since") or S.now(), "head": new, "files": sorted(set(pend.get("files", [])) | set(code))}
+        S.write_json(pend_p, pend)
+        T.fyi(project, task.get("slug"), f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
+                                        f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
+                                        f"`systemctl --user restart altitude` when convenient; L2 workers survive it (decision 42).")
+        notes.append(f"restart pending ({len(code)} code files)")
+    return notes
+
+
+def cleanup_after_done(project: str, task: dict) -> list[str]:
+    """After `done`: drop the L2 background session and the merged worktrees nobody owns any more.
+
+    A worktree is never removed while a not-done task lists it, a live `claude agents` row runs in it, or git has it
+    locked — "fully merged into origin/main" is also true of a branch with no commits yet, and on 2026-08-30 the old rule
+    removed two running L2s' worktrees out from under them. If the live-session list cannot be read, nothing is removed."""
+    import subprocess
+    from . import improve
     repo = config.project_path(project)
     notes = []
     if task.get("agent_id"):
         notes.append("claude rm: " + engines.claude_rm(task["agent_id"])[:120])
+    protected = {str(Path(t["worktree"])) for t in S.list_tasks(project)
+                 if t.get("worktree") and t.get("slug") != task.get("slug") and t.get("state") not in ("done", "rejected")}
+    try:
+        protected |= {str(Path(a["cwd"])) for a in engines.claude_agents()
+                      if a.get("cwd") and a.get("state") not in ("failed", "done", "stopped")}
+    except RuntimeError as e:
+        improve.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=task.get("slug"))
+        return notes + [f"skipped worktree cleanup: {e}"]
     try:
         subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
         subprocess.run(["git", "worktree", "prune"], cwd=str(repo), capture_output=True, text=True, timeout=30)
         out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout
     except (subprocess.SubprocessError, OSError) as e:
-        from . import improve
         improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=task.get("slug"))
         return notes + [f"git: {e}"]
-    wt, branch = None, None
+
+    def owned(wt: str) -> bool:
+        return any(wt == q or wt.startswith(q + "/") or q.startswith(wt + "/") for q in protected)
+
+    wt, branch, locked = None, None, False
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
             wt = line.split(" ", 1)[1]
         elif line.startswith("branch "):
             branch = line.split(" ", 1)[1].replace("refs/heads/", "")
+        elif line == "locked" or line.startswith("locked "):
+            locked = True
         elif line == "":
-            if wt and branch and "/.claude/worktrees/" in wt:
+            if wt and branch and "/.claude/worktrees/" in wt and not locked and not owned(wt):
                 merged = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo), capture_output=True).returncode == 0
                 if merged:
-                    subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
-                    subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
-                    notes.append(f"removed merged worktree {Path(wt).name}")
-            wt, branch = None, None
+                    rm = subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
+                    if rm.returncode == 0:
+                        subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
+                        notes.append(f"removed merged worktree {Path(wt).name}")
+                    else:
+                        notes.append(f"could not remove {Path(wt).name}: {(rm.stderr or rm.stdout).strip()[:120]}")
+            wt, branch, locked = None, None, False
+    notes += pull_after_done(project, task)
     return notes
