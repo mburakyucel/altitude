@@ -1,9 +1,11 @@
 """Self-improvement (ARCHITECTURE §8): incidents, right-sized rules, scopes, promotion, audit input."""
 from __future__ import annotations
+import fcntl
 import json
 import os
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import config, rules, state as S, tasks as T
@@ -77,6 +79,21 @@ _IID = re.compile(r"^I-(\d+)$")
 INCIDENT_ID_ATTEMPTS = 20
 
 
+@contextmanager
+def _alloc_lock(directory: Path):
+    """A lock of its own for incident-id allocation, deliberately NOT `S.project_lock` (I-013). This is a leaf:
+    it is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
+    with itself nor invert an order against the project lock — and `dispatch.run` does hold a project lock while
+    `wip_hold` files a `quota-unknown` fault, so reusing that lock here would deadlock altd outright."""
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / ".alloc.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def _issued_incident_numbers(project: str) -> list[int]:
     """Every incident number this project has already issued, wherever it was recorded: the global index, the
     per-project ledger, the Altitude-side folder `new_incident` writes, and the repo copy. Anything that is not a
@@ -84,7 +101,7 @@ def _issued_incident_numbers(project: str) -> list[int]:
     nums: list[int] = []
 
     def take(value: object) -> None:
-        m = _IID.match(str(value if value is not None else ""))
+        m = _IID.match(str(value))
         if m:
             nums.append(int(m.group(1)))
 
@@ -119,31 +136,33 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
                  tags: list[str], generalizable: str = "unknown", mechanism: str = "incident-only",
                  scope: str = "project", rule: str | None = None, actor: str = "l3") -> dict:
     """Write the incident into the project's Altitude folder (the repo copy lands via the apply S-task).
-    Must NOT be called with the target project's lock already held — the allocate step takes it, and
-    `S.project_lock` is a plain flock, so a nested take would deadlock."""
+    Safe to call while holding any project lock — allocation takes a leaf lock of its own (I-013), precisely so a
+    caller that already holds one (`dispatch.run` does, around the `wip_hold` that files `quota-unknown`) cannot
+    deadlock on it."""
     template = (config.TEMPLATES / "incident.md").read_text()
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
-    # (I-013) Allocate and reserve in one critical section, and reserve with O_EXCL: the exclusive create is what
-    # makes the id unique even against another process, the lock only stops two racers from spinning the retries.
-    # An existing incidents/I-NNN.md is never overwritten — we take the next free id, or give up loudly.
-    with S.project_lock(project):
+    # (I-013) Reserve the id with an exclusive create, then fill the file atomically. The empty file IS the
+    # reservation and holds the id against every other racer — process or thread — while `atomic_write` replaces
+    # it whole, so a crash mid-write can never leave a half-parsed incident. An existing incidents/I-NNN.md is
+    # never overwritten: we take the next free id, or give up loudly. The lock only stops racers spinning here.
+    iid, path = "", d
+    with _alloc_lock(d):
         for _ in range(INCIDENT_ID_ATTEMPTS):
             iid = next_incident_id(project)
             path = d / f"{iid}.md"
-            body = template.format(
-                id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
-                cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch")
             try:
-                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             except FileExistsError:
                 continue                    # someone took it between the max and the open — recompute and retry
-            with os.fdopen(fd, "w") as f:
-                f.write(body)
             break
         else:
-            raise RuntimeError(f"cannot file an incident on {project}: {iid} already exists at {path} and so did every "
-                               f"id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident file is never overwritten")
+            raise RuntimeError(f"cannot file an incident on {project}: {iid or '(none allocated)'} already exists at {path} "
+                               f"and so did every id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident "
+                               "file is never overwritten")
+    S.atomic_write(path, template.format(
+        id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
+        cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch"))
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "scope": scope, "mechanism": mechanism, "rule": rule, "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
