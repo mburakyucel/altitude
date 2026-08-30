@@ -56,6 +56,15 @@
 - status: probation
 - text: Chat is a conversation with Burak on his phone, not a log. A chat reply answers what he asked in a few plain sentences: what changed and what he needs to do, nothing else. No ids, slugs, file paths, rule or decision numbers or spend figures in chat text: those go in FYIs, digests, the detail of a card and the task folder. Server-triggered turns (proposal-ready, report-landed, reconcile, audit, backlog) are not chat: their output is the card, the digest or the FYI, and the closing text is at most two plain sentences saying what happened and whether anything waits on him.
 
+## R-010 — Codex L2 dispatch proves both write roots
+- scope: project
+- where: CLAUDE.md
+- origin: I-030 (altitude)
+- prevents:
+- effect:
+- status: probation
+- text: Before a Codex L2 task starts, dispatch must verify that the session can write and remove a probe in both its assigned worktree and task folder. A failed probe raises one system fault and holds the task without consuming the task's retry or turn envelope.
+
 ## R-012 — A resumed worker needs a fresh report generation
 - scope: project
 - where: CLAUDE.md
