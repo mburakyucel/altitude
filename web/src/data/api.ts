@@ -340,7 +340,9 @@ export interface DecideInput {
   project: string;
   slug: string;
   /** Index into the decision's options list (the server does int(option)). */
-  option: number;
+  option?: number;
+  /** Decision 50: feedback on a proposal → the proposal is redone around `note` (required). */
+  revise?: boolean;
   note?: string;
 }
 

@@ -27,7 +27,9 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         parks = [e for e in S.read_events(project, slug) if e.get("kind") == "state" and e.get("to") == "parked" and e.get("reason")]
         if parks:
             prior += f"\n\n## Why the L3 parked the previous proposal (this is the revision brief)\n{parks[-1]['reason']}"
-        prior += "\n\nThis is revision %d. Produce a corrected proposal, not a defence of the previous one." % (task.get("revisions", 0) + 1)
+        prior += ("\n\nThis is revision %d. Produce a corrected proposal, not a defence of the previous one. Burak's feedback (the "
+                  "'## Burak's feedback' sections of the request and the revision note above) is binding: address every point and open "
+                  "the summary with what changed because of it." % (task.get("revisions", 0) + task.get("feedback_rounds", 0) + 1))
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
     res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",

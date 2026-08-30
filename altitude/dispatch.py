@@ -60,6 +60,8 @@ def build_brief(project: str, slug: str) -> str:
     approval_note = f" — Burak chose: {dec['chosen']}" if dec.get("chosen") else ""
     if dec.get("chosen") and dec.get("detail"):  # decision 46: the card is short; the conditions behind it travel with the brief
         approval_note += f"\n\nBehind the card (the L3's reasoning and conditions — binding where they say so):\n{dec['detail']}"
+    if dec.get("chosen") and dec.get("note"):  # decision 50: Burak's own words with the answer are binding too
+        approval_note += f"\n\nBurak's note with that answer (binding): {dec['note']}"
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # decision 48: the hold is the exception, and it says why
         merge_policy = f"**Held for Burak** — open the PR, get it review-clean and CI-green, and stop; Burak merges it himself. Why: {task['hold_merge']}"

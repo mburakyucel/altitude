@@ -186,6 +186,9 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
  * and the same executive shape (decision 46): context above the question, the reasoning behind it
  * in a closed "Why" disclosure. A card without context/detail renders exactly as it did before.
  */
+/** Decision 50: any option that starts with "revise" is the feedback path and needs the note. */
+const isRevise = (label: string) => /^revise/i.test(label);
+
 function DecisionCard({ project, row }: { project: string; row: ProjectDecision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
@@ -195,6 +198,8 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
   const options = arr(row.options).map(String);
   const fallback = row.kind === "blocked" ? ["Resume", "Park", "Reject"] : ["Approve", "Revise", "Reject"];
   const labels = options.length > 0 ? options : fallback;
+  const blocked = row.kind === "blocked";
+  const onSettled = () => queryClient.invalidateQueries({ queryKey: ["project", project] });
   return (
     <article className="card space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -206,9 +211,10 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
       {str(row.question) ? (
         <p className="text-body font-semibold text-ink">{str(row.question)}</p>
       ) : null}
-      <input
+      <textarea
         className="field w-full"
-        placeholder="Note (optional)"
+        rows={2}
+        placeholder={blocked ? "Note (optional)" : "Feedback — required for Revise, optional otherwise"}
         aria-label={`Note for ${title}`}
         value={note}
         onChange={(event) => setNote(event.target.value)}
@@ -219,20 +225,27 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
             key={label}
             type="button"
             className={index === 0 ? "btn btn-primary" : "btn"}
-            disabled={decide.isPending}
+            // Decision 50: a revision carries feedback — the button waits for it.
+            disabled={decide.isPending || (isRevise(label) && note.trim().length === 0)}
+            title={isRevise(label) && note.trim().length === 0 ? "Type what should change first" : undefined}
             onClick={() =>
-              decide.mutate(
-                { project, slug, option: index, note: note || undefined },
-                {
-                  onSettled: () =>
-                    queryClient.invalidateQueries({ queryKey: ["project", project] }),
-                },
-              )
+              decide.mutate({ project, slug, option: index, note: note || undefined }, { onSettled })
             }
           >
             {label}
           </button>
         ))}
+        {!blocked && !labels.some(isRevise) ? (
+          <button
+            type="button"
+            className="btn"
+            disabled={decide.isPending || note.trim().length === 0}
+            title={note.trim().length === 0 ? "Type what should change first" : undefined}
+            onClick={() => decide.mutate({ project, slug, revise: true, note }, { onSettled })}
+          >
+            Revise
+          </button>
+        ) : null}
       </div>
       {row.detail ? (
         <details>

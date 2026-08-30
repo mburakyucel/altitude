@@ -149,8 +149,10 @@ def approve(project: str, slug: str, option: int | None = None, actor: str = "bu
             dec.update({"chosen": chosen, "chosen_index": option, "answered": S.now(), "note": note})
             task["decision"] = dec
             low = chosen.lower()
-            if low.startswith("revise"):
-                return _move(project, task, "requested", actor, question=dec.get("question"), answer=chosen, note=note)
+            if low.startswith("revise"):  # decision 50: a revision carries Burak's feedback, and the next proposal answers it
+                if not (note or "").strip():
+                    raise TransitionError("Revise needs feedback: what should change in the proposal")
+                return _revise_locked(project, task, note.strip(), actor, question=dec.get("question"), answer=chosen)
             if low.startswith("park"):
                 return _move(project, task, "parked", actor, question=dec.get("question"), answer=chosen, note=note)
             if low.startswith("reject"):
@@ -313,3 +315,43 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
         S.save_task(project, t)
     S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor)
     return t
+
+
+def archive_proposal(task_dir) -> int:
+    """Move proposal.md / proposal.json / critique.json aside as -vN (N = next free number) so the next proposal run
+    starts fresh and the reviser can still read the previous round. Returns N, or 0 when there was nothing to move."""
+    n = len(list(task_dir.glob("proposal-v*.md"))) + 1
+    moved = 0
+    for old in ("proposal.md", "proposal.json", "critique.json"):
+        src = task_dir / old
+        if src.exists():
+            src.rename(src.with_name(f"{src.stem}-v{n}{src.suffix}"))
+            moved += 1
+    return n if moved else 0
+
+
+def _revise_locked(project: str, task: dict, feedback: str, actor: str, **ev) -> dict:
+    d = S.task_dir(project, task["slug"])
+    n = archive_proposal(d) or len(list(d.glob("proposal-v*.md"))) + 1
+    with open(d / "request.md", "a") as f:  # the feedback is part of the request from now on — whoever proposes next reads it
+        f.write(f"\n\n## Burak's feedback on proposal v{n} ({S.now()[:16]})\n{feedback}\n")
+    task["proposal_started"] = None
+    task["feedback_rounds"] = int(task.get("feedback_rounds", 0)) + 1
+    return _move(project, task, "requested", actor, answer=ev.pop("answer", "Revise"), note=feedback, **ev)
+
+
+def revise(project: str, slug: str, feedback: str, actor: str = "burak") -> dict:
+    """Decision 50: feedback on a proposal card. The task goes back to *requested*, the old proposal is archived as
+    -vN, the feedback is appended to request.md, and the next proposal (agent or L3) must answer it point by point."""
+    feedback = (feedback or "").strip()
+    if not feedback:
+        raise TransitionError("Revise needs feedback: what should change in the proposal")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "proposed":
+            raise TransitionError(f"{slug}: revise applies to a proposed task, not {task['state']}")
+        dec = task.get("decision") or {}
+        if dec:
+            dec.update({"chosen": "Revise", "answered": S.now(), "note": feedback})
+            task["decision"] = dec
+        return _revise_locked(project, task, feedback, actor, question=dec.get("question"))

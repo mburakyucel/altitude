@@ -9,7 +9,6 @@ const NAV = [
   { to: "/projects", label: "Projects", end: false, badge: false },
   { to: "/chat", label: "Chat", end: false, badge: false },
   { to: "/monitor", label: "Monitor", end: false, badge: false },
-  { to: "/listen", label: "Listen", end: false, badge: false },
 ];
 
 /** The persistent readout from the 0.1 header: "5h 12% · 7d 40%", or "quota unknown". */

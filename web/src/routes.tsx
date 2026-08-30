@@ -8,7 +8,6 @@ import Project from "./routes/Project";
 import Task from "./routes/Task";
 import Chat from "./routes/Chat";
 import Monitor from "./routes/Monitor";
-import Listen from "./routes/Listen";
 
 /** /chat with no project: redirect to the first managed project's chat. */
 function ChatRedirect() {
@@ -31,7 +30,6 @@ export const routes: RouteObject[] = [
       { path: "/chat", element: <ChatRedirect /> },
       { path: "/chat/:name", element: <Chat /> },
       { path: "/monitor", element: <Monitor /> },
-      { path: "/listen", element: <Listen /> },
       // Last: a typo'd deep link lands on the Inbox inside the shell, not on react-router's
       // bare error page outside it.
       { path: "*", element: <Navigate to="/" replace /> },

@@ -114,6 +114,41 @@ describe("Inbox", () => {
     });
   });
 
+  // Decision 50: a proposal card whose options come from the L3 (no "Revise" among them) still lets
+  // Burak send feedback; the button waits for the feedback and posts `revise: true` with it.
+  it("adds a Revise button that needs feedback when the options lack one", async () => {
+    const custom = {
+      ...overview,
+      queue: [{ ...overview.queue[0], options: ["Wait for the next reading", "Dispatch anyway"] }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(custom);
+      if (url.includes("/api/decide")) return jsonResponse({ ok: true, state: "requested" });
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route: "/" });
+    await screen.findByText("Fix the timer");
+    const revise = screen.getByRole("button", { name: "Revise" });
+    expect(revise).toBeDisabled();
+    await user.type(screen.getByLabelText("Note for Fix the timer"), "smaller scope, no daemon");
+    expect(revise).toBeEnabled();
+    await user.click(revise);
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/decide"))).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/decide"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      project: "altitude",
+      slug: "fix-timer",
+      revise: true,
+      note: "smaller scope, no daemon",
+    });
+  });
+
   // A task Altitude is holding (blocked + resume_after) leaves the Decisions queue and joins the
   // waiting list; "(resume)" is what tells you nobody has to dispatch it by hand.
   it("marks a waiting entry Altitude will resume itself", async () => {
@@ -131,7 +166,7 @@ describe("Inbox", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
         String(input).includes("/api/overview")
           ? jsonResponse(waiting)
           : jsonResponse({ error: "not found" }, 404),
@@ -147,7 +182,7 @@ describe("Inbox", () => {
   it("shows the empty state when nothing is queued", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
         String(input).includes("/api/overview")
           ? jsonResponse({ ...overview, queue: [] })
           : jsonResponse({ error: "not found" }, 404),
@@ -165,7 +200,7 @@ describe("Inbox decision card (executive shape)", () => {
   function stubQueue(queue: unknown[]) {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
         String(input).includes("/api/overview")
           ? jsonResponse({ ...overview, queue })
           : jsonResponse({ error: "not found" }, 404),

@@ -22,6 +22,9 @@ function age(iso: string | null | undefined): string {
  * question in a closed "Why" disclosure, never in front of it. A card without context/detail
  * renders exactly as it did before them.
  */
+/** Decision 50: any option that starts with "revise" is the feedback path and needs the note. */
+const isRevise = (label: string) => /^revise/i.test(label);
+
 function DecisionCard({ d }: { d: Decision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
@@ -40,9 +43,10 @@ function DecisionCard({ d }: { d: Decision }) {
       </div>
       {d.context ? <p className="text-body text-muted">{d.context}</p> : null}
       {d.question ? <p className="text-body font-semibold text-ink">{d.question}</p> : null}
-      <input
+      <textarea
         className="field w-full"
-        placeholder="Note (optional)"
+        rows={2}
+        placeholder={blocked ? "Note (optional)" : "Feedback — required for Revise, optional otherwise"}
         value={note}
         onChange={(e) => setNote(e.target.value)}
         aria-label={`Note for ${d.title || d.slug}`}
@@ -53,7 +57,9 @@ function DecisionCard({ d }: { d: Decision }) {
             key={label}
             type="button"
             className={i === 0 ? "btn btn-primary" : "btn"}
-            disabled={decide.isPending}
+            // Decision 50: a revision carries feedback — the button waits for it.
+            disabled={decide.isPending || (isRevise(label) && note.trim().length === 0)}
+            title={isRevise(label) && note.trim().length === 0 ? "Type what should change first" : undefined}
             onClick={() =>
               decide.mutate({ project: d.project, slug: d.slug, option: i, note: note || undefined })
             }
@@ -61,6 +67,17 @@ function DecisionCard({ d }: { d: Decision }) {
             {label}
           </button>
         ))}
+        {!blocked && !options.some(isRevise) ? (
+          <button
+            type="button"
+            className="btn"
+            disabled={decide.isPending || note.trim().length === 0}
+            title={note.trim().length === 0 ? "Type what should change first" : undefined}
+            onClick={() => decide.mutate({ project: d.project, slug: d.slug, revise: true, note })}
+          >
+            Revise
+          </button>
+        ) : null}
         <Link className="ml-auto text-meta" to={`/projects/${d.project}/tasks/${d.slug}`}>
           Details
         </Link>

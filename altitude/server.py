@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 import ssl
+import ssl
 import subprocess
 import threading
 import time
@@ -198,10 +199,7 @@ def run_proposal_flow(project: str, slug: str) -> None:
             if n < 2:
                 with S.project_lock(project):
                     t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
-                for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
-                    src = S.task_dir(project, slug) / old
-                    if src.exists():
-                        src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
+                T.archive_proposal(S.task_dir(project, slug))  # history as -vN; the reviser reads the latest critique-vN
                 T.unpark(project, slug, actor="altd")
                 log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
                 return
@@ -549,6 +547,9 @@ class Handler(BaseHTTPRequestHandler):
                                    "project": rules.project_rules(config.project_path(parts[2])),
                                    "incidents": [r for r in improve.index() if r["project"] == parts[2]]})
             return self._json({"error": "unknown api"}, 404)
+        except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
+            log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
+            return
         except Exception as e:  # noqa: BLE001
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
             return self._json({"error": str(e)}, 500)
@@ -590,9 +591,10 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
                     return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+                if o.get("revise"):  # decision 50: feedback on the card → the proposal is redone around it
+                    t = T.revise(project, slug, o.get("note") or "", actor="burak")
+                    return self._json({"ok": True, "state": t["state"]})
                 t = T.approve(project, slug, int(opt) if opt is not None else None, actor="burak", note=o.get("note") or "")
-                if t["state"] == "requested":  # revise → proposal again
-                    t["proposal_started"] = None; S.save_task(project, t)
                 if t["state"] == "approved":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
                 return self._json({"ok": True, "state": t["state"]})
@@ -659,6 +661,9 @@ class Handler(BaseHTTPRequestHandler):
             if api == "install-statusline":
                 return self._json(install_statusline())
             return self._json({"error": "unknown api"}, 404)
+        except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
+            log(f"POST {self.path}: client went away ({type(e).__name__}: {e})")
+            return
         except Exception as e:  # noqa: BLE001
             log(f"POST {self.path}: {e}\n{traceback.format_exc()}")
             try:
