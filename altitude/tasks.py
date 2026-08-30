@@ -225,6 +225,28 @@ def block(project: str, slug: str, reason: str, actor: str = "altd") -> dict:
         return _move(project, task, "blocked", actor, reason=reason)
 
 
+def raise_envelope(project: str, slug: str, launches: int | None = None, turns: int | None = None, actor: str = "l3") -> dict:
+    """Decision 52: L3 raises a blocked task's envelope itself. task.json and the envelope file the hooks read both change,
+    so the re-attached L2's next launch is judged against the new cap; lowering is refused (a cap is a stop, not a dial)."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        env = task["envelope"]
+        for key, val in (("subagent_launches", launches), ("max_turns", turns)):
+            if val is None:
+                continue
+            if int(val) < int(env[key]):
+                raise TransitionError(f"{slug}: {key} {env[key]} → {val} would lower the envelope; only raising is allowed")
+            env[key] = int(val)
+        S.save_task(project, task)
+        if task.get("dispatch_id"):
+            p = config.MONITOR_DIR / f"envelope-{project}--{task['dispatch_id']}.json"
+            cur = S.read_json(p) if p.exists() else {"project": project, "slug": slug, "dispatch_id": task["dispatch_id"]}
+            cur.update(env)
+            S.write_json(p, cur)
+    S.append_event(project, slug, "envelope-raised", actor=actor, launches=launches, turns=turns)
+    return task
+
+
 def resume(project: str, slug: str, actor: str = "altd", **ev) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)

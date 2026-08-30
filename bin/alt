@@ -56,8 +56,11 @@ def main(argv=None) -> None:
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
     for name in ("reject", "park", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("resume", "unpark", "show", "events"):
+    for name in ("unpark", "show", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
+    rs = ts.add_parser("resume", help="decision 52: re-attach a blocked L2 (its transcript, its worktree); raise the envelope first when the block was the cap")
+    rs.add_argument("slug"); rs.add_argument("--launches", type=int); rs.add_argument("--turns", type=int)
+    rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or the granted cap")
     hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
@@ -138,7 +141,18 @@ def main(argv=None) -> None:
         elif tc == "block":
             out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
-            out(T.resume(p, args.slug, actor=ACTOR))
+            if args.launches or args.turns:
+                T.raise_envelope(p, args.slug, launches=args.launches, turns=args.turns, actor=ACTOR)
+            t = S.load_task(p, args.slug)
+            if t["state"] == "blocked" and t.get("session_id"):
+                answer = args.answer or "Continue from your progress file; finish to *done* and rewrite the report."
+                if args.launches:
+                    answer = f"Envelope raised to {args.launches} subagent launches. " + answer
+                from altitude import dispatch
+                res = dispatch.resume_blocked(p, args.slug, answer, prefix="Altitude: ")
+                out({"slug": args.slug, "state": "running", "agent": (res.get("agent") or {}).get("id"), "envelope": S.load_task(p, args.slug)["envelope"]})
+            else:
+                out(T.resume(p, args.slug, actor=ACTOR))
         elif tc == "unpark":
             out(T.unpark(p, args.slug, actor=ACTOR))
         elif tc == "hold-merge":

@@ -88,7 +88,7 @@ def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
-    env["PATH"] = env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")  # I-021: `alt` in every session
     return env
 
 
