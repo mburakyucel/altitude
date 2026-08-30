@@ -1,6 +1,7 @@
 """Self-improvement (ARCHITECTURE §8): incidents, right-sized rules, scopes, promotion, audit input."""
 from __future__ import annotations
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -72,25 +73,77 @@ def index() -> list[dict]:
     return out
 
 
+_IID = re.compile(r"^I-(\d+)$")
+INCIDENT_ID_ATTEMPTS = 20
+
+
+def _issued_incident_numbers(project: str) -> list[int]:
+    """Every incident number this project has already issued, wherever it was recorded: the global index, the
+    per-project ledger, the Altitude-side folder `new_incident` writes, and the repo copy. Anything that is not a
+    strict `I-NNN` is skipped rather than crashed on."""
+    nums: list[int] = []
+
+    def take(value: object) -> None:
+        m = _IID.match(str(value if value is not None else ""))
+        if m:
+            nums.append(int(m.group(1)))
+
+    for r in index():
+        if r.get("project") == project:
+            take(r.get("id"))
+    ledger = config.project_dir(project) / "incidents.jsonl"
+    if ledger.exists():
+        for line in ledger.read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                take(row.get("id"))
+    for d in (config.project_dir(project) / "incidents", config.project_path(project) / "docs" / "incidents"):
+        if d.is_dir():
+            for f in d.glob("I-*.md"):
+                take(f.stem)
+    return nums
+
+
 def next_incident_id(project: str) -> str:
-    n = sum(1 for r in index() if r.get("project") == project)
-    repo_dir = config.project_path(project) / "docs" / "incidents"
-    if repo_dir.is_dir():
-        n = max(n, len(list(repo_dir.glob("I-*.md"))))
-    return f"I-{n + 1:03d}"
+    """One past the highest id ever issued — never a count (I-013): two `l2-died` faults in the same second both
+    counted the same 8 rows and both got `I-009`, and the blind overwrite behind it kept only the second. A gap
+    left by a lost or renumbered record is never handed out again either. Same shape as `rules.next_id`."""
+    nums = _issued_incident_numbers(project)
+    return f"I-{(max(nums) + 1) if nums else 1:03d}"
 
 
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
                  tags: list[str], generalizable: str = "unknown", mechanism: str = "incident-only",
                  scope: str = "project", rule: str | None = None, actor: str = "l3") -> dict:
-    """Write the incident into the project's Altitude folder (the repo copy lands via the apply S-task)."""
-    iid = next_incident_id(project)
-    body = (config.TEMPLATES / "incident.md").read_text().format(
-        id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
-        cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch")
+    """Write the incident into the project's Altitude folder (the repo copy lands via the apply S-task).
+    Must NOT be called with the target project's lock already held — the allocate step takes it, and
+    `S.project_lock` is a plain flock, so a nested take would deadlock."""
+    template = (config.TEMPLATES / "incident.md").read_text()
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
-    S.atomic_write(d / f"{iid}.md", body)
+    # (I-013) Allocate and reserve in one critical section, and reserve with O_EXCL: the exclusive create is what
+    # makes the id unique even against another process, the lock only stops two racers from spinning the retries.
+    # An existing incidents/I-NNN.md is never overwritten — we take the next free id, or give up loudly.
+    with S.project_lock(project):
+        for _ in range(INCIDENT_ID_ATTEMPTS):
+            iid = next_incident_id(project)
+            path = d / f"{iid}.md"
+            body = template.format(
+                id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
+                cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch")
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                continue                    # someone took it between the max and the open — recompute and retry
+            with os.fdopen(fd, "w") as f:
+                f.write(body)
+            break
+        else:
+            raise RuntimeError(f"cannot file an incident on {project}: {iid} already exists at {path} and so did every "
+                               f"id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident file is never overwritten")
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "scope": scope, "mechanism": mechanism, "rule": rule, "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
@@ -134,8 +187,8 @@ def _incident_task(body: str, spans: dict[str, tuple[int, int]]) -> str | None:
 
 
 def _index_correct(path: Path, project: str, incident: str, updates: dict) -> bool:
-    """Rewrite one incident's existing index row. Never appends: `next_incident_id` counts rows, so an extra
-    row would burn an incident id — and the audit would then read the old cause beside the new one."""
+    """Rewrite one incident's existing index row. Never appends: a second row for the same id would leave the
+    audit reading the old cause beside the new one."""
     if not updates or not path.exists():
         return False
     lines, hit = [], False
