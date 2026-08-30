@@ -406,6 +406,7 @@ class Handler(BaseHTTPRequestHandler):
                 if action == "park":
                     T.park(project, slug, reason, actor="burak")
                 elif action == "build":  # executive override (Burak): approve as requested and dispatch now, skipping proposal/critic
+                    t = S.load_task(project, slug)
                     if t["state"] == "parked":
                         T.unpark(project, slug, actor="burak")
                     t = S.load_task(project, slug)
