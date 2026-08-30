@@ -1,16 +1,19 @@
-import { useState } from "react";
 import { useDigest, useDigestSpeak } from "../data/api";
 
 /**
  * The 0.1 listen view: the digest text, the rendered `/digest.wav` when there is one,
- * and the button that asks Kokoro for a fresh render. Kokoro takes a few seconds, so
- * the audio element only appears once `/api/digest` reports `audio: true` (the query
- * polls); the query string on the src busts the browser cache after a re-render.
+ * and the button that asks Kokoro for a fresh render.
+ *
+ * The cache-buster is the digest query's own `dataUpdatedAt`, never a stamp taken when the POST
+ * returns: POST /api/digest/speak answers as soon as the server has spawned Kokoro, seconds
+ * before the new wav exists, so busting on it pins the browser to the *stale* digest and never
+ * moves again. Tying the stamp to the polled query means the src turns over exactly when the
+ * data the server reports actually refreshes.
  */
 export default function Listen() {
   const digest = useDigest();
   const speak = useDigestSpeak();
-  const [stamp, setStamp] = useState(() => Date.now());
+  const stamp = digest.dataUpdatedAt;
 
   if (digest.isPending) return <p className="text-muted">Loading…</p>;
   if (digest.isError) return <p className="text-danger">{digest.error.message}</p>;
@@ -32,7 +35,7 @@ export default function Listen() {
           className="btn"
           disabled={speak.isPending}
           onClick={() => {
-            speak.mutate(undefined, { onSuccess: () => setStamp(Date.now()) });
+            speak.mutate(undefined);
           }}
         >
           Render with Kokoro

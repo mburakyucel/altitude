@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -131,5 +131,76 @@ describe("Chat", () => {
     });
     expect(screen.getByLabelText("Message L3")).toHaveValue("status?");
     expect(postsToChat(fetchMock)).toHaveLength(1);
+  });
+
+  // Regression: the optimistic turn used to be dropped as soon as its text appeared anywhere in
+  // the refetched history, so re-asking a question you had already asked swallowed both the new
+  // user bubble and the streamed reply.
+  it("keeps the new turn when the same words are already in the history", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        return streamResponse(['{"t":"still two."}\n', '{"done":{"error":null}}']);
+      }
+      // The refetch after the stream returns the *same* transcript — the L3 write has not landed
+      // yet — so the pending turn must survive it.
+      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+
+    // exactly the text of the first message already in the transcript
+    await user.type(screen.getByLabelText("Message L3"), "how is it going?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await screen.findByText("still two.");
+    await waitFor(() => {
+      expect(postsToChat(fetchMock)).toHaveLength(1);
+    });
+    // the history copy and the new optimistic bubble, both on screen
+    expect(screen.getAllByText("how is it going?")).toHaveLength(2);
+    expect(screen.getByText("still two.")).toBeInTheDocument();
+  });
+
+  it("offers a link to every managed project's chat and marks the current one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) {
+          return jsonResponse({
+            ...overview,
+            projects: [
+              { name: "altitude", managed: true },
+              { name: "sibling", managed: true },
+              { name: "unmanaged", managed: false },
+            ],
+          });
+        }
+        if (url.includes("/api/chat")) return jsonResponse(chatView);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+    renderApp({ route });
+
+    await screen.findByText("how is it going?");
+    const strip = await screen.findByRole("navigation", { name: "Projects" });
+
+    expect(within(strip).getByRole("link", { name: "sibling" })).toHaveAttribute(
+      "href",
+      "/chat/sibling",
+    );
+    expect(within(strip).getByRole("link", { name: "altitude" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(strip).getByRole("link", { name: "sibling" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    expect(within(strip).queryByRole("link", { name: "unmanaged" })).toBeNull();
   });
 });

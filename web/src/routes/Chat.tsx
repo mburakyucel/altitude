@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, NavLink, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, streamChat, useChat } from "../data/api";
+import { ApiError, streamChat, useChat, useOverview } from "../data/api";
 import type { ChatMessage } from "../data/api";
 import { useToast } from "../data/Toast";
 
@@ -63,12 +63,32 @@ interface LocalTurn {
   id: number;
   user: string;
   assistant: string;
+  /** Signature of the transcript this turn was sent against (see `signature`). */
+  base: string;
+}
+
+/**
+ * Identity of a loaded transcript — length, last stamp, last text — never the *sender's* text.
+ * Matching a local turn against the history by the message the user just typed would erase it the
+ * moment those words already appear above (re-sending "status?"), so the bubble and the streamed
+ * reply would never show; comparing whole-transcript snapshots cannot make that mistake.
+ *
+ * All three parts are needed. altitude/l3.py:45 caps the reply at `chat.jsonl[-limit:]` (the
+ * client asks for 60), so past 60 messages the length is pinned and only the tail moves; the tail
+ * stamp is second-resolution (state.py:20) and the schema lets `at` be nullish, so the last text
+ * is what keeps the signature moving in the cases where the first two go constant.
+ */
+function signature(history: ChatMessage[]): string {
+  const last = history[history.length - 1];
+  return `${history.length}:${last?.at ?? ""}:${last?.text ?? ""}`;
 }
 
 export default function Chat() {
   const params = useParams();
   const project = params["name"] ?? "";
   const chat = useChat(project);
+  // The shell already holds ["overview"]; this reads the same cache entry, no extra request.
+  const overview = useOverview();
   const toast = useToast();
   const queryClient = useQueryClient();
 
@@ -80,10 +100,11 @@ export default function Chat() {
 
   const history = chat.data?.history ?? [];
   const busy = chat.data?.busy ?? false;
-  // Drop a local turn once the server's history has caught up with it.
-  const pending = locals.filter(
-    (l) => !history.some((m) => m.role === "user" && m.text === l.user),
-  );
+  const sig = signature(history);
+  // Each local turn is keyed by its own id and holds the transcript it was sent against; it is
+  // dropped in the same render as the refetched history that moved past it — never earlier, so a
+  // repeated message keeps its bubble and its streamed reply, and never later, so it never doubles.
+  const pending = locals.filter((l) => l.base === sig);
 
   useEffect(() => {
     foot.current?.scrollIntoView?.({ block: "end" });
@@ -97,7 +118,7 @@ export default function Chat() {
     const text = draft.trim();
     if (!text || streaming || busy) return;
     const id = (nextId.current += 1);
-    setLocals((prev) => [...prev, { id, user: text, assistant: "" }]);
+    setLocals((prev) => [...prev, { id, user: text, assistant: "", base: sig }]);
     setDraft("");
     setStreaming(true);
     try {
@@ -130,6 +151,8 @@ export default function Chat() {
   const ctx = num(l3["context_percent"]);
   const session = str(l3["session_id"]);
   const disabled = streaming || busy;
+  // The 0.1 project strip: one link per managed project, straight to that project's chat.
+  const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4">
@@ -149,6 +172,20 @@ export default function Chat() {
             .join(" · ")}
         </span>
       </header>
+
+      {switchable.length > 0 ? (
+        <nav className="flex flex-wrap gap-2" aria-label="Projects">
+          {switchable.map((p) => (
+            <NavLink
+              key={p.name}
+              to={`/chat/${p.name}`}
+              className="pill hover:text-ink aria-[current=page]:border-accent-tint-border aria-[current=page]:bg-accent-tint aria-[current=page]:text-accent-ink"
+            >
+              {p.name}
+            </NavLink>
+          ))}
+        </nav>
+      ) : null}
 
       <section className="flex flex-col gap-3" aria-label="Transcript">
         {history.length === 0 && pending.length === 0 ? (

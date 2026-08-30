@@ -32,6 +32,9 @@ export const routes: RouteObject[] = [
       { path: "/chat/:name", element: <Chat /> },
       { path: "/monitor", element: <Monitor /> },
       { path: "/listen", element: <Listen /> },
+      // Last: a typo'd deep link lands on the Inbox inside the shell, not on react-router's
+      // bare error page outside it.
+      { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
 ];

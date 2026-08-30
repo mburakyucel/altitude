@@ -175,7 +175,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <input
           className="field w-full"
           aria-label="Reason"
-          placeholder="Reason (park / reject)"
+          placeholder="Reason (required to park / reject)"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
@@ -186,7 +186,10 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
               type="button"
               className={a.primary ? "btn btn-primary" : "btn"}
               title={a.title}
-              disabled={act.isPending}
+              // Park and Reject are destructive and irreversible from here; the 0.1 app refused
+              // them without a reason and Project.tsx still does, so they stay disabled until one
+              // is typed rather than firing on a single unconfirmed click.
+              disabled={act.isPending || (a.reason === true && reason.trim().length === 0)}
               onClick={() => run(a)}
             >
               {a.label}

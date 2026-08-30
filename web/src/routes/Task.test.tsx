@@ -127,6 +127,31 @@ describe("Task", () => {
     });
   });
 
+  // Park and Reject are irreversible from here and used to fire on one unconfirmed click with an
+  // optional reason; they now stay disabled until a reason is typed.
+  it("refuses park and reject until a reason is typed", async () => {
+    const fetchMock = stub(proposed);
+    const { user } = renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    const park = screen.getByRole("button", { name: "Park" });
+    const reject = screen.getByRole("button", { name: "Reject" });
+    expect(park).toBeDisabled();
+    expect(reject).toBeDisabled();
+    // a non-destructive action in the same row is unaffected
+    expect(screen.getByRole("button", { name: "Build now" })).toBeEnabled();
+
+    await user.click(park);
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(false);
+
+    await user.type(screen.getByLabelText("Reason"), "   ");
+    expect(park).toBeDisabled();
+
+    await user.type(screen.getByLabelText("Reason"), "waiting on the API");
+    expect(park).toBeEnabled();
+    expect(reject).toBeEnabled();
+  });
+
   it("messages the L2 while the task is running", async () => {
     const fetchMock = stub(running);
     const { user } = renderApp({ route });

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
@@ -346,8 +346,15 @@ export interface TaskActionInput {
 }
 
 export function useTaskAction(project: string) {
+  const queryClient = useQueryClient();
   return useOptimisticMutation<TaskActionInput, unknown, ProjectView>({
-    mutationFn: (input) => post("/api/task/action", input),
+    // Every action moves a task's state, which the Inbox badge and the Projects counts read from
+    // ["overview"] — invalidate it too or both sit stale for a full 20s poll.
+    mutationFn: async (input) => {
+      const out = await post("/api/task/action", input);
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      return out;
+    },
     queryKey: ["project", project],
     update: () => undefined,
     failureMessage: "Task action failed.",
@@ -397,8 +404,15 @@ export function useL2Message(project: string) {
 }
 
 export function useL3Reset(project: string) {
+  const queryClient = useQueryClient();
   return useOptimisticMutation<void, unknown, ChatView>({
-    mutationFn: () => post("/api/l3/reset", { project }),
+    // The Rotate button lives on a card rendered from ["project", project] (session id, context
+    // %, turns) — invalidating only ["chat", project] leaves the card showing the dead session.
+    mutationFn: async () => {
+      const out = await post("/api/l3/reset", { project });
+      void queryClient.invalidateQueries({ queryKey: ["project", project] });
+      return out;
+    },
     queryKey: ["chat", project],
     update: () => undefined,
     failureMessage: "Couldn't reset the L3 session.",
