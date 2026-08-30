@@ -120,9 +120,9 @@ def run_proposal_flow(project: str, slug: str) -> None:
                   if crit.get("verdict") == "unavailable" else
                   f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json.") if crit else "")
               + "\n\nApply the Decision rule. Then run exactly one of: "
-              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\" --detail \"…\"` "
-              "(card for Burak — decision 46: the question is the dilemma in ≤ 2 plain sentences, options ≤ 8 words each with the recommended "
-              "first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
+              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\" --context \"…\" --detail \"…\"` "
+              "(card for Burak — decision 46: --context is the situation in ≤ 2 plain sentences (what is wrong, what the proposal does), --question is "
+              "the one question in plain words, options ≤ 8 words each with the recommended first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")

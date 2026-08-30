@@ -32,10 +32,12 @@ class TestCardContract(unittest.TestCase):
     def test_plain_card_is_accepted_with_detail(self):
         slug = self._task("plain-card")
         t = T.propose("altitude", slug, "# proposal", None, question="Altitude cannot see how much of the window is left. When no fresh reading can be had, stop or carry on?",
-                      options=["Stop dispatching until a reading returns (recommended)", "Carry on and raise an alarm", "Park"], detail=JARGON)
+                      options=["Stop dispatching until a reading returns (recommended)", "Carry on and raise an alarm", "Park"], detail=JARGON,
+                      context="Altitude only learns the window usage from interactive sessions, so it flies blind. The proposal adds a headless reader.")
         self.assertEqual(t["state"], "proposed")
         card = next(d for d in T.decisions("altitude") if d["slug"] == slug)
         self.assertEqual(card["detail"], JARGON)
+        self.assertTrue(card["context"].startswith("Altitude only learns"))
         self.assertLessEqual(len(card["question"]), T.CARD_QUESTION_MAX)
 
     def test_jargon_or_length_is_rejected_with_the_fix(self):
@@ -47,6 +49,8 @@ class TestCardContract(unittest.TestCase):
         self.assertEqual(S.load_task("altitude", slug)["state"], "requested", "a rejected card changes nothing")
         with self.assertRaises(T.TransitionError):
             T.propose("altitude", slug, "# p", None, question="Should we change server.py now?", options=["Yes", "No"])
+        with self.assertRaises(T.TransitionError):
+            T.propose("altitude", slug, "# p", None, question="Stop or carry on?", options=["Stop", "Go"], context="x " * 200)
 
     def test_blocked_card_is_one_sentence_with_the_reason_behind_it(self):
         slug = self._task("blocked-card")

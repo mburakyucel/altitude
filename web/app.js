@@ -44,13 +44,13 @@ function decisionCard(i) {
   state.cards[i.project + "/" + i.slug] = i;
   const opts = (i.options || []).map((o, n) => `<button class="btn ${n===0?'primary':''}" onclick="decide('${i.project}','${i.slug}',${n})">${esc(o)}</button>`).join("");
   return `<div class="card ${i.kind}"><div class="row"><span class="pill ${i.class}">${i.class}</span><b class="grow">${esc(i.title)}</b><span class="muted small">${esc(i.project)} · ${age(i.asked)}</span></div>
-    <div style="margin:6px 0">${linkify(esc(i.question), i.project)}</div><div class="options">${opts}</div>
+    ${i.context?`<div class="muted" style="margin:6px 0">${linkify(esc(i.context), i.project)}</div>`:""}<div style="margin:6px 0"><b>${linkify(esc(i.question), i.project)}</b></div><div class="options">${opts}</div>
     <div class="row" style="margin-top:6px"><input id="note-${i.slug}" placeholder="note (optional, goes with your choice)">${i.detail?`<button class="btn small" onclick="openDetail('${i.project}','${i.slug}')">why</button>`:""}<button class="btn small" onclick="openTask('${i.project}','${i.slug}')">files</button></div></div>`;
 }
 function openDetail(project, slug) {
   const i = state.cards[project + "/" + slug]; if (!i) return;
   openModal(`<div class="row"><span class="pill ${i.class}">${i.class}</span><b class="grow">${esc(i.title)}</b><button class="btn small" onclick="closeModal()">close</button></div>
-    <div style="margin:6px 0">${linkify(esc(i.question), project)}</div><ol>${(i.options||[]).map(o=>`<li>${esc(o)}</li>`).join("")}</ol>
+    ${i.context?`<div class="muted" style="margin:6px 0">${linkify(esc(i.context), project)}</div>`:""}<div style="margin:6px 0"><b>${linkify(esc(i.question), project)}</b></div><ol>${(i.options||[]).map(o=>`<li>${esc(o)}</li>`).join("")}</ol>
     <h3>Reasoning</h3><div class="detail">${linkify(esc(i.detail), project)}</div>
     <div class="row" style="margin-top:8px"><button class="btn small" onclick="openTask('${project}','${slug}')">task files</button></div>`);
 }

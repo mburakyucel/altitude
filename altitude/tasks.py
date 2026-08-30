@@ -7,14 +7,19 @@ import re
 from . import config, state as S
 
 # ---- decision 46: the card is executive — the dilemma in ≤ 2 plain sentences, options ≤ 8 words, the rest in detail ----
+CARD_CONTEXT_MAX = 320
 CARD_QUESTION_MAX = 280
 CARD_OPTION_MAX = 80
 CARD_JARGON = re.compile(r"\bI-\d{3}\b|\bR-\d{3}\b|\bdecisions?[- ]?#?\d+\b|\b[\w/.-]+\.(?:py|js|md|json|ts|yaml|yml|toml)\b|`", re.I)
 
 
-def check_card(question: str, options: list[str] | None) -> list[str]:
+def check_card(question: str, options: list[str] | None, context: str | None = None) -> list[str]:
     """What is wrong with a card, in the L3's terms (empty list = fine). Burak reads it on a phone with no ledger in his head."""
     probs = []
+    if context and len(context) > CARD_CONTEXT_MAX:
+        probs.append(f"context is {len(context)} chars (max {CARD_CONTEXT_MAX}): the situation in ≤ 2 plain sentences — what is wrong and what the proposal does about it")
+    if context and CARD_JARGON.search(context):
+        probs.append("context names an incident/decision/rule id, a file or code: plain words only; ids and files go in --detail")
     if len(question) > CARD_QUESTION_MAX:
         probs.append(f"question is {len(question)} chars (max {CARD_QUESTION_MAX}): the dilemma in ≤ 2 plain sentences; the rest goes in --detail")
     if CARD_JARGON.search(question):
@@ -99,10 +104,11 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
 
 
 def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = None,
-            question: str | None = None, options: list[str] | None = None, actor: str = "l3", detail: str | None = None) -> dict:
-    """Attach a proposal. If it needs Burak, `question`/`options` create the Decision card; `detail` carries the reasoning."""
+            question: str | None = None, options: list[str] | None = None, actor: str = "l3", detail: str | None = None,
+            context: str | None = None) -> dict:
+    """Attach a proposal. If it needs Burak, `context`/`question`/`options` create the Decision card; `detail` carries the reasoning."""
     if question:
-        probs = check_card(question, options)
+        probs = check_card(question, options, context)
         if probs:
             raise TransitionError("card rejected (decision 46 — the card is executive): " + "; ".join(probs))
     with S.project_lock(project):
@@ -119,7 +125,7 @@ def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = N
                 task["envelope"].update({k: v for k, v in env.items() if k in task["envelope"] and v is not None})
         if question:
             task["decision"] = {"question": question, "options": options or ["Approve", "Revise", "Park"],
-                                "asked": S.now(), "chosen": None, "detail": detail}
+                                "asked": S.now(), "chosen": None, "detail": detail, "context": context}
         else:
             task["decision"] = None
         return _move(project, task, "proposed", actor, needs_decision=bool(question))
@@ -286,7 +292,8 @@ def decisions(project: str) -> list[dict]:
         if t["state"] == "proposed" and t.get("decision") and not t["decision"].get("chosen"):
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
                         "question": t["decision"]["question"], "options": t["decision"]["options"],
-                        "asked": t["decision"].get("asked"), "kind": "decision", "detail": t["decision"].get("detail")})
+                        "asked": t["decision"].get("asked"), "kind": "decision", "detail": t["decision"].get("detail"),
+                        "context": t["decision"].get("context")})
         elif t["state"] == "blocked" and not t.get("resume_after"):  # held by Altitude (decision 44) is not a decision
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
                         "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
