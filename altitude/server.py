@@ -633,6 +633,7 @@ def tls_init(ip: str | None = None) -> dict:
         "-out", "server.crt", "-extfile", str(ext))
     (d / "server.csr").unlink(missing_ok=True); ext.unlink(missing_ok=True)
     for f in ("ca.key", "server.key"):
+    (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)  # this process now runs current main
         (d / f).chmod(0o600)
     end = subprocess.run(["openssl", "x509", "-enddate", "-noout", "-in", str(d / "server.crt")], capture_output=True, text=True).stdout.strip()
     return {"dir": str(d), "ip": ip, "server_cert": end, "phone": f"open http://{ip}:{config.PORT}/ca.crt once (with ALTITUDE_TLS=0) or install ca.crt by other means, then trust it in the phone's certificate settings"}

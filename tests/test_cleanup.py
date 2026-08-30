@@ -53,5 +53,27 @@ class TestCleanupScope(unittest.TestCase):
         self.assertTrue(any("skipped worktree cleanup" in n for n in notes), notes)
 
 
+class TestSelfDeploy(unittest.TestCase):
+    def test_pull_after_done_fast_forwards_and_flags_code_changes(self):
+        repo = TestCleanupScope.repo
+        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "stacks": ["python"], "self_deploy": True}})
+        other = Path(_TMP) / "other"; git("clone", "-q", "-b", "main", str(Path(_TMP) / "origin.git"), str(other), cwd=_TMP)
+        (other / "altitude").mkdir(exist_ok=True); (other / "altitude" / "x.py").write_text("# new\n")
+        (other / "hooks").mkdir(exist_ok=True); (other / "hooks" / "h.py").write_text("# hook\n")
+        git("add", "-A", cwd=other); git("commit", "-qm", "code + hook", cwd=other); git("push", "-q", "origin", "main", cwd=other)
+        S.task_dir("altitude", "landed").mkdir(parents=True, exist_ok=True)
+        S.save_task("altitude", {"slug": "landed", "title": "landed", "class": "S", "state": "done", "created": S.now(), "updated": S.now()})
+        notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
+        self.assertTrue((repo / "hooks" / "h.py").exists(), notes)          # hooks deploy by the pull itself
+        pend = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {})
+        self.assertEqual(pend.get("files"), ["altitude/x.py"], notes)       # python needs a restart: flagged, not done
+        self.assertTrue(any("restart pending" in n for n in notes), notes)
+        self.assertEqual(dispatch.pull_after_done("altitude", {"slug": "landed"}), [])  # nothing new → silent
+
+    def test_not_self_deploy_projects_are_untouched(self):
+        config.save_projects({"other": {"name": "other", "path": str(Path(_TMP) / "nowhere"), "stacks": []}})
+        self.assertEqual(dispatch.pull_after_done("other", {"slug": "x"}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

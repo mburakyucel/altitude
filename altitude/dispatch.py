@@ -277,6 +277,50 @@ def _seconds_since(iso: str) -> float:
         return 0.0
 
 
+RESTART_PENDING = "restart-pending.json"
+DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded at start; everything else is read per use
+
+
+def pull_after_done(project: str, task: dict) -> list[str]:
+    """Self-deploy (decision 43): when a project's checkout *is* the deployment — Altitude's own repo — fast-forward it to
+    origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
+    changes need a restart: those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here."""
+    import subprocess
+    proj = config.project(project)
+    if not proj.get("self_deploy", project == "altitude"):
+        return []
+    repo = config.project_path(project)
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        if br != "main":
+            return [f"self-deploy skipped: checkout on {br!r}, not main"]
+        pull = subprocess.run(["git", "pull", "-q", "--ff-only", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        if pull.returncode != 0:
+            T.fyi(project, task.get("slug"), f"self-deploy: `git pull --ff-only` failed in {repo}: {(pull.stderr or pull.stdout).strip()[:200]}")
+            return [f"self-deploy: pull failed: {(pull.stderr or pull.stdout).strip()[:120]}"]
+        new = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
+        if new == head:
+            return []
+        files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
+    except (subprocess.SubprocessError, OSError) as e:
+        from . import improve
+        improve.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        return [f"self-deploy: git error: {e}"]
+    code = [f for f in files if f.startswith(DEPLOY_DIRS)]
+    notes = [f"self-deploy: main {head[:7]} → {new[:7]} ({len(files)} files)"]
+    if code:
+        pend_p = config.MONITOR_DIR / RESTART_PENDING
+        pend = S.read_json(pend_p, {}) or {}
+        pend = {"since": pend.get("since") or S.now(), "head": new, "files": sorted(set(pend.get("files", [])) | set(code))}
+        S.write_json(pend_p, pend)
+        T.fyi(project, task.get("slug"), f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
+                                        f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
+                                        f"`systemctl --user restart altitude` when convenient; L2 workers survive it (decision 42).")
+        notes.append(f"restart pending ({len(code)} code files)")
+    return notes
+
+
 def cleanup_after_done(project: str, task: dict) -> list[str]:
     """After `done`: drop the L2 background session and the merged worktrees nobody owns any more.
 
@@ -327,4 +371,5 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     else:
                         notes.append(f"could not remove {Path(wt).name}: {(rm.stderr or rm.stdout).strip()[:120]}")
             wt, branch, locked = None, None, False
+    notes += pull_after_done(project, task)
     return notes
