@@ -82,3 +82,12 @@
 - effect:
 - status: probation
 - text: This repository's test gate is python3 -m unittest discover tests (the Makefile's make test); pytest is not installed on this host. Every L2 roadmap and every L1 sub-brief names that command verbatim, and a sub-brief that names any other test runner is corrected before launch, not after a failed run.
+
+## R-016 — A fix round on an open PR runs the L1 in the task worktree with --cwd
+- scope: project
+- where: personas/l2.md (the L1 launch paragraph and the fix-round step) and templates/brief.md (the review and fix sentence)
+- origin: I-070 (altitude)
+- prevents: a fix-round launch spent on an L1 that cannot reach the PR branch, followed by the L2 patching the PR itself with no re-review
+- effect: one sentence in the L2 persona and one in the brief template
+- status: probation
+- text: alt l1 run cuts a fresh worktree from origin/main, so a sub-brief that asks an L1 to push to an existing PR branch cannot be satisfied and the launch is lost. A fix round on an open PR is launched as alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>: with --cwd the launcher skips worktree and branch creation and the L1 amends the PR in place. The fix brief names the PR number and the findings to address, and the L2 checks the amended PR with git diff --stat origin/main <head> before merging.
