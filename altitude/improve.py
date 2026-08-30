@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import re
+import sys
 from pathlib import Path
 
 from . import config, rules, state as S, tasks as T
@@ -9,8 +10,16 @@ from . import config, rules, state as S, tasks as T
 MECHANISMS = ("rule", "instruction", "skill", "incident-only")
 SCOPES = ("project", "stack", "global")
 STATUSES = ("open", "watch", "closed")
+# Every bullet templates/incident.md writes, in order. A value may run over many lines (ARCHITECTURE §8 shows
+# multi-line `what happened`/`evidence`), so a field ends only at the NEXT one of these labels, at the amendment
+# history, or at EOF — never at a stray `- ` line or a blank line inside the value.
+INCIDENT_LABELS = ("date", "task", "project", "what happened", "evidence", "root cause",
+                   "generalizable", "mechanism", "scope", "rule", "status")
 # Fields `alt incident amend` may rewrite, in template order → the bullet label each one owns in incident.md.
 AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cause", "status": "status"}
+# ...and the incidents.jsonl column each one feeds, so a correction reaches `alt incident list` / the weekly audit.
+INDEXED = {"cause": "cause"}
+_BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS) + r"): |(amended): )", re.M)
 
 
 def _index_append(row: dict) -> None:
@@ -94,52 +103,114 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     return {"id": iid, "path": str(d / f"{iid}.md"), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
 
 
-def _field_re(label: str):
-    """The template writes one `- <label>: <value>` bullet per field; a value may wrap over several lines,
-    so a field runs up to the next bullet, the blank line before the amendment history, or the end of file."""
-    return re.compile(rf"^- {re.escape(label)}: (.*?)(?=\n- |\n\n|\n*\Z)", re.S | re.M)
+def _field_spans(body: str, incident: str) -> dict[str, tuple[int, int]]:
+    """Where each bullet's value starts and ends. A value runs to the next known label, to the amendment
+    history, or to EOF, so multi-line values (and the `- ` lines inside them) survive a rewrite intact."""
+    marks = list(_BULLET.finditer(body))
+    spans: dict[str, tuple[int, int]] = {}
+    for i, m in enumerate(marks):
+        if m.group(2):            # `amended:` — everything below is the record of past corrections, not a field
+            break
+        label = m.group(1)
+        if label in spans:
+            raise ValueError(f"{incident} has two `- {label}:` bullets, so its fields cannot be told apart; "
+                             "amending it would corrupt one of them — fix the file by hand first")
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+        spans[label] = (m.end(), len(body[:end].rstrip("\n")))
+    return spans
 
 
-def _incident_task(body: str) -> str | None:
-    m = re.search(r"^- task: (.*)$", body, re.M)
-    task = m.group(1).strip() if m else ""
+def _breaks_parse(value: str) -> str | None:
+    """A new value that carries its own `- <label>:` or `amended:` line would read as a different field the next
+    time the file is parsed. Refuse it rather than write something we could not round-trip."""
+    m = _BULLET.search(value, 1)
+    return m.group(0).strip() if m else None
+
+
+def _incident_task(body: str, spans: dict[str, tuple[int, int]]) -> str | None:
+    s, e = spans.get("task", (0, 0))
+    task = body[s:e].strip()
     return task if task and task != "-" else None
+
+
+def _index_correct(path: Path, project: str, incident: str, updates: dict) -> bool:
+    """Rewrite one incident's existing index row. Never appends: `next_incident_id` counts rows, so an extra
+    row would burn an incident id — and the audit would then read the old cause beside the new one."""
+    if not updates or not path.exists():
+        return False
+    lines, hit = [], False
+    for line in path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            lines.append(line)
+            continue
+        if row.get("project") == project and row.get("id") == incident:
+            row.update(updates)
+            line, hit = json.dumps(row, sort_keys=True), True
+        lines.append(line)
+    if hit:
+        S.atomic_write(path, "\n".join(lines) + "\n")
+    return hit
 
 
 def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3", **fields) -> dict:
     """Correct a filed incident in place: rewrite only the named fields, keep the replaced text beneath a dated
     `amended:` line. Nothing is ever deleted — an incident is the provenance of a rule (decision 14), so a
-    correction that lost the original would break the audit trail it exists for."""
+    correction that lost the original would break the audit trail it exists for. Corrections stack at the
+    bottom of the file, oldest first:
+
+        amended: 2026-08-30 by burak: root cause was wrong; corrected in chat
+        - was root cause: the envelope had no slack
+
+    Everything is validated before the file is touched — a refusal writes nothing, anywhere."""
     reason = (reason or "").strip()
     if not reason:
         raise ValueError("an amendment needs a --reason; an unexplained correction is not auditable")
     unknown = sorted(set(fields) - set(AMENDABLE))
     if unknown:
         raise ValueError(f"unknown field(s) {', '.join(unknown)}; amendable fields are {', '.join(AMENDABLE)}")
-    fields = {k: v for k, v in fields.items() if v is not None}
+    fields = {k: str(v).strip() for k, v in fields.items() if v is not None}
     if not fields:
         raise ValueError(f"nothing to amend: give at least one of {', '.join('--' + k for k in AMENDABLE)}")
+    for key, value in fields.items():
+        if not value:
+            raise ValueError(f"--{key} is empty; an amendment replaces a field, it cannot blank one")
+        bad = _breaks_parse(value)
+        if bad:
+            raise ValueError(f"--{key} has a line starting `{bad}`, which would read as another field next time; rephrase it")
     if "status" in fields and fields["status"] not in STATUSES:
         raise ValueError(f"status in {STATUSES}")
     path = config.project_dir(project) / "incidents" / f"{incident}.md"
     if not path.exists():
         raise ValueError(f"unknown incident {incident!r} in project {project!r} (no {path})")
     body = path.read_text()
-    was = []
-    for key, label in AMENDABLE.items():   # template order, so the history reads like the file
-        if key not in fields:
-            continue
-        m = _field_re(label).search(body)
-        if not m:
-            raise ValueError(f"{incident} has no `- {label}:` line to amend")
-        was.append(f"- was {label}: {m.group(1)}")
-        body = body[:m.start(1)] + fields[key].strip() + body[m.end(1):]
+    spans = _field_spans(body, incident)
+    absent = [AMENDABLE[k] for k in AMENDABLE if k in fields and AMENDABLE[k] not in spans]
+    if absent:
+        raise ValueError(f"{incident} has no `- {absent[0]}:` line to amend")
+    named = _incident_task(body, spans)
+    # Decided before the write, so the event can never fail after the file has changed — and so a task name that
+    # has no folder is reported rather than conjured into one by append_event's mkdir.
+    task = named if named and S.task_dir(project, named).is_dir() else None
+    edits = sorted(((spans[AMENDABLE[k]], k) for k in fields), key=lambda e: e[0])
+    was = [f"- was {AMENDABLE[k]}: {body[s:e]}" for (s, e), k in edits]      # file order, so it reads like the file
+    for (s, e), key in reversed(edits):                                      # right to left: earlier spans keep their offsets
+        body = body[:s] + fields[key] + body[e:]
     body = body.rstrip("\n") + f"\n\namended: {S.now()[:10]} by {actor}: {reason}\n" + "\n".join(was) + "\n"
     S.atomic_write(path, body)
-    task = _incident_task(body)
+    row = {INDEXED[k]: fields[k][:200] for k in fields if k in INDEXED}
+    _index_correct(config.project_dir(project) / "incidents.jsonl", project, incident, row)
+    _index_correct(config.INCIDENT_INDEX, project, incident, row)
     if task:
         S.append_event(project, task, "incident-amended", id=incident, fields=sorted(fields), reason=reason, by=actor)
-    return {"id": incident, "path": str(path), "amended": sorted(fields), "task": task, "by": actor}
+    elif named:
+        print(f"alt: {incident} names task {named!r}, which has no folder — amended the incident, wrote no event",
+              file=sys.stderr)
+    S.project_log(project, "incident-amended", id=incident, fields=sorted(fields), reason=reason, by=actor)
+    S.regen_state_md(project)
+    return {"id": incident, "path": str(path), "amended": sorted(fields), "task": task, "names_task": named,
+            "by": actor}
 
 
 def matches_elsewhere(project: str, tags: list[str]) -> list[dict]:
