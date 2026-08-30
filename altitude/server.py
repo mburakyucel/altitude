@@ -72,18 +72,22 @@ def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
     return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
 
 
-def _turn_started_at(project: str, header: str, fallback: str) -> str:
-    """When our proposal-ready turn actually began (incident I-008).
+def _turn_started_at(project: str, header: str) -> str | None:
+    """When our proposal-ready turn actually began (incident I-008), or None if we cannot tell.
 
     `l3.turn` serializes on a per-project lock and logs the prompt verbatim *inside* it, right
     before the engine runs — so the chat entry's `at` is the moment the L3 started on our turn,
     not the moment we queued behind another one. Using the queue time instead would read a park
     the L3 made for Burak during that earlier turn as an in-turn park, and override it.
+
+    The entry always exists once `l3.turn` has returned, so None is unreachable in a healthy
+    system — which is the point. It fails closed: without a trustworthy start the guard leaves
+    the park standing rather than risk overriding one (decision 36 — no silent fallback).
     """
     for ev in reversed(l3.chat_history(project, limit=200)):
         if ev.get("role") == "user" and ev.get("text") == header:
-            return ev.get("at") or fallback
-    return fallback
+            return ev.get("at") or None
+    return None
 
 
 def run_proposal_flow(project: str, slug: str) -> None:
@@ -128,18 +132,20 @@ def run_proposal_flow(project: str, slug: str) -> None:
     if t1["state"] != "requested":
         with S.project_lock(project):
             t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
-        log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
         if t1["state"] != "proposed":
+            log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
             return
+        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
         t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
     else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
-        queued_at = S.now()
         res = l3.turn(project, header, trigger="proposal-ready")
-        turn_start = _turn_started_at(project, header, queued_at)
+        turn_start = _turn_started_at(project, header)
+        if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
+            log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
         t2 = S.load_task(project, slug)
         # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
         # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
-        if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise"
+        if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise" and turn_start is not None
                 and _l3_parked_during_turn(project, slug, turn_start)):
             n = int(t2.get("revisions", 0))
             if n < 2:

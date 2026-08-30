@@ -4,6 +4,7 @@ The branches of server.run_proposal_flow, with the proposal/critic/L3 agents stu
   * Burak parks during the L3 turn   -> the park stands (no revision, no -vN history);
   * the L3 parks during the turn      -> the revision is queued as before;
   * the L3 parked in an *earlier* turn while we queued on l3.lock -> the park stands;
+  * the turn cannot be dated at all  -> the park stands (the guard fails closed, decision 36);
   * the task left `requested` before the turn -> the turn is skipped and proposal_started cleared;
   * it left `requested` by becoming `proposed` -> skipped, but still auto-approved as FYI-only.
 """
@@ -74,6 +75,7 @@ class TestProposalFlowPark(unittest.TestCase):
         """Stub for l3.turn: the L3 (or Burak, racing it) parks the task while the turn runs."""
         def turn(project, prompt, **kw):
             calls.append(prompt)
+            self._chat_entry(project, prompt, offset=-1)  # logged inside the lock, before the engine runs
             T.park(project, slug, f"parked by {actor}", actor=actor)
             return {"ok": True}
         return turn
@@ -161,6 +163,32 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertEqual([q.name for q in sorted(d.glob("*-v*"))], [])
         last = self._state_events(slug)[-1]
         self.assertEqual((last["to"], last["by"]), ("parked", "l3"), "altd must not have unparked it")
+
+    def test_an_undatable_turn_leaves_the_park_standing(self):
+        """The guard fails closed (decision 36): if the chat entry l3.turn writes inside the lock is
+        missing, we cannot tell when the turn began, so even an L3 park made during it must stand —
+        the permissive reading is exactly the I-008 override. Unreachable in a healthy system."""
+        slug = self._task("the chat entry is missing")
+        calls: list = []
+
+        def turn(project, prompt, **kw):
+            calls.append(prompt)
+            T.park(project, slug, "revise: the estimate is wrong", actor="l3")  # in-turn, but undatable
+            return {"ok": True}
+        l3.turn = turn
+
+        server.run_proposal_flow(PROJECT, slug)
+
+        self.assertEqual(len(calls), 1)
+        t = S.load_task(PROJECT, slug)
+        self.assertEqual(t["state"], "parked", "an undatable turn must not override the park")
+        self.assertFalse(t.get("revisions"), "no revision may be queued off a turn we cannot date")
+        d = S.task_dir(PROJECT, slug)
+        self.assertEqual([q.name for q in sorted(d.glob("*-v*"))], [], "no -vN history either")
+        last = self._state_events(slug)[-1]
+        self.assertEqual((last["to"], last["by"]), ("parked", "l3"), "altd must not have unparked it")
+        self.assertIsNone(server._turn_started_at(PROJECT, "a prompt that was never logged"),
+                          "an unresolved start is None, never a permissive stand-in")
 
     def test_fyi_only_proposal_made_during_the_flow_is_still_auto_approved(self):
         """Finding 2: the L3 proposes the task (no question) in a chat turn while our proposal agent
