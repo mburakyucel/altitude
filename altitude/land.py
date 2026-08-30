@@ -113,7 +113,8 @@ def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     fetched = _git(root, "fetch", "-q", "origin", f"+refs/heads/{branch}:{ref}")
     if fetched.returncode != 0:
         err = ((fetched.stderr or "") + (fetched.stdout or "")).strip()
-        if any(s in err.lower() for s in ("couldn't find remote ref", "could not find remote ref")):
+        absent = _git(root, "ls-remote", "--exit-code", "--heads", "origin", branch)
+        if absent.returncode == 2:
             return None
         raise LandError(f"git fetch origin {branch}: {err[-300:] or f'exit {fetched.returncode}'}")
     tip = _git(root, "rev-parse", "--verify", "-q", ref)
@@ -122,17 +123,33 @@ def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     return tip.stdout.strip()
 
 
-def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None) -> None:
+def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None) -> list[str]:
     """Push once normally; retry a non-fast-forward once against the pre-commit remote-tip lease."""
     p = _git(root, "push", "-u", "origin", branch, timeout=300)
     if p.returncode == 0:
-        return
+        return []
     err = (p.stderr or "") + (p.stdout or "")
     if not any(s in err for s in ("non-fast-forward", "fetch first", "[rejected]")):
         raise LandError(f"git push: {err.strip()[-300:]}")
     if recorded_tip is None:
         raise LandError(f"push rejected, but origin/{branch} had no tip when alt land began — refusing to force "
                         "without a recorded lease; fetch the branch, inspect it, and re-run alt land")
+    # A rebase adds commits outside the recorded tip's history; a zero count means force can only rewind it.
+    local_additions = _need(
+        _git(root, "rev-list", "--count", "HEAD", f"^{recorded_tip}"),
+        f"cannot determine whether force would only rewind origin/{branch}",
+    )
+    if local_additions == "0":
+        try:
+            current_tip = _fetch_remote_tip(root, branch)
+            current = current_tip or "(no remote branch)"
+        except LandError as exc:
+            current = f"(unavailable: {exc})"
+        raise LandError(
+            f"force-with-lease push refused — recorded remote tip: {recorded_tip}; current remote tip: "
+            f"{current}. Run `git fetch origin {branch}`, look at the foreign commits, rebase by hand, then "
+            "re-run `alt land`. Local HEAD adds no commits outside the recorded remote history"
+        )
     try:
         missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
     except git_policy.GitPolicyError as exc:
@@ -147,8 +164,9 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
         _git(root, "rev-list", "--oneline", "--max-count=10", recorded_tip, "^HEAD"),
         f"cannot audit commits replaced on origin/{branch}",
     )
+    replaced = audit.splitlines()
     _note(f"push rejected (non-fast-forward) — retrying once with a lease on {recorded_tip}; "
-          f"recorded remote-only commits (up to 10): {audit.replace(chr(10), ' | ') or '(none)'}")
+          f"recorded remote-only commits (up to 10): {' | '.join(replaced) or '(none)'}")
     lease = f"--force-with-lease={branch}:{recorded_tip}"
     p2 = _git(root, "push", "-u", lease, "origin", branch, timeout=300)
     if p2.returncode != 0:
@@ -163,6 +181,7 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
             f"{current}. Run `git fetch origin {branch}`, look at the foreign commits, rebase by hand, then "
             f"re-run `alt land`. Push error: {push_err or f'exit {p2.returncode}'}"
         )
+    return replaced
 
 
 def _pr_view(root: Path, branch: str) -> dict | None:
@@ -366,7 +385,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "head": None, "lease": lease_repr, "staged": changed, "hold": hold_merge,
-                "dry_run": True}
+                "replaced": [], "dry_run": True}
     pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
         if groups:
@@ -382,7 +401,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         # never reported as a pass (decision 36).
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
-                "lease": lease_repr, "staged": [], "hold": hold_merge}
+                "lease": lease_repr, "staged": [], "hold": hold_merge, "replaced": []}
     if pr is not None and pr.get("state") == "CLOSED":
         raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
                         f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
@@ -403,7 +422,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note(f"committed {commit[:7]} ({len(staged)} path(s))")
         else:
             _note("staged changes match HEAD — nothing to commit")
-    _push(root, branch, base, task_ref, recorded_tip)
+    replaced = _push(root, branch, base, task_ref, recorded_tip)
     pushed_head = _need(_git(root, "rev-parse", f"origin/{branch}"), "cannot capture the pushed PR head")
     _note(f"pushed head {pushed_head}")
     pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
@@ -421,4 +440,4 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease_repr, "staged": staged,
-            "hold": hold_merge}
+            "hold": hold_merge, "replaced": replaced}

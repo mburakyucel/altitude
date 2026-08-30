@@ -121,6 +121,13 @@ class TestLand(unittest.TestCase):
         with self.assertRaisesRegex(land.LandError, "main"):
             land.land("msg", cwd=self.repo)
 
+    def test_rebase_in_progress_refuses(self):
+        self.leased_change()
+        (self.repo / ".git" / "rebase-merge").mkdir()
+        with self.assertRaisesRegex(land.LandError, "rebase is in progress"):
+            land.land("msg", cwd=self.repo)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
     def test_refuses_outside_lease_and_stages_nothing(self):
         self.leased_change()
         (self.repo / "rogue.txt").write_text("outside\n")
@@ -156,6 +163,7 @@ class TestLand(unittest.TestCase):
         self.assertEqual(res["branch"], "worktree-fix-x")
         self.assertEqual(res["lease"], ["src", "docs/NOTES.md"])
         self.assertEqual(res["staged"], ["docs/NOTES.md", "src/a[1].py", "src/has space.py"])
+        self.assertEqual(res["replaced"], [])
         self.assertIn("src/a[1].py", self.git("show", "--name-only", "--format=", "HEAD"))
         self.assertEqual(
             self.git("log", "-1", "--format=%B").strip(),
@@ -206,6 +214,8 @@ class TestLand(unittest.TestCase):
         self.assertIn(f"--force-with-lease=worktree-fix-x:{recorded_tip}", pushes[1])
         self.assertEqual(res["head"], self.git("rev-parse", "HEAD").strip())
         self.assertEqual(res["pr"], 101)
+        self.assertEqual(len(res["replaced"]), 1)
+        self.assertIn(recorded_tip[:7], res["replaced"][0])
 
     def test_refused_lease_reports_recorded_and_current_tips(self):
         self.leased_change()
@@ -263,13 +273,18 @@ class TestLand(unittest.TestCase):
                                            "+refs/heads/worktree-fix-x:refs/remotes/origin/worktree-fix-x"]])
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
 
-    def test_first_push_without_remote_tip_uses_plain_push(self):
+    def test_first_push_without_remote_tip_uses_plain_push_with_localized_fetch_error(self):
         self.leased_change()
         commands = []
         real = land._run
 
         def fake(args, cwd, timeout=120):
             commands.append(args)
+            if args == ["git", "fetch", "-q", "origin",
+                        "+refs/heads/worktree-fix-x:refs/remotes/origin/worktree-fix-x"]:
+                return subprocess.CompletedProcess(args, 128, "", "fatal: référence distante introuvable")
+            if args == ["git", "ls-remote", "--exit-code", "--heads", "origin", "worktree-fix-x"]:
+                return subprocess.CompletedProcess(args, 2, "", "")
             return real(args, cwd, timeout=timeout)
 
         land._run = fake
@@ -277,7 +292,9 @@ class TestLand(unittest.TestCase):
         res = land.land("fix: first push", cwd=self.repo, wait=0)
         self.assertEqual([a for a in commands if a[:2] == ["git", "push"]],
                          [["git", "push", "-u", "origin", "worktree-fix-x"]])
+        self.assertIn(["git", "ls-remote", "--exit-code", "--heads", "origin", "worktree-fix-x"], commands)
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
+        self.assertEqual(res["replaced"], [])
 
     def test_result_head_comes_from_remote_tracking_branch(self):
         self.leased_change()
@@ -469,6 +486,53 @@ class TestLand(unittest.TestCase):
         again = land.land("fix: conflict again", cwd=self.repo, wait=0)
         self.assertEqual(again["head"], res["head"])
         self.assertEqual(self.git("log", "--all", "-S", "<<<<<<<", "--oneline").strip(), "")
+
+    def test_strictly_behind_branch_is_not_force_rewound(self):
+        self.leased_change("src/f.py")
+        self.git("add", "src/f.py")
+        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        self.git("push", "-q", "-u", "origin", "worktree-fix-x")
+        local_tip = self.git("rev-parse", "HEAD").strip()
+        other = self.tmp / "other-behind"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True, capture_output=True)
+
+        def og(*args):
+            p = subprocess.run(["git", "-C", str(other), *args], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, f"other git {' '.join(args)}: {p.stderr or p.stdout}")
+
+        og("config", "user.email", "o@o")
+        og("config", "user.name", "o")
+        og("config", "commit.gpgsign", "false")
+        og("checkout", "-q", "worktree-fix-x")
+        (other / "src" / "remote.py").write_text("foreign\n")
+        og("add", "src/remote.py")
+        og("commit", "-q", "-m", "foreign", "-m", "Altitude-Task: demo/fix-x")
+        og("push", "-q")
+        foreign_tip = subprocess.run(
+            ["git", "-C", str(self.remote), "rev-parse", "worktree-fix-x"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        commands = []
+        real = land._run
+
+        def record(args, cwd, timeout=120):
+            commands.append(args)
+            return real(args, cwd, timeout=timeout)
+
+        land._run = record
+        self.addCleanup(setattr, land, "_run", real)
+        with self.assertRaises(land.LandError) as cm:
+            land.land("fix: must not rewind", cwd=self.repo, wait=0)
+        message = str(cm.exception)
+        self.assertIn(f"recorded remote tip: {foreign_tip}", message)
+        self.assertIn(f"current remote tip: {foreign_tip}", message)
+        self.assertIn("rebase by hand", message)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), local_tip)
+        self.assertEqual(subprocess.run(
+            ["git", "-C", str(self.remote), "rev-parse", "worktree-fix-x"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip(), foreign_tip)
 
     def test_resolved_task_with_empty_lease_fails_loudly(self):
         d = S.tasks_dir("demo") / "fix-x"
