@@ -126,6 +126,7 @@ class TestLand(unittest.TestCase):
 
     def test_happy_path(self):
         self.leased_change("src/has space.py")
+        self.leased_change("src/a[1].py")  # a bracket-expression name must stage as a literal, not a glob
         self.leased_change("docs/NOTES.md")
         res = land.land("fix: land the thing\n\nlonger body", cwd=self.repo, wait=0)
         self.assertEqual(res["pr"], 101)
@@ -134,7 +135,8 @@ class TestLand(unittest.TestCase):
         self.assertFalse(res["merged"])
         self.assertEqual(res["branch"], "worktree-fix-x")
         self.assertEqual(res["lease"], ["src", "docs/NOTES.md"])
-        self.assertEqual(res["staged"], ["docs/NOTES.md", "src/has space.py"])
+        self.assertEqual(res["staged"], ["docs/NOTES.md", "src/a[1].py", "src/has space.py"])
+        self.assertIn("src/a[1].py", self.git("show", "--name-only", "--format=", "HEAD"))
         self.assertEqual(
             self.git("log", "-1", "--format=%B").strip(),
             "fix: land the thing\n\nlonger body\n\n"
@@ -222,6 +224,116 @@ class TestLand(unittest.TestCase):
         self.assertFalse(res["merged"])
         self.assertIsNone(res["main_run"])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def remote_heads(self):
+        p = subprocess.run(["git", "-C", str(self.remote), "branch", "--format=%(refname:short)"],
+                           capture_output=True, text=True)
+        return sorted(p.stdout.split())
+
+    def test_detached_head_refuses(self):
+        self.git("checkout", "-q", "--detach")
+        self.leased_change()
+        with self.assertRaisesRegex(land.LandError, "detached"):
+            land.land("msg", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_refuses_when_branch_equals_base(self):
+        self.git("checkout", "-q", "-b", "develop")
+        self.leased_change()
+        with self.assertRaisesRegex(land.LandError, "develop"):
+            land.land("msg", cwd=self.repo, wait=0, base="develop")
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.remote_heads(), ["main"])
+
+    def test_conflicted_rebase_leaves_a_state_the_next_run_refuses(self):
+        # a real diverging remote: same branch, same file, different content in a second clone
+        seed = self.repo / "src" / "f.py"
+        seed.parent.mkdir(parents=True, exist_ok=True)
+        seed.write_text("base\n")
+        self.git("add", "src/f.py")
+        self.git("commit", "-q", "-m", "seed")
+        self.git("push", "-q", "-u", "origin", "worktree-fix-x")
+        other = self.tmp / "other"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True, capture_output=True)
+
+        def og(*args):
+            p = subprocess.run(["git", "-C", str(other), *args], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, f"other git {' '.join(args)}: {p.stderr or p.stdout}")
+
+        og("config", "user.email", "o@o")
+        og("config", "user.name", "o")
+        og("config", "commit.gpgsign", "false")
+        og("checkout", "-q", "worktree-fix-x")
+        (other / "src" / "f.py").write_text("remote\n")
+        og("add", "src/f.py")
+        og("commit", "-q", "-m", "remote change")
+        og("push", "-q")
+        seed.write_text("local\n")
+        with self.assertRaisesRegex(land.LandError, "mid-rebase"):
+            land.land("fix: conflict", cwd=self.repo, wait=0)
+        # the worktree is now mid-rebase; the follow-up run must refuse, never commit conflict markers
+        with self.assertRaisesRegex(land.LandError, "rebase is in progress"):
+            land.land("fix: conflict again", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("log", "--all", "-S", "<<<<<<<", "--oneline").strip(), "")
+
+    def test_resolved_task_with_empty_lease_refuses(self):
+        d = S.tasks_dir("demo") / "fix-x"
+        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
+        self.leased_change()
+        (self.repo / "secrets.env").write_text("x\n")
+        with self.assertRaisesRegex(land.LandError, "lease is empty"):
+            land.land("msg", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_absolute_lease_entry_still_matches(self):
+        d = S.tasks_dir("demo") / "fix-x"
+        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": ["/src"]}))
+        self.leased_change("src/thing.py")
+        res = land.land("fix: abs", cwd=self.repo, wait=0)
+        self.assertEqual(res["staged"], ["src/thing.py"])
+
+    def test_rename_crossing_the_lease_boundary_refuses(self):
+        self.leased_change("src/keep.py")
+        self.git("add", "src/keep.py")
+        self.git("commit", "-q", "-m", "seed")
+        self.git("mv", "src/keep.py", "escaped.py")
+        with self.assertRaisesRegex(land.LandError, "escaped.py"):
+            land.land("msg", cwd=self.repo, wait=0)
+
+    def test_unknown_check_bucket_is_an_error_not_a_pass(self):
+        self.leased_change()
+        (self.ghdir / "checks.json").write_text('[{"bucket": "neutral"}]')
+        with self.assertRaisesRegex(land.LandError, "neutral"):
+            land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_rerun_after_merge_does_not_resurrect_the_branch(self):
+        self.leased_change()
+        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        # GitHub deletes the remote head branch on merge; mirror that on the bare remote
+        self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
+        res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(res["merged"])
+        self.assertEqual(res["pr"], 101)
+        self.assertIsNone(res["commit"])
+        self.assertEqual(res["staged"], [])
+        self.assertEqual(self.remote_heads(), ["main"])
+
+    def test_new_changes_after_merge_are_refused(self):
+        self.leased_change()
+        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        self.leased_change("src/late.py")
+        with self.assertRaisesRegex(land.LandError, "already merged"):
+            land.land("fix: late", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_dry_run_reports_a_distinct_checks_value(self):
+        self.leased_change()
+        res = land.land("msg", cwd=self.repo, dry_run=True)
+        self.assertEqual(res["checks"], "dry-run")
+        self.assertTrue(res["dry_run"])
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.gh_log(), [])
 
     def test_unresolved_task_stages_everything_without_the_trailer(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):

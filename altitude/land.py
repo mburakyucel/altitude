@@ -86,9 +86,12 @@ def _changes(root: Path) -> list[tuple[str, list[str]]]:
 
 
 def _inside(path: str, lease: list[str]) -> bool:
-    """A lease entry that is a directory covers everything beneath it (decision 39 semantics)."""
-    p = dispatch._norm(path)
-    return any(p == l or p.startswith(l + "/") for l in map(dispatch._norm, lease))
+    """A lease entry that is a directory covers everything beneath it (decision 39 semantics). Entries are
+    repo-root-relative; a malformed absolute entry like `/src` is read as `src` rather than matching nothing."""
+    def norm(x: str) -> str:
+        return dispatch._norm(x).lstrip("/")
+    p = norm(path)
+    return any(p == l or p.startswith(l + "/") for l in map(norm, lease))
 
 
 def _push(root: Path, branch: str) -> None:
@@ -102,7 +105,9 @@ def _push(root: Path, branch: str) -> None:
     _note("push rejected (non-fast-forward) — one `git pull --rebase`, one re-push")
     r = _git(root, "pull", "--rebase", "origin", branch, timeout=300)
     if r.returncode != 0:
-        raise LandError(f"git pull --rebase: {((r.stderr or '') + (r.stdout or '')).strip()[-300:]}")
+        raise LandError("git pull --rebase failed — if it stopped on conflicts the worktree is now mid-rebase: "
+                        "resolve and `git rebase --continue`, or `git rebase --abort`, then re-run alt land: "
+                        f"{((r.stderr or '') + (r.stdout or '')).strip()[-300:]}")
     p2 = _git(root, "push", "-u", "origin", branch, timeout=300)
     if p2.returncode != 0:
         raise LandError(f"push failed again after one rebase — stopping, not retrying: "
@@ -128,10 +133,12 @@ def _pr_files(root: Path, base: str) -> list[str]:
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
-               pr_body_file: str | None, task_ref: str) -> dict:
-    """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it."""
+               pr_body_file: str | None, task_ref: str, pr: dict | None = None) -> dict:
+    """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it. `pr` is the
+    caller's already-fetched view of the branch's PR, so the happy path costs one `gh pr view`, not two."""
     title = pr_title or message.splitlines()[0]
-    pr = _pr_view(root, branch)
+    if pr is None:
+        pr = _pr_view(root, branch)
     if pr is not None:
         _note(f"PR #{pr.get('number')} exists — reusing it")
         if pr_title or pr_body_file:
@@ -179,6 +186,10 @@ def _checks_state(root: Path, number: int) -> str:
         buckets = {c.get("bucket") for c in json.loads(body)}
     except (ValueError, TypeError, AttributeError) as e:
         raise LandError(f"gh pr checks #{number}: unparseable output") from e
+    unknown = buckets - {"pass", "fail", "pending", "skipping", "cancel"}
+    if unknown:
+        raise LandError(f"gh pr checks #{number}: unrecognised bucket(s) {', '.join(sorted(map(str, unknown)))} — "
+                        f"refusing to read them as a pass (decision 36); this gates --merge")
     if not buckets:
         return "skipped"
     if buckets & {"fail", "cancel"}:
@@ -220,29 +231,71 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if not message.strip():
         raise LandError("--message is empty")
     root = Path(_need(_git(Path(cwd or Path.cwd()), "rev-parse", "--show-toplevel"), "not a git repository"))
-    branch = _need(_git(root, "rev-parse", "--abbrev-ref", "HEAD"), "cannot read the current branch")
-    if branch in ("main", "master"):
-        raise LandError(f"on {branch!r} — alt land runs from a task worktree branch, never {branch!r}")
+    git_dir = Path(_need(_git(root, "rev-parse", "--git-dir"), "cannot resolve the git dir"))
+    if not git_dir.is_absolute():
+        git_dir = root / git_dir  # in a worktree `.git` is a file, so resolve the real dir, never assume .git/
+    if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+        raise LandError("a rebase is in progress in this worktree — finish it (resolve conflicts, then "
+                        "`git rebase --continue`) or back out (`git rebase --abort`) before running alt land")
+    ref = _git(root, "symbolic-ref", "-q", "HEAD")
+    if ref.returncode != 0:
+        sha = (_git(root, "rev-parse", "--short", "HEAD").stdout or "").strip() or "unknown"
+        raise LandError(f"detached HEAD at {sha} — alt land runs from a task worktree branch; "
+                        f"check out your branch first")
+    branch = (ref.stdout or "").strip()
+    if branch.startswith("refs/heads/"):
+        branch = branch[len("refs/heads/"):]
+    if branch in ("main", "master") or branch == base:
+        raise LandError(f"on {branch!r} (base {base!r}) — alt land runs from a task worktree branch, "
+                        f"never the base branch itself")
     project, slug, task = _resolve(branch, project)
-    lease = ([p.strip() for p in paths.split(",") if p.strip()] if paths
-             else (dispatch.task_paths(project, task) if task else []))
+    if paths is not None:
+        lease = [p.strip() for p in paths.split(",") if p.strip()]
+        if not lease:
+            raise LandError("--paths was given but names no paths")
+        lease_src = "--paths"
+    elif task is not None:
+        lease = dispatch.task_paths(project, task)
+        if not lease:
+            raise LandError(f"task {project}/{slug} resolved but its lease is empty — refusing to stage "
+                            f"anything; declare paths on the task or pass --paths")
+        lease_src = f"task {project}/{slug}"
+    else:
+        lease, lease_src = [], None
     groups = _changes(root)
     changed = sorted({p for _, grp in groups for p in grp})
     if lease:
         outside = sorted({p for _, grp in groups for p in grp if not _inside(p, lease)})
         if outside:
-            raise LandError(f"changes outside the lease ({', '.join(lease)}) — staging nothing: {', '.join(outside)}")
+            raise LandError(f"changes outside the lease ({', '.join(lease)}, from {lease_src}) — "
+                            f"staging nothing: {', '.join(outside)}")
     elif changed:
-        _note(f"no lease resolved for branch {branch!r}; staging all {len(changed)} changed path(s)")
+        _note(f"no task resolved for branch {branch!r} and no --paths given — "
+              f"staging all {len(changed)} changed path(s)")
     lease_repr: list[str] | str = lease if lease else UNDECLARED
     commit, staged = None, []
     if not groups:
         _note("working tree clean — nothing to commit")
     if dry_run:
-        return {"pr": None, "url": None, "checks": "skipped", "merged": False, "main_run": None, "branch": branch,
+        return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "lease": lease_repr, "staged": changed, "dry_run": True}
+    pr = _pr_view(root, branch)
+    if pr is not None and pr.get("state") == "MERGED":
+        if groups:
+            raise LandError(f"PR #{pr.get('number')} for {branch!r} is already merged — this branch has landed; "
+                            f"refusing to commit new changes onto it, start a new task branch")
+        _note(f"PR #{pr.get('number')} already merged — nothing to push, not resurrecting the branch")
+        return {"pr": pr.get("number"), "url": pr.get("url"), "checks": _checks_state(root, pr.get("number")),
+                "merged": True, "main_run": None, "branch": branch, "commit": None, "lease": lease_repr,
+                "staged": []}
     if groups:
-        _need(_git(root, "add", "-A", "--", *changed), "git add")
+        fd, spec = tempfile.mkstemp(prefix="alt-land-pathspec-")
+        try:  # NUL-separated :(literal) pathspecs: a path like `a[1].py` is a filename, never a glob
+            with os.fdopen(fd, "w") as fh:
+                fh.write("\0".join(f":(literal){p}" for p in changed))
+            _need(_git(root, "add", "-A", f"--pathspec-from-file={spec}", "--pathspec-file-nul"), "git add")
+        finally:
+            Path(spec).unlink(missing_ok=True)
         if _git(root, "diff", "--cached", "--quiet").returncode != 0:
             trailer = ([f"Altitude-Task: {project}/{slug}"] if project and slug else []) + [TRAILER]
             _need(_git(root, "commit", "-m", message.rstrip("\n") + "\n\n" + "\n".join(trailer)), "git commit")
@@ -253,7 +306,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note("staged changes match HEAD — nothing to commit")
     _push(root, branch)
     task_ref = f"{project}/{slug}" if project and slug else "(unresolved)"
-    pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref)
+    pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
     checks = _checks_state(root, number)
     deadline = time.monotonic() + max(wait, 0)
