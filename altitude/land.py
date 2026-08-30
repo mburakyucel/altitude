@@ -249,6 +249,17 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         raise LandError(f"on {branch!r} (base {base!r}) — alt land runs from a task worktree branch, "
                         f"never the base branch itself")
     project, slug, task = _resolve(branch, project)
+    hold_merge = task.get("hold_merge") if task is not None else None
+    if merge and task is None:
+        raise LandError(f"cannot verify a merge hold for branch {branch!r}: no task record resolved; "
+                        "pass `--project` or run from the dispatch environment")
+    if hold_merge:  # decision 48 / I-060: a merge hold is the one exception to merge-by-default.
+        if merge:
+            raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
+                            f"the L3 releases it with `alt task hold-merge {slug} --off`; "
+                            "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
+        _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
+              "the PR will be opened but not merged")
     if paths is not None:
         lease = [p.strip() for p in paths.split(",") if p.strip()]
         if not lease:
@@ -278,7 +289,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _note("working tree clean — nothing to commit")
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
-                "commit": None, "lease": lease_repr, "staged": changed, "dry_run": True}
+                "commit": None, "lease": lease_repr, "staged": changed, "hold": hold_merge, "dry_run": True}
     pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
         if groups:
@@ -291,7 +302,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                   f"pushed onto a merged branch — cherry-pick them onto a new task branch")
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": _checks_state(root, pr.get("number")),
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "lease": lease_repr,
-                "staged": []}
+                "staged": [], "hold": hold_merge}
     if groups:
         fd, spec = tempfile.mkstemp(prefix="alt-land-pathspec-")
         try:  # NUL-separated :(literal) pathspecs: a path like `a[1].py` is a filename, never a glob
@@ -324,4 +335,4 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
-            "branch": branch, "commit": commit, "lease": lease_repr, "staged": staged}
+            "branch": branch, "commit": commit, "lease": lease_repr, "staged": staged, "hold": hold_merge}
