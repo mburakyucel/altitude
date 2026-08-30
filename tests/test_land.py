@@ -1,6 +1,7 @@
 """`alt land` runs the whole land-a-PR sequence offline here: a real temp repo with a bare
 remote stands in for GitHub's git side, and a fake `gh` first on PATH answers view/create/
-checks/merge/run-list from canned JSON while recording every argv it was called with."""
+checks/merge/run-list from canned JSON while recording every argv it was called with. The no-CI
+merge gate also logs the exact candidate directory in which its fake test runner executes."""
 import contextlib, io, json, os, shutil, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ.setdefault("ALTITUDE_HOME", tempfile.mkdtemp(prefix="altitude-land-"))
@@ -37,7 +38,11 @@ elif cmd == ("pr", "create"):
         json.dump(body, f)
     print(body["url"])
 elif cmd == ("pr", "checks"):
-    print(read("checks.json", '[{"bucket": "pass"}]'))
+    body = read("checks.json", '[{"bucket": "pass"}]')
+    if not body.strip():
+        print("no checks reported on the 'x' branch", file=sys.stderr)
+        sys.exit(1)
+    print(body)
 elif cmd == ("pr", "merge"):
     body = json.loads(read("pr.json", "{}") or "{}")
     body["state"] = "MERGED"
@@ -115,6 +120,52 @@ class TestLand(unittest.TestCase):
         p = self.repo / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("changed\n")
+
+    def fake_runner(self, name, exit_code=0, output="", script=None):
+        p = self.tmp / "ghbin" / name
+        p.write_text("#!/usr/bin/env python3\n"
+                     "import json, os, sys\n"
+                     "with open(os.path.join(os.environ['FAKE_GH_DIR'], 'runner.jsonl'), 'a') as f:\n"
+                     "    f.write(json.dumps({'argv': [os.path.basename(sys.argv[0])] + sys.argv[1:],\n"
+                     "                        'cwd': os.path.realpath(os.getcwd())}) + '\\n')\n"
+                     + (script or f"sys.stdout.write({output!r})\nsys.exit({exit_code})\n"))
+        p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def runner_calls(self):
+        log = self.ghdir / "runner.jsonl"
+        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    def runner_log(self):
+        return [call["argv"] for call in self.runner_calls()]
+
+    def no_checks(self, body="[]"):
+        (self.ghdir / "checks.json").write_text(body)
+
+    def configure_ci(self):
+        workflow = self.repo / ".github" / "workflows"
+        workflow.mkdir(parents=True)
+        (workflow / "ci.yml").write_text("on: [push]\n")
+        self.git("add", ".github/workflows/ci.yml")
+        self.git("commit", "-q", "-m", "ci", "-m", "Altitude-Task: demo/fix-x")
+
+    def advance_base(self, name, content="base\n"):
+        other = self.tmp / ("base-" + name.replace("/", "-"))
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True, capture_output=True)
+
+        def og(*args):
+            result = subprocess.run(["git", "-C", str(other), *args], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f"base git {' '.join(args)}: {result.stderr or result.stdout}")
+
+        og("config", "user.email", "b@b")
+        og("config", "user.name", "b")
+        og("config", "commit.gpgsign", "false")
+        og("checkout", "-q", "main")
+        changed = other / name
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text(content)
+        og("add", name)
+        og("commit", "-q", "-m", "the base moves on")
+        og("push", "-q", "origin", "main")
 
     def test_refuses_on_main(self):
         self.git("checkout", "-q", "main")
@@ -575,6 +626,217 @@ class TestLand(unittest.TestCase):
         with self.assertRaisesRegex(land.LandError, "neutral"):
             land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    # R-006 / I-020: where no workflow and no check exist, the exact merge candidate's local suite is the
+    # gate. Absence, skipped checks, stale revisions, and unreadable test reports never become green.
+
+    def test_no_ci_merges_after_a_green_local_suite_and_records_the_count(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: no ci", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"], {
+            "command": "make test", "passed": True, "returncode": 0, "tests": 12, "skipped": 0,
+            "error": None, "base": result["local_tests"]["base"], "head": result["local_tests"]["head"],
+        })
+        self.assertEqual(self.runner_log(), [["make", "test"]])
+
+    def test_the_suite_runs_on_the_merge_candidate_not_on_this_worktree(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        land.land("fix: candidate", cwd=self.repo, wait=0, merge=True)
+        candidate = Path(self.runner_calls()[0]["cwd"])
+        self.assertNotEqual(candidate, self.repo.resolve())
+        self.assertFalse(candidate.exists())
+        self.assertEqual([line for line in self.git("worktree", "list").splitlines() if "candidate" in line], [])
+
+    def test_a_base_change_that_breaks_the_head_fails_on_the_candidate(self):
+        runner = ("import os\n"
+                  "here = os.getcwd()\n"
+                  "both = all(os.path.exists(os.path.join(here, 'src', f))\n"
+                  "           for f in ('thing.py', 'integration.py'))\n"
+                  "sys.stdout.write('Ran 4 tests in 0.1s\\n\\n'\n"
+                  "                 + ('FAILED (failures=1)\\n' if both else 'OK\\n'))\n"
+                  "sys.exit(1 if both else 0)\n")
+        self.leased_change()
+        self.advance_base("src/integration.py")
+        self.no_checks()
+        self.fake_runner("make", script=runner)
+        result = land.land("fix: integration break", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertFalse(result["merged"])
+        self.assertFalse(result["local_tests"]["passed"])
+        self.assertEqual(result["local_tests"]["returncode"], 1)
+        self.assertNotEqual(Path(self.runner_calls()[0]["cwd"]), self.repo.resolve())
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_no_ci_merge_pins_the_tested_head_revision(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: pinned", cwd=self.repo, wait=0, merge=True)
+        head = self.git("rev-parse", "HEAD").strip()
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["head"], head)
+        self.assertEqual(result["local_tests"]["head"], head)
+        self.assertEqual(result["local_tests"]["base"], self.git("rev-parse", "origin/main").strip())
+        self.assertIn(["pr", "merge", "101", "--squash", "--delete-branch", "--match-head-commit", head],
+                      self.gh_log())
+
+    def test_a_base_that_moves_during_the_suite_is_not_merged(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._local_suite
+
+        def moving(cwd, test_cmd):
+            output = real(cwd, test_cmd)
+            self.advance_base("src/late.py")
+            return output
+
+        land._local_suite = moving
+        self.addCleanup(setattr, land, "_local_suite", real)
+        result = land.land("fix: moving base", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertTrue(result["local_tests"]["passed"])
+        self.assertIn("moved", result["local_tests"]["error"])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_no_ci_red_local_suite_blocks_the_merge(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 1, "Ran 12 tests in 0.4s\n\nFAILED (failures=1)\n")
+        result = land.land("fix: red suite", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertFalse(result["merged"])
+        self.assertFalse(result["local_tests"]["passed"])
+        self.assertEqual(result["local_tests"]["tests"], 12)
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_a_local_suite_that_cannot_run_blocks_rather_than_passes(self):
+        self.leased_change()
+        self.no_checks()
+        result = land.land("fix: no runner", cwd=self.repo, wait=0, merge=True,
+                           test_cmd="definitely-not-a-real-command")
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertFalse(result["merged"])
+        self.assertFalse(result["local_tests"]["passed"])
+        self.assertIsNone(result["local_tests"]["returncode"])
+        self.assertTrue(result["local_tests"]["error"])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_a_green_suite_with_an_unreadable_count_is_not_a_pass(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "everything is fine, trust me\n")
+        result = land.land("fix: uncountable", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertFalse(result["local_tests"]["passed"])
+        self.assertEqual(result["local_tests"]["returncode"], 0)
+        self.assertIsNone(result["local_tests"]["tests"])
+        self.assertIn("count", result["local_tests"]["error"])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_skipped_tests_are_excluded_from_the_reported_count(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK (skipped=2)\n")
+        result = land.land("fix: some skips", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 10)
+        self.assertEqual(result["local_tests"]["skipped"], 2)
+
+    def test_gh_refusing_with_no_checks_reported_is_the_same_gate(self):
+        self.leased_change()
+        self.no_checks("")
+        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        result = land.land("fix: nothing reported", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 3)
+
+    def test_test_cmd_override_is_the_command_that_gates(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
+        result = land.land("fix: override", cwd=self.repo, wait=0, merge=True,
+                           test_cmd="otherrunner -q tests")
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["command"], "otherrunner -q tests")
+        self.assertEqual(result["local_tests"]["tests"], 5)
+        self.assertEqual(result["local_tests"]["skipped"], 2)
+        self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
+
+    def test_no_checks_but_workflows_configured_never_reaches_the_local_suite(self):
+        self.configure_ci()
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: unreported", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "skipped")
+        self.assertFalse(result["merged"])
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_workflows_only_on_the_base_branch_still_count_as_ci(self):
+        self.git("checkout", "-q", "main")
+        self.configure_ci()
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "worktree-fix-x")
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: base has ci", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "skipped")
+        self.assertFalse(result["merged"])
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
+
+    def test_a_base_that_cannot_be_refreshed_fails_closed(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        subprocess.run(["git", "-C", str(self.remote), "symbolic-ref", "HEAD", "refs/heads/gone"], check=True)
+        subprocess.run(["git", "-C", str(self.remote), "branch", "-D", "main"],
+                       check=True, capture_output=True)
+        with self.assertRaisesRegex(land.LandError, r"origin(?:/| )main"):
+            land.land("fix: unreadable base", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(self.runner_log(), [])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_skipped_checks_are_not_a_no_ci_repository(self):
+        self.leased_change()
+        (self.ghdir / "checks.json").write_text('[{"bucket": "skipping"}]')
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: skipping", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "skipped")
+        self.assertFalse(result["merged"])
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
+
+    def test_a_pass_mixed_with_a_skip_is_skipped_not_a_pass(self):
+        self.leased_change()
+        (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}, {"bucket": "skipping"}]')
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        result = land.land("fix: half skipped", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "skipped")
+        self.assertFalse(result["merged"])
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
+
+    def test_configured_checks_that_pass_merge_without_the_local_suite(self):
+        self.configure_ci()
+        self.leased_change()
+        self.fake_runner("make", 1, "the local suite must not be consulted here\n")
+        result = land.land("fix: green ci", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "pass")
+        self.assertTrue(result["merged"])
+        self.assertIsNone(result["local_tests"])
+        self.assertEqual(self.runner_log(), [])
 
     def test_rerun_after_merge_does_not_resurrect_the_branch(self):
         self.leased_change()

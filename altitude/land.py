@@ -4,16 +4,21 @@ The measured why: status → add → commit → push → `gh pr create` → `gh 
 ~100 turns across L2/L1 sessions, and every compound form of it trips the Safety Net (R-003). Here it is one
 command: stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
 push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
-reuse the PR, wait for checks, merge only on green and only when asked. No model call anywhere — the commit
-message arrives as an argument. Idempotent: nothing to commit is a skip, an up-to-date push is a no-op, an
-open PR is reused.
+reuse the PR, wait for checks, merge only on green — or, where the repository configures no CI at all, on a
+full local suite that passed on the base-plus-head merge candidate (R-006, I-020) — and only when asked. No
+model call anywhere — the commit message arrives as an argument. Idempotent: nothing to commit is a skip, an
+up-to-date push is a no-op, an open PR is reused.
 
 Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
 first — that lookup is what decides whether committing is safe at all (a merged or closed PR is refused) — so
 a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
 from __future__ import annotations
+import contextlib
 import json
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +28,8 @@ from pathlib import Path
 from . import config, dispatch, git_policy, state as S
 
 CHECK_POLL_SECONDS = 15
+LOCAL_TEST_TIMEOUT = 1800
+DEFAULT_TEST_CMD = "make test"
 TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
 UNDECLARED = "(undeclared — all changes staged)"
 EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
@@ -246,13 +253,15 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
 
 
 def _checks_state(root: Path, number: int) -> str:
-    """One reading of the PR's checks: pass / fail / pending / skipped. `gh pr checks` exits non-zero for
-    pending or failing checks, so the JSON body is the verdict, not the exit code."""
+    """One reading of the PR's checks: pass / fail / pending / skipped / none. `gh pr checks` exits non-zero
+    for pending or failing checks, so the JSON body is the verdict, not the exit code. `none` is GitHub
+    reporting no checks at all, which is a different fact from checks that ran and were skipped: only the
+    caller, which knows whether the repository configures CI, can say what it means (R-006)."""
     p = _run(["gh", "pr", "checks", str(number), "--json", "bucket"], root)
     body = (p.stdout or "").strip()
     if not body:
         if "no checks" in ((p.stderr or "") + (p.stdout or "")).lower():
-            return "skipped"
+            return "none"
         raise LandError(f"gh pr checks #{number}: {(p.stderr or '').strip()[-200:] or f'exit {p.returncode}'}")
     try:
         buckets = {c.get("bucket") for c in json.loads(body)}
@@ -263,12 +272,115 @@ def _checks_state(root: Path, number: int) -> str:
         raise LandError(f"gh pr checks #{number}: unrecognised bucket(s) {', '.join(sorted(map(str, unknown)))} — "
                         f"refusing to read them as a pass (decision 36); this gates --merge")
     if not buckets:
-        return "skipped"
+        return "none"
     if buckets & {"fail", "cancel"}:
         return "fail"
     if "pending" in buckets:
         return "pending"
-    return "skipped" if buckets <= {"skipping"} else "pass"
+    # A rollup that mixes passes with skips is not a pass: the skipped check is a configured gate that did
+    # not run, and R-006 never lets a gate be satisfied by its absence.
+    return "skipped" if "skipping" in buckets else "pass"
+
+
+def _fetch_rev(root: Path, ref: str) -> str:
+    """Fetch and return the authoritative current tip of `origin/<ref>`."""
+    fetched = _git(root, "fetch", "origin", ref, timeout=300)
+    if fetched.returncode != 0:
+        raise LandError(f"cannot refresh origin/{ref}: "
+                        f"{((fetched.stderr or '') + (fetched.stdout or '')).strip()[-200:] or f'exit {fetched.returncode}'} — "
+                        "refusing to judge checks or a merge against a ref that cannot be read")
+    return _need(_git(root, "rev-parse", "FETCH_HEAD"), f"cannot resolve origin/{ref} after fetching it")
+
+
+def _has_ci(root: Path, base: str) -> bool:
+    """Whether either side of the proposed merge configures GitHub Actions workflows.
+
+    Head workflows count first so adding CI does not fall through to the local gate. The freshly fetched base
+    counts too so deleting workflows cannot turn a CI repository into a no-CI merge path.
+    """
+    if (root / ".github" / "workflows").is_dir():
+        return True
+    head = _git(root, "ls-tree", "--name-only", "HEAD", ".github/workflows")
+    if head.returncode == 0 and (head.stdout or "").strip():
+        return True
+    base_sha = _fetch_rev(root, base)
+    base_tree = _git(root, "ls-tree", "--name-only", base_sha, ".github/workflows")
+    if base_tree.returncode != 0:
+        raise LandError(f"cannot inspect .github/workflows on origin/{base}: "
+                        f"{(base_tree.stderr or '').strip()[-200:] or f'exit {base_tree.returncode}'}")
+    return bool((base_tree.stdout or "").strip())
+
+
+def _checks_value(root: Path, number: int, base: str) -> str:
+    """Classify no reported checks only after checking whether the repository configures CI."""
+    state = _checks_state(root, number)
+    if state != "none":
+        return state
+    return "none-configured" if not _has_ci(root, base) else "skipped"
+
+
+def _test_counts(output: str) -> tuple[int | None, int | None]:
+    """Return (passing, skipped) for unittest or pytest output, or an unreadable pair."""
+    ran = re.findall(r"^Ran (\d+) tests?\b", output, re.M)
+    if ran:
+        found = re.findall(r"\bskipped=(\d+)", output)
+        skipped = int(found[-1]) if found else 0
+        return max(int(ran[-1]) - skipped, 0), skipped
+    passed = re.findall(r"\b(\d+) passed\b", output)
+    if passed:
+        found = re.findall(r"\b(\d+) skipped\b", output)
+        return int(passed[-1]), int(found[-1]) if found else 0
+    return None, None
+
+
+def _local_suite(cwd: Path, test_cmd: str) -> dict:
+    """Run and count the full local suite in the synthetic merge candidate."""
+    argv = shlex.split(test_cmd)
+    if not argv:
+        raise LandError("the local test command is empty")
+    _note(f"no CI configured — the merge candidate's local suite is the gate: {test_cmd}")
+    result = {"command": test_cmd, "passed": False, "returncode": None, "tests": None, "skipped": None,
+              "error": None}
+    try:
+        run = _run(argv, cwd, timeout=LOCAL_TEST_TIMEOUT)
+    except LandError as exc:
+        _note(f"the local suite did not run to completion — not merging: {exc}")
+        result["error"] = str(exc)
+        return result
+    tests, skipped = _test_counts((run.stdout or "") + "\n" + (run.stderr or ""))
+    result.update(returncode=run.returncode, tests=tests, skipped=skipped,
+                  passed=run.returncode == 0 and tests is not None)
+    if run.returncode == 0 and tests is None:
+        result["error"] = ("the suite exited 0 but no passing-test count could be read from its output — "
+                           "an uncountable suite is not a reported pass (R-006)")
+        _note(f"not merging: {result['error']}")
+    else:
+        _note(f"local suite exited {run.returncode}"
+              + (f" ({tests} passing, {skipped} skipped)" if tests is not None else " (count unreadable)"))
+    return result
+
+
+@contextlib.contextmanager
+def _candidate(root: Path, base_sha: str, head_sha: str):
+    """Yield a clean temporary worktree containing the base-plus-head merge candidate."""
+    tmp = Path(tempfile.mkdtemp(prefix="alt-land-candidate-"))
+    path = tmp / "candidate"
+    try:
+        worktree = _git(root, "worktree", "add", "--detach", str(path), base_sha, timeout=300)
+        if worktree.returncode != 0:
+            raise LandError(f"cannot build the merge candidate worktree: "
+                            f"{((worktree.stderr or '') + (worktree.stdout or '')).strip()[-200:]}")
+        merged = _git(path, "-c", "user.name=alt land", "-c", "user.email=alt-land@localhost",
+                      "-c", "commit.gpgsign=false", "merge", "--no-ff", "--no-edit", head_sha, timeout=300)
+        if merged.returncode != 0:
+            raise LandError("the base-plus-head merge candidate does not merge cleanly — GitHub would refuse "
+                            f"this merge too: {((merged.stderr or '') + (merged.stdout or '')).strip()[-200:]}")
+        yield path
+    finally:
+        removed = _git(root, "worktree", "remove", "--force", str(path), timeout=300)
+        shutil.rmtree(tmp, ignore_errors=True)
+        if removed.returncode != 0:
+            _git(root, "worktree", "prune")
 
 
 def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) -> tuple[bool, dict | None]:
@@ -298,9 +410,32 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) 
     return True, (rows[0] if rows else None)
 
 
+def _merge_on_local_suite(root: Path, branch: str, number: int, base: str,
+                          test_cmd: str) -> tuple[bool, dict | None, dict]:
+    """Test one exact base/head pair and merge only while both tips still match it."""
+    base_sha, head_sha = _fetch_rev(root, base), _fetch_rev(root, branch)
+    try:
+        with _candidate(root, base_sha, head_sha) as path:
+            tests = _local_suite(path, test_cmd)
+    except LandError as exc:
+        _note(f"not merging: {exc}")
+        return False, None, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
+                             "skipped": None, "error": str(exc), "base": base_sha, "head": head_sha}
+    tests.update(base=base_sha, head=head_sha)
+    if not tests["passed"]:
+        _note(f"not merging: the local suite ({test_cmd}) is not green on the merge candidate")
+        return False, None, tests
+    if _fetch_rev(root, base) != base_sha or _fetch_rev(root, branch) != head_sha:
+        tests["error"] = "the base or the head moved while the merge candidate was under test"
+        _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
+        return False, None, tests
+    merged, main_run = _merge(root, branch, number, base, head_sha)
+    return merged, main_run, tests
+
+
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int = 600, paths: str | None = None, base: str = "main",
-         dry_run: bool = False, cwd: Path | None = None) -> dict:
+         dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None) -> dict:
     """Run the whole sequence from the current worktree; returns the JSON-ready result object."""
     if not message.strip():
         raise LandError("--message is empty")
@@ -385,7 +520,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "head": None, "lease": lease_repr, "staged": changed, "hold": hold_merge,
-                "replaced": [], "dry_run": True}
+                "replaced": [], "local_tests": None, "dry_run": True}
     pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
         if groups:
@@ -401,7 +536,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         # never reported as a pass (decision 36).
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
-                "lease": lease_repr, "staged": [], "hold": hold_merge, "replaced": []}
+                "lease": lease_repr, "staged": [], "hold": hold_merge, "replaced": [], "local_tests": None}
     if pr is not None and pr.get("state") == "CLOSED":
         raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
                         f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
@@ -427,17 +562,19 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     _note(f"pushed head {pushed_head}")
     pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
-    checks = _checks_state(root, number)
+    checks = _checks_value(root, number, base)
     deadline = time.monotonic() + max(wait, 0)
     while checks == "pending" and time.monotonic() < deadline:
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
-        checks = _checks_state(root, number)
-    merged, main_run = pr.get("state") == "MERGED", None
+        checks = _checks_value(root, number, base)
+    merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
     if merge and not merged:
-        if checks == "pass":
+        if checks == "none-configured":
+            merged, main_run, local_tests = _merge_on_local_suite(root, branch, number, base, test_cmd)
+        elif checks == "pass":
             merged, main_run = _merge(root, branch, number, base, pushed_head)
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease_repr, "staged": staged,
-            "hold": hold_merge, "replaced": replaced}
+            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests}
