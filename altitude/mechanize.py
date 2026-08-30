@@ -23,8 +23,10 @@ _VALUE_FLAGS = {
     "gh": {"-R", "--repo"},
 }
 _EXCLUDED_INCIDENT_SHAPES = {"Read", "Edit", "Write"}
-# Decision 47 / mechanize-histogram-exclude-alt-by-basen: R-003 wrapper scripts make
-# cd/echo navigation and output an artifact of the harness, not a mechanizable action.
+# Decision 47 / mechanize-histogram-exclude-alt-by-basen: pure shell navigation (cd, pwd),
+# output (echo), orientation (bare `ls`; `ls docs` keeps its target and stays in) and no-op
+# probes (true). The R-003 one-command-per-call harness makes these an artifact of the
+# harness, not a mechanizable action. Everything else stays in.
 _EXCLUDED_SHELL_SHAPES = {"cd", "echo", "pwd", "ls", "true"}
 _SHELL_BREAKS = {"|", "||", "&&", ";", "&"}
 
@@ -33,6 +35,8 @@ def _is_excluded_shape(shape: str) -> bool:
     words = shape.split()
     first = words[0] if words else ""
     return (shape in _EXCLUDED_INCIDENT_SHAPES
+            # `alt` is excluded by basename, so `alt`, `bin/alt` and any absolute path to it
+            # are one shape; _bash_shape normalises the same way for rows built from transcripts.
             or Path(first).name == "alt"
             or shape in _EXCLUDED_SHELL_SHAPES)
 
