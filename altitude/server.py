@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -349,6 +349,10 @@ def drain_hook_faults() -> None:
 
 
 def tick() -> None:
+    try:
+        quota_codex.refresh_if_due()
+    except Exception as e:  # noqa: BLE001
+        log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
