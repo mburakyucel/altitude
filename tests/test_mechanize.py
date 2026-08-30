@@ -146,6 +146,70 @@ class TestMechanize(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(mechanize._bash_shape(command), expected)
 
+    def test_incident_shape_exclusions(self):
+        excluded_commands = {
+            "cd /x": "cd",
+            "echo hi": "echo",
+            "pwd": "pwd",
+            "ls": "ls",
+            "ls -la": "ls",
+            "true": "true",
+        }
+        for command, expected in excluded_commands.items():
+            with self.subTest(command=command):
+                shape = mechanize._bash_shape(command)
+                self.assertEqual(shape, expected)
+                self.assertTrue(mechanize._is_excluded_shape(shape))
+
+        self.assertFalse(mechanize._is_excluded_shape(mechanize._bash_shape("ls docs")))
+        self.assertFalse(mechanize._is_excluded_shape("git status"))
+        self.assertFalse(mechanize._is_excluded_shape("cat report.md"))
+
+    def test_alt_basename_shapes_are_excluded_from_incident_filing(self):
+        rows = [
+            {"shape": shape, "turns": mechanize.INCIDENT_TURNS,
+             "context_tokens": 100, "sessions": 1}
+            for shape in ("bin/alt", "/home/x/bin/alt", "alt")
+        ]
+
+        with patch.object(mechanize.improve, "new_incident") as incident:
+            mechanize._file_incidents(self.project_name, rows, mechanize.time.time())
+
+        incident.assert_not_called()
+
+    def test_path_variants_collapse_and_actionable_shapes_file_incidents(self):
+        recent = datetime.now(timezone.utc).isoformat()
+        lines = []
+        for turn in range(mechanize.INCIDENT_TURNS):
+            lines.extend(self._assistant(recent, [
+                ("Bash", {"command": "bin/alt task status"}),
+                ("Bash", {"command": "/abs/path/bin/alt task status"}),
+                ("Bash", {"command": "cat a/report.md"}),
+                ("Bash", {"command": "cat b/report.md"}),
+                ("Bash", {"command": "git status"}),
+            ], (1, 2, 3), f"turn-{turn}"))
+        self._write(self.project, lines)
+
+        with patch.object(mechanize, "_transcript_root", return_value=self.transcripts):
+            rows = mechanize._collect(self.project_name, mechanize.time.time())
+
+        by_shape = {row["shape"]: row for row in rows}
+        self.assertEqual(set(by_shape), {"alt task", "cat report.md", "git status"})
+        self.assertEqual(by_shape["alt task"]["turns"], mechanize.INCIDENT_TURNS)
+        self.assertEqual(by_shape["cat report.md"]["turns"], mechanize.INCIDENT_TURNS)
+        self.assertEqual(by_shape["git status"]["turns"], mechanize.INCIDENT_TURNS)
+
+        with patch.object(mechanize.improve, "new_incident",
+                          side_effect=[{"id": "I-001"}, {"id": "I-002"}]) as incident, \
+             patch.object(mechanize.T, "fyi"):
+            mechanize._file_incidents(self.project_name, rows, mechanize.time.time())
+
+        self.assertEqual(incident.call_count, 2)
+        self.assertEqual(
+            {call.kwargs["title"] for call in incident.call_args_list},
+            {"mechanize: `cat report.md`", "mechanize: `git status`"},
+        )
+
     def test_old_file_mtime_excludes_transcript(self):
         recent = datetime.now(timezone.utc).isoformat()
         path = self._write(self.project, self._assistant(
