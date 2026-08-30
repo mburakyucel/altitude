@@ -10,7 +10,7 @@ routing via react-router, tests with vitest + testing-library.
   running altd (self-signed TLS accepted). Needs node >= 22 and pnpm (corepack).
 - **Test**: `pnpm test` (vitest, jsdom). Typecheck: `pnpm typecheck`.
 
-Route components live in `src/routes/`; Inbox is implemented, the rest are stubs filled in
-by later slices. Shared pieces for those slices: `src/data/api.ts` (query/mutation hooks,
-`streamChat`), `src/data/useOptimisticMutation.ts`, `src/data/Toast.tsx`, and
-`src/test/render.tsx` (`renderApp`).
+Route components live in `src/routes/` — Inbox, Projects, Project, Task, Chat, Monitor and
+Listen, all implemented. Shared pieces: `src/data/api.ts` (query/mutation hooks, `streamChat`),
+`src/data/launches.ts` (`launchLabel`), `src/data/useOptimisticMutation.ts`,
+`src/data/Toast.tsx`, and `src/test/render.tsx` (`renderApp`).

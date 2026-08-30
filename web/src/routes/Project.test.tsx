@@ -1,0 +1,154 @@
+import { screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { renderApp } from "../test/render";
+
+function jsonResponse(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+const project = {
+  name: "altitude",
+  config: { stacks: ["python", "web"], approval: "ask", wip: 2 },
+  l3: { session_id: "abcdef1234567890", turns: 12, context_percent: 33, last_turn: ago(7) },
+  busy: false,
+  tasks: [
+    {
+      slug: "fix-timer",
+      state: "running",
+      class: "M",
+      title: "Fix the timer",
+      updated: ago(2),
+      live: {
+        agent: { status: "active", state: "tool" },
+        context_percent: 44,
+        subagent_launches: 1,
+        cap: 3,
+        edits: 7,
+      },
+    },
+    { slug: "add-badge", state: "approved", class: "S", title: "Add the badge", updated: ago(30) },
+  ],
+  archive: [{ slug: "old-thing", state: "done", class: "S", title: "Old thing" }],
+  inbox: [{ at: ago(9), slug: "fix-timer", text: "L2 picked it up" }],
+  decisions: [
+    {
+      slug: "add-badge",
+      class: "S",
+      title: "Add the badge",
+      question: "Proposal ready — approve?",
+      asked: ago(4),
+      options: ["Approve", "Revise", "Reject"],
+      kind: "decision",
+    },
+  ],
+  incidents: [{ id: "INC-1", title: "altd restarted", tags: ["restart"], rule: "R-002" }],
+  hold: null,
+  state_md: "# STATE\nall good",
+};
+
+const overview = {
+  projects: [],
+  queue: [],
+  fyis: [],
+  wip: { per_project: {}, machine: 0, waiting: [] },
+  quota: { known: false },
+};
+
+function mockFetch() {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/api/overview")) return jsonResponse(overview);
+    if (url.includes("/api/project/altitude")) return jsonResponse(project);
+    if (url.includes("/api/task/action")) return jsonResponse({ ok: true });
+    if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
+    if (url.includes("/api/decide")) return jsonResponse({ ok: true });
+    return jsonResponse({ error: "not found" }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("Project", () => {
+  it("renders the L3 card, the task list and the launch counter as 'launches N · cap M'", async () => {
+    mockFetch();
+    renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("link", { name: "Fix the timer" });
+    expect(screen.getByText("Tasks (2)")).toBeInTheDocument();
+    expect(screen.getByText(/session abcdef12 · 12 turns · context 33% · last 7m/)).toBeInTheDocument();
+    expect(screen.getByText(/stacks: python, web · approval: ask · WIP 2/)).toBeInTheDocument();
+    expect(screen.getByText(/launches 1 · cap 3/)).toBeInTheDocument();
+    expect(screen.getByText(/L2 active\/tool · ctx 44%/)).toBeInTheDocument();
+    // The wording is load-bearing: "1/3" and "agents" both read as "three agents planned".
+    expect(document.body.textContent).not.toContain("1/3");
+    expect(document.body.textContent).not.toMatch(/agents/i);
+    expect(screen.getByText("Needs you (1)")).toBeInTheDocument();
+    expect(screen.getByText("L2 picked it up")).toBeInTheDocument();
+    expect(screen.getByText(/INC-1/)).toBeInTheDocument();
+    expect(screen.getByText("Done / rejected (1)")).toBeInTheDocument();
+  });
+
+  it("dispatches an approved task through /api/task/action", async () => {
+    const fetchMock = mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await user.click(await screen.findByRole("button", { name: "Dispatch" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
+    expect(call?.[1]?.method).toBe("POST");
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      project: "altitude",
+      slug: "add-badge",
+      action: "dispatch",
+    });
+  });
+
+  it("sends a note into a running L2", async () => {
+    const fetchMock = mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await user.click(await screen.findByRole("button", { name: "Message L2" }));
+    await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "check the toast timer");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      project: "altitude",
+      slug: "fix-timer",
+      text: "check the toast timer",
+    });
+  });
+
+  it("creates a new task with the chosen class", async () => {
+    const fetchMock = mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await user.type(await screen.findByLabelText("New request"), "Ship the badge");
+    await user.selectOptions(screen.getByLabelText("Task class"), "L");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      project: "altitude",
+      slug: "",
+      action: "new",
+      title: "Ship the badge",
+      class: "L",
+      request: "Ship the badge",
+    });
+  });
+});
