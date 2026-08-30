@@ -29,6 +29,14 @@ export function applyTheme(theme: Theme): void {
   const dark = theme === "dark" || (theme === "system" && systemPrefersDark());
   if (dark) document.documentElement.dataset.theme = "dark";
   else delete document.documentElement.dataset.theme;
+
+  let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!themeColor) {
+    themeColor = document.createElement("meta");
+    themeColor.name = "theme-color";
+    document.head.append(themeColor);
+  }
+  themeColor.content = dark ? "#0f172a" : "#f8fafc";
 }
 
 export function setTheme(theme: Theme): void {

@@ -1,13 +1,14 @@
-/* Design tokens — canonical values from docs/UX.md (settled 2026-08-23/24; dark palette + sizes revised 2026-08-25 for WCAG AA).
- * The build consumes THESE variables; docs/UX.md is the prose spec, this file is the code spec.
+/* Design tokens — canonical values from docs/DECISIONS.md decision 37 (settled 2026-08-23/24; dark palette + sizes revised 2026-08-25 for WCAG AA).
+ * The build consumes THESE variables; this file is the code spec.
  * Dashboard world: light by default, [data-theme="dark"] flips it.
- * Session world (lobby, session room): always dark — apply the dark values unconditionally, no toggle.
  * Every token has a value in BOTH blocks below (or is theme-independent): a token missing from the
  * dark block leaks its light value into dark subtrees — that is the bug the 2026-08-25 revision fixed.
  * Contrast floor: every text token ≥ 4.5:1 on both --page and --surface of its theme (WCAG AA).
  */
 
 :root {
+  color-scheme: light;
+
   /* Type */
   --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace; /* transcripts, timers, evidence quotes */
@@ -54,6 +55,8 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
+
   /* Color — dark (dashboard dark + session world) */
   --page: #0f172a;
   --surface: #1e293b;
