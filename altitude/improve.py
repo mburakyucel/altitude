@@ -140,8 +140,16 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     caller that already holds one (`dispatch.run` does, around the `wip_hold` that files `quota-unknown`) cannot
     deadlock on it."""
     template = (config.TEMPLATES / "incident.md").read_text()
+    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
+                  cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-",
+                  status="open" if rule else "watch")
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
+    # Render once before anything is reserved, with a placeholder id: a template placeholder this function does not
+    # pass — or a stray brace in incident.md — must blow up here, not after O_EXCL has burned an id and left a
+    # zero-byte file behind. The real id is not known until the reservation succeeds, and only that value differs,
+    # so if this pass renders the one below cannot fail.
+    template.format(id="I-000", **fields)
     # (I-013) Reserve the id with an exclusive create, then fill the file atomically. The empty file IS the
     # reservation and holds the id against every other racer — process or thread — while `atomic_write` replaces
     # it whole, so a crash mid-write can never leave a half-parsed incident. An existing incidents/I-NNN.md is
@@ -160,9 +168,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
             raise RuntimeError(f"cannot file an incident on {project}: {iid or '(none allocated)'} already exists at {path} "
                                f"and so did every id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident "
                                "file is never overwritten")
-    S.atomic_write(path, template.format(
-        id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
-        cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch"))
+    S.atomic_write(path, template.format(id=iid, **fields))
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "scope": scope, "mechanism": mechanism, "rule": rule, "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
@@ -172,7 +178,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         S.append_event(project, task, "incident", id=iid, tags=row["tags"], mechanism=mechanism, scope=scope, by=actor)
     S.project_log(project, "incident", id=iid, title=title, tags=row["tags"])
     S.regen_state_md(project)
-    return {"id": iid, "path": str(d / f"{iid}.md"), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
+    return {"id": iid, "path": str(path), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
 
 
 def _field_spans(body: str, incident: str) -> dict[str, tuple[int, int]]:

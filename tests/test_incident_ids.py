@@ -4,6 +4,7 @@ the highest id ever issued and the file is reserved with O_EXCL, so a race loses
 throwaway ALTITUDE_HOME; every test builds its own temp home, never the live ledger."""
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,14 +20,16 @@ REPO = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, REPO)
 from altitude import config, improve, state as S  # noqa: E402
 
-# One racing child for the multi-process test: waits on a file barrier, then files one incident and prints its id.
+# One racing child for the multi-process test. It announces itself only once the import is done, so the parent can
+# wait for every child to be armed before firing the gun; then it spins on `go` and files one incident.
 CHILD = '''
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
 from altitude import improve
-go, marker = sys.argv[2], sys.argv[3]
+ready, go, marker = sys.argv[2], sys.argv[3], sys.argv[4]
+open(ready, "w").close()
 while not os.path.exists(go):
-    time.sleep(0.005)
+    time.sleep(0.002)
 res = improve.new_incident("demo", title=marker, task=None, what=marker, evidence="events.log",
                            cause="not yet analysed", tags=["system-fault"])
 print(res["id"])
@@ -48,6 +51,7 @@ class TempHome:
         for m, k, rel in self.DERIVED:
             setattr(m, k, root / rel)
         self.addCleanup(self._restore_home)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         repo = root / "repo"
         (repo / "docs" / "incidents").mkdir(parents=True, exist_ok=True)
         config.save_projects({project: {"name": project, "path": str(repo), "stacks": ["python"]}})
@@ -235,14 +239,20 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         """The real I-013 shape: two independent processes filing a fault at the same moment. Children share one
         ALTITUDE_HOME and are released by a file barrier, so the flock and the exclusive create are doing the work
         across process boundaries, not just across threads."""
-        workers = 6
+        workers, deadline = 6, time.monotonic() + 60
         script = self.root / "racer.py"
         script.write_text(CHILD)
         go = self.root / "go"
+        ready = [self.root / f"ready-{i}" for i in range(workers)]
         env = dict(os.environ, ALTITUDE_HOME=str(self.root))
-        procs = [subprocess.Popen([sys.executable, str(script), REPO, str(go), f"child {i}"], env=env,
+        procs = [subprocess.Popen([sys.executable, str(script), REPO, str(ready[i]), str(go), f"child {i}"], env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for i in range(workers)]
-        time.sleep(0.3)                                     # let every child reach the barrier before the gun
+        while not all(r.exists() for r in ready):           # every child armed before the gun — a bare sleep would
+            if time.monotonic() > deadline:                 # let a slow importer file its incident after the rest,
+                for p in procs:                             # and the race would silently pass without ever racing
+                    p.kill()
+                self.fail(f"children never armed: {[r.name for r in ready if not r.exists()]}")
+            time.sleep(0.002)
         go.write_text("go")
         out = [p.communicate(timeout=120) for p in procs]
         for p, (stdout, stderr) in zip(procs, out):
