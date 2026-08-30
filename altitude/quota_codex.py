@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import selectors
 import subprocess
@@ -16,6 +17,7 @@ _REQUESTS = (
      "params": {"clientInfo": {"name": "altitude", "title": "altitude", "version": "0"}}},
     {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": {}},
 )
+_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 _last_refresh_at: float | None = None
 
 
@@ -40,6 +42,7 @@ def _talk(timeout: float) -> list[str]:
         proc.stdin.flush()
         deadline = time.monotonic() + timeout
         buffered = b""
+        total_bytes = 0
         with selectors.DefaultSelector() as selector:
             selector.register(proc.stdout, selectors.EVENT_READ)
             while True:
@@ -53,6 +56,11 @@ def _talk(timeout: float) -> list[str]:
                     code = proc.poll()
                     suffix = f" with status {code}" if code is not None else ""
                     raise RuntimeError(f"app-server exited before response{suffix}")
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_OUTPUT_BYTES:
+                    raise RuntimeError(
+                        f"Codex app-server output exceeded {_MAX_OUTPUT_BYTES} bytes"
+                    )
                 buffered += chunk
                 while b"\n" in buffered:
                     raw, buffered = buffered.split(b"\n", 1)
@@ -66,15 +74,33 @@ def _talk(timeout: float) -> list[str]:
                         return lines
     finally:
         if proc.stdin is not None:
-            proc.stdin.close()
-        if proc.poll() is None:
-            proc.kill()
+            try:
+                proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
         try:
             proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                proc.wait()
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
             pass
         if proc.stdout is not None:
-            proc.stdout.close()
+            try:
+                proc.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _unknown(why: str) -> dict:
@@ -123,17 +149,33 @@ def read(timeout: float = 20.0) -> dict:
     secondary = limits.get("secondary")
     try:
         primary_used = float(used)
-        primary_resets = _epoch_iso(primary.get("resetsAt"))
-        secondary_used = None
-        secondary_resets = None
-        secondary_window = None
-        if isinstance(secondary, dict):
-            if secondary.get("usedPercent") is not None:
-                secondary_used = float(secondary["usedPercent"])
-            secondary_resets = _epoch_iso(secondary.get("resetsAt"))
-            secondary_window = secondary.get("windowDurationMins")
+    except (TypeError, ValueError, OverflowError):
+        return _unknown(f"Codex response has invalid primary usedPercent: {used!r}")
+    if not math.isfinite(primary_used) or not 0 <= primary_used <= 100:
+        return _unknown(f"Codex response has invalid primary usedPercent: {used!r}")
+
+    resets_at = primary.get("resetsAt")
+    if resets_at is None:
+        return _unknown("Codex response missing rateLimits.primary.resetsAt")
+    try:
+        primary_resets = _epoch_iso(resets_at)
     except (TypeError, ValueError, OverflowError, OSError):
-        return _unknown("Codex response has invalid rate-limit values")
+        return _unknown(f"Codex response has invalid primary resetsAt: {resets_at!r}")
+
+    secondary_used = None
+    secondary_resets = None
+    secondary_window = None
+    if isinstance(secondary, dict):
+        secondary_value = secondary.get("usedPercent")
+        try:
+            candidate_used = float(secondary_value)
+            if math.isfinite(candidate_used) and 0 <= candidate_used <= 100:
+                candidate_resets = _epoch_iso(secondary.get("resetsAt"))
+                secondary_used = candidate_used
+                secondary_resets = candidate_resets
+                secondary_window = secondary.get("windowDurationMins")
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
 
     return {
         "known": True,
