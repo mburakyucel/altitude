@@ -169,6 +169,8 @@ def run_proposal_flow(project: str, slug: str) -> None:
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    with S.project_lock(project):  # a new report: whatever L3 did with the previous one no longer counts
+        t0 = S.load_task(project, slug); t0["l3_handled"] = None; S.save_task(project, t0)
     if item.get("needs_input"):
         a = item.get("agent") or {}
         reason = f"L2 is idle without a report — probably waiting for a permission or a question. Attach: `claude attach {a.get('id', '')}`; or answer via the card (Resume sends your note into the session)."
@@ -198,7 +200,13 @@ def on_l2_finished(project: str, item: dict) -> None:
         T.block(project, slug, (v.get("report") or {}).get("blocked") or "blocked (see report)")
     else:
         T.report(project, slug, v)
-    matches = []
+    report_turn(project, t, v)
+
+
+def report_turn(project: str, t: dict, v: dict) -> None:
+    """The L3's report-landed turn. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart
+    cut short is re-run by `resume_stranded_reports` instead of leaving the task waiting for nobody."""
+    slug = t["slug"]
     inc = improve.index()
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
@@ -208,6 +216,25 @@ def on_l2_finished(project: str, item: dict) -> None:
               "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
               "then the post-mortem pass (incident + right-sized rule, or one line saying nothing went wrong).")
     l3.turn(project, header, trigger="report-landed")
+    with S.project_lock(project):
+        t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+
+
+def resume_stranded_reports(project: str) -> None:
+    """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    for t in S.list_tasks(project):
+        if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
+            continue
+        if not (S.task_dir(project, t["slug"]) / "report.json").exists():
+            continue
+        key = f"finished:{project}:{t['slug']}"
+        with _bg_guard:
+            if (_bg.get(key) or threading.Thread()).is_alive():
+                continue
+        v = t.get("verified") or {"verdict": "missing", "problems": ["no verified report on the task"], "signals": [],
+                                  "spend": {}, "prs": t.get("prs", []), "report": {}}
+        log(f"[{project}/{t['slug']}] report turn resumed (previous run did not finish)")
+        spawn(key, report_turn, project, t, v)
 
 
 def dispatch_waiting(project: str) -> None:
@@ -246,6 +273,7 @@ def tick() -> None:
         try:
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
+            resume_stranded_reports(project)
             for t in S.list_tasks(project):
                 if t["state"] == "requested" and t["class"] in ("M", "L"):
                     started = t.get("proposal_started")
