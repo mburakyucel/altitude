@@ -246,13 +246,27 @@ def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
         return "", None
 
 
+def rule_application(task: dict) -> bool:
+    """A task that edits the rules ledger (docs/RULES.md, docs/incidents) — those serialize; every other improve task
+    relies on leases like anyone else (decision 51: the broad "one improve task at a time" held 11 tasks for hours)."""
+    paths = task.get("paths") or []
+    return str(task.get("slug", "")).startswith("apply-r-") or any(str(p).strip().lstrip("./").startswith(("docs/RULES.md", "docs/incidents")) for p in paths)
+
+
+PER_TASK_HOLDS = ("file lease", "one rule-application")  # holds that belong to one task; the rest of the queue is still dispatchable
+
+
+def per_task_hold(hold: str | None) -> bool:
+    return bool(hold) and str(hold).startswith(PER_TASK_HOLDS)
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     held = engines.usage_hold()
     if held:
         return f"usage limit: subscription window exhausted, resets {held}"
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
-    if task and task.get("source") == "improve" and any(t.get("source") == "improve" for t in running):
+    if task and rule_application(task) and any(rule_application(t) for t in running):
         return "one rule-application task at a time (they edit the same ledger)"
     if task:
         mine = task_paths(project, task)
@@ -260,7 +274,7 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
             hit = paths_overlap(mine, other["paths"])
             if hit:
                 return f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
-    live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed")]
+    live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed", "stopped")]  # stopped = no process
     if len(live) >= config.SESSIONS_PER_MACHINE:
         return f"session ceiling: {len(live)} live Claude sessions on this machine (cap {config.SESSIONS_PER_MACHINE})"
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):

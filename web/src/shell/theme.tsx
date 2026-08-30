@@ -29,6 +29,14 @@ export function applyTheme(theme: Theme): void {
   const dark = theme === "dark" || (theme === "system" && systemPrefersDark());
   if (dark) document.documentElement.dataset.theme = "dark";
   else delete document.documentElement.dataset.theme;
+
+  let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!themeColor) {
+    themeColor = document.createElement("meta");
+    themeColor.name = "theme-color";
+    document.head.append(themeColor);
+  }
+  themeColor.content = dark ? "#0f172a" : "#f8fafc";
 }
 
 export function setTheme(theme: Theme): void {
@@ -72,7 +80,7 @@ export function ThemeToggle() {
           type="button"
           aria-pressed={theme === option}
           onClick={() => set(option)}
-          className="min-h-8 rounded-[6px] px-3 font-medium text-ink-2 aria-pressed:bg-accent-tint aria-pressed:text-accent-ink"
+          className="min-h-[var(--target-min)] rounded-[6px] px-3 font-medium text-ink-2 aria-pressed:bg-accent-tint aria-pressed:text-accent-ink"
         >
           {LABELS[option]}
         </button>

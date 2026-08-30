@@ -87,9 +87,12 @@ def status(project: str, slug: str) -> dict:
             out[field] = task.get(field)
         out["envelope"] = task.get("envelope")
 
+    dispatch_id = task.get("dispatch_id")
     session_id = task.get("session_id")
-    if session_id:
-        counts_path = config.MONITOR_DIR / f"counts-{session_id}.json"
+    counts_path = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
+    if (counts_path is None or not counts_path.exists()) and session_id:
+        counts_path = config.MONITOR_DIR / f"counts-{session_id}.json"  # legacy session-keyed counter
+    if counts_path is not None:
         try:
             if not counts_path.exists():
                 raise FileNotFoundError(counts_path)
@@ -101,7 +104,6 @@ def status(project: str, slug: str) -> dict:
         except Exception as e:
             _error(errors, "counts", e)
 
-    dispatch_id = task.get("dispatch_id")
     if dispatch_id:
         envelope_path = config.MONITOR_DIR / f"envelope-{project}--{dispatch_id}.json"
         try:

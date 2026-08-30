@@ -166,6 +166,13 @@ class TestTaskStatus(unittest.TestCase):
         run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
         self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
 
+    def test_dispatch_keyed_counts_win_over_the_legacy_session_file(self):
+        S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
+                     {"subagent_launches": 4, "edits": 11})
+        result = task_status.status("demo", "task-one")
+        self.assertEqual(result["counts"], {"subagent_launches": 4, "edits": 11})
+        self.assertEqual(result["errors"], [])
+
     def test_missing_main_run_names_the_merge_sha(self):
         self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
         result = task_status.status("demo", "task-one")

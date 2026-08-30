@@ -65,6 +65,8 @@ L3 runs every request through it. Which stages actually execute depends on the t
 | **M** | a feature or change within settled architecture | research → propose (one-page) → critique → build → review → verify → report | FYI, unless the proposal hits the Decision rule |
 | **L** | new architecture, always-list class, multi-task | full loop; proposal is a Decision; L2 may split into several L2s | Decision, then FYIs |
 
+Burak does not have to pick the class: a request filed as `auto` (the UI default, `alt task new` default) is sized by the intake sizer — a read-only research-tier session with the table above as its rubric — which also names the paths for the lease; S is approved at once, M/L enter the proposal flow (decision 53). L3 can override before approval with `alt task size`.
+
 The "spin up a session to design, then propose, then build, then another to verify" instructions Burak keeps repeating are these stages; once they are in the personas they are never typed again.
 
 ## The spend envelope — proportionality (decision 31)
@@ -80,7 +82,7 @@ Every brief carries an **envelope**, set by size class and adjusted by L3 at pro
 Rules that follow from it, for every level:
 - **Verify per artifact, not per item.** Ten interview topics get one verification pass with a checklist, not ten researchers. Ten PRs from one brief get one reviewer session that walks them, unless the brief says otherwise.
 - **Research is bounded by the question.** A proposal names the two or three things it needs to find out; a subagent per unknown, not per possibility.
-- **Hitting the envelope is a stop, not a nudge.** The session checkpoints, writes what it has, and reports *Blocked: envelope* with the number it would need; L3 decides whether the return justifies raising it (obvious for a nearly-done M task; a Decision when it would double).
+- **Hitting the envelope is a stop, not a nudge.** The session checkpoints, writes what it has, and reports *Blocked: envelope* with the number it would need; L3 raises it itself up to 2× the class envelope with `alt task resume <slug> --launches N` (decision 52); above that, or when the L2 cannot say what the launches buy, it is a Decision.
 - **Retries are counted.** One retry per failing step; the second failure is a report, not a third attempt.
 - **Spend past 2× the estimate is an incident** (post-mortem signal), even when the task landed — the lesson is usually a brief that under-specified the work or an orchestrator that fanned out per item.
 

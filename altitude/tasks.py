@@ -79,8 +79,10 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 def new(project: str, title: str, cls: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, engine: str | None = None, hold_merge: str | None = None) -> dict:
-    if cls not in S.CLASSES:
-        raise TransitionError(f"class must be one of {S.CLASSES}")
+    if cls == "auto":  # decision 53: the intake sizer picks the class (Burak does not have to)
+        cls = None
+    elif cls not in S.CLASSES:
+        raise TransitionError(f"class must be one of {S.CLASSES} or auto")
     if model and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
     config.project(project)
@@ -95,7 +97,7 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         S.atomic_write(d / "request.md", request.rstrip() + "\n")
         task = {"slug": slug, "title": title, "class": cls, "state": "requested", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None, "worktree": None,
-                "branch": None, "prs": [], "envelope": dict(ENVELOPE[cls]), "estimate": {}, "spend": {},
+                "branch": None, "prs": [], "envelope": dict(ENVELOPE[cls]) if cls else {}, "estimate": {}, "spend": {},
                 "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "engine": engine,  # decision 45: a forced engine for every L1 of this task (None = by quota)
                 "hold_merge": (hold_merge or "").strip() or None}  # decision 48: why Burak merges this one himself (None = the L2 merges)
@@ -158,6 +160,27 @@ def approve(project: str, slug: str, option: int | None = None, actor: str = "bu
             if low.startswith("reject"):
                 return _move(project, task, "rejected", actor, question=dec.get("question"), answer=chosen, note=note)
         return _move(project, task, "approved", actor, question=dec.get("question"), answer=chosen, note=note)
+
+
+def set_class(project: str, slug: str, cls: str, why: str, paths: list[str] | None = None, actor: str = "sizer") -> dict:
+    """Decision 53: give an unsized (or wrongly sized) requested task its class; the envelope follows the class table and
+    declared paths are kept (the sizer's are used only when the task has none)."""
+    if cls not in S.CLASSES:
+        raise TransitionError(f"class must be one of {S.CLASSES}")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "requested":
+            raise TransitionError(f"{slug}: class can change only while requested (state {task['state']})")
+        prev = task.get("class")
+        task["class"] = cls
+        task["envelope"] = dict(ENVELOPE[cls])
+        if paths and not task.get("paths"):
+            task["paths"] = [p.strip() for p in paths if p.strip()]
+        task["sized"] = {"class": cls, "why": why, "by": actor, "at": S.now(), "previous": prev}
+        task["size_error"] = None
+        S.save_task(project, task)
+    S.append_event(project, slug, "sized", actor=actor, cls=cls, why=why, previous=prev)
+    return task
 
 
 def auto_approve(project: str, slug: str, reason: str) -> dict:
@@ -223,6 +246,28 @@ def block(project: str, slug: str, reason: str, actor: str = "altd") -> dict:
         task = S.load_task(project, slug)
         task["blocked_reason"] = reason
         return _move(project, task, "blocked", actor, reason=reason)
+
+
+def raise_envelope(project: str, slug: str, launches: int | None = None, turns: int | None = None, actor: str = "l3") -> dict:
+    """Decision 52: L3 raises a blocked task's envelope itself. task.json and the envelope file the hooks read both change,
+    so the re-attached L2's next launch is judged against the new cap; lowering is refused (a cap is a stop, not a dial)."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        env = task["envelope"]
+        for key, val in (("subagent_launches", launches), ("max_turns", turns)):
+            if val is None:
+                continue
+            if int(val) < int(env[key]):
+                raise TransitionError(f"{slug}: {key} {env[key]} → {val} would lower the envelope; only raising is allowed")
+            env[key] = int(val)
+        S.save_task(project, task)
+        if task.get("dispatch_id"):
+            p = config.MONITOR_DIR / f"envelope-{project}--{task['dispatch_id']}.json"
+            cur = S.read_json(p) if p.exists() else {"project": project, "slug": slug, "dispatch_id": task["dispatch_id"]}
+            cur.update(env)
+            S.write_json(p, cur)
+    S.append_event(project, slug, "envelope-raised", actor=actor, launches=launches, turns=turns)
+    return task
 
 
 def resume(project: str, slug: str, actor: str = "altd", **ev) -> dict:

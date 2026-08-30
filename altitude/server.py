@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -114,22 +114,38 @@ def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
     return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
 
 
-def _turn_started_at(project: str, header: str) -> str | None:
-    """When our proposal-ready turn actually began (incident I-008), or None if we cannot tell.
+def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_proposed: bool = False) -> None:
+    """Clear the in-flight marker and log a proposal-ready turn skipped after a state change."""
+    with S.project_lock(project):
+        latest = S.load_task(project, slug)
+        latest["proposal_started"] = None
+        S.save_task(project, latest)
+    if task["state"] == "proposed" and keep_fyi_proposed:
+        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
+        return
+    log(f"[{project}/{slug}] no longer requested (state={task['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
 
-    `l3.turn` serializes on a per-project lock and logs the prompt verbatim *inside* it, right
-    before the engine runs — so the chat entry's `at` is the moment the L3 started on our turn,
-    not the moment we queued behind another one. Using the queue time instead would read a park
-    the L3 made for Burak during that earlier turn as an in-turn park, and override it.
 
-    The entry always exists once `l3.turn` has returned, so None is unreachable in a healthy
-    system — which is the point. It fails closed: without a trustworthy start the guard leaves
-    the park standing rather than risk overriding one (decision 36 — no silent fallback).
-    """
-    for ev in reversed(l3.chat_history(project, limit=200)):
-        if ev.get("role") == "user" and ev.get("text") == header:
-            return ev.get("at") or None
-    return None
+def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
+    """Apply proposal-state policy after either a completed or skipped proposal-ready turn."""
+    if task["state"] != "proposed":
+        return
+    hits = p.get("always_list_hits")
+    if hits and not task.get("hold_merge"):  # decision 48: always-list → Burak merges
+        hits = hits if isinstance(hits, list) else [hits]
+        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
+    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
+    if not task.get("decision") and task["class"] in ("S", "M") and not p.get("always_list_hits"):
+        T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
+        T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
+
+
+def size_task(project: str, slug: str) -> None:
+    try:
+        res = intake.size(project, slug)
+        log(f"[{project}/{slug}] sized: {res}")
+    except Exception as e:  # noqa: BLE001 — the fault is already filed by intake.size
+        log(f"[{project}/{slug}] sizer failed: {e}")
 
 
 def run_proposal_flow(project: str, slug: str) -> None:
@@ -153,6 +169,11 @@ def run_proposal_flow(project: str, slug: str) -> None:
         if cj.exists() and pj.exists() and cj.stat().st_mtime >= pj.stat().st_mtime:  # a critique of *this* proposal
             crit = S.read_json(cj)
         else:
+            tcrit = S.load_task(project, slug)
+            if tcrit["state"] != "requested":
+                _skip_proposal_ready_turn(project, slug, tcrit)
+                _finish_proposal(project, slug, p, tcrit)
+                return
             log(f"[{project}/{slug}] critic")
             crit = propose.run_critic(project, slug)
     header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
@@ -174,22 +195,30 @@ def run_proposal_flow(project: str, slug: str) -> None:
     # (requested only) if it comes back to requested later.
     t1 = S.load_task(project, slug)
     if t1["state"] != "requested":
-        with S.project_lock(project):
-            t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
-        if t1["state"] != "proposed":
-            log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
-            return
-        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
-        t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
-    else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
+        _skip_proposal_ready_turn(project, slug, t1, keep_fyi_proposed=True)
+        _finish_proposal(project, slug, p, t1)
+        return
+    else:
+        task_at_turn = None
+
+        def still_requested() -> bool:
+            nonlocal task_at_turn
+            task_at_turn = S.load_task(project, slug)
+            return task_at_turn["state"] == "requested"
+
         try:
             res = l3.turn(project, header, trigger="proposal-ready",
-                          on_start=lambda pid: _record_l3_turn(project, slug, pid))
+                          on_start=lambda pid: _record_l3_turn(project, slug, pid), precheck=still_requested)
         finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
             _record_l3_turn(project, slug, None)
-        turn_start = _turn_started_at(project, header)
+        if res.get("skipped"):
+            skipped_task = task_at_turn or S.load_task(project, slug)
+            _skip_proposal_ready_turn(project, slug, skipped_task)
+            _finish_proposal(project, slug, p, skipped_task)
+            return
+        turn_start = res.get("_turn_started_at")
         if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
-            log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
+            log(f"[{project}/{slug}] l3.turn returned no start timestamp — cannot date the turn, so any park stands")
         t2 = S.load_task(project, slug)
         # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
         # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
@@ -205,14 +234,7 @@ def run_proposal_flow(project: str, slug: str) -> None:
                 return
             T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
             return
-    hits = p.get("always_list_hits")
-    if hits and t2["state"] == "proposed" and not t2.get("hold_merge"):  # decision 48: always-list → Burak merges
-        hits = hits if isinstance(hits, list) else [hits]
-        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
-    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
-    if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
-        T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
-        T.fyi(project, slug, f"{slug} ({t2['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
+    _finish_proposal(project, slug, p, t2)
 
 
 def on_l2_finished(project: str, item: dict) -> None:
@@ -307,6 +329,8 @@ def dispatch_waiting(project: str) -> None:
         if t["state"] != "approved":
             continue
         hold = dispatch.wip_hold(project, t)
+        if hold and dispatch.per_task_hold(hold):  # decision 51: a leased task must not block the queue behind it
+            continue
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             return
@@ -333,6 +357,10 @@ def drain_hook_faults() -> None:
 
 
 def tick() -> None:
+    try:
+        quota_codex.refresh_if_due()
+    except Exception as e:  # noqa: BLE001
+        log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
@@ -342,6 +370,9 @@ def tick() -> None:
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
             for t in S.list_tasks(project):
+                if t["state"] == "requested" and not t.get("class") and not t.get("size_error") and not engines.usage_hold():
+                    spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
+                    continue
                 if t["state"] == "requested" and t["class"] in ("M", "L") and not engines.usage_hold():
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
@@ -626,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "verify":
                     return self._json(verify.verify(project, slug))
                 elif action == "new":
-                    t = T.new(project, o["title"], o.get("class") or "M", o.get("request") or o["title"], actor="burak")
+                    t = T.new(project, o["title"], o.get("class") or "auto", o.get("request") or o["title"], actor="burak")
                     return self._json({"ok": True, "slug": t["slug"]})
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":

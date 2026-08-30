@@ -49,12 +49,14 @@ export default function AppShell() {
         </div>
       </aside>
       <main className="p-4 pb-24 md:p-8 md:pb-8">
-        <div
-          className="mb-4 flex items-center justify-between text-meta text-muted md:hidden"
-          aria-label="Usage quota"
-        >
-          <span className="font-semibold text-ink-2">Altitude</span>
-          <span>{quota}</span>
+        <div className="mb-4 md:hidden">
+          <div className="flex items-center justify-between text-meta text-muted" aria-label="Usage quota">
+            <span className="font-semibold text-ink-2">Altitude</span>
+            <span>{quota}</span>
+          </div>
+          <div className="mt-2">
+            <ThemeToggle />
+          </div>
         </div>
         <Outlet />
       </main>

@@ -19,3 +19,30 @@
 - effect: 1-5 turns per task recovered (I-002: 5 turns; this-is-a-test-job-submitted-from-my-pho: 1 turn, recurrence 2026-08-30)
 - status: probation
 - text: Issue one plain command per Bash call. No &&, ;, pipes, cd, or $ inside heredocs - the Safety Net hooks and auto mode's command classifier reject those as unverifiable against the worktree boundary, and every refusal costs a turn. When you need composition, write a short script file and run it, or use the file tools instead.
+
+## R-004 — Staged L tasks land stage by stage: stage 1 is its own PR, checkpoint until it merges
+- scope: project
+- where: L2 persona: the stage plan and merge-policy step for L tasks
+- origin: I-018 (altitude)
+- prevents: long-lived L branches that chase main and double-port files the branch retires (I-018)
+- effect: one merge by Burak per stage PR instead of one at the end - the L2 exits at each stage PR and is resumed after the merge
+- status: probation
+- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, checkpoint progress.md, report Blocked: stage 1 PR awaits merge, and exit - the L merge policy stands, Burak merges, and you are resumed on merged main. Later stages open their own PRs from merged main, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice.
+
+## R-005 — A mechanism named in a request or brief is a suggestion the implementer verifies at the call sites
+- scope: project
+- where: CLAUDE.md (new section: Briefs and mechanisms); the L3 side applies immediately to requests this L3 writes
+- origin: I-019 (altitude)
+- prevents: request-prescribes-unverified-mechanism
+- effect: one L1 build round and one reviewer launch per recurrence (#37: 2 rounds, 3/3 launches, 34/40 turns)
+- status: probation
+- text: A mechanism named in a request or brief (a lock to take, an ordering, a shared file to write) is a suggestion, not a spec: the request states the invariant and the evidence, and whoever implements verifies the mechanism against every path that reaches the new code before adopting it - for a lock, who already holds it on those paths and whether it is reentrant. A mechanism that fails the check is replaced and the failed check is recorded under Deviations; that is a documented default, not a question and not a block.
+
+## R-006 — The definition of done names only gates the repository has
+- scope: project
+- where: templates/brief.md (the Definition of done line)
+- origin: I-020 (altitude)
+- prevents: brief-names-gate-the-repo-lacks
+- effect: one recorded deviation and a not-applicable argument per task in this repo (#37, #38), plus the risk of checks skipped read as green
+- status: probation
+- text: The definition of done names only gates the repository has. Where the repo has CI (a .github/workflows directory), the main run is green after merge. Where it has none, the full local test suite runs on merged main and the report states the count, and a checks value of skipped or no-checks-reported is never read as passed. A gate is never satisfied by its absence.

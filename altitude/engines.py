@@ -88,7 +88,7 @@ def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
-    env["PATH"] = env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")  # I-021: `alt` in every session
     return env
 
 
@@ -286,7 +286,8 @@ def claude_rm(agent_id: str) -> str:
 
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
-               model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None) -> dict:
+               model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
+               effort: str | None = None) -> dict:
     """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
     `turn.completed` events on stdout."""
@@ -299,6 +300,8 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         cmd += ["-m", model]
     for kv in extra_config or []:
         cmd += ["-c", kv]
+    if effort:
+        cmd += ["-c", f'model_reasoning_effort="{effort}"']
     try:
         p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL, env=clean_env())
