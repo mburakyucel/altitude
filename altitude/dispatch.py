@@ -1,6 +1,7 @@
 """Dispatch an L2 as `claude --bg` in a worktree; poll `claude agents`; notice done (ARCHITECTURE §5)."""
 from __future__ import annotations
 import json
+from datetime import datetime, timezone
 import re
 from pathlib import Path
 
@@ -185,7 +186,7 @@ def resume_due(project: str) -> list[str]:
     due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
     for t in sorted(due, key=lambda t: t.get("created") or ""):
         if wip_hold(project, t):
-            break
+            continue  # a lease or the improve-serialization rule holds this one; a younger unrelated task may still go
         resume_blocked(project, t["slug"], "The usage window has reopened; Altitude held you, nothing is wrong with the task.", prefix="")
         with S.project_lock(project):
             t2 = S.load_task(project, t["slug"]); t2["resume_after"] = None; S.save_task(project, t2)
@@ -224,15 +225,17 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
             for t in S.list_tasks(project) if t["state"] == "running" and t["slug"] != exclude]
 
 
-def job_detail(agent_id: str | None) -> str:
-    """What the worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) — the limit message lands here."""
+def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
+    """What the worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) and when — the limit message
+    lands here, and "resets 8pm" only means something relative to the moment it was written."""
     if not agent_id:
-        return ""
+        return "", None
+    p = JOBS_DIR / str(agent_id) / "state.json"
     try:
-        st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
-        return str(st.get("detail") or "") if isinstance(st, dict) else ""
+        st = json.loads(p.read_text())
+        return (str(st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
     except (OSError, ValueError):
-        return ""
+        return "", None
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
@@ -285,7 +288,8 @@ def poll(project: str) -> list[dict]:
         live = {"status": a.get("status"), "state": a.get("state")} if a else None
         idle_since = None
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
-            lim = engines.usage_limit_in(job_detail(a.get("id")))
+            detail, at = job_detail(a.get("id"))
+            lim = engines.usage_limit_in(detail, now=at)
             if lim:  # decision 44: the worker is waiting for the window, not for a human
                 finished.append({"task": t, "agent": a, "limited": lim})
                 S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})

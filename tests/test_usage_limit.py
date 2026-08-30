@@ -57,13 +57,21 @@ class TestPollAndResume(unittest.TestCase):
         orig = engines.claude_agents, S.list_tasks, dispatch.job_detail
         engines.claude_agents = lambda: [{"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}]
         S.list_tasks = lambda project: [{"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"}]
-        dispatch.job_detail = lambda aid: LIMIT
+        dispatch.job_detail = lambda aid: (LIMIT, datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc))
         try:
             out = dispatch.poll("altitude")
         finally:
             engines.claude_agents, S.list_tasks, dispatch.job_detail = orig
         self.assertEqual(len(out), 1)
-        self.assertTrue(out[0].get("limited", "").endswith("+00:00"))
+        self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
+
+    def test_job_detail_reads_the_file_and_its_time(self):
+        d = dispatch.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
+        (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
+        text, at = dispatch.job_detail("t-detail")
+        self.assertEqual(text, LIMIT)
+        self.assertLess((datetime.now(timezone.utc) - at).total_seconds(), 60)
+        self.assertEqual(dispatch.job_detail("no-such-job"), ("", None))
 
     def test_resume_due_is_oldest_first_and_wip_throttled(self):
         past = "2026-01-01T00:00:00+00:00"
