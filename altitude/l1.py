@@ -191,8 +191,34 @@ def exec_run(project: str, slug: str, name: str) -> dict:
 
 def _compact(r: dict) -> dict:
     res = r.get("result") or {}
-    return {k: r.get(k) for k in ("name", "role", "engine", "why", "model", "branch", "worktree", "started", "done")} | {
+    compact = {k: r.get(k) for k in ("name", "role", "engine", "why", "model", "branch", "worktree", "started", "done")} | {
         "pr": res.get("pr"), "summary": res.get("summary"), "error": res.get("error"), "usage": res.get("usage")}
+    if r.get("role") != "reviewer":
+        return compact
+    structured = res.get("structured")
+    findings = structured.get("findings") if isinstance(structured, dict) else None
+    if not isinstance(findings, list):
+        findings = None
+    compact["findings"] = findings
+    if findings is not None:
+        if not findings:
+            compact["summary"] = "no findings"
+        else:
+            counts = {severity: 0 for severity in ("blocking", "major", "minor")}
+            other = 0
+            for finding in findings:
+                severity = finding.get("severity") if isinstance(finding, dict) else None
+                if severity in counts:
+                    counts[severity] += 1
+                else:
+                    other += 1
+            buckets = [f"{counts[severity]} {severity}" for severity in ("blocking", "major", "minor") if counts[severity]]
+            if other:
+                buckets.append(f"{other} other")
+            compact["summary"] = f"{len(findings)} findings: {', '.join(buckets)}"
+    elif r.get("done") and not (isinstance(compact["summary"], str) and compact["summary"].strip()) and compact["error"] is None:
+        compact["error"] = "reviewer returned no findings and no summary"
+    return compact
 
 
 def status(project: str, slug: str) -> list[dict]:
