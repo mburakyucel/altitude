@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, monitor, propose, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, mechanize, monitor, propose, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -388,6 +388,11 @@ def tick() -> None:
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
                     S.append_event(project, t["slug"], "cleanup", notes=notes)
                     log(f"[{project}/{t['slug']}] cleanup: {notes}")
+            try:
+                mechanize.run_due(project)
+            except Exception as e:  # noqa: BLE001
+                log(f"[{project}] mechanize failed: {e}\n{traceback.format_exc()}")
+                improve.system_fault("mechanize", f"{project}: {e}", project=project)
             weekly_audit(project)
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
@@ -547,7 +552,13 @@ class Handler(BaseHTTPRequestHandler):
             if api == "task" and len(parts) > 3:
                 return self._json(task_view(parts[2], parts[3]))
             if api == "monitor":
-                return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(), "agents": engines.claude_agents()})
+                tool_shapes = {}
+                for project in config.load_projects():
+                    path = config.MONITOR_DIR / f"tool-shapes-{project}.json"
+                    if path.exists():
+                        tool_shapes[project] = (S.read_json(path, {}) or {}).get("shapes", [])[:10]
+                return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
+                                   "agents": engines.claude_agents(), "tool_shapes": tool_shapes})
             if api == "digest":
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:

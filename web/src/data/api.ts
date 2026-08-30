@@ -217,6 +217,7 @@ export const MonitorSchema = z
     quota: QuotaSchema,
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
+    tool_shapes: z.record(z.string(), z.unknown()).nullish(),
   })
   .passthrough();
 
