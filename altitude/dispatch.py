@@ -229,13 +229,98 @@ def narrow(paths: list[str]) -> list[str]:
     return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
 
 
+def _split_top_level(value: str) -> list[str]:
+    """Split commas outside brace groups and parenthesized annotations."""
+    parts, start, brace_depth, paren_depth = [], 0, 0, 0
+    for i, char in enumerate(value):
+        if char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth = max(0, brace_depth - 1)
+        elif char == "(":
+            paren_depth += 1
+        elif char == ")":
+            paren_depth = max(0, paren_depth - 1)
+        elif char == "," and not brace_depth and not paren_depth:
+            parts.append(value[start:i])
+            start = i + 1
+    parts.append(value[start:])
+    return parts
+
+
+def _annotation_start(value: str) -> int | None:
+    """The start of a trailing parenthesized annotation, not parentheses within a filename."""
+    start = value.find(" (")
+    while start >= 0:
+        depth = 0
+        for i in range(start + 1, len(value)):
+            if value[i] == "(":
+                depth += 1
+            elif value[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    if not value[i + 1:].strip():
+                        return start
+                    break
+        start = value.find(" (", start + 2)
+    return None
+
+
+def _expand_braces(path: str) -> list[str]:
+    """Expand balanced brace groups, including subsequent and nested groups."""
+    candidates = [path]
+    while any("{" in candidate for candidate in candidates):
+        expanded = []
+        for candidate in candidates:
+            start = candidate.find("{")
+            if start < 0:
+                expanded.append(candidate)
+                continue
+            depth, end = 0, None
+            for i in range(start, len(candidate)):
+                if candidate[i] == "{":
+                    depth += 1
+                elif candidate[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            if end is None:
+                continue
+            members = _split_top_level(candidate[start + 1:end])
+            expanded.extend(candidate[:start] + member.strip() + candidate[end + 1:]
+                            for member in members if member.strip())
+        candidates = expanded
+    return [candidate for candidate in candidates if "{" not in candidate and "}" not in candidate]
+
+
+def _expand_entry(entry: str) -> list[str]:
+    """Expand one declared file entry into unannotated paths."""
+    entry = entry.strip()
+    if not entry or entry.startswith("("):
+        return []
+    if "{" not in entry and "}" not in entry and " (" not in entry:
+        return [entry]
+    out = []
+    for part in _split_top_level(entry):
+        path = part.strip()
+        annotation = _annotation_start(path)
+        if annotation is not None:
+            path = path[:annotation].strip()
+        if not path or path.startswith("(") or ("/" not in path and "." not in path):
+            continue
+        out.extend(_expand_braces(path))
+    return out
+
+
 def task_paths(project: str, task: dict) -> list[str]:
     """The paths a task has declared: `--paths` on the task, else the proposal's `files`. This is the *staging* lease
     (`alt land` refuses changes outside it); the *hold* lease is `narrow()` of it — see wip_hold."""
-    if task.get("paths"):
-        return list(task["paths"])
-    p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
-    return list(p.get("files") or [])
+    entries = task.get("paths")
+    if not entries:
+        p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
+        entries = p.get("files") or []
+    return [path for entry in entries for path in _expand_entry(str(entry))]
 
 
 def leases(project: str, exclude: str | None = None) -> list[dict]:
