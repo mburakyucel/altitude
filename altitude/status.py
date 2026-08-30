@@ -223,9 +223,9 @@ def status(project: str, slug: str) -> dict:
 
     if not merge_candidates:
         return out
-    newest_sha = max(merge_candidates)[2]
     if out["gate"] == "local-suite":
         return out
+    newest_sha = max(merge_candidates)[2]
     try:
         run_list = verify.gh(["run", "list", "--branch", "main", "--limit", "100",
                               "--json", _RUN_FIELDS], repo)

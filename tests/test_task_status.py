@@ -239,6 +239,21 @@ class TestTaskStatus(unittest.TestCase):
             "hold_paths": ["tests/test_x.py"],
         }])
 
+        other["state"] = "blocked"
+        other["resume_after"] = "2026-08-30T12:00:00+00:00"
+        S.write_json(other_path, other)
+
+        result = task_status.status("demo", "task-one")
+        dispatcher_hold = dispatch.wip_hold("demo", task)
+
+        self.assertEqual(result["wip_hold"], dispatcher_hold)
+        self.assertEqual(result["wip_hold"],
+                         "file lease: `other-task` is blocked with a pending resume on tests/test_x.py")
+        self.assertEqual(result["other_leases"], [{
+            "slug": "other-task", "paths": ["tests/test_x.py"],
+            "pending_resume": True, "hold_paths": ["tests/test_x.py"],
+        }])
+
     def test_other_leases_are_published_only_after_all_are_annotated(self):
         # `z-` sorts last, so the first entry is annotated before the second one raises: a
         # half-annotated `other_leases` would hand a consumer a KeyError on `hold_paths`.

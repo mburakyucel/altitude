@@ -275,7 +275,8 @@ def hold_conflict(mine: list[str], others: list[dict]) -> str | None:
     for other in others:
         hit = paths_overlap(mine, narrow(other.get("paths", [])))
         if hit:
-            activity = other.get("activity", "running")
+            activity = other.get("activity") or (
+                "blocked with a pending resume" if other.get("pending_resume") else "running")
             return f"file lease: `{other['slug']}` is {activity} on {', '.join(hit[:4])}"
     return None
 
@@ -430,15 +431,16 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     if task:
         mine = task_paths(project, task)
         mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
+        holders = []
         for other in _lease_tasks(project, exclude=task["slug"]):
             pending_resume = other["state"] == "blocked"
             if pending_resume and mine_pending and _resume_order(other) >= _resume_order(task):
                 continue  # among overlapping queued resumes, the deterministic oldest task proceeds first
-            activity = "blocked with a pending resume" if pending_resume else "running"
-            held = hold_conflict(mine, [{"slug": other["slug"], "paths": task_paths(project, other),
-                                         "activity": activity}])
-            if held:
-                return held
+            holders.append({"slug": other["slug"], "paths": task_paths(project, other),
+                            "pending_resume": pending_resume})
+        held = hold_conflict(mine, holders)
+        if held:
+            return held
     live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed", "stopped")]  # stopped = no process
     if len(live) >= config.SESSIONS_PER_MACHINE:
         return f"session ceiling: {len(live)} live Claude sessions on this machine (cap {config.SESSIONS_PER_MACHINE})"
