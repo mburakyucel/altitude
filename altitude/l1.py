@@ -256,6 +256,8 @@ def engine_started(rec: dict, res: dict, exc: BaseException | None, pid: int | N
     happened raises `FileNotFoundError`/`PermissionError`, and a wrapper that could not find the engine exits 127."""
     if res.get("limited"):
         return False  # a confirmed quota/engine refusal is not a started L1, even when the CLI emitted diagnostics
+    if res.get("engine_started") is False:
+        return False  # a caller-side preflight failed before the engine process existed
     if rec["engine"] == "claude":
         return pid is not None and not _EXIT_127.search(str(res.get("error") or exc or ""))
     if exc is not None:
@@ -314,7 +316,8 @@ def exec_run(project: str, slug: str, name: str) -> dict:
                 extra.append(f'sandbox_workspace_write.writable_roots=["{(wt / common).resolve()}"]')
             res = engines.codex_exec(prompt, cwd=wt, sandbox="read-only" if rec["role"] == "reviewer" else "workspace-write",
                                      model=rec["model"], timeout=config.L1_TIMEOUT, extra_config=extra, schema=schema,
-                                     effort=config.CODEX_EFFORT.get(rec["role"]))
+                                     effort=config.CODEX_EFFORT.get(rec["role"]),
+                                     fault_context={"project": project, "task": slug})
         else:
             res = engines.claude_print(prompt, cwd=wt, model=rec["model"], permission_mode="plan" if rec["role"] == "reviewer" else "auto",
                                        max_turns=config.L1_MAX_TURNS, timeout=config.L1_TIMEOUT, schema=schema,
@@ -363,11 +366,14 @@ def exec_run(project: str, slug: str, name: str) -> dict:
                 denial = _codex_sandbox_stop(summary or text[-1500:])
         if not denial:
             denial = _codex_sandbox_denial(err) or _codex_sandbox_denial(text)
+        if not denial and res.get("engine_started") is False:
+            denial = str(err or "Codex sandbox preflight failed")[:300]
     if denial:
-        try:
-            improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
-        except Exception as e:  # noqa: BLE001 — a fault raised about a broken run must not break the record too
-            err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
+        if res.get("fault_recorded") != "codex-sandbox":
+            try:
+                improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
+            except Exception as e:  # noqa: BLE001 — a fault raised about a broken run must not break the record too
+                err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
         summary = "engine fault: codex-sandbox"
     pr = None
     if summary and "no pr" not in summary.lower():

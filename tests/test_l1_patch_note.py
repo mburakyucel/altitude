@@ -82,6 +82,7 @@ class TestL1PatchNote(unittest.TestCase):
             "worktree": str(root),
         }
         faults = []
+        settlements = []
         state_root = root / "state"
 
         with ExitStack() as stack:
@@ -93,10 +94,12 @@ class TestL1PatchNote(unittest.TestCase):
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", return_value=response))
             stack.enter_context(mock.patch.object(engines, "claude_print", return_value=response))
-            stack.enter_context(mock.patch.object(l1, "_settle_launch", return_value=None))
+            stack.enter_context(mock.patch.object(
+                l1, "_settle_launch", side_effect=lambda *args: settlements.append(args[-1])
+            ))
             stack.enter_context(mock.patch.object(improve, "system_fault", side_effect=lambda **kw: faults.append(kw)))
             result = l1.exec_run("project", "task", "implementer-1")
-        return result, faults
+        return result, faults, settlements
 
     def test_bwrap_denial_becomes_codex_sandbox_engine_fault(self):
         response = {
@@ -107,13 +110,53 @@ class TestL1PatchNote(unittest.TestCase):
             "returncode": 1,
         }
         with tempfile.TemporaryDirectory() as td:
-            rec, faults = self._run_codex_result(Path(td), response)
+            rec, faults, settlements = self._run_codex_result(Path(td), response)
 
         self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
         self.assertIsNone(rec["result"]["pr"])
         self.assertEqual(faults, [{
             "kind": "codex-sandbox",
             "detail": "bwrap: setting up uid map: Permission denied",
+            "project": "project",
+            "task": "task",
+        }])
+        self.assertEqual(settlements, [True])
+
+    def test_preflight_failure_closes_the_run_without_billing_a_launch(self):
+        response = {
+            "text": "",
+            "error": "Codex sandbox preflight failed for /repo:\nbwrap: setting up uid map: Permission denied",
+            "usage": {},
+            "structured": None,
+            "returncode": 1,
+            "engine_started": False,
+            "fault_recorded": "codex-sandbox",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            rec, faults, settlements = self._run_codex_result(Path(td), response)
+
+        self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
+        self.assertEqual(settlements, [False])
+        self.assertEqual(faults, [], "codex_exec already recorded this preflight fault with task context")
+
+    def test_preflight_fault_persistence_failure_retries_once_with_task_context(self):
+        response = {
+            "text": "",
+            "error": "Codex sandbox preflight failed for /repo: namespace unavailable",
+            "usage": {},
+            "structured": None,
+            "returncode": 1,
+            "engine_started": False,
+            "fault_recorded": None,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            rec, faults, settlements = self._run_codex_result(Path(td), response)
+
+        self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
+        self.assertEqual(settlements, [False])
+        self.assertEqual(faults, [{
+            "kind": "codex-sandbox",
+            "detail": "Codex sandbox preflight failed for /repo: namespace unavailable",
             "project": "project",
             "task": "task",
         }])
@@ -126,7 +169,7 @@ class TestL1PatchNote(unittest.TestCase):
     def test_sandbox_stop_without_a_raw_bwrap_line_is_an_engine_fault(self):
         response = {"text": self.STOPPED, "error": None, "usage": {}, "structured": None, "returncode": 0}
         with tempfile.TemporaryDirectory() as td:
-            rec, faults = self._run_codex_result(Path(td), response)
+            rec, faults, _ = self._run_codex_result(Path(td), response)
 
         self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
         self.assertIsNone(rec["result"]["pr"])
@@ -137,7 +180,7 @@ class TestL1PatchNote(unittest.TestCase):
     def test_same_stop_on_claude_is_not_a_codex_fault(self):
         response = {"text": self.STOPPED, "error": None, "usage": {}, "structured": None, "returncode": 0}
         with tempfile.TemporaryDirectory() as td:
-            rec, faults = self._run_codex_result(Path(td), response, engine="claude")
+            rec, faults, _ = self._run_codex_result(Path(td), response, engine="claude")
 
         self.assertEqual(faults, [])
         self.assertNotEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
@@ -148,7 +191,7 @@ class TestL1PatchNote(unittest.TestCase):
             "error": None, "usage": {}, "structured": None, "returncode": 0,
         }
         with tempfile.TemporaryDirectory() as td:
-            rec, faults = self._run_codex_result(Path(td), response)
+            rec, faults, _ = self._run_codex_result(Path(td), response)
 
         self.assertEqual(rec["result"]["pr"], 61)
         self.assertEqual(faults, [])
@@ -162,11 +205,12 @@ class TestL1PatchNote(unittest.TestCase):
             "returncode": 0,
         }
         with tempfile.TemporaryDirectory() as td:
-            rec, faults = self._run_codex_result(Path(td), response)
+            rec, faults, settlements = self._run_codex_result(Path(td), response)
 
         self.assertEqual(rec["result"]["summary"], "#42 — landed normally")
         self.assertEqual(rec["result"]["pr"], 42)
         self.assertEqual(faults, [])
+        self.assertEqual(settlements, [True])
 
 
 if __name__ == "__main__":
