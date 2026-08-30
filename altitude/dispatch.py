@@ -230,11 +230,12 @@ def narrow(paths: list[str]) -> list[str]:
 
 
 def task_paths(project: str, task: dict) -> list[str]:
-    """The paths a task has declared: `--paths` on the task, else the proposal's `files` — minus over-broad claims."""
+    """The paths a task has declared: `--paths` on the task, else the proposal's `files`. This is the *staging* lease
+    (`alt land` refuses changes outside it); the *hold* lease is `narrow()` of it — see wip_hold."""
     if task.get("paths"):
-        return narrow(list(task["paths"]))
+        return list(task["paths"])
     p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
-    return narrow(list(p.get("files") or []))
+    return list(p.get("files") or [])
 
 
 def leases(project: str, exclude: str | None = None) -> list[dict]:
@@ -279,9 +280,9 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     if task and rule_application(task) and any(rule_application(t) for t in running):
         return "one rule-application task at a time (they edit the same ledger)"
     if task:
-        mine = task_paths(project, task)
+        mine = narrow(task_paths(project, task))  # hold lease: top-level directory claims do not hold anyone
         for other in leases(project, exclude=task["slug"]):
-            hit = paths_overlap(mine, other["paths"])
+            hit = paths_overlap(mine, narrow(other["paths"]))
             if hit:
                 return f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
     live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed", "stopped")]  # stopped = no process
