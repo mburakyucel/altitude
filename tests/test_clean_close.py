@@ -168,6 +168,51 @@ class TestCleanClose(unittest.TestCase):
         self.assertEqual(faults[0][0][0], "report-json")
         self.assertEqual(faults[0][1], {"project": PROJECT, "task": "shape-corrupt-json"})
 
+    def test_main_runs_must_be_present_well_shaped_and_successful(self):
+        cases = (
+            ("missing", []),
+            ("failed", [{"id": "run-red", "conclusion": "failure"}]),
+            ("missing-id", [{"conclusion": "success"}]),
+            ("missing-conclusion", [{"id": "run-unknown"}]),
+        )
+        for name, runs in cases:
+            with self.subTest(name=name):
+                task, verdict = self._task_and_verdict(
+                    f"main-run-{name}", change=lambda report, _verdict: report["landed"].update(main_runs=runs))
+
+                turns, _ = self._run(task, verdict)
+
+                self.assertEqual(len(turns), 1)
+                self.assertEqual(turns[0][2], "report-landed")
+                self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
+
+    def test_missing_or_corrupt_live_status_falls_through_without_escaping(self):
+        faults = []
+        original_fault = improve.system_fault
+        improve.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
+        try:
+            for name, corrupt in (("missing", False), ("corrupt", True)):
+                with self.subTest(name=name):
+                    task, verdict = self._task_and_verdict(f"live-status-{name}")
+                    status_path = S.status_path(PROJECT, task["slug"])
+                    if corrupt:
+                        S.atomic_write(status_path, "{not json\n")
+                    else:
+                        status_path.unlink()
+                    try:
+                        turns, logs = self._run(task, verdict)
+                    finally:
+                        S.save_task(PROJECT, task)
+
+                    self.assertEqual(len(turns), 1)
+                    self.assertEqual(turns[0][2], "report-landed")
+                    self.assertTrue(any("l3_handled could not be stamped" in line for line in logs))
+        finally:
+            improve.system_fault = original_fault
+        self.assertEqual(len(faults), 1)
+        self.assertEqual(faults[0][0][0], "task-json")
+        self.assertEqual(faults[0][1], {"project": PROJECT, "task": "live-status-corrupt"})
+
     def test_live_hold_merge_value_controls_clean_close_and_its_fyi(self):
         held_task, held_verdict = self._task_and_verdict("live-hold")
         live = S.load_task(PROJECT, held_task["slug"])
@@ -213,6 +258,7 @@ class TestCleanClose(unittest.TestCase):
         self.assertEqual(turns[0][2], "report-landed")
         self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "blocked")
         self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
+        self.assertIn(f"[{PROJECT}/{task['slug']}] clean close lost the state race → L3 turn", logs)
         self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
     def test_unknown_review_dispositions_fail_closed(self):

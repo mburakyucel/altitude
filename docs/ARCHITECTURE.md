@@ -26,10 +26,11 @@ One small Python process — **`altd`, the same shape as the pocketbook server**
 ```
 
 The **clean-close gate** skips the L3 report-landed turn only for a live, unheld S/M task whose on-disk report is
-mechanically beyond judgment: verifier `ok` with no problems or post-mortem signals; merged PRs; well-shaped main
-runs; deploy `healthy` or `not-applicable`; every review disposition `fixed` or `dismissed`; and no decisions, blocked
-items, FYIs, or follow-ups. The gate fails closed to L3 on every doubt, including malformed shapes and a task-state race;
-corrupt `report.json` also files a decision-36 system fault rather than being swallowed.
+mechanically beyond judgment: verifier `ok` with no problems or post-mortem signals; merged PRs; at least one
+well-shaped main run and every run successful; deploy `healthy` or `not-applicable`; every review disposition `fixed`
+or `dismissed`; and no decisions, blocked items, FYIs, or follow-ups. The gate fails closed to L3 on every doubt,
+including malformed shapes and a task-state race; corrupt `report.json` also files a decision-36 system fault rather
+than being swallowed.
 
 ## 1. State — files, one writer, atomic
 

@@ -296,26 +296,34 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     """Close a mechanically clean S/M report, otherwise run the L3's report-landed turn.
 
     The clean-close gate uses the on-disk report and live task state. It requires an ok verifier with no problems or
-    signals, no merge hold, only merged PRs, well-shaped main runs, a healthy or not-applicable deploy, only fixed or
-    dismissed review findings, and no decisions, blocks, FYIs, follow-ups, or post-mortem work. Any malformed, corrupt,
-    stale, or raced state fails closed to L3; corrupt JSON also raises a decision-36 system fault. `l3_handled` is
-    stamped only when the turn returns, so a turn that altd's restart cut short is re-run by
+    signals, no merge hold, only merged PRs, at least one well-shaped successful main run, a healthy or not-applicable
+    deploy, only fixed or dismissed review findings, and no decisions, blocks, FYIs, follow-ups, or post-mortem work.
+    Any malformed, corrupt, stale, or raced state fails closed to L3; corrupt JSON also raises a decision-36 system
+    fault. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart cut short is re-run by
     `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
     slug = t["slug"]
     if (v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals")
             and t.get("class") != "L"):
-        report_error = None
+        report_error = task_error = None
         try:
             with S.project_lock(project):
-                live = S.load_task(project, slug)
                 try:
-                    report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+                    live = S.load_task(project, slug)
                 except ValueError as e:
-                    report_error = e
+                    task_error = e
+                    live = {}
                     report = None
-        except OSError:
+                else:
+                    try:
+                        report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+                    except ValueError as e:
+                        report_error = e
+                        report = None
+        except (KeyError, OSError):
             live, report = {}, None
+        if task_error is not None:
+            improve.system_fault("task-json", f"{project}/{slug}: {task_error}", project=project, task=slug)
         if report_error is not None:
             improve.system_fault("report-json", f"{project}/{slug}: {report_error}", project=project, task=slug)
         if isinstance(report, dict):
@@ -331,7 +339,9 @@ def report_turn(project: str, t: dict, v: dict) -> None:
             if (not report.get("decisions") and not report.get("blocked") and not report.get("fyi")
                     and not report.get("follow_ups") and deploy_status in ("healthy", "not-applicable")
                     and isinstance(prs, list) and all(isinstance(pr, dict) and pr.get("merged") is True for pr in prs)
-                    and isinstance(runs, list) and all(isinstance(run, dict) for run in runs)
+                    and isinstance(runs, list) and bool(runs)
+                    and all(isinstance(run, dict) and isinstance(run.get("id"), str) and run.get("id")
+                            and run.get("conclusion") == "success" for run in runs)
                     and isinstance(review, list)
                     and all(isinstance(item, dict) and item.get("disposition") in ("fixed", "dismissed") for item in review)
                     and live.get("state") == "reported" and not live_hold_merge):
@@ -344,10 +354,10 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                 try:
                     T.done(project, slug, actor="altd", digest=clean_digest)
                 except T.TransitionError:
-                    pass
+                    log(f"[{project}/{slug}] clean close lost the state race → L3 turn")
                 else:
                     T.fyi(project, slug, f"{slug}: closed by altd without an L3 turn — nothing to judge: verifier verdict ok; "
-                          f"task class {t.get('class')}; hold_merge {live_hold_merge or 'unset'}; PRs merged: {pr_text}; "
+                          f"task class {t.get('class')}; hold_merge unset; PRs merged: {pr_text}; "
                           f"main runs: {run_text}; deploy: {deploy}; no decisions, blocked items, FYIs, follow-ups, or "
                           "post-mortem signals.", actor="altd")
                     with S.project_lock(project):
@@ -370,8 +380,11 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     if (res or {}).get("limited"):
         log(f"[{project}/{slug}] report turn held: {res['error']}")  # not stamped: re-run when the window reopens
         return
-    with S.project_lock(project):
-        t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+    try:
+        with S.project_lock(project):
+            t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+    except (KeyError, OSError, ValueError) as e:
+        log(f"[{project}/{slug}] L3 turn completed but l3_handled could not be stamped: {e}")
 
 
 def resume_stranded_reports(project: str) -> None:
