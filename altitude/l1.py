@@ -9,13 +9,28 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, engines, route, state as S, tasks as T
+from . import config, engines, improve, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
+# Single source of truth for the host patch constraint; the Codex L2 path must import this rather than define a copy.
+CODEX_PATCH_NOTE = (
+    "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
+    "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
+    "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
+    "sandbox and its configured writable roots."
+)
 FOOTER = ("\n\n---\nWhen you are finished, print exactly one final line `RESULT: <PR number or URL, or 'no PR'> — <one sentence on what "
           "landed or why you stopped>`. Do not merge. Do not spawn agents or subagents.")
 POLL = 5
+_CODEX_SANDBOX_MARKERS = ("uid map", "loopback", "RTM_NEWADDR", "Operation not permitted")
+
+
+def _codex_sandbox_denial(output: str | None) -> str | None:
+    for line in (output or "").splitlines():
+        if "bwrap:" in line and any(marker in line for marker in _CODEX_SANDBOX_MARKERS):
+            return line.strip()[:300]
+    return None
 
 
 def runs_dir(project: str, slug: str) -> Path:
@@ -87,6 +102,8 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
         workdir, branch = base, _git(base, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     persona = config.PERSONAS / ("reviewer.md" if role == "reviewer" else "l1.md")
     prompt = persona.read_text() + "\n\n# Sub-brief\n\n" + Path(brief).read_text() + FOOTER
+    if choice["engine"] == "codex":
+        prompt += "\n\n" + CODEX_PATCH_NOTE
     (runs_dir(project, slug) / f"{name}.prompt.md").write_text(prompt)
     key = ("reviewer" if role == "reviewer" else "l1") + ("_codex" if choice["engine"] == "codex" else "")
     model = model or config.MODELS.get(key)
@@ -129,8 +146,13 @@ def exec_run(project: str, slug: str, name: str) -> dict:
         text, err = res.get("text") or "", res.get("error")
     except Exception as e:  # noqa: BLE001 — the record must close with the reason (decision 36)
         text, err = "", f"{type(e).__name__}: {e}"
-    m = RESULT_RE.search(text)
-    summary = m.group(1).strip() if m else None
+    denial = _codex_sandbox_denial(err) if rec["engine"] == "codex" else None
+    if denial:
+        improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
+        summary = "engine fault: codex-sandbox"
+    else:
+        m = RESULT_RE.search(text)
+        summary = m.group(1).strip() if m else None
     pr = None
     if summary and "no pr" not in summary.lower():
         pm = PR_RE.search(summary)
