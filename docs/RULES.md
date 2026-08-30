@@ -64,3 +64,12 @@
 - effect:
 - status: probation
 - text: When a blocked L2 is resumed, record the resume generation or timestamp and ignore every report artifact older than it; both Claude and Codex resume regressions must prove the old blocked report cannot be ingested again.
+
+## R-013 — A merge hold is not the L2's to lift
+- scope: project
+- where: CLAUDE.md
+- origin: I-060 (altitude)
+- prevents:
+- effect:
+- status: probation
+- text: When the task carries a merge hold (hold_merge set), the L2 opens the PR, reports ok with the PR number and stops. It never merges around the hold - not with gh pr merge, not by any other route - even when the hold's stated reason looks false for its PR; it says so in the report and the L3 releases the hold. Merging under a hold is a breach, not a deviation.
