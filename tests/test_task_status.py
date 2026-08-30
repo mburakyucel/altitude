@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, state as S, status as task_status  # noqa: E402
@@ -225,14 +226,22 @@ class TestTaskStatus(unittest.TestCase):
         }])
 
     def test_other_leases_are_published_only_after_all_are_annotated(self):
+        # `z-` sorts last, so the first entry is annotated before the second one raises: a
+        # half-annotated `other_leases` would hand a consumer a KeyError on `hold_paths`.
         broken_dir = S.tasks_dir("demo") / "z-broken-task"
         broken_dir.mkdir(parents=True)
         S.write_json(broken_dir / "status.json", {
-            "slug": "z-broken-task", "state": "running",
-            "paths": ["altitude/x.py", 3],
+            "slug": "z-broken-task", "state": "running", "paths": ["boom/x.py"],
         })
+        real_narrow = dispatch.narrow
 
-        result = task_status.status("demo", "task-one")
+        def narrow(paths):
+            if "boom/x.py" in paths:
+                raise ValueError("boom")
+            return real_narrow(paths)
+
+        with mock.patch.object(dispatch, "narrow", narrow):
+            result = task_status.status("demo", "task-one")
 
         self.assertEqual(result["other_leases"], [])
         self.assertTrue(any(error.startswith("other_leases:") for error in result["errors"]))
