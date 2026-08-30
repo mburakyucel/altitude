@@ -20,7 +20,7 @@ from . import config, dispatch, state as S
 CHECK_POLL_SECONDS = 15
 TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
 UNDECLARED = "(undeclared — all changes staged)"
-EMPTY_LEASE_MESSAGE = "task lease is empty: pass --paths or set the task paths"
+EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
 
 
 class LandError(RuntimeError):
@@ -273,7 +273,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     elif task is not None:
         lease = dispatch.task_paths(project, task)
         if not lease:
-            raise EmptyLeaseError(EMPTY_LEASE_MESSAGE)
+            raise EmptyLeaseError(f"alt land: task {project}/{slug} {EMPTY_LEASE_MESSAGE}")
         lease_src = f"task {project}/{slug}"
     else:
         lease, lease_src = [], None

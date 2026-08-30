@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from altitude import config, improve, rules
+from altitude import config, dispatch, improve, rules, state as S
 
 
 class TestParseLedgerReal(unittest.TestCase):
@@ -222,27 +222,45 @@ class TestRenderEntryRoundTrip(unittest.TestCase):
 
 
 class TestProposeRulePaths(unittest.TestCase):
-    def test_apply_task_carries_ledger_incident_and_where_paths(self):
+    def propose(self, *, mechanism="rule", where="", scope="project"):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
-            home, repo = root / "home", root / "repo"
+            home, repo, source = root / "home", root / "repo", root / "source"
             (repo / "docs").mkdir(parents=True)
             (repo / "docs" / "RULES.md").write_text("# Rules\n")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_alpha.py").write_text("")
+            (repo / "tests" / "test_beta.py").write_text("")
             incident_dir = home / "demo" / "incidents"
             incident_dir.mkdir(parents=True)
             (incident_dir / "I-062.md").write_text("# I-062\n")
             projects = home / "projects.json"
-            projects.write_text(json.dumps({"demo": {"path": str(repo), "stacks": []}}))
+            projects.write_text(json.dumps({
+                "demo": {"path": str(repo), "stacks": []},
+                "altitude": {"path": str(repo), "stacks": []},
+            }))
+            incident_index = home / "incidents.jsonl"
 
             with (
                 patch.object(config, "ROOT", home),
                 patch.object(config, "PROJECTS_FILE", projects),
+                patch.object(config, "INCIDENT_INDEX", incident_index),
+                patch.object(config, "REPO", source),
+                patch.object(config, "RULES", source / "rules"),
+                patch.object(improve, "matches_elsewhere", return_value=[{"id": "I-061"}]),
             ):
                 result = improve.propose_rule(
                     "demo", incident="I-062", title="carry apply paths", text="Keep apply tasks leased.",
-                    mechanism="rule", where="CLAUDE.md; personas/l2.md section Flow; templates/brief.md, altitude/land.py",
+                    mechanism=mechanism, where=where, scope=scope, stack="python" if scope == "stack" else None,
                 )
-                task = json.loads((home / "demo" / "tasks" / result["task"] / "status.json").read_text())
+                task = S.load_task(result["target_project"], result["task"])
+                expanded = dispatch.task_paths(result["target_project"], task)
+        return result, task, expanded
+
+    def test_apply_task_carries_ledger_incident_and_where_paths(self):
+        _, task, _ = self.propose(
+            where="CLAUDE.md; personas/l2.md section Flow; templates/brief.md, altitude/land.py",
+        )
 
         self.assertEqual(task["paths"], [
             "docs/RULES.md",
@@ -252,6 +270,47 @@ class TestProposeRulePaths(unittest.TestCase):
             "templates/brief.md",
             "altitude/land.py",
         ])
+
+    def test_prose_where_still_carries_rule_mechanism_target(self):
+        _, task, _ = self.propose(where="L2 persona: the stage plan and merge-policy step for L tasks")
+        self.assertEqual(task["paths"], ["docs/RULES.md", "docs/incidents/I-062.md", "CLAUDE.md"])
+
+    def test_glob_is_resolved_to_concrete_repo_paths(self):
+        _, task, _ = self.propose(where="tests/test_*.py")
+        self.assertEqual(task["paths"], [
+            "docs/RULES.md", "docs/incidents/I-062.md", "CLAUDE.md",
+            "tests/test_alpha.py", "tests/test_beta.py",
+        ])
+
+    def test_brace_group_is_preserved_for_dispatch_expansion(self):
+        _, task, expanded = self.propose(where="docs/{ROLES,ARCHITECTURE}.md")
+        self.assertIn("docs/{ROLES,ARCHITECTURE}.md", task["paths"])
+        self.assertEqual(expanded[-2:], ["docs/ROLES.md", "docs/ARCHITECTURE.md"])
+
+    def test_sentence_period_is_not_stored_as_part_of_path(self):
+        _, task, _ = self.propose(where="CLAUDE.md and docs/ROLES.md.")
+        self.assertEqual(task["paths"][-1], "docs/ROLES.md")
+
+    def test_empty_where_adds_each_mechanism_target(self):
+        expected = {
+            "rule": ["CLAUDE.md"],
+            "skill": [".claude/skills/"],
+            "instruction": ["CLAUDE.md"],
+            "incident-only": [],
+        }
+        for mechanism, target in expected.items():
+            with self.subTest(mechanism=mechanism):
+                _, task, _ = self.propose(mechanism=mechanism)
+                self.assertEqual(task["paths"], ["docs/RULES.md", "docs/incidents/I-062.md", *target])
+
+    def test_stack_and_global_ledgers_are_relative_to_altitude_repo(self):
+        expected = {"stack": "rules/stacks/python/RULES.md", "global": "rules/global/RULES.md"}
+        for scope, ledger in expected.items():
+            with self.subTest(scope=scope):
+                result, task, _ = self.propose(scope=scope)
+                self.assertEqual(result["target_project"], "altitude")
+                self.assertEqual(task["paths"][0], ledger)
+                self.assertFalse(any(Path(path).is_absolute() for path in task["paths"]))
 
 
 class TestTaskPathsCommand(unittest.TestCase):
@@ -285,11 +344,22 @@ class TestTaskPathsCommand(unittest.TestCase):
 
     def test_sets_paths_on_blocked_task_without_disturbing_resume(self):
         status = self.write_task("blocked-task", "blocked", resume_after="2026-08-30T12:00:00+00:00")
+        self.write_task("running-task", "running", paths=["tests/test_land.py"],
+                        updated="2026-08-30T11:00:00+00:00")
         result = self.set_paths("blocked-task", "altitude/land.py,tests/test_land.py")
         self.assertEqual(result.returncode, 0, result.stderr)
         task = json.loads(status.read_text())
         self.assertEqual(task["paths"], ["altitude/land.py", "tests/test_land.py"])
         self.assertEqual(task["resume_after"], "2026-08-30T12:00:00+00:00")
+        with (
+            patch.object(config, "ROOT", self.home),
+            patch.object(config, "PROJECTS_FILE", self.home / "projects.json"),
+            patch.object(dispatch.engines, "usage_hold", return_value=None),
+        ):
+            repaired = S.load_task("demo", "blocked-task")
+            self.assertEqual(dispatch.task_paths("demo", repaired), ["altitude/land.py", "tests/test_land.py"])
+            self.assertEqual(dispatch.wip_hold("demo", repaired),
+                             "file lease: `running-task` is running on tests/test_land.py")
 
 
 class TestAuditInput(unittest.TestCase):

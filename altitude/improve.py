@@ -8,7 +8,7 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, rules, state as S, tasks as T
+from . import config, dispatch, rules, state as S, tasks as T
 
 MECHANISMS = ("rule", "instruction", "skill", "incident-only")
 SCOPES = ("project", "stack", "global")
@@ -23,9 +23,10 @@ AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cau
 # ...and the incidents.jsonl column each one feeds, so a correction reaches `alt incident list` / the weekly audit.
 INDEXED = {"cause": "cause"}
 _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS) + r"): |(amended): )", re.M)
+_PATH_PART = r"(?:[A-Za-z0-9_.*?\[\]-]+|\{[A-Za-z0-9_.*?\[\]-]+(?:,[A-Za-z0-9_.*?\[\]-]+)+\})+"
 _WHERE_PATH = re.compile(
-    r"(?<![\w./-])(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.*?{}\[\]-]+\.[A-Za-z0-9]+(?![\w./-])"
-    r"|(?<![\w./-])\.claude/skills/(?![\w./-])"
+    rf"(?<![\w./{{}},-])(?:{_PATH_PART}/)*{_PATH_PART}\.[A-Za-z0-9]+\.?(?![\w./{{}}-])"
+    r"|(?<![\w./{},-])\.claude/skills/\.?(?![\w./{}-])"
 )
 
 
@@ -301,14 +302,49 @@ def matches_elsewhere(project: str, tags: list[str]) -> list[dict]:
     return [r for r in index() if r.get("project") != project and tags & set(r.get("tags") or [])]
 
 
-def _application_paths(target_project: str, ledger: Path, incident: str, where: str) -> list[str]:
+def _where_paths(target_project: str, where: str) -> list[str]:
+    """Paths named by prose, normalized into entries the dispatcher and land can resolve."""
+    repo = config.project_path(target_project).resolve()
+    paths = []
+    for match in _WHERE_PATH.finditer(where):
+        entry = match.group(0)
+        if entry.endswith("."):
+            entry = entry[:-1]
+        expanded = dispatch._expand_entry(entry)
+        if not any(any(char in path for char in "*?[") for path in expanded):
+            paths.append(entry)  # keep a brace group intact; task_paths expands it for dispatch and land
+            continue
+        for path in expanded:
+            if not any(char in path for char in "*?["):
+                paths.append(path)
+                continue
+            try:
+                matches = sorted(repo.glob(path))
+            except (OSError, ValueError):
+                continue
+            paths.extend(str(found.relative_to(repo)) for found in matches)
+    return list(dict.fromkeys(paths))
+
+
+def _application_paths(target_project: str, ledger: Path, incident: str, where: str,
+                       mechanism: str) -> list[str]:
     """Repo-relative files named by a rule application, in the order the apply brief presents them."""
-    try:
-        ledger_path = str(ledger.resolve().relative_to(config.project_path(target_project).resolve()))
-    except ValueError:
-        ledger_path = str(ledger)
-    paths = [ledger_path, f"docs/incidents/{incident}.md"]
-    paths.extend(m.group(0) for m in _WHERE_PATH.finditer(where))
+    ledger_path = None
+    for root in (config.project_path(target_project), config.REPO):
+        try:
+            ledger_path = str(ledger.resolve().relative_to(root.resolve()))
+            break
+        except ValueError:
+            continue
+    where_paths = _where_paths(target_project, where)
+    paths = ([ledger_path] if ledger_path else []) + [f"docs/incidents/{incident}.md"]
+    if mechanism == "rule":
+        paths.append("CLAUDE.md")
+    elif mechanism == "skill":
+        paths.append(".claude/skills/")
+    elif mechanism == "instruction" and not where_paths:
+        paths.append("CLAUDE.md")
+    paths.extend(where_paths)
     return list(dict.fromkeys(paths))
 
 
@@ -328,7 +364,10 @@ def propose_rule(project: str, *, incident: str, title: str, text: str, mechanis
               "global": config.RULES / "global" / "RULES.md"}[scope]
     d = config.project_dir(project) / "rules-pending"
     rid = rules.next_id(ledger, "S" if mechanism == "skill" else "R", pending=d)
-    applies_where = where or ("CLAUDE.md" if mechanism == "rule" else ".claude/skills/" if mechanism == "skill" else "the owning section")
+    applies_where = where or {"rule": "CLAUDE.md", "skill": ".claude/skills/",
+                              "instruction": "CLAUDE.md", "incident-only": "the owning section"}[mechanism]
+    if mechanism == "instruction" and not _where_paths(target_project, applies_where):
+        applies_where = "CLAUDE.md"
     entry = rules.render_entry(rid, title, scope=scope if scope == "project" else f"{scope}:{stack or ''}".rstrip(":"),
                                where=applies_where,
                                origin=f"{incident} ({project})", prevents=prevents, effect=effect, status="probation", text=text.strip())
@@ -344,7 +383,7 @@ def propose_rule(project: str, *, incident: str, title: str, text: str, mechanis
                    "incident-only": "nothing else — the incident file is the record."}[mechanism]
                + "\n\n4. Open the PR titled `rules: " + rid + " from " + incident + "` and merge it if the project policy allows docs-only merges. No other changes.")
     task = T.new(target_project, f"apply {rid} ({incident})", "S", request, actor=actor, source="improve",
-                 paths=_application_paths(target_project, ledger, incident, applies_where))
+                 paths=_application_paths(target_project, ledger, incident, applies_where, mechanism))
     T.auto_approve(target_project, task["slug"], f"rule application from {incident}; veto = revert the PR")
     T.fyi(project, None, f"{incident} → {rid} ({mechanism}, {scope}): {title}. Applying via task `{task['slug']}` on {target_project}; veto = revert the PR.", actor=actor)
     return {"rule": rid, "task": task["slug"], "target_project": target_project, "ledger": str(ledger)}

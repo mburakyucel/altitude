@@ -364,7 +364,7 @@ class TestLand(unittest.TestCase):
         p = subprocess.run([sys.executable, str(cli), "land", "--message", "msg", "--wait", "0"],
                            cwd=self.repo, capture_output=True, text=True)
         self.assertNotEqual(p.returncode, 0)
-        self.assertEqual(p.stderr.strip(), land.EMPTY_LEASE_MESSAGE)
+        self.assertIn(f"task demo/fix-x {land.EMPTY_LEASE_MESSAGE}", p.stderr)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 
     def test_explicit_paths_override_empty_task_lease(self):
