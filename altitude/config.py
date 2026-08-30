@@ -12,6 +12,7 @@ RULES = REPO / "rules"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"
 WEB = REPO / "web"
+WEB_DIST = REPO / "web" / "dist"
 HOOKS = REPO / "hooks"
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))

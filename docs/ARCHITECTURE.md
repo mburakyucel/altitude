@@ -83,7 +83,7 @@ Served by `altd` on the WireGuard address next to the pocketbook, one static pag
 
 No auth (holding a tunnel key is the auth), no TLS (the tunnel is the encryption) — the pocketbook's posture. The queue, WIP accounting, and digest text are deterministic (no model); only the chat and the digest *prose* involve L3.
 
-**Stack (decision 37).** From 0.2 the web app is a Vite/React 19/TypeScript SPA (`web/`), react-router 8 + TanStack Query 5, Tailwind 4 with `web/design/tokens.css`, built with pnpm into `web/dist`, which `altd` serves statically; the JSON API and NDJSON chat stream above are unchanged and are the contract between the two. The 0.1 vanilla `index.html/app.js/style.css` is the reference for feature parity until the SPA lands.
+**Stack (decision 37).** From 0.2 the web app is a Vite/React 19/TypeScript SPA (`web/`), react-router 8 + TanStack Query 5, Tailwind 4 with `web/design/tokens.css`, built with pnpm into `web/dist`, which `altd` serves statically; the JSON API and NDJSON chat stream above are unchanged and are the contract between the two. The 0.1 vanilla `app.js/style.css` were retired once the SPA reached parity; `git log` is their only record.
 
 ## 6a. Intake — ideas and the backlog (decisions 27–28)
 
