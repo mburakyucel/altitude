@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from altitude import engines, improve, l1, route, state as S
+from altitude import config, engines, improve, l1, route, state as S
 
 
 class TestL1PatchNote(unittest.TestCase):
@@ -20,6 +20,11 @@ class TestL1PatchNote(unittest.TestCase):
         for role, route_role, engine in cases:
             with self.subTest(role=role, engine=engine), tempfile.TemporaryDirectory() as td:
                 root = Path(td)
+                # `l1.start` reads this task's own launch history before it reserves a slot, so the folder has to
+                # exist even where the status record itself is mocked.
+                slug = f"task-{role}-{engine}"
+                state_root = root / "state"
+                (state_root / "project" / "tasks" / slug).mkdir(parents=True, exist_ok=True)
                 run_dir = root / "runs"
                 run_dir.mkdir()
                 brief = root / "brief.md"
@@ -31,9 +36,12 @@ class TestL1PatchNote(unittest.TestCase):
                     return {"engine": engine, "why": "test"}
 
                 with ExitStack() as stack:
+                    stack.enter_context(mock.patch.object(config, "ROOT", state_root))
                     stack.enter_context(mock.patch.object(route, "pick_engine", pick_engine))
                     stack.enter_context(mock.patch.object(
-                        S, "load_task", return_value={"envelope": {"l1_in_flight": 1}, "worktree": str(root)}
+                        S, "load_task", return_value={
+                            "envelope": {"l1_in_flight": 1, "subagent_launches": 3}, "worktree": str(root)
+                        }
                     ))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
                     stack.enter_context(mock.patch.object(l1, "list_runs", return_value=[]))
@@ -44,11 +52,9 @@ class TestL1PatchNote(unittest.TestCase):
                     ))
                     stack.enter_context(mock.patch.object(l1.git_policy, "capture_origin_sha", return_value="a" * 40))
                     stack.enter_context(mock.patch.object(l1.git_policy, "commits_missing_task_trailer", return_value=[]))
+                    stack.enter_context(mock.patch.object(config, "project_path", return_value=root))
                     stack.enter_context(mock.patch.object(l1.subprocess, "Popen", return_value=SimpleNamespace(pid=123)))
-                    rec = l1.start(
-                        "project", "task", brief, role=role, engine=engine,
-                        cwd=str(root) if role == "reviewer" else None,
-                    )
+                    rec = l1.start("project", slug, brief, role=role, engine=engine, cwd=str(root))
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])
@@ -76,8 +82,10 @@ class TestL1PatchNote(unittest.TestCase):
             "worktree": str(root),
         }
         faults = []
+        state_root = root / "state"
 
         with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(config, "ROOT", state_root))
             stack.enter_context(mock.patch.object(l1, "load", return_value=rec))
             stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
             stack.enter_context(mock.patch.object(l1, "save", return_value=None))
@@ -85,6 +93,7 @@ class TestL1PatchNote(unittest.TestCase):
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", return_value=response))
             stack.enter_context(mock.patch.object(engines, "claude_print", return_value=response))
+            stack.enter_context(mock.patch.object(l1, "_settle_launch", return_value=None))
             stack.enter_context(mock.patch.object(improve, "system_fault", side_effect=lambda **kw: faults.append(kw)))
             result = l1.exec_run("project", "task", "implementer-1")
         return result, faults
