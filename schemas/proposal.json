@@ -152,6 +152,7 @@
   },
   "files": {
    "type": "array",
+   "description": "Every entry is one bare repo-relative path (a file or narrow directory); put any explanation in the proposal rationale, and brace groups and comma lists are not accepted. A path that will be created may use the trailing `(new)` annotation.",
    "items": {
     "type": "string"
    }

@@ -4,6 +4,35 @@ import json
 from pathlib import Path
 
 from . import config, engines, route, state as S, tasks as T
+from .dispatch import _expand_entry, _split_top_level
+
+
+def _normalise_proposal_files(project: str, proposal: dict) -> None:
+    """Store expanded bare paths, rejecting entries that cannot name files at the proposal base."""
+    repo = config.project_path(project)
+    normalised = []
+    for raw_entry in proposal.get("files") or []:
+        entry = str(raw_entry).strip()
+        expanded = _expand_entry(entry)
+        parts = _split_top_level(entry)
+        if len(parts) > 1:  # _expand_entry's literal-path fast path intentionally preserves a plain comma list.
+            expanded_with_new = [
+                (path, part.strip().endswith("(new)")) for part in parts for path in _expand_entry(part)
+            ]
+        else:
+            expanded_with_new = [(path, entry.endswith("(new)")) for path in expanded]
+        if not expanded_with_new:
+            raise RuntimeError(f"proposal files entry {entry!r} is invalid: it expands to no repo-relative paths")
+        for path, is_new in expanded_with_new:
+            relative = Path(path)
+            if relative.is_absolute() or ".." in relative.parts or path.startswith("./"):
+                raise RuntimeError(f"proposal files entry {entry!r} is invalid: {path!r} is not a bare repo-relative path")
+            if not is_new and not (repo / relative).exists():
+                raise RuntimeError(
+                    f"proposal files entry {entry!r} is invalid: {path!r} does not exist at proposal base {repo}"
+                )
+            normalised.append(path)
+    proposal["files"] = normalised
 
 
 def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
@@ -44,6 +73,7 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
     if res["error"] and not res["structured"]:
         raise RuntimeError(res["error"])
     p = res["structured"] or {}
+    _normalise_proposal_files(project, p)
     S.write_json(d / "proposal.json", p)
     S.atomic_write(d / "proposal.md", render_proposal_md(p))
     with S.project_lock(project):
