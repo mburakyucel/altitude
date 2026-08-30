@@ -46,3 +46,12 @@
 - effect: one recorded deviation and a not-applicable argument per task in this repo (#37, #38), plus the risk of checks skipped read as green
 - status: probation
 - text: The definition of done names only gates the repository has. Where the repo has CI (a .github/workflows directory), the main run is green after merge. Where it has none, the full local test suite runs on merged main and the report states the count, and a checks value of skipped or no-checks-reported is never read as passed. A gate is never satisfied by its absence.
+
+## R-007 — Chat is a conversation with Burak, never the turn log
+- scope: project
+- where: personas/l3.md section Style, and the server turn prompts that ask the L3 to report in N sentences (altitude/l3.py or wherever they are built)
+- origin: I-021 (altitude)
+- prevents: chat-doubles-as-turn-log
+- effect: the chat is usable as the entry point again (his words, 2026-08-30 05:24Z)
+- status: probation
+- text: Chat is a conversation with Burak on his phone, not a log. A chat reply answers what he asked in a few plain sentences: what changed and what he needs to do, nothing else. No ids, slugs, file paths, rule or decision numbers or spend figures in chat text: those go in FYIs, digests, the detail of a card and the task folder. Server-triggered turns (proposal-ready, report-landed, reconcile, audit, backlog) are not chat: their output is the card, the digest or the FYI, and the closing text is at most two plain sentences saying what happened and whether anything waits on him.

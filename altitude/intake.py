@@ -8,8 +8,11 @@ from . import config, engines, l3, route, state as S
 
 def idea(project: str, text: str, on_text=None) -> dict:
     S.project_log(project, "idea", text=text[:500])
+    # [R-007] `/idea` is Burak talking in the chat box: the reply is conversation, not a log line.
     prompt = ("Burak has an idea. Evaluate it against the project's docs and current tasks: file it as a task with a class "
-              "(`alt task new`), or park it with a one-line reason, or say it is already covered. Answer in ≤5 sentences.\n\n"
+              "(`alt task new`), or park it with a one-line reason, or say it is already covered. Answer in a few plain "
+              "sentences (at most 5) saying what you did and whether anything waits on him, with no ids, slugs, file paths, "
+              "rule or decision numbers, or spend figures in the reply.\n\n"
               f"Idea: {text}")
     return l3.turn(project, prompt, trigger="idea", on_text=on_text)
 
