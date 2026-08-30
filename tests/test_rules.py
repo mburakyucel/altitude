@@ -1,5 +1,8 @@
 """Tests for altitude.rules: ledger parsing, section compilation, id allocation, entry rendering."""
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -216,6 +219,77 @@ class TestRenderEntryRoundTrip(unittest.TestCase):
         self.assertTrue(rendered.startswith("## R-042 — some title"))
         self.assertTrue(rendered.endswith("\n"))
         self.assertFalse(rendered.endswith("\n\n"))
+
+
+class TestProposeRulePaths(unittest.TestCase):
+    def test_apply_task_carries_ledger_incident_and_where_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            home, repo = root / "home", root / "repo"
+            (repo / "docs").mkdir(parents=True)
+            (repo / "docs" / "RULES.md").write_text("# Rules\n")
+            incident_dir = home / "demo" / "incidents"
+            incident_dir.mkdir(parents=True)
+            (incident_dir / "I-062.md").write_text("# I-062\n")
+            projects = home / "projects.json"
+            projects.write_text(json.dumps({"demo": {"path": str(repo), "stacks": []}}))
+
+            with (
+                patch.object(config, "ROOT", home),
+                patch.object(config, "PROJECTS_FILE", projects),
+            ):
+                result = improve.propose_rule(
+                    "demo", incident="I-062", title="carry apply paths", text="Keep apply tasks leased.",
+                    mechanism="rule", where="CLAUDE.md; personas/l2.md section Flow; templates/brief.md, altitude/land.py",
+                )
+                task = json.loads((home / "demo" / "tasks" / result["task"] / "status.json").read_text())
+
+        self.assertEqual(task["paths"], [
+            "docs/RULES.md",
+            "docs/incidents/I-062.md",
+            "CLAUDE.md",
+            "personas/l2.md",
+            "templates/brief.md",
+            "altitude/land.py",
+        ])
+
+
+class TestTaskPathsCommand(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.home, self.repo = root / "home", root / "repo"
+        self.home.mkdir()
+        self.repo.mkdir()
+        (self.home / "projects.json").write_text(json.dumps({"demo": {"path": str(self.repo), "stacks": []}}))
+        self.cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
+        self.env = {**os.environ, "ALTITUDE_HOME": str(self.home), "ALTITUDE_PROJECT": "demo"}
+
+    def write_task(self, slug, state, **extra):
+        directory = self.home / "demo" / "tasks" / slug
+        directory.mkdir(parents=True)
+        task = {"slug": slug, "title": slug, "class": "S", "state": state, "paths": [], **extra}
+        (directory / "status.json").write_text(json.dumps(task))
+        return directory / "status.json"
+
+    def set_paths(self, slug, paths):
+        return subprocess.run([sys.executable, str(self.cli), "task", "paths", slug, paths],
+                              cwd=self.repo, env=self.env, capture_output=True, text=True)
+
+    def test_sets_paths_on_requested_task(self):
+        status = self.write_task("requested-task", "requested")
+        result = self.set_paths("requested-task", "altitude/improve.py, tests/test_rules.py")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(status.read_text())["paths"], ["altitude/improve.py", "tests/test_rules.py"])
+
+    def test_sets_paths_on_blocked_task_without_disturbing_resume(self):
+        status = self.write_task("blocked-task", "blocked", resume_after="2026-08-30T12:00:00+00:00")
+        result = self.set_paths("blocked-task", "altitude/land.py,tests/test_land.py")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        task = json.loads(status.read_text())
+        self.assertEqual(task["paths"], ["altitude/land.py", "tests/test_land.py"])
+        self.assertEqual(task["resume_after"], "2026-08-30T12:00:00+00:00")
 
 
 class TestAuditInput(unittest.TestCase):

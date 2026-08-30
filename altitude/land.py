@@ -20,10 +20,15 @@ from . import config, dispatch, state as S
 CHECK_POLL_SECONDS = 15
 TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
 UNDECLARED = "(undeclared — all changes staged)"
+EMPTY_LEASE_MESSAGE = "task lease is empty: pass --paths or set the task paths"
 
 
 class LandError(RuntimeError):
     """A refusal or a dead end the caller must see; bin/alt prints it on stderr and exits non-zero."""
+
+
+class EmptyLeaseError(LandError):
+    """The task resolved correctly, but it grants no files for this landing."""
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -268,8 +273,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     elif task is not None:
         lease = dispatch.task_paths(project, task)
         if not lease:
-            raise LandError(f"task {project}/{slug} resolved but its lease is empty — refusing to stage "
-                            f"anything; declare paths on the task or pass --paths")
+            raise EmptyLeaseError(EMPTY_LEASE_MESSAGE)
         lease_src = f"task {project}/{slug}"
     else:
         lease, lease_src = [], None
