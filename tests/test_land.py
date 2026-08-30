@@ -23,6 +23,9 @@ def read(name, default):
     return default
 cmd = tuple(args[:2])
 if cmd == ("pr", "view"):
+    if os.path.exists(os.path.join(d, "view_error.txt")):  # a broken or logged-out gh, not a missing PR
+        print(read("view_error.txt", ""), file=sys.stderr)
+        sys.exit(1)
     if os.path.exists(os.path.join(d, "pr.json")):
         print(read("pr.json", "{}"))
     else:
@@ -143,6 +146,7 @@ class TestLand(unittest.TestCase):
         self.leased_change("src/has space.py")
         self.leased_change("src/a[1].py")  # a bracket-expression name must stage as a literal, not a glob
         self.leased_change("docs/NOTES.md")
+        self.assertIsNone(land._pr_view(self.repo, "worktree-fix-x"))
         res = land.land("fix: land the thing\n\nlonger body", cwd=self.repo, wait=0)
         self.assertEqual(res["pr"], 101)
         self.assertEqual(res["url"], "https://example.invalid/pr/101")
@@ -452,6 +456,64 @@ class TestLand(unittest.TestCase):
         with self.assertRaisesRegex(land.LandError, "already merged"):
             land.land("fix: late", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_merged_no_op_asks_for_no_checks(self):
+        self.leased_change()
+        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
+        (self.ghdir / "log.jsonl").unlink()  # only the second run's gh traffic is under test
+        res = land.land("fix: merge me", cwd=self.repo, wait=0)
+        self.assertTrue(res["merged"])
+        self.assertEqual(res["checks"], "merged")  # its own value — never reported as a pass
+        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
+
+    def test_closed_unmerged_pr_refuses_before_any_mutation(self):
+        self.leased_change()
+        (self.ghdir / "pr.json").write_text(json.dumps(
+            {"number": 55, "url": "https://example.invalid/pr/55", "state": "CLOSED"}))
+        head = self.git("rev-parse", "HEAD").strip()
+        with self.assertRaisesRegex(land.LandError, "closed"):
+            land.land("fix: onto a closed pr", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.remote_heads(), ["main"])  # nothing pushed onto the closed PR's branch
+        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
+
+    def test_create_path_reads_the_pr_back_once(self):
+        pr = land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x", pr=None)
+        self.assertEqual(pr["number"], 101)
+        # pr=None is "the caller looked and there is no PR", so no view before the create
+        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "create"], ["pr", "view"]])
+
+    def test_not_prefetched_looks_before_creating(self):
+        land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x")
+        self.assertEqual([a[:2] for a in self.gh_log()],
+                         [["pr", "view"], ["pr", "create"], ["pr", "view"]])
+
+    def test_full_run_views_the_pr_twice(self):
+        self.leased_change()
+        land.land("fix: once", cwd=self.repo, wait=0)
+        # the prefetch that gates committing, then the read-back after create — not a third
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 2)
+
+    def test_gh_404_stops_the_run_before_any_mutation(self):
+        self.leased_change()
+        head = self.git("rev-parse", "HEAD").strip()
+        message = "gh: Not Found (HTTP 404)"
+        (self.ghdir / "view_error.txt").write_text(message)
+        with self.assertRaises(land.LandError) as cm:
+            land.land("fix: no gh", cwd=self.repo, wait=0)
+        self.assertIn("gh pr view worktree-fix-x", str(cm.exception))
+        self.assertIn(message, str(cm.exception))
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertIn("?? src/thing.py", self.git("status", "--short", "--untracked-files=all").splitlines())
+        self.assertEqual((self.repo / "src" / "thing.py").read_text(), "changed\n")
+        self.assertEqual(self.remote_heads(), ["main"])
+        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
+        doc = land.__doc__
+        self.assertIn("authenticated `gh`", doc)  # the precondition this behaviour is documented by
+        self.assertIn("nothing committed", doc)
 
     def test_dry_run_reports_a_distinct_checks_value(self):
         self.leased_change()
