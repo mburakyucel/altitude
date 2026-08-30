@@ -59,6 +59,37 @@ def start_l3(project: str) -> None:
             trigger="start")
 
 
+def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
+    """Did the L3 park this task during the turn that started at `turn_start` (incident I-008)?
+
+    The last `state → parked` event in the task's log decides it: a park by Burak (or any actor
+    other than the L3), or an L3 park that predates the turn, must never queue an auto-revision.
+    """
+    last = None
+    for ev in S.read_events(project, slug):
+        if ev.get("kind") == "state" and ev.get("to") == "parked":
+            last = ev
+    return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
+
+
+def _turn_started_at(project: str, header: str) -> str | None:
+    """When our proposal-ready turn actually began (incident I-008), or None if we cannot tell.
+
+    `l3.turn` serializes on a per-project lock and logs the prompt verbatim *inside* it, right
+    before the engine runs — so the chat entry's `at` is the moment the L3 started on our turn,
+    not the moment we queued behind another one. Using the queue time instead would read a park
+    the L3 made for Burak during that earlier turn as an in-turn park, and override it.
+
+    The entry always exists once `l3.turn` has returned, so None is unreachable in a healthy
+    system — which is the point. It fails closed: without a trustworthy start the guard leaves
+    the park standing rather than risk overriding one (decision 36 — no silent fallback).
+    """
+    for ev in reversed(l3.chat_history(project, limit=200)):
+        if ev.get("role") == "user" and ev.get("text") == header:
+            return ev.get("at") or None
+    return None
+
+
 def run_proposal_flow(project: str, slug: str) -> None:
     task = S.load_task(project, slug)
     with S.project_lock(project):
@@ -93,23 +124,42 @@ def run_proposal_flow(project: str, slug: str) -> None:
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
-    res = l3.turn(project, header, trigger="proposal-ready")
-    t2 = S.load_task(project, slug)
-    # critic said revise and the L3 parked with a revision brief: re-propose, at most twice, then it waits for Burak
-    if t2["state"] == "parked" and crit and crit.get("verdict") == "revise":
-        n = int(t2.get("revisions", 0))
-        if n < 2:
-            with S.project_lock(project):
-                t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
-            for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
-                src = S.task_dir(project, slug) / old
-                if src.exists():
-                    src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
-            T.unpark(project, slug, actor="altd")
-            log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
+    # Burak (or the L3 in a chat turn) may have parked, approved, rejected or proposed the task while the proposal and
+    # the critic ran (incident I-008): re-read the state and skip the turn rather than talk to the L3 about a task that
+    # has already been decided. proposal.json stays on disk; clearing proposal_started lets tick() re-run the flow
+    # (requested only) if it comes back to requested later.
+    t1 = S.load_task(project, slug)
+    if t1["state"] != "requested":
+        with S.project_lock(project):
+            t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
+        if t1["state"] != "proposed":
+            log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
             return
-        T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
-        return
+        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
+        t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
+    else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
+        res = l3.turn(project, header, trigger="proposal-ready")
+        turn_start = _turn_started_at(project, header)
+        if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
+            log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
+        t2 = S.load_task(project, slug)
+        # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
+        # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
+        if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise" and turn_start is not None
+                and _l3_parked_during_turn(project, slug, turn_start)):
+            n = int(t2.get("revisions", 0))
+            if n < 2:
+                with S.project_lock(project):
+                    t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
+                for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
+                    src = S.task_dir(project, slug) / old
+                    if src.exists():
+                        src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
+                T.unpark(project, slug, actor="altd")
+                log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
+                return
+            T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
+            return
     # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
