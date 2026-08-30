@@ -19,3 +19,12 @@
 - effect: 1-5 turns per task recovered (I-002: 5 turns; this-is-a-test-job-submitted-from-my-pho: 1 turn, recurrence 2026-08-30)
 - status: probation
 - text: Issue one plain command per Bash call. No &&, ;, pipes, cd, or $ inside heredocs - the Safety Net hooks and auto mode's command classifier reject those as unverifiable against the worktree boundary, and every refusal costs a turn. When you need composition, write a short script file and run it, or use the file tools instead.
+
+## R-004 — Staged L tasks land stage by stage: stage 1 is its own PR, checkpoint until it merges
+- scope: project
+- where: L2 persona: the stage plan and merge-policy step for L tasks
+- origin: I-018 (altitude)
+- prevents: long-lived L branches that chase main and double-port files the branch retires (I-018)
+- effect: one merge by Burak per stage PR instead of one at the end - the L2 exits at each stage PR and is resumed after the merge
+- status: probation
+- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, checkpoint progress.md, report Blocked: stage 1 PR awaits merge, and exit - the L merge policy stands, Burak merges, and you are resumed on merged main. Later stages open their own PRs from merged main, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice.
