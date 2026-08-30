@@ -285,6 +285,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             raise LandError(f"PR #{pr.get('number')} for {branch!r} is already merged — this branch has landed; "
                             f"refusing to commit new changes onto it, start a new task branch")
         _note(f"PR #{pr.get('number')} already merged — nothing to push, not resurrecting the branch")
+        ahead = _git(root, "rev-list", "--count", f"origin/{branch}..HEAD")
+        if ahead.returncode == 0 and ahead.stdout.strip() not in ("", "0"):
+            _note(f"warning: {ahead.stdout.strip()} local commit(s) are not on origin/{branch} and will not be "
+                  f"pushed onto a merged branch — cherry-pick them onto a new task branch")
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": _checks_state(root, pr.get("number")),
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "lease": lease_repr,
                 "staged": []}
