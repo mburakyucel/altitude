@@ -1,3 +1,62 @@
-{"type":"object","additionalProperties":false,"required":["findings"],
- "properties":{"findings":{"type":"array","items":{"type":"object","required":["tag","severity","file","claim","fix"],
-  "properties":{"tag":{"type":"string","enum":["correctness","tests","scope","guardrail","security","docs","style","perf"]},"severity":{"type":"string","enum":["blocking","major","minor"]},"file":{"type":"string"},"line":{"type":"integer"},"claim":{"type":"string"},"fix":{"type":"string"}}}}}}
+{
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "findings"
+ ],
+ "properties": {
+  "findings": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "tag",
+     "severity",
+     "file",
+     "line",
+     "claim",
+     "fix"
+    ],
+    "properties": {
+     "tag": {
+      "type": "string",
+      "enum": [
+       "correctness",
+       "tests",
+       "scope",
+       "guardrail",
+       "security",
+       "docs",
+       "style",
+       "perf"
+      ]
+     },
+     "severity": {
+      "type": "string",
+      "enum": [
+       "blocking",
+       "major",
+       "minor"
+      ]
+     },
+     "file": {
+      "type": "string"
+     },
+     "line": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "claim": {
+      "type": "string"
+     },
+     "fix": {
+      "type": "string"
+     }
+    },
+    "additionalProperties": false
+   }
+  }
+ }
+}

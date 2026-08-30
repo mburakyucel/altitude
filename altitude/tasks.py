@@ -81,7 +81,7 @@ def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = N
                 task["estimate"] = est
             env = proposal.get("envelope") or {}
             if env:
-                task["envelope"].update({k: v for k, v in env.items() if k in task["envelope"]})
+                task["envelope"].update({k: v for k, v in env.items() if k in task["envelope"] and v is not None})
         if question:
             task["decision"] = {"question": question, "options": options or ["Approve", "Revise", "Park"],
                                 "asked": S.now(), "chosen": None}

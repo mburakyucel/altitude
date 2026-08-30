@@ -1,5 +1,72 @@
-{"type":"object","additionalProperties":false,"required":["verdict","issues"],
- "properties":{"verdict":{"type":"string","enum":["go","revise"]},
-  "issues":{"type":"array","items":{"type":"object","required":["severity","claim"],"properties":{"severity":{"type":"string","enum":["blocking","major","minor"]},"claim":{"type":"string"},"evidence":{"type":"string"},"fix":{"type":"string"}}}},
-  "missing_always_list_hits":{"type":"array","items":{"type":"string"}},
-  "smallest_change_to_go":{"type":"string"}}}
+{
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "verdict",
+  "issues",
+  "missing_always_list_hits",
+  "smallest_change_to_go"
+ ],
+ "properties": {
+  "verdict": {
+   "type": "string",
+   "enum": [
+    "go",
+    "revise"
+   ]
+  },
+  "issues": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "severity",
+     "claim",
+     "evidence",
+     "fix"
+    ],
+    "properties": {
+     "severity": {
+      "type": "string",
+      "enum": [
+       "blocking",
+       "major",
+       "minor"
+      ]
+     },
+     "claim": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "fix": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  "missing_always_list_hits": {
+   "type": [
+    "array",
+    "null"
+   ],
+   "items": {
+    "type": "string"
+   }
+  },
+  "smallest_change_to_go": {
+   "type": [
+    "string",
+    "null"
+   ]
+  }
+ }
+}
