@@ -42,6 +42,8 @@ CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex":
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
 WIP_PER_PROJECT = 3               # decision 21
 WIP_PER_MACHINE = 8
+SESSIONS_PER_MACHINE = 12         # decision 39: live Claude sessions (L2s + their L1s) across all projects
+SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
 L3_TURN_TIMEOUT = 900             # seconds
 AGENT_POLL_SECONDS = 30
 

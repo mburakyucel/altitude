@@ -44,7 +44,7 @@ def main(argv=None) -> None:
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
     pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--option", action="append")
     ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
@@ -99,7 +99,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model))
+            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None))
         elif tc == "propose":
             out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR))
         elif tc == "approve":

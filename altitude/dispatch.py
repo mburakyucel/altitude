@@ -31,6 +31,8 @@ def build_brief(project: str, slug: str) -> str:
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
+        leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
+        paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the proposal's file list)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
         l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
         verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
@@ -43,7 +45,8 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
     """Per-dispatch settings passed with --settings: hooks that enforce the envelope, nothing global."""
     hooks = config.HOOKS
     settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]}],
+        "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]},
+                       {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key,
@@ -110,11 +113,51 @@ def resume_blocked(project: str, slug: str, answer: str) -> dict:
     return res
 
 
+def _norm(p: str) -> str:
+    p = p.strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.rstrip("/")
+
+
+def paths_overlap(a: list[str], b: list[str]) -> list[str]:
+    """Paths collide when equal or when one is a directory prefix of the other (decision 39)."""
+    out = []
+    for x in map(_norm, a):
+        for y in map(_norm, b):
+            if x == y or x.startswith(y + "/") or y.startswith(x + "/"):
+                out.append(x if len(x) >= len(y) else y)
+    return sorted(set(out))
+
+
+def task_paths(project: str, task: dict) -> list[str]:
+    """The paths a task has declared: `--paths` on the task, else the proposal's `files`."""
+    if task.get("paths"):
+        return list(task["paths"])
+    p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
+    return list(p.get("files") or [])
+
+
+def leases(project: str, exclude: str | None = None) -> list[dict]:
+    """Running tasks and the paths they hold, for holds and for the brief."""
+    return [{"slug": t["slug"], "paths": task_paths(project, t)}
+            for t in S.list_tasks(project) if t["state"] == "running" and t["slug"] != exclude]
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
     if task and task.get("source") == "improve" and any(t.get("source") == "improve" for t in running):
         return "one rule-application task at a time (they edit the same ledger)"
+    if task:
+        mine = task_paths(project, task)
+        for other in leases(project, exclude=task["slug"]):
+            hit = paths_overlap(mine, other["paths"])
+            if hit:
+                return f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
+    live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed")]
+    if len(live) >= config.SESSIONS_PER_MACHINE:
+        return f"session ceiling: {len(live)} live Claude sessions on this machine (cap {config.SESSIONS_PER_MACHINE})"
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
         return f"WIP limit: {len(running)} running in {project}"
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")

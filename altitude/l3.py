@@ -71,7 +71,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
         S.regen_state_md(project)
         inf = info(project)
         sid = inf.get("session_id")
-        fresh = not sid or inf.get("rotate_next", False)
+        over = (inf.get("context_percent") or 0) >= config.CONTEXT_ACT * 100  # decision 12: checked at turn start, not only after
+        if over and sid and not inf.get("rotate_next"):
+            inf["rotate_reason"] = f"context {inf.get('context_percent')}% ≥ act line {int(config.CONTEXT_ACT * 100)}% at turn start"
+        fresh = not sid or inf.get("rotate_next", False) or over
         if fresh and sid:
             S.project_log(project, "l3-rotate", old=sid, reason=inf.get("rotate_reason", "requested"))
         persona = rules.compiled_persona("l3", project)
