@@ -360,11 +360,20 @@ def resume_stranded_reports(project: str) -> None:
                                   "spend": {}, "prs": t.get("prs", []), "report": {}}
         try:
             report = S.read_json(report_path)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
+            log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
             report = None
+        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
+                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
         if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
-                and not report.get("blocked")):
-            t = T.report(project, t["slug"], v)
+                and not report.get("blocked") and "attempt" in v and v.get("attempt") == t.get("attempt")
+                and last_block and last_block.get("frm") == "running"):
+            try:
+                t = T.report(project, t["slug"], v, expected_state="blocked",
+                             expected_attempt=t.get("attempt"), expected_block_from="running")
+            except (T.TransitionError, KeyError) as e:
+                log(f"[{project}/{t['slug']}] stranded report promotion skipped after a concurrent change: {e}")
+                continue
         log(f"[{project}/{t['slug']}] report turn resumed (previous run did not finish)")
         spawn(key, report_turn, project, t, v)
 
