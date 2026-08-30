@@ -13,7 +13,7 @@ def _normalise_proposal_files(project: str, proposal: dict) -> None:
     normalised = []
     for raw_entry in proposal.get("files") or []:
         entry = str(raw_entry).strip()
-        if entry[:1] in "/~$<":
+        if entry and entry[:1] in "/~$<":
             expanded = _expand_entry(entry)
             normalised.append(expanded[0] if len(expanded) == 1 else entry)
             continue
@@ -22,14 +22,14 @@ def _normalise_proposal_files(project: str, proposal: dict) -> None:
             expanded_with_new = []
             for part in parts:
                 part = part.strip()
-                if part[:1] in "/~$<":
+                if part and part[:1] in "/~$<":
                     host_paths = _expand_entry(part)
                     normalised.append(host_paths[0] if len(host_paths) == 1 else part)
                     continue
                 part_paths = _expand_entry(part)
                 if not part_paths:
                     raise RuntimeError(
-                        f"proposal files entry {part!r} is invalid: it expands to no repo-relative paths"
+                        f"proposal files entry {(part or entry)!r} is invalid: it expands to no repo-relative paths"
                     )
                 expanded_with_new.extend((path, part.endswith(" (new)"), part) for path in part_paths)
         else:
