@@ -77,7 +77,7 @@ def main(argv=None) -> None:
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
-    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--paths", help="comma-separated lease override"); ln.add_argument("--base", default="main"); ln.add_argument("--dry-run", action="store_true")
+    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--paths", help="comma-separated lease override"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="full local suite used only when the pinned PR pair configures no CI"); ln.add_argument("--dry-run", action="store_true")
     ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat")
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
@@ -227,7 +227,8 @@ def main(argv=None) -> None:
         from altitude import land
         try:
             out(land.land(args.message, project=args.project, pr_title=args.pr_title, pr_body_file=args.pr_body_file,
-                          merge=args.merge, wait=args.wait, paths=args.paths, base=args.base, dry_run=args.dry_run))
+                          merge=args.merge, wait=args.wait, paths=args.paths, base=args.base,
+                          test_cmd=args.test_cmd, dry_run=args.dry_run))
         except land.EmptyLeaseError as e:
             sys.exit(str(e))
         except land.LandError as e:
