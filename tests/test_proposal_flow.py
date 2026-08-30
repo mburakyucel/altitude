@@ -6,13 +6,15 @@ The branches of server.run_proposal_flow, with the proposal/critic/L3 agents stu
   * the L3 parked in an *earlier* turn while we queued on l3.lock -> the park stands;
   * the turn cannot be dated at all  -> the park stands (the guard fails closed, decision 36);
   * the task left `requested` before the turn -> the turn is skipped and proposal_started cleared;
+  * it leaves `requested` while waiting on l3.lock -> the engine turn is skipped without a trace;
+  * it leaves `requested` after the proposal -> the critic and L3 turn are both skipped;
   * it left `requested` by becoming `proposed` -> skipped, but still auto-approved as FYI-only.
 """
 import importlib
-import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,7 +29,7 @@ from altitude import config  # noqa: E402
 # different ALTITUDE_HOME before this one ran; rebuild ROOT and its derived paths against ours.
 importlib.reload(config)
 
-from altitude import l3, propose, server, state as S, tasks as T  # noqa: E402
+from altitude import engines, l3, propose, server, state as S, tasks as T  # noqa: E402
 
 PROJECT = "propflow"
 PROPOSAL = {"summary": "a summary", "decision_needed": True, "always_list_hits": [], "estimate": {"turns": 40}}
@@ -59,25 +61,13 @@ class TestProposalFlowPark(unittest.TestCase):
             S.write_json(d / "critique.json", {"verdict": "revise", "issues": ["one issue"]})
         return t["slug"]
 
-    def _chat_entry(self, project: str, prompt: str, offset: int) -> None:
-        """Write the `user` chat entry l3.turn would have written, `offset` seconds from now.
-
-        l3.turn logs the prompt *inside* the per-project L3 lock, so this entry — not the moment
-        the server queued the turn — is when the turn really began (incident I-008, finding 1).
-        """
-        at = (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset)).isoformat()
-        path = config.project_dir(project) / "chat.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
-            f.write(json.dumps({"at": at, "role": "user", "text": prompt, "trigger": "proposal-ready"}) + "\n")
-
     def _park_in_turn(self, slug: str, actor: str, calls: list):
         """Stub for l3.turn: the L3 (or Burak, racing it) parks the task while the turn runs."""
         def turn(project, prompt, **kw):
             calls.append(prompt)
-            self._chat_entry(project, prompt, offset=-1)  # logged inside the lock, before the engine runs
+            turn_started_at = S.now()
             T.park(project, slug, f"parked by {actor}", actor=actor)
-            return {"ok": True}
+            return {"ok": True, "_turn_started_at": turn_started_at}
         return turn
 
     def _events(self, slug: str, kind: str) -> list[dict]:
@@ -139,18 +129,106 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertTrue((d / "proposal.json").exists(), "the proposal stays on disk to be reused")
         self.assertEqual([p.name for p in sorted(d.glob("*-v*"))], [])
 
+    def test_park_while_waiting_on_l3_lock_skips_the_turn(self):
+        slug = self._task("burak parks while proposal turn waits on l3 lock")
+        sent: list = []
+        logs: list[str] = []
+        errors: list[BaseException] = []
+        entered = threading.Event()
+        chat_before = l3.chat_history(PROJECT)
+        project_l3_lock = l3.lock(PROJECT)
+        real_turn = self._orig[2]
+        real_engine = engines.claude_print
+        real_log = server.log
+
+        def waiting_turn(project, prompt, **kwargs):
+            entered.set()
+            return real_turn(project, prompt, **kwargs)
+
+        def fake_engine(*args, **kwargs):
+            sent.append(args[0])
+            return {"text": "", "session_id": "test-session", "usage": {}, "context_tokens": 0,
+                    "cost": 0.0, "turns": 1, "structured": None, "error": None, "tools": []}
+
+        def run_flow():
+            try:
+                server.run_proposal_flow(PROJECT, slug)
+            except BaseException as exc:  # preserve worker failures for the test thread
+                errors.append(exc)
+
+        l3.turn = waiting_turn
+        engines.claude_print = fake_engine
+        server.log = logs.append
+        project_l3_lock.acquire()
+        worker = threading.Thread(target=run_flow)
+        try:
+            worker.start()
+            reached_lock = entered.wait(5)
+            if reached_lock:
+                T.park(PROJECT, slug, "not now", actor="burak")
+        finally:
+            project_l3_lock.release()
+            worker.join(5)
+            engines.claude_print = real_engine
+            server.log = real_log
+
+        self.assertTrue(reached_lock, "the proposal-ready turn should reach the held L3 lock")
+        self.assertFalse(worker.is_alive(), "the proposal flow should finish after the lock is released")
+        self.assertEqual(errors, [])
+        self.assertEqual(sent, [], "a task parked while queued must not be sent to the engine")
+        self.assertEqual(l3.chat_history(PROJECT), chat_before, "a skipped turn must not reach chat.jsonl")
+        t = S.load_task(PROJECT, slug)
+        self.assertEqual(t["state"], "parked")
+        self.assertIsNone(t.get("proposal_started"))
+        self.assertFalse(t.get("revisions"), "no revision may be queued for the skipped turn")
+        self.assertEqual(len([line for line in logs if "skipping the proposal-ready L3 turn" in line]), 1)
+
+    def test_park_between_proposal_and_critic_skips_the_critic(self):
+        slug = self._task("burak parks between proposal and critic", on_disk=False)
+        critic_calls: list[str] = []
+        logs: list[str] = []
+
+        def run_proposal(project, task_slug):
+            d = S.task_dir(project, task_slug)
+            S.atomic_write(d / "proposal.md", "# Proposal\nBody.\n")
+            S.write_json(d / "proposal.json", dict(PROPOSAL))
+            T.park(project, task_slug, "not now", actor="burak")
+            return dict(PROPOSAL)
+
+        def run_critic(project, task_slug):
+            critic_calls.append(task_slug)
+            return {"verdict": "revise", "issues": ["one issue"]}
+
+        propose.run_proposal = run_proposal
+        propose.run_critic = run_critic
+        real_log = server.log
+        server.log = logs.append
+
+        try:
+            server.run_proposal_flow(PROJECT, slug)  # l3.turn stub fails the test if it is called
+        finally:
+            server.log = real_log
+
+        self.assertEqual(critic_calls, [], "a park after the proposal must prevent the critic run")
+        t = S.load_task(PROJECT, slug)
+        self.assertEqual(t["state"], "parked")
+        self.assertIsNone(t.get("proposal_started"))
+        self.assertFalse(t.get("revisions"))
+        self.assertEqual(len([line for line in logs if "skipping the proposal-ready L3 turn" in line]), 1)
+
     def test_park_by_l3_in_an_earlier_turn_is_not_overridden(self):
         """Finding 1: we stamp the queue time, then block on l3.lock behind a chat turn in which the
         L3 parks the task for Burak (`alt task park` under ALTITUDE_ACTOR=l3, so `by=l3`). That park
-        predates our turn and must stand — the guard reads the chat entry, not the queue time."""
+        predates our turn and must stand — the guard reads the result timestamp, not queue time."""
         slug = self._task("l3 parked it in the chat turn we queued behind")
         calls: list = []
 
         def turn(project, prompt, **kw):
             calls.append(prompt)
             T.park(project, slug, "Burak asked me to park it", actor="l3")   # the earlier chat turn
-            self._chat_entry(project, prompt, offset=60)                     # our turn only starts after it
-            return {"ok": True}
+            turn_started_at = (datetime.now(timezone.utc).replace(microsecond=0)
+                               + timedelta(seconds=60)).isoformat()           # our turn only starts after it
+            return {"ok": True, "_turn_started_at": turn_started_at}
         l3.turn = turn
 
         server.run_proposal_flow(PROJECT, slug)
@@ -165,10 +243,10 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertEqual((last["to"], last["by"]), ("parked", "l3"), "altd must not have unparked it")
 
     def test_an_undatable_turn_leaves_the_park_standing(self):
-        """The guard fails closed (decision 36): if the chat entry l3.turn writes inside the lock is
-        missing, we cannot tell when the turn began, so even an L3 park made during it must stand —
+        """The guard fails closed (decision 36): if l3.turn returns no start timestamp, we cannot
+        tell when the turn began, so even an L3 park made during it must stand —
         the permissive reading is exactly the I-008 override. Unreachable in a healthy system."""
-        slug = self._task("the chat entry is missing")
+        slug = self._task("the turn start is missing")
         calls: list = []
 
         def turn(project, prompt, **kw):
@@ -187,8 +265,6 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertEqual([q.name for q in sorted(d.glob("*-v*"))], [], "no -vN history either")
         last = self._state_events(slug)[-1]
         self.assertEqual((last["to"], last["by"]), ("parked", "l3"), "altd must not have unparked it")
-        self.assertIsNone(server._turn_started_at(PROJECT, "a prompt that was never logged"),
-                          "an unresolved start is None, never a permissive stand-in")
 
     def test_fyi_only_proposal_made_during_the_flow_is_still_auto_approved(self):
         """Finding 2: the L3 proposes the task (no question) in a chat turn while our proposal agent

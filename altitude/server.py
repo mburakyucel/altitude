@@ -114,22 +114,21 @@ def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
     return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
 
 
-def _turn_started_at(project: str, header: str) -> str | None:
-    """When our proposal-ready turn actually began (incident I-008), or None if we cannot tell.
+def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_proposed: bool = False) -> bool:
+    """Clear the in-flight marker and log a proposal-ready turn skipped after a state change.
 
-    `l3.turn` serializes on a per-project lock and logs the prompt verbatim *inside* it, right
-    before the engine runs — so the chat entry's `at` is the moment the L3 started on our turn,
-    not the moment we queued behind another one. Using the queue time instead would read a park
-    the L3 made for Burak during that earlier turn as an in-turn park, and override it.
-
-    The entry always exists once `l3.turn` has returned, so None is unreachable in a healthy
-    system — which is the point. It fails closed: without a trustworthy start the guard leaves
-    the park standing rather than risk overriding one (decision 36 — no silent fallback).
+    A proposal made outside this flow still reaches the FYI-only auto-approve check when asked;
+    every other caller is finished once the skipped turn has been recorded.
     """
-    for ev in reversed(l3.chat_history(project, limit=200)):
-        if ev.get("role") == "user" and ev.get("text") == header:
-            return ev.get("at") or None
-    return None
+    with S.project_lock(project):
+        latest = S.load_task(project, slug)
+        latest["proposal_started"] = None
+        S.save_task(project, latest)
+    if task["state"] == "proposed" and keep_fyi_proposed:
+        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
+        return False
+    log(f"[{project}/{slug}] no longer requested (state={task['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
+    return True
 
 
 def run_proposal_flow(project: str, slug: str) -> None:
@@ -153,6 +152,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
         if cj.exists() and pj.exists() and cj.stat().st_mtime >= pj.stat().st_mtime:  # a critique of *this* proposal
             crit = S.read_json(cj)
         else:
+            tcrit = S.load_task(project, slug)
+            if tcrit["state"] != "requested":
+                _skip_proposal_ready_turn(project, slug, tcrit)
+                return
             log(f"[{project}/{slug}] critic")
             crit = propose.run_critic(project, slug)
     header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
@@ -174,20 +177,26 @@ def run_proposal_flow(project: str, slug: str) -> None:
     # (requested only) if it comes back to requested later.
     t1 = S.load_task(project, slug)
     if t1["state"] != "requested":
-        with S.project_lock(project):
-            t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
-        if t1["state"] != "proposed":
-            log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
+        if _skip_proposal_ready_turn(project, slug, t1, keep_fyi_proposed=True):
             return
-        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
         t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
     else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
+        task_at_turn = None
+
+        def still_requested() -> bool:
+            nonlocal task_at_turn
+            task_at_turn = S.load_task(project, slug)
+            return task_at_turn["state"] == "requested"
+
         try:
             res = l3.turn(project, header, trigger="proposal-ready",
-                          on_start=lambda pid: _record_l3_turn(project, slug, pid))
+                          on_start=lambda pid: _record_l3_turn(project, slug, pid), precheck=still_requested)
         finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
             _record_l3_turn(project, slug, None)
-        turn_start = _turn_started_at(project, header)
+        if res.get("skipped"):
+            _skip_proposal_ready_turn(project, slug, task_at_turn or S.load_task(project, slug))
+            return
+        turn_start = res.get("_turn_started_at")
         if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
             log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
         t2 = S.load_task(project, slug)
