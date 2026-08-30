@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, rules, state as S, tasks as T
+from . import config, engines, git_policy, rules, state as S, tasks as T
 
 
 def project_never_list(repo: Path) -> str:
@@ -48,6 +48,70 @@ def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str
         except (OSError, ValueError, AttributeError):
             pass
     return (_git_branch(worktree) or derived) if worktree else derived
+
+
+def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path:
+    """Create or validate the L2 checkout without ever inheriting the deployment checkout's mutable HEAD."""
+    import subprocess
+
+    expected_branch = f"worktree-{slug}"
+    worktree = repo / ".claude" / "worktrees" / slug
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
+
+    branch_exists = git("show-ref", "--verify", "--quiet", f"refs/heads/{expected_branch}").returncode == 0
+    if not worktree.exists():
+        if branch_exists:
+            raise T.TransitionError(
+                f"task branch {expected_branch!r} exists without its registered worktree {worktree}; "
+                "quarantine or remove the orphan branch before dispatch"
+            )
+        worktree.parent.mkdir(parents=True, exist_ok=True)
+        made = git("worktree", "add", "-b", expected_branch, str(worktree), origin_sha)
+        if made.returncode != 0:
+            raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
+        return worktree
+
+    _validate_task_worktree(repo, project, slug, worktree, origin_sha, require_clean=True)
+    return worktree
+
+
+def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path, origin_sha: str,
+                            *, require_clean: bool) -> None:
+    """Validate an already-created L2 checkout before either a fresh launch or a resume."""
+    import subprocess
+
+    expected_path = (repo / ".claude" / "worktrees" / slug).resolve()
+    if worktree.resolve() != expected_path or not worktree.is_dir():
+        raise T.TransitionError(f"task worktree for {project}/{slug} must be {expected_path}, got {worktree}")
+    expected_branch = f"worktree-{slug}"
+    actual = _git_branch(worktree)
+    if actual != expected_branch:
+        raise T.TransitionError(
+            f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
+        )
+    task_ref = f"{project}/{slug}"
+    missing = git_policy.commits_missing_task_trailer(
+        worktree, "main", task_ref, origin_sha=origin_sha
+    )
+    if missing:
+        sample = ", ".join(sha[:12] for sha in missing[:5])
+        raise T.TransitionError(
+            f"existing task branch {expected_branch!r} has commit(s) without exact "
+            f"`Altitude-Task: {task_ref}` provenance: {sample}"
+        )
+    if require_clean:
+        dirty = subprocess.run(
+            ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if dirty.returncode != 0 or (dirty.stdout or "").strip():
+            detail = (dirty.stderr or "").strip()[:200]
+            raise T.TransitionError(
+                f"existing task worktree {worktree} is dirty"
+                + (f": {detail}" if detail else " — preserve or clean it before dispatch")
+            )
 
 
 def build_brief(project: str, slug: str) -> str:
@@ -99,6 +163,8 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
+    # Read task eligibility first, but do not mark or write anything until the deployment checkout has passed
+    # its remote-backed gate and this task's worktree has a provenance-safe base.
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task["state"] != "approved":
@@ -108,6 +174,26 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         held = wip_hold(project, task)
         if held:
             raise T.TransitionError(held)
+    repo = config.project_path(project)
+    try:
+        origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+    except git_policy.GitPolicyError as exc:
+        # system_fault may acquire state locks, so it deliberately lives outside project_lock.
+        from . import improve
+        improve.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
+        raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
+    try:
+        worktree_path = _task_worktree(repo, project, slug, origin_sha)
+    except (git_policy.GitPolicyError, T.TransitionError) as exc:
+        from . import improve
+        improve.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
+        raise T.TransitionError(f"dispatch refused by task provenance gate: {exc}") from exc
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "approved":
+            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
+            raise T.TransitionError(f"{slug} is already being dispatched")
         task["dispatching"] = S.now()
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
@@ -122,7 +208,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     settings = session_settings(project, slug, f"{project}--{dispatch_id}")
     persona = rules.compiled_persona("l2", project)
     proj = config.project(project)
-    res = engines.claude_bg(name, brief_md, cwd=config.project_path(project), worktree=slug, persona=persona,
+    res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
                             permission_mode="auto", max_turns=task["envelope"]["max_turns"],
                             model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
                             extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
@@ -132,7 +218,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             t2 = S.load_task(project, slug); t2["dispatching"] = None; S.save_task(project, t2)
         S.append_event(project, slug, "dispatch-failed", stdout=res["stdout"][:300], stderr=res["stderr"][:300])
         raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
-    worktree = str(config.project_path(project) / ".claude" / "worktrees" / slug)
+    worktree = str(worktree_path)
     T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent.get("sessionId"), agent_id=agent.get("id"),
                worktree=worktree, branch=worktree_branch(slug, worktree, agent.get("id")))
     if agent.get("sessionId"):
@@ -160,6 +246,16 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     cwd = Path(task.get("worktree") or "")
     if not task.get("worktree") or not cwd.is_dir():
         raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
+    repo = config.project_path(project)
+    try:
+        origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+        # A resume is specifically how an agent continues uncommitted work, so dirt is allowed here; path,
+        # branch, and every committed ancestor remain strict.
+        _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
+    except (git_policy.GitPolicyError, T.TransitionError) as exc:
+        from . import improve
+        improve.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
+        raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     name = f"{project}/{task['dispatch_id']}"
     res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
                                    max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
@@ -526,18 +622,22 @@ def pull_after_done(project: str, task: dict) -> list[str]:
         br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
         if br != "main":
             return [f"self-deploy skipped: checkout on {br!r}, not main"]
-        pull = subprocess.run(["git", "pull", "-q", "--ff-only", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        git_policy.fetch_origin(repo, "main")
+        git_policy.service_preflight(repo, "main")
+        pull = subprocess.run(["git", "merge", "-q", "--ff-only", "origin/main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
         if pull.returncode != 0:
-            T.fyi(project, task.get("slug"), f"self-deploy: `git pull --ff-only` failed in {repo}: {(pull.stderr or pull.stdout).strip()[:200]}")
-            return [f"self-deploy: pull failed: {(pull.stderr or pull.stdout).strip()[:120]}"]
+            raise git_policy.GitPolicyError(
+                f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
+            )
         new = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
         if new == head:
             return []
         files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
-    except (subprocess.SubprocessError, OSError) as e:
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         from . import improve
         improve.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
-        return [f"self-deploy: git error: {e}"]
+        T.fyi(project, task.get("slug"), f"self-deploy refused in {repo}: {str(e)[:300]}")
+        return [f"self-deploy refused: {str(e)[:160]}"]
     code = [f for f in files if f.startswith(DEPLOY_DIRS)]
     notes = [f"self-deploy: main {head[:7]} → {new[:7]} ({len(files)} files)"]
     if code:

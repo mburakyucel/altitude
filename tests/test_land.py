@@ -125,6 +125,20 @@ class TestLand(unittest.TestCase):
             land.land("msg", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 
+    def test_plain_and_merge_land_refuse_unprovenanced_history_before_mutation(self):
+        (self.repo / "rogue-history.txt").write_text("direct commit\n")
+        self.git("add", "rogue-history.txt")
+        self.git("commit", "-q", "-m", "missing task trailer")
+        self.leased_change()
+
+        for merge in (False, True):
+            with self.subTest(merge=merge), self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
+                land.land("must refuse", cwd=self.repo, wait=0, merge=merge)
+
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.gh_log(), [])
+        self.assertNotIn("worktree-fix-x", self.remote_heads())
+
     def test_happy_path(self):
         self.leased_change("src/has space.py")
         self.leased_change("src/a[1].py")  # a bracket-expression name must stage as a literal, not a glob
@@ -272,7 +286,29 @@ class TestLand(unittest.TestCase):
         res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(res["merged"])
         self.assertEqual(res["main_run"], {"databaseId": 7, "status": "completed", "conclusion": "success"})
-        self.assertIn(["pr", "merge", "101", "--squash", "--delete-branch"], self.gh_log())
+        merge = next(args for args in self.gh_log() if args[:2] == ["pr", "merge"])
+        self.assertEqual(merge[:5], ["pr", "merge", "101", "--squash", "--delete-branch"])
+        self.assertEqual(merge[merge.index("--match-head-commit") + 1], self.git("rev-parse", "HEAD").strip())
+
+    def test_changed_pr_head_is_refused_atomically(self):
+        self.leased_change()
+        commands = []
+        real = land._run
+
+        def changed(args, cwd, timeout=120):
+            if args[:3] == ["gh", "pr", "merge"]:
+                commands.append(args)
+                return subprocess.CompletedProcess(args, 1, "", "head branch was modified")
+            return real(args, cwd, timeout=timeout)
+
+        land._run = changed
+        self.addCleanup(setattr, land, "_run", real)
+        with self.assertRaisesRegex(land.LandError, "head branch was modified"):
+            land.land("fix: guarded merge", cwd=self.repo, wait=0, merge=True)
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("--match-head-commit", commands[0])
+        self.assertEqual(json.loads((self.ghdir / "pr.json").read_text())["state"], "OPEN")
 
     def test_merge_hold_without_merge_opens_pr_and_emits_notice(self):
         reason = "production migration is costly"
@@ -330,7 +366,7 @@ class TestLand(unittest.TestCase):
         seed.parent.mkdir(parents=True, exist_ok=True)
         seed.write_text("base\n")
         self.git("add", "src/f.py")
-        self.git("commit", "-q", "-m", "seed")
+        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         other = self.tmp / "other"
         subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True, capture_output=True)
@@ -345,7 +381,7 @@ class TestLand(unittest.TestCase):
         og("checkout", "-q", "worktree-fix-x")
         (other / "src" / "f.py").write_text("remote\n")
         og("add", "src/f.py")
-        og("commit", "-q", "-m", "remote change")
+        og("commit", "-q", "-m", "remote change", "-m", "Altitude-Task: demo/fix-x")
         og("push", "-q")
         seed.write_text("local\n")
         with self.assertRaisesRegex(land.LandError, "mid-rebase"):
@@ -385,7 +421,7 @@ class TestLand(unittest.TestCase):
     def test_rename_crossing_the_lease_boundary_refuses(self):
         self.leased_change("src/keep.py")
         self.git("add", "src/keep.py")
-        self.git("commit", "-q", "-m", "seed")
+        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
         self.git("mv", "src/keep.py", "escaped.py")
         with self.assertRaisesRegex(land.LandError, "escaped.py"):
             land.land("msg", cwd=self.repo, wait=0)
@@ -425,18 +461,16 @@ class TestLand(unittest.TestCase):
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.gh_log(), [])
 
-    def test_unresolved_task_stages_everything_without_the_trailer(self):
+    def test_unresolved_task_is_refused_before_staging(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
             old = os.environ.pop(key)
             self.addCleanup(os.environ.__setitem__, key, old)
         self.leased_change()
         (self.repo / "anything.txt").write_text("also staged\n")
-        res = land.land("fix: undeclared", cwd=self.repo, wait=0)
-        self.assertEqual(res["lease"], land.UNDECLARED)
-        self.assertIn("anything.txt", res["staged"])
-        body = self.git("log", "-1", "--format=%B")
-        self.assertNotIn("Altitude-Task", body)
-        self.assertIn("Co-Authored-By: Claude <noreply@anthropic.com>", body)
+        with self.assertRaisesRegex(land.LandError, "cannot verify commit provenance"):
+            land.land("fix: undeclared", cwd=self.repo, wait=0)
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.gh_log(), [])
 
 
 if __name__ == "__main__":

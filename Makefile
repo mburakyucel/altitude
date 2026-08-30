@@ -6,5 +6,6 @@ test:           ## lifecycle self-test (throwaway ALTITUDE_HOME) + rules unit te
 web:            ## build the SPA into web/dist (frozen-lockfile pnpm install + build; needs node >= 22)
 	cd web && export PATH="$$HOME/.nvm/versions/node/v24.14.0/bin:$$PATH" && pnpm install --frozen-lockfile && pnpm build
 install-service: ## user-level systemd unit (binds the WireGuard address) — run `make web` first so web/dist exists
+	bin/alt install-git-guards
 	mkdir -p ~/.config/systemd/user && cp systemd/altitude.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now altitude && systemctl --user status altitude --no-pager | head -5
 	@echo "If ufw is active, open the port on the tunnel once:  sudo ufw allow in on wg0 to any port 8890 proto tcp"

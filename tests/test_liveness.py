@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-liveness-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -58,12 +59,12 @@ class TestResumeRebinds(unittest.TestCase):
             seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {}); return {"stdout": "", "stderr": "", "returncode": 0}
         rows = [{"id": "old", "name": "altitude/resume-me-1", "sessionId": "old-sid", "state": "failed", "startedAt": 1},
                 {"id": "new", "name": "altitude/resume-me-1", "sessionId": "new-sid", "state": "working", "startedAt": 2}]
-        orig = engines.claude_resume_bg, engines.claude_agents
-        engines.claude_resume_bg, engines.claude_agents = fake_resume, (lambda: rows)
-        try:
+        with mock.patch.object(engines, "claude_resume_bg", fake_resume), \
+             mock.patch.object(engines, "claude_agents", return_value=rows), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_validate_task_worktree") as validate:
             res = dispatch.resume_session("altitude", "resume-me", "go")
-        finally:
-            engines.claude_resume_bg, engines.claude_agents = orig
+        validate.assert_called_once()
         self.assertEqual(seen["cwd"], str(wt))
         self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), "altitude--resume-me-1")
         t = S.load_task("altitude", "resume-me")
@@ -76,6 +77,28 @@ class TestResumeRebinds(unittest.TestCase):
                                  "envelope": {"max_turns": 5}, "worktree": str(Path(_TMP) / "gone"), "class": "S"})
         with self.assertRaises(T.TransitionError):
             dispatch.resume_session("altitude", "no-wt", "go")
+
+    def test_resume_provenance_failure_never_launches_the_engine(self):
+        wt = Path(_TMP) / "wt-refused-resume"; wt.mkdir(exist_ok=True)
+        S.task_dir("altitude", "refused-resume").mkdir(parents=True, exist_ok=True)
+        S.save_task("altitude", {
+            "slug": "refused-resume", "title": "refused-resume", "created": S.now(), "updated": S.now(),
+            "state": "blocked", "session_id": "old", "agent_id": "old-agent",
+            "dispatch_id": "refused-resume-1", "envelope": {"max_turns": 5},
+            "worktree": str(wt), "class": "S",
+        })
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(
+                 dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
+             ), \
+             mock.patch("altitude.improve.system_fault") as fault, \
+             mock.patch.object(engines, "claude_resume_bg") as launch:
+            with self.assertRaisesRegex(T.TransitionError, "foreign commit"):
+                dispatch.resume_session("altitude", "refused-resume", "go")
+
+        fault.assert_called_once()
+        launch.assert_not_called()
 
 
 if __name__ == "__main__":
