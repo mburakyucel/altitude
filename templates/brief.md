@@ -4,6 +4,8 @@
 
 **Definition of done:** every PR merged on `origin/main` (under a merge hold, done is: PR open, review-clean, the gates this repository has green on the PR, reported with its number, and those PR gates replace the R-006 post-merge/main gates below); [R-006] the gates this repository has are green (where it has CI — a `.github/workflows` directory — the `main` run after merge, and where it has none, the full local test suite on merged `main` with the count stated in the report; a `skipped` or no-checks-reported value is never read as passed, and a gate is never satisfied by its absence); deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
 
+**Review/fix:** [R-016] For a fix round on an open PR, run `alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>` with the PR number and findings named in the fix brief, then check the amended PR with `git diff --stat origin/main <head>` before merging.
+
 **Change class / merge policy:** {merge_policy}
 
 When the task carries a merge hold, open the PR, report ok with the PR number and stop; never merge around the hold, by `gh pr merge` or any other route, even if its reason looks false for your PR — say so in the report instead.
