@@ -1,16 +1,23 @@
 """Subscription CLIs driven headlessly (decision 1). Claude Code and Codex command builders + runners."""
 from __future__ import annotations
+import ast
 import json
+import logging
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import config
+
+logger = logging.getLogger(__name__)
 
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends; L1 applies the same default cap to the artifacts it exposes.
@@ -355,12 +362,128 @@ def claude_rm(agent_id: str) -> str:
     return (p.stdout + p.stderr).strip()
 
 
+class CodexSandboxPreflightError(RuntimeError):
+    """A workspace-write turn cannot start because its host sandbox cannot safely write every promised root."""
+
+    def __init__(self, roots: list[str], detail: str):
+        self.roots = list(roots)
+        detail = str(detail).strip() or "unknown bwrap failure"
+        self.detail = detail if len(detail) <= 500 else detail[:245] + " ... " + detail[-250:]
+        super().__init__(f"Codex sandbox preflight failed for {', '.join(self.roots)}: {self.detail}")
+
+
+def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
+    """Return every root a workspace-write override promises; malformed overrides are not promises.
+
+    Non-existent roots stay in the list so the in-sandbox write fails closed instead of silently narrowing access.
+    """
+    base = Path(cwd).resolve()
+    roots = [str(base)]
+    for override in extra_config or []:
+        key, separator, value = override.partition("=")
+        if not separator or key.strip() != "sandbox_workspace_write.writable_roots":
+            continue
+        try:
+            parsed = ast.literal_eval(value.strip())
+        except (SyntaxError, ValueError):
+            logger.warning("Codex sandbox preflight ignored unparseable writable-roots override: %r", override)
+            continue
+        if isinstance(parsed, (list, tuple)):
+            roots.extend(str((base / root).resolve()) for root in parsed if isinstance(root, str))
+    return list(dict.fromkeys(roots))
+
+
+def _codex_network_access(extra_config: list[str] | None) -> bool:
+    """Return the effective workspace-write network setting from Codex's TOML-style overrides."""
+    network_access = False
+    for override in extra_config or []:
+        key, separator, value = override.partition("=")
+        if not separator or key.strip() != "sandbox_workspace_write.network_access":
+            continue
+        normalized = value.strip().lower()
+        if normalized in {"true", "false"}:
+            network_access = normalized == "true"
+    return network_access
+
+
+def codex_sandbox_preflight(cwd: Path, extra_config: list[str] | None = None, timeout: int = 15) -> None:
+    """Prove the requested Linux sandbox can create, sync, and remove a sentinel in every writable root.
+
+    `codex sandbox` cannot express these inline roots reliably, so probe the capability Codex depends on directly.
+    Other platforms and hosts without bwrap are outside I-030's failure mode and stay available with one warning.
+    """
+    if not sys.platform.startswith("linux"):
+        logger.warning("Codex sandbox preflight skipped: platform is not Linux")
+        return
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        logger.warning("Codex sandbox preflight skipped: bwrap is not resolvable")
+        return
+    roots = codex_probe_roots(cwd, extra_config)
+    sentinel = f".altitude-codex-write-probe-{uuid.uuid4().hex}"
+    script = """set -eu
+name=$1
+shift
+for root do
+    probe=$root/$name
+    { printf '%s\\n' altitude-codex-write-probe > "$probe" && sync "$probe" && rm -f "$probe"; } || {
+        status=$?
+        printf 'codex sandbox preflight failed for root: %s\\n' "$root" >&2
+        exit "$status"
+    }
+done
+"""
+    cmd = [bwrap, "--dev-bind", "/", "/", "--unshare-user"]
+    if not _codex_network_access(extra_config):
+        cmd.append("--unshare-net")
+    cmd += ["--die-with-parent", "/bin/sh", "-c", script, "altitude-codex-write-probe", sentinel, *roots]
+    detail = ""
+    try:
+        probe = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+        if probe.returncode == 0:
+            return
+        detail = probe.stderr or f"bwrap exited {probe.returncode} without stderr"
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        detail = stderr or f"bwrap timed out after {timeout} seconds"
+    except OSError as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+    cleanup_errors = []
+    for root in roots:
+        try:
+            (Path(root) / sentinel).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            cleanup_errors.append(f"{root}: {type(exc).__name__}: {exc}")
+    if cleanup_errors:
+        detail = f"{detail.rstrip()}; cleanup failed: {'; '.join(cleanup_errors)}"
+    raise CodexSandboxPreflightError(roots, detail)
+
+
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
                effort: str | None = None, extra_env: dict | None = None) -> dict:
     """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
     `turn.completed` events on stdout."""
+    if sandbox == "workspace-write":
+        try:
+            codex_sandbox_preflight(cwd, extra_config)
+        except CodexSandboxPreflightError as exc:
+            from . import improve  # local: improve -> dispatch -> engines during module import
+            try:
+                improve.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}")
+            except Exception:  # noqa: BLE001 — fault persistence must not replace the deterministic gate failure
+                logger.exception("Failed to record Codex sandbox preflight system fault")
+            error = str(exc)
+            if len(error) > 500:
+                error = error[:245] + " ... " + error[-250:]
+            # Callers already persist and stamp ordinary failures; returning that contract avoids duplicate faults
+            # and stranded L3 turns while still guaranteeing Codex was never invoked.
+            return {"text": "", "structured": None, "returncode": 1, "usage": {}, "error": error,
+                    "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
+                    "raw_stderr_truncated": False}
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
         out_path = outf.name
     cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd), "--skip-git-repo-check"]
