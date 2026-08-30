@@ -169,6 +169,17 @@ def run_proposal_flow(project: str, slug: str) -> None:
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    if item.get("limited"):  # decision 44: hold, remember when to come back, say it once
+        until, a = item["limited"], item.get("agent") or {}
+        news = engines.note_usage_limit(until, f"L2 {a.get('id', '')} of {slug}")
+        with S.project_lock(project):
+            t0 = S.load_task(project, slug); t0["resume_after"] = until; S.save_task(project, t0)
+        T.block(project, slug, f"usage limit: the subscription window is exhausted, resets {until} — Altitude resumes this L2 itself after that")
+        if news:
+            T.fyi(project, slug, f"Usage limit hit (5-hour window). Dispatch, proposals and L3 turns are held until {until}; "
+                                 f"blocked L2s resume automatically, WIP-throttled, oldest first.", actor="altd")
+        log(f"[{project}/{slug}] L2 hit the usage limit → blocked until {until}")
+        return
     with S.project_lock(project):  # a new report: whatever L3 did with the previous one no longer counts
         t0 = S.load_task(project, slug); t0["l3_handled"] = None; S.save_task(project, t0)
     if item.get("needs_input"):
@@ -215,13 +226,18 @@ def report_turn(project: str, t: dict, v: dict) -> None:
               f"{json.dumps([{k: r.get(k) for k in ('project', 'id', 'tags')} for r in inc[-20:]])}\n\n"
               "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
               "then the post-mortem pass (incident + right-sized rule, or one line saying nothing went wrong).")
-    l3.turn(project, header, trigger="report-landed")
+    res = l3.turn(project, header, trigger="report-landed")
+    if (res or {}).get("limited"):
+        log(f"[{project}/{slug}] report turn held: {res['error']}")  # not stamped: re-run when the window reopens
+        return
     with S.project_lock(project):
         t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
 
 
 def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    if engines.usage_hold():
+        return
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
@@ -274,8 +290,10 @@ def tick() -> None:
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
+            for slug in dispatch.resume_due(project):
+                log(f"[{project}/{slug}] resumed: the usage window reopened")
             for t in S.list_tasks(project):
-                if t["state"] == "requested" and t["class"] in ("M", "L"):
+                if t["state"] == "requested" and t["class"] in ("M", "L") and not engines.usage_hold():
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
                     alive = (_bg.get(key) or threading.Thread()).is_alive()

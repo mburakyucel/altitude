@@ -155,7 +155,7 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
                                    max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
                                    extra_env=l2_env(project, task))
-    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done")]
+    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
     if not live:
         raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
     new = max(live, key=lambda a: a.get("startedAt") or 0)
@@ -168,10 +168,29 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     return res
 
 
-def resume_blocked(project: str, slug: str, answer: str) -> dict:
-    res = resume_session(project, slug, f"Burak's answer: {answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
+def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ") -> dict:
+    task = S.load_task(project, slug)
+    if task.get("agent_id"):  # the idle worker that stopped at the block keeps nothing the transcript does not
+        engines.claude_stop(task["agent_id"])
+    res = resume_session(project, slug, f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
     T.resume(project, slug, answer=answer)
     return res
+
+
+def resume_due(project: str) -> list[str]:
+    """Tasks blocked by an exhausted window come back by themselves once it reopens — oldest first, WIP-throttled."""
+    if engines.usage_hold():
+        return []
+    now, back = S.now(), []
+    due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
+    for t in sorted(due, key=lambda t: t.get("created") or ""):
+        if wip_hold(project, t):
+            break
+        resume_blocked(project, t["slug"], "The usage window has reopened; Altitude held you, nothing is wrong with the task.", prefix="")
+        with S.project_lock(project):
+            t2 = S.load_task(project, t["slug"]); t2["resume_after"] = None; S.save_task(project, t2)
+        back.append(t["slug"])
+    return back
 
 
 def _norm(p: str) -> str:
@@ -205,7 +224,21 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
             for t in S.list_tasks(project) if t["state"] == "running" and t["slug"] != exclude]
 
 
+def job_detail(agent_id: str | None) -> str:
+    """What the worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) — the limit message lands here."""
+    if not agent_id:
+        return ""
+    try:
+        st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
+        return str(st.get("detail") or "") if isinstance(st, dict) else ""
+    except (OSError, ValueError):
+        return ""
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    held = engines.usage_hold()
+    if held:
+        return f"usage limit: subscription window exhausted, resets {held}"
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
     if task and task.get("source") == "improve" and any(t.get("source") == "improve" for t in running):
@@ -252,6 +285,11 @@ def poll(project: str) -> list[dict]:
         live = {"status": a.get("status"), "state": a.get("state")} if a else None
         idle_since = None
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
+            lim = engines.usage_limit_in(job_detail(a.get("id")))
+            if lim:  # decision 44: the worker is waiting for the window, not for a human
+                finished.append({"task": t, "agent": a, "limited": lim})
+                S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
+                continue
             idle_since = prev.get("idle_since") or S.now()
         died = a is not None and a.get("state") == "failed" and not has_report
         if died:  # worker gone before a report: raised as a system fault by the server, never read as "still running"

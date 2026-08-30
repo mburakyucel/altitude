@@ -2,12 +2,86 @@
 from __future__ import annotations
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import config
+
+# ---- usage limit (decision 44): the subscription window closing is a hold with a reset time, not a failure ----------
+LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)
+RESETS = re.compile(r"resets?\s+(?:(?:at|in)\s+)?(?:([A-Za-z]{3,9}\s+\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.I)
+
+
+def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | None = None) -> str | None:
+    """The UTC ISO time the window reopens if `text`/`quota` say it is exhausted, else None.
+
+    Claude Code says it two ways: a synthetic assistant message ("You've hit your session limit · resets 8pm
+    (America/Los_Angeles)") and, on the same record, `quotaLimits: {status: rejected, resetsAt: <epoch>}`."""
+    now = now or datetime.now(timezone.utc)
+    if quota and quota.get("status") == "rejected" and quota.get("resetsAt"):
+        return datetime.fromtimestamp(int(quota["resetsAt"]), timezone.utc).isoformat(timespec="seconds")
+    if not text or not LIMIT_TEXT.search(text):
+        return None
+    m = RESETS.search(text)
+    if not m:
+        return (now + timedelta(hours=1)).isoformat(timespec="seconds")  # no time given: hold an hour, then look again
+    day, hour, minute, ampm, tz = m.groups()
+    try:
+        zone = ZoneInfo(tz) if tz else (datetime.now().astimezone().tzinfo or timezone.utc)
+    except Exception:  # noqa: BLE001 — unknown zone name
+        zone = timezone.utc
+    local = now.astimezone(zone)
+    when = local.replace(hour=int(hour) % 12 + (12 if ampm.lower() == "pm" else 0), minute=int(minute or 0), second=0, microsecond=0)
+    if day:
+        for fmt in ("%b %d", "%B %d"):
+            try:
+                d = datetime.strptime(day, fmt); when = when.replace(month=d.month, day=d.day); break
+            except ValueError:
+                continue
+    if when <= local:
+        when += timedelta(days=1)
+    return when.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def usage_limit_path() -> Path:
+    return config.MONITOR_DIR / "usage-limit.json"
+
+
+def note_usage_limit(until: str, detail: str = "") -> bool:
+    """Record an exhausted window. True when the reset time is news, so callers post one FYI per window."""
+    p = usage_limit_path(); p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        cur = json.loads(p.read_text()) if p.exists() else {}
+    except ValueError:
+        cur = {}
+    if cur.get("until") == until:
+        return False
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"until": until, "seen": datetime.now(timezone.utc).isoformat(timespec="seconds"), "detail": detail[:200]}))
+    os.replace(tmp, p)
+    return True
+
+
+def usage_hold() -> str | None:
+    """The reset time while the window is exhausted, else None. Dispatch, proposals and L3 turns check this first."""
+    p = usage_limit_path()
+    try:
+        until = json.loads(p.read_text()).get("until") if p.exists() else None
+    except (ValueError, OSError):
+        return None
+    if until and datetime.fromisoformat(until) > datetime.now(timezone.utc):
+        return until
+    return None
+
+
+def claude_stop(agent_id: str) -> str:
+    p = subprocess.run([config.CLAUDE_BIN, "stop", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
+    return (p.stdout or p.stderr).strip()
 
 
 def clean_env() -> dict:
@@ -26,7 +100,12 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None,
                  timeout: int = config.L3_TURN_TIMEOUT) -> dict:
-    """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error."""
+    """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error; `limited` (a reset
+    time) when the subscription window is exhausted — the call is not even made while a hold is in force."""
+    held = usage_hold()
+    if held:
+        return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
+                "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": held}
     cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
            "--permission-mode", permission_mode]
     if persona:
@@ -87,6 +166,11 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                 for c in msg.get("content") or []:
                     if c.get("type") == "tool_use":
                         out["tools"].append(c.get("name"))
+                    elif c.get("type") == "text" and msg.get("model") == "<synthetic>":
+                        out["synthetic"] = (out.get("synthetic") or "") + str(c.get("text") or "")
+                q = o.get("quotaLimits") or msg.get("quotaLimits")
+                if isinstance(q, dict):
+                    out["quota"] = q
             elif typ == "result":
                 out["usage"] = o.get("usage") or {}
                 out["cost"] = float(o.get("total_cost_usd") or 0)
@@ -103,6 +187,11 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         drain.join(timeout=2)
         proc.stderr.close()
     out["text"] = "".join(parts).strip()
+    lim = usage_limit_in(out.get("synthetic") or out["text"] or (stderr[0] if stderr else ""), out.get("quota"))
+    if lim:
+        note_usage_limit(lim, (out.get("synthetic") or out["text"])[:200])
+        out["limited"] = lim
+        out["error"] = f"usage limit: window exhausted until {lim}"
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {(stderr[0] if stderr else '').strip()[:500]}"
     if schema and out["structured"] is None and out["text"]:

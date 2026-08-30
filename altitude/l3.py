@@ -84,8 +84,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
             resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
             permission_mode="auto", model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text,
             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
-        if res["error"] and not res["session_id"]:
-            chat_log(project, "error", res["error"], trigger=trigger)
+        if res.get("limited") or (res["error"] and not res["session_id"]):
+            chat_log(project, "error", res["error"], trigger=trigger)  # a held/limited turn is not a turn: nothing saved
             return res
         pct = engines.context_percent(res["context_tokens"])
         inf.update({"session_id": res["session_id"], "turns": (0 if fresh else inf.get("turns", 0)) + 1,
