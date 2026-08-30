@@ -59,14 +59,15 @@ def run_critic(project: str, slug: str) -> dict:
               + "\n\n## Proposal\n" + (d / "proposal.md").read_text()
               + "\n\nAnswer as JSON per the output schema.")
     res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json")
+    res["engine"] = "codex"
     if res["structured"] is None:
-        # fall back to Claude if Codex is unavailable
-        r2 = engines.claude_print(prompt, cwd=config.project_path(project), permission_mode="plan",
-                                  schema=config.SCHEMAS / "critic.json", max_turns=30, timeout=900)
-        res = {"structured": r2["structured"], "text": r2["text"], "error": r2["error"], "engine": "claude"}
+        # decision 36: no silent fallback to the same engine — the other-engine critique is the point. Raise it.
+        from . import improve
+        err = (res.get("error") or res.get("text") or "no structured output")[-600:]
+        improve.system_fault("critic-engine", f"codex exec produced no critique: {err}", project=project, task=slug)
+        c = {"verdict": "unavailable", "issues": [], "error": err}
     else:
-        res["engine"] = "codex"
-    c = res["structured"] or {"verdict": "unknown", "issues": [], "error": res.get("error")}
+        c = res["structured"]
     S.write_json(d / "critique.json", c)
     S.append_event(project, slug, "critique", verdict=c.get("verdict"), issues=len(c.get("issues") or []), engine=res.get("engine"))
     return c

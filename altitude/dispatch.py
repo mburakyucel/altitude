@@ -118,7 +118,10 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")
     if total >= config.WIP_PER_MACHINE:
         return f"WIP limit: {total} running on this machine"
-    from .monitor import quota_hold
+    from .monitor import quota_hold, quota
+    if not (quota() or {}).get("known"):
+        from . import improve  # decision 36: the reserve line cannot be enforced — say so, once a day
+        improve.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line (decision 31) is not being enforced; run `alt install-statusline` or fix the monitor")
     q = quota_hold()
     if q:
         return q
@@ -177,6 +180,8 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
         subprocess.run(["git", "worktree", "prune"], cwd=str(repo), capture_output=True, text=True, timeout=30)
         out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout
     except (subprocess.SubprocessError, OSError) as e:
+        from . import improve
+        improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=task.get("slug"))
         return notes + [f"git: {e}"]
     wt, branch = None, None
     for line in out.splitlines() + [""]:

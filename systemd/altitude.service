@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=%h/Projects/agent-orchestrator
 ExecStart=%h/Projects/agent-orchestrator/bin/alt serve
 Restart=on-failure
-RestartSec=5
+RestartSec=20
 Environment=ALTITUDE_HOST=10.88.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin

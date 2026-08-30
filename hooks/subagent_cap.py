@@ -14,13 +14,17 @@ if inp.get("tool_name") == "Bash":
 root = Path(os.environ.get("ALTITUDE_HOME", Path.home() / ".altitude"))
 mon = root / "monitor"; mon.mkdir(parents=True, exist_ok=True)
 counts_p = mon / f"counts-{sid}.json"
-try: counts = json.loads(counts_p.read_text())
-except Exception: counts = {}
+def fault(msg):  # decision 36: a hook cannot reach the server, so it leaves a line the tick raises as a system fault
+    try:
+        with open(mon / "hook-faults.log", "a") as f: f.write(f"subagent_cap.py session={sid}: {msg}\n")
+    except OSError: pass
+try: counts = json.loads(counts_p.read_text()) if counts_p.exists() else {}
+except Exception as e: counts = {}; fault(f"counts file unreadable, counter reset: {e}")
 cap = 8
 key = os.environ.get("ALTITUDE_SESSION_KEY")
 if key:
     try: cap = int(json.loads((mon / f"envelope-{key}.json").read_text()).get("subagent_launches", cap))
-    except Exception: pass
+    except Exception as e: fault(f"envelope file for {key} unreadable, default cap {cap} used: {e}")
 n = int(counts.get("subagent_launches", 0)) + 1
 counts["subagent_launches"] = n; counts["cap"] = cap
 tmp = counts_p.with_suffix(".tmp"); tmp.write_text(json.dumps(counts)); os.replace(tmp, counts_p)

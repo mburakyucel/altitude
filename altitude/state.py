@@ -40,10 +40,15 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 def read_json(path: Path, default=None):
+    """Missing file → default. A corrupt file raises (decision 36): silently defaulting would hide a real fault."""
     try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
+        text = Path(path).read_text()
+    except FileNotFoundError:
         return default
+    try:
+        return json.loads(text) if text.strip() else default
+    except ValueError as e:
+        raise ValueError(f"corrupt JSON in {path}: {e}") from e
 
 
 def write_json(path: Path, obj) -> None:

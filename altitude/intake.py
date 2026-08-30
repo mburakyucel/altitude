@@ -18,9 +18,11 @@ def backlog_issues(project: str, limit: int = 60) -> list[dict]:
     try:
         p = subprocess.run(["gh", "issue", "list", "--state", "open", "--limit", str(limit), "--json", "number,title,labels,body,updatedAt"],
                            cwd=str(config.project_path(project)), capture_output=True, text=True, timeout=60, env=engines.clean_env())
-        return json.loads(p.stdout or "[]")
-    except (subprocess.SubprocessError, ValueError, OSError):
-        return []
+    except (subprocess.SubprocessError, OSError) as e:
+        raise RuntimeError(f"gh issue list failed: {e}") from e
+    if p.returncode != 0:
+        raise RuntimeError(f"gh issue list exit {p.returncode}: {(p.stderr or '')[-300:]}")
+    return json.loads(p.stdout or "[]")
 
 
 def backlog(project: str, on_text=None) -> dict:

@@ -52,11 +52,17 @@ def text() -> str:
 def speak(txt: str) -> Path | None:
     """Render with Kokoro through voice-tutor's speak.py --stdin-text; returns the audio path if it worked."""
     speak_py = Path.home() / "Projects" / "voice-tutor" / "hooks" / "speak.py"
+    from . import improve
     if not speak_py.exists():
+        improve.system_fault("tts", f"voice-tutor speak.py not found at {speak_py}")
         return None
     out = config.ROOT / "digest.wav"
     try:
-        subprocess.run(["python3", str(speak_py), "--stdin-text", "--out", str(out)], input=txt, text=True, timeout=300, capture_output=True)
-    except (subprocess.SubprocessError, OSError):
+        p = subprocess.run(["python3", str(speak_py), "--stdin-text", "--out", str(out)], input=txt, text=True, timeout=300, capture_output=True)
+    except (subprocess.SubprocessError, OSError) as e:
+        improve.system_fault("tts", f"speak.py failed: {e}")
         return None
-    return out if out.exists() else None
+    if p.returncode != 0 or not out.exists():
+        improve.system_fault("tts", f"speak.py exit {p.returncode}: {(p.stderr or '')[-300:]}")
+        return None
+    return out

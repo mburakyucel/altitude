@@ -41,6 +41,9 @@ def spawn(key: str, fn, *a) -> bool:
                 fn(*a)
             except Exception as e:  # noqa: BLE001
                 log(f"[{key}] failed: {e}\n{traceback.format_exc()}")
+                parts = key.split(":")
+                improve.system_fault(f"workflow:{parts[0]}", f"{key}: {e}", project=parts[1] if len(parts) > 1 else None,
+                                     task=parts[2] if len(parts) > 2 else None)
         t = threading.Thread(target=run, name=key, daemon=True)
         _bg[key] = t
         t.start()
@@ -80,7 +83,9 @@ def run_proposal_flow(project: str, slug: str) -> None:
     header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
               f"Proposal says decision_needed={p.get('decision_needed')}, always-list hits={p.get('always_list_hits')}, "
               f"estimate={p.get('estimate')}."
-              + (f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json." if crit else "")
+              + ((f" CRITIC UNAVAILABLE — Altitude fault raised (see inbox/incidents); this task needs the other-engine critique, so park it with that reason until the fault is fixed."
+                  if crit.get("verdict") == "unavailable" else
+                  f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json.") if crit else "")
               + "\n\nApply the Decision rule. Then run exactly one of: "
               f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\"` (card for Burak), "
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
@@ -107,6 +112,10 @@ def on_l2_finished(project: str, item: dict) -> None:
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})
+    if v["verdict"] == "fault":
+        T.block(project, slug, f"verifier fault (Altitude, not the L2): {v.get('fault')}")
+        log(f"[{project}/{slug}] verifier fault → blocked; fault raised")
+        return
     if v["verdict"] == "missing":
         T.block(project, slug, "L2 session ended without a report (report.json missing)")
     elif v["verdict"] == "blocked":
@@ -145,7 +154,19 @@ def dispatch_waiting(project: str) -> None:
         hp.unlink()
 
 
+def drain_hook_faults() -> None:
+    """Hooks run inside L2 sessions and cannot reach the server: they append to monitor/hook-faults.log; the tick raises them."""
+    p = config.MONITOR_DIR / "hook-faults.log"
+    if not p.exists():
+        return
+    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
+    p.unlink()
+    for ln in lines[-20:]:
+        improve.system_fault("hook", ln[:400])
+
+
 def tick() -> None:
+    drain_hook_faults()
     for project in list(config.load_projects()):
         try:
             for item in dispatch.poll(project):
@@ -176,6 +197,7 @@ def tick() -> None:
             weekly_audit(project)
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
+            improve.system_fault("tick", f"{project}: {e}", project=project)
     morning_digest()
 
 
@@ -212,7 +234,11 @@ def timer_loop() -> None:
         try:
             tick()
         except Exception as e:  # noqa: BLE001
-            log(f"tick: {e}")
+            log(f"tick: {e}\n{traceback.format_exc()}")
+            try:
+                improve.system_fault("tick", str(e))
+            except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
+                log(f"tick: could not record fault: {e2}")
         time.sleep(config.AGENT_POLL_SECONDS)
 
 
@@ -482,9 +508,9 @@ def main(host: str | None = None, port: int | None = None) -> None:
     try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
-        log(f"cannot bind {host}:{port} ({e}); falling back to 127.0.0.1")
-        host = "127.0.0.1"
-        srv = ThreadingHTTPServer((host, port), Handler)
+        # decision 36: no silent fallback to loopback — exit non-zero and let systemd retry (wg0 may not be up yet)
+        log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
+        raise SystemExit(1)
     srv.daemon_threads = True
     scheme = "http"
     crt, key = config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key"

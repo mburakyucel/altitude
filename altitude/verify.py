@@ -7,15 +7,36 @@ from pathlib import Path
 from . import config, engines, state as S
 
 
+class VerifierFault(RuntimeError):
+    """The verifier's own tooling failed (gh, network): not a verdict on the L2's work (decision 36)."""
+
+
 def gh(args: list[str], cwd: Path) -> dict | list | None:
     try:
         p = subprocess.run(["gh"] + args, cwd=str(cwd), capture_output=True, text=True, timeout=60, env=engines.clean_env())
-        return json.loads(p.stdout) if p.returncode == 0 and p.stdout.strip() else None
-    except (subprocess.SubprocessError, ValueError, OSError):
-        return None
+    except (subprocess.SubprocessError, OSError) as e:
+        raise VerifierFault(f"gh {' '.join(args[:3])}: {e}") from e
+    if p.returncode != 0:
+        err = (p.stderr or "").strip()
+        if "Could not resolve" in err or "no pull requests found" in err.lower() or "not found" in err.lower():
+            return None  # a legitimately missing object, not a tooling failure
+        raise VerifierFault(f"gh {' '.join(args[:3])} exit {p.returncode}: {err[-300:]}")
+    try:
+        return json.loads(p.stdout) if p.stdout.strip() else None
+    except ValueError as e:
+        raise VerifierFault(f"gh {' '.join(args[:3])}: unparseable output") from e
 
 
 def verify(project: str, slug: str) -> dict:
+    try:
+        return _verify(project, slug)
+    except VerifierFault as e:
+        from . import improve
+        improve.system_fault("verifier", str(e), project=project, task=slug)
+        return {"verdict": "fault", "problems": [f"verifier fault: {e}"], "signals": [], "spend": {}, "prs": [], "report": None, "fault": str(e)}
+
+
+def _verify(project: str, slug: str) -> dict:
     d = S.task_dir(project, slug)
     repo = config.project_path(project)
     task = S.load_task(project, slug)

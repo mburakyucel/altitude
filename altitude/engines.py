@@ -137,8 +137,11 @@ def claude_agents() -> list[dict]:
         p = subprocess.run([config.CLAUDE_BIN, "agents", "--json", "--all"], capture_output=True, text=True,
                            timeout=60, env=clean_env())
         data = json.loads(p.stdout or "[]")
-    except (subprocess.SubprocessError, ValueError, OSError):
-        return []
+    except (subprocess.SubprocessError, ValueError, OSError) as e:
+        # decision 36: an empty list would read as "every L2 vanished" and block every running task — fail loudly instead
+        raise RuntimeError(f"claude agents --json failed: {e}") from e
+    if p.returncode != 0:
+        raise RuntimeError(f"claude agents --json exit {p.returncode}: {(p.stderr or '')[-300:]}")
     if isinstance(data, dict):
         data = data.get("agents") or data.get("sessions") or []
     return data if isinstance(data, list) else []

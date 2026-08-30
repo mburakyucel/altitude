@@ -15,6 +15,39 @@ def _index_append(row: dict) -> None:
         f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+FAULTS = config.ROOT / "monitor" / "faults.json"
+FAULT_WINDOW_SECONDS = 24 * 3600
+
+
+def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
+    """Decision 36: Altitude's own machinery failed. Raise it where it gets fixed — an incident on the `altitude`
+    project plus an inbox line — never paper over it with a fallback. One incident per kind per 24 h; repeats are
+    counted in monitor/faults.json."""
+    from . import tasks as T
+    from .dispatch import _seconds_since
+    detail = (detail or "").strip()
+    FAULTS.parent.mkdir(parents=True, exist_ok=True)
+    faults = S.read_json(FAULTS, {}) or {}
+    rec = faults.get(kind) or {}
+    recent = bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS and rec.get("incident")
+    rec = {"first": rec.get("first") or S.now(), "last": S.now(), "count": int(rec.get("count", 0)) + 1,
+           "incident": rec.get("incident"), "detail": detail[:500], "project": project, "task": task}
+    faults[kind] = rec
+    S.write_json(FAULTS, faults)
+    if recent:
+        return None
+    target = "altitude" if "altitude" in config.load_projects() else project
+    inc = None
+    if target:
+        inc = new_incident(target, title=f"system fault: {kind}", task=task,
+                           what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
+                           evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
+                           tags=["system-fault", kind], generalizable="unknown", mechanism="incident-only", scope="project", actor="altd")
+        rec["incident"] = inc["id"]; faults[kind] = rec; S.write_json(FAULTS, faults)
+        T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}. Altitude itself needs the fix; nothing falls back silently (decision 36).", actor="altd")
+    return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
+
+
 def index() -> list[dict]:
     if not config.INCIDENT_INDEX.exists():
         return []
