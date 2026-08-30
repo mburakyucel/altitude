@@ -552,27 +552,19 @@ def pull_after_done(project: str, task: dict) -> list[str]:
     return notes
 
 
-class CleanupDeferred(RuntimeError):
-    """Keep a done task eligible for cleanup on the next server tick."""
-
-    def __init__(self, notes: list[str]):
-        self.notes = notes
-        super().__init__("; ".join(n for n in notes if n.startswith("deferred worktree ")) or "worktree cleanup deferred")
-
-
 def cleanup_after_done(project: str, task: dict) -> list[str]:
     """After `done`, remove only this task's merged L2 and completed-L1 worktrees.
 
     Ownership comes from the task's persisted L2 path and L1 records, before any session or git-state guard is applied.
-    A live L1 record raises ``CleanupDeferred`` after the pass so the server does not stamp the task cleaned and retries
-    on a later tick. The Claude session list remains a secondary guard; failure to read it still removes nothing."""
+    An unfinished L1 is recorded and returned as an expected deferral even if git cannot list it. The current server
+    caller stamps any normal return cleaned, so this contract leaks that deferred tree safely instead of risking its
+    removal; retrying it requires a future caller change. The Claude session list remains a secondary guard; failure to
+    read it still removes nothing."""
     import subprocess
     from . import improve
     repo = config.project_path(project)
     slug = task.get("slug") or ""
     notes = []
-    if task.get("agent_id"):
-        notes.append("claude rm: " + engines.claude_rm(task["agent_id"])[:120])
 
     def path_key(path: str | Path) -> str:
         return str(Path(path).resolve())
@@ -604,6 +596,16 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             if owner_slug == slug:
                 own_candidates[key] = {"kind": "L1", "done": bool(rec.get("done")), "name": rec["name"]}
 
+    # Deferral comes from persisted ownership, not from git's transient view. Record every unfinished implementer even
+    # when its worktree is absent from (or cannot be read through) `git worktree list`.
+    deferred_keys = set()
+    for key, candidate in own_candidates.items():
+        if candidate["kind"] == "L1" and not candidate["done"]:
+            reason = "persisted L1 record has no done stamp"
+            S.append_event(project, slug, "cleanup-worktree", action="deferred", worktree=key, reason=reason)
+            notes.append(f"deferred worktree {Path(key).name}: {reason}")
+            deferred_keys.add(key)
+
     try:
         fetch = subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
         listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30)
@@ -632,24 +634,20 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     records.append((wt, branch, locked, key, own_candidates[key]))
             wt, branch, locked = None, None, False
 
-    deferred = False
     eligible = []
     for wt, branch, locked, key, candidate in records:
+        if key in deferred_keys:
+            continue
         if owners.get(key, set()) != {slug}:
             reason = "also owned by task(s): " + ", ".join(sorted(owners[key] - {slug}))
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
-        elif candidate["kind"] == "L1" and not candidate["done"]:
-            reason = "persisted L1 record has no done stamp"
-            S.append_event(project, slug, "cleanup-worktree", action="deferred", worktree=wt, reason=reason)
-            notes.append(f"deferred worktree {Path(wt).name}: {reason}")
-            deferred = True
         elif locked:
             reason = "git worktree is locked"
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
         else:
-            eligible.append((wt, branch))
+            eligible.append((wt, branch, candidate))
 
     try:
         live = [path_key(a["cwd"]) for a in engines.claude_agents()
@@ -657,19 +655,17 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     except RuntimeError as e:
         reason = f"live Claude session list unavailable: {e}"
         improve.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=slug)
-        for wt, _branch in eligible:
+        for wt, _branch, _candidate in eligible:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
         notes.append(f"skipped worktree cleanup: {e}")
         notes += pull_after_done(project, task)
-        if deferred:
-            raise CleanupDeferred(notes)
         return notes
 
     def has_live_claude_session(path: str) -> bool:
         key = path_key(path)
         return any(key == cwd or key.startswith(cwd + "/") or cwd.startswith(key + "/") for cwd in live)
 
-    for wt, branch in eligible:
+    for wt, branch, candidate in eligible:
         reason = None
         if fetch_error:
             reason = f"could not refresh origin/main: {fetch_error}"
@@ -678,24 +674,48 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
         elif not branch:
             reason = "git worktree has no branch"
         else:
-            merged = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo), capture_output=True).returncode == 0
-            if not merged:
+            try:
+                ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo),
+                                          capture_output=True, text=True, timeout=30)
+            except (subprocess.SubprocessError, OSError) as e:
+                reason = f"merge-base indeterminate: {e}"
+                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
+            if not reason and ancestry.returncode == 1:
                 reason = "branch has commits not on origin/main"
+            elif not reason and ancestry.returncode != 0:
+                stderr = (ancestry.stderr or "").strip()[:120] or "(empty stderr)"
+                reason = f"merge-base indeterminate (exit {ancestry.returncode}); stderr: {stderr}"
+                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
         if reason:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
             continue
         removal_reason = "task-owned branch is merged into origin/main"
-        rm = subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
-        if rm.returncode == 0:
+        removed = False
+        used_claude_rm = candidate["kind"] == "L2" and bool(task.get("agent_id"))
+        if used_claude_rm:
+            try:
+                rm_note = engines.claude_rm(task["agent_id"])
+            except (subprocess.SubprocessError, OSError, RuntimeError) as e:
+                reason = f"claude rm failed: {e}"
+                improve.system_fault("cleanup-claude-rm", f"{project}/{slug}: {reason}", project=project, task=slug)
+            else:
+                notes.append(f"claude rm {task['agent_id']}: {(rm_note or 'completed')[:120]}")
+                removed = not Path(wt).exists()
+        if not removed and not reason:
+            rm = subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
+            if rm.returncode == 0:
+                removed = True
+            else:
+                reason = f"git worktree remove failed: {(rm.stderr or rm.stdout).strip()[:120]}"
+        if removed:
             subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
+            if used_claude_rm:
+                removal_reason += "; L2 agent removed via claude rm"
             S.append_event(project, slug, "cleanup-worktree", action="removed", worktree=wt, reason=removal_reason)
             notes.append(f"removed merged worktree {Path(wt).name}")
         else:
-            reason = f"git worktree remove failed: {(rm.stderr or rm.stdout).strip()[:120]}"
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
-            notes.append(f"could not remove {Path(wt).name}: {(rm.stderr or rm.stdout).strip()[:120]}")
+            notes.append(f"could not remove {Path(wt).name}: {reason}")
     notes += pull_after_done(project, task)
-    if deferred:
-        raise CleanupDeferred(notes)
     return notes
