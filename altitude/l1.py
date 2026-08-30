@@ -208,7 +208,7 @@ def _compact(r: dict) -> dict:
             other = 0
             for finding in findings:
                 severity = finding.get("severity") if isinstance(finding, dict) else None
-                if severity in counts:
+                if isinstance(severity, str) and severity in counts:
                     counts[severity] += 1
                 else:
                     other += 1
