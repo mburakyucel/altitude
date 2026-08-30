@@ -12,6 +12,56 @@ from zoneinfo import ZoneInfo
 
 from . import config
 
+# Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
+# from both ends; L1 applies the same default cap to the artifacts it exposes.
+RAW_CAPTURE_CAP = 2 * 1024 * 1024
+
+
+def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
+    """Cap raw bytes, retaining the head and tail with an exact drop notice."""
+    total = len(data) if total is None else total
+    if total <= cap:
+        return data, False
+    dropped = total - cap
+    while True:
+        notice = f"\n\n[altitude: raw output truncated; {dropped} bytes dropped]\n\n".encode()
+        kept = max(0, cap - len(notice))
+        exact = total - kept
+        if exact == dropped:
+            break
+        dropped = exact
+    head = kept // 2
+    tail = kept - head
+    return data[:head] + notice + (data[-tail:] if tail else b""), True
+
+
+class _BoundedRawCapture:
+    """Collect at most ``cap`` bytes, retaining the head and tail with an exact drop notice."""
+
+    def __init__(self, cap: int | None = None):
+        self.cap = RAW_CAPTURE_CAP if cap is None else cap
+        self.total = 0
+        self.head = bytearray()
+        self.tail = bytearray()
+        self.head_limit = self.cap // 2
+        self.tail_limit = self.cap - self.head_limit
+
+    def add(self, text: str) -> None:
+        data = text.encode("utf-8", errors="replace")
+        self.total += len(data)
+        room = self.head_limit - len(self.head)
+        if room > 0:
+            self.head.extend(data[:room])
+            data = data[room:]
+        if data:
+            self.tail.extend(data)
+            if len(self.tail) > self.tail_limit:
+                del self.tail[:len(self.tail) - self.tail_limit]
+
+    def render(self) -> tuple[str, bool]:
+        data, truncated = cap_raw(bytes(self.head + self.tail), self.cap, total=self.total)
+        return data.decode("utf-8", errors="replace"), truncated
+
 # ---- usage limit (decision 44): the subscription window closing is a hold with a reset time, not a failure ----------
 LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)
 RESETS = re.compile(r"resets?\s+(?:(?:at|in)\s+)?(?:([A-Za-z]{3,9}\s+\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.I)
@@ -112,15 +162,17 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT) -> dict:
-    """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error; `limited` (a reset
-    time) when the subscription window is exhausted — the call is not even made while a hold is in force.
+    """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
+    raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
+    made while a hold is in force.
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd (systemd KillMode=process,
     ce856bb), so its pid is the only evidence a *restarted* altd has that the turn is still running (I-011)."""
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
-                "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": held}
+                "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": held,
+                "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False}
     cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
            "--permission-mode", permission_mode]
     if persona:
@@ -150,16 +202,23 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         proc.stdin.close()
     except (BrokenPipeError, OSError):
         pass
-    stderr: list[str] = []
-    drain = threading.Thread(target=lambda: stderr.append(proc.stderr.read() or ""), daemon=True)
+    stdout_capture, stderr_capture = _BoundedRawCapture(), _BoundedRawCapture()
+
+    def drain_stderr() -> None:
+        while chunk := proc.stderr.read(65536):
+            stderr_capture.add(chunk)
+
+    drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
     killer = threading.Timer(timeout, proc.kill)
     killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
+    failure = None
     try:
         for line in proc.stdout:
+            stdout_capture.add(line)
             try:
                 o = json.loads(line)
             except ValueError:
@@ -197,19 +256,30 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                 elif not parts and o.get("result"):
                     parts.append(str(o["result"]))
         proc.wait()
+    except BaseException as exc:
+        failure = exc
+        raise
     finally:
         killer.cancel()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()
+        drain.join(timeout=2)
+        if failure is not None:
+            failure.raw_stdout, failure.raw_stdout_truncated = stdout_capture.render()
+            failure.raw_stderr, failure.raw_stderr_truncated = stderr_capture.render()
+    raw_stdout, raw_stdout_truncated = stdout_capture.render()
+    raw_stderr, raw_stderr_truncated = stderr_capture.render()
+    out.update({"raw_stdout": raw_stdout, "raw_stderr": raw_stderr,
+                "raw_stdout_truncated": raw_stdout_truncated, "raw_stderr_truncated": raw_stderr_truncated})
     out["text"] = "".join(parts).strip()
-    lim = usage_limit_in(out.get("synthetic") or out["text"] or (stderr[0] if stderr else ""), out.get("quota"))
+    lim = usage_limit_in(out.get("synthetic") or out["text"] or raw_stderr, out.get("quota"))
     if lim:
         note_usage_limit(lim, (out.get("synthetic") or out["text"])[:200])
         out["limited"] = lim
         out["error"] = f"usage limit: window exhausted until {lim}"
     if proc.returncode != 0 and not out["error"]:
-        out["error"] = f"claude exit {proc.returncode}: {(stderr[0] if stderr else '').strip()[:500]}"
+        out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     if schema and out["structured"] is None and out["text"]:
         try:
             out["structured"] = json.loads(out["text"])
@@ -331,7 +401,9 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
     if not text.strip() and messages:  # no -o file (or empty): the last agent message is the answer
         text = messages[-1]
     return {"text": text.strip(), "structured": structured, "returncode": p.returncode, "usage": usage,
-            "error": None if p.returncode == 0 else p.stderr.strip()[:500]}
+            "error": None if p.returncode == 0 else p.stderr.strip()[:500],
+            "raw_stdout": p.stdout or "", "raw_stderr": p.stderr or "",
+            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
 
 
 def context_percent(context_tokens: int, engine: str = "claude") -> float:
