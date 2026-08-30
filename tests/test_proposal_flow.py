@@ -141,6 +141,7 @@ class TestProposalFlowPark(unittest.TestCase):
         project_l3_lock = l3.lock(PROJECT)
         real_turn = self._orig[2]
         real_engine = engines.claude_print
+        real_codex = engines.codex_exec
         real_log = server.log
 
         def waiting_turn(project, prompt, **kwargs):
@@ -160,6 +161,7 @@ class TestProposalFlowPark(unittest.TestCase):
 
         l3.turn = waiting_turn
         engines.claude_print = fake_engine
+        engines.codex_exec = fake_engine
         server.log = logs.append
         project_l3_lock.acquire()
         worker = threading.Thread(target=run_flow)
@@ -172,6 +174,7 @@ class TestProposalFlowPark(unittest.TestCase):
             project_l3_lock.release()
             worker.join(5)
             engines.claude_print = real_engine
+            engines.codex_exec = real_codex
             server.log = real_log
 
         self.assertTrue(reached_lock, "the proposal-ready turn should reach the held L3 lock")
@@ -193,6 +196,7 @@ class TestProposalFlowPark(unittest.TestCase):
         project_l3_lock = l3.lock(PROJECT)
         real_turn = self._orig[2]
         real_engine = engines.claude_print
+        real_codex = engines.codex_exec
 
         def waiting_turn(project, prompt, **kwargs):
             entered.set()
@@ -211,6 +215,7 @@ class TestProposalFlowPark(unittest.TestCase):
 
         l3.turn = waiting_turn
         engines.claude_print = fake_engine
+        engines.codex_exec = fake_engine
         project_l3_lock.acquire()
         worker = threading.Thread(target=run_flow)
         try:
@@ -222,6 +227,7 @@ class TestProposalFlowPark(unittest.TestCase):
             project_l3_lock.release()
             worker.join(5)
             engines.claude_print = real_engine
+            engines.codex_exec = real_codex
 
         self.assertTrue(reached_lock, "the proposal-ready turn should reach the held L3 lock")
         self.assertFalse(worker.is_alive(), "the proposal flow should finish after the lock is released")

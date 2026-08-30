@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from . import config, engines, l3, state as S
+from . import config, engines, l3, route, state as S
 
 
 def idea(project: str, text: str, on_text=None) -> dict:
@@ -24,10 +24,15 @@ def size(project: str, slug: str) -> dict:
         return {"skipped": f"state {task['state']}, class {task.get('class')}"}
     request = (S.task_dir(project, slug) / "request.md").read_text()
     prompt = f"Request `{slug}` for project `{project}`:\n\n{request}\n\nPick the class and the paths as JSON per the schema."
+    choice = route.pick_engine("sizer", task=task)
     try:
-        res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "size.md",
-                                   permission_mode="plan", schema=config.SCHEMAS / "size.json", model=config.MODELS["research"],
-                                   max_turns=20, timeout=600)
+        if choice["engine"] == "codex":  # decision 56
+            res = engines.codex_exec((config.PERSONAS / "size.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
+                                     schema=config.SCHEMAS / "size.json", timeout=600, effort=config.CODEX_EFFORT.get("sizer"))
+        else:
+            res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "size.md",
+                                       permission_mode="plan", schema=config.SCHEMAS / "size.json", model=config.MODELS["research"],
+                                       max_turns=20, timeout=600)
         out = res.get("structured") or {}
         if res.get("error") and not out:
             raise RuntimeError(res["error"])
@@ -39,7 +44,7 @@ def size(project: str, slug: str) -> dict:
         improve.system_fault("sizer", f"intake sizer failed for {project}/{slug}: {str(e)[:200]}", project=project, task=slug)
         raise
     T.set_class(project, slug, out["class"], out["why"], paths=out.get("paths") or [], actor="sizer")
-    S.append_event(project, slug, "size-run", turns=res.get("turns"), cost=res.get("cost"))
+    S.append_event(project, slug, "size-run", engine=choice["engine"], why=choice["why"], turns=res.get("turns"), cost=res.get("cost"))
     if out["class"] == "S":
         T.auto_approve(project, slug, f"sized S by the intake sizer: {out['why']}")
     return {"class": out["class"], "why": out["why"], "paths": out.get("paths") or []}

@@ -287,7 +287,7 @@ def claude_rm(agent_id: str) -> str:
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
-               effort: str | None = None) -> dict:
+               effort: str | None = None, extra_env: dict | None = None) -> dict:
     """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
     `turn.completed` events on stdout."""
@@ -303,8 +303,9 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
     try:
+        env = clean_env(); env.update(extra_env or {})
         p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                           stdin=subprocess.DEVNULL, env=clean_env())
+                           stdin=subprocess.DEVNULL, env=env)
         text = Path(out_path).read_text() if Path(out_path).exists() else ""
     finally:
         try:

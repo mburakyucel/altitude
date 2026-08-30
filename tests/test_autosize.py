@@ -19,21 +19,22 @@ class TestAutoSize(unittest.TestCase):
         config.save_projects({"z": {"name": "z", "path": str(_TMP / "repo"), "stacks": ["python"]}})
 
     def _fake(self, structured=None, error=None):
-        def fake(prompt, **kw):
-            self.assertEqual(kw.get("permission_mode"), "plan")
-            self.assertEqual(kw.get("model"), config.MODELS["research"])
-            return {"structured": structured, "error": error, "turns": 3, "cost": 0.01}
+        def fake(prompt, **kw):  # decision 56: the sizer is Codex — read-only sandbox, strict schema, persona inline
+            self.assertEqual(kw.get("sandbox", "read-only"), "read-only")
+            self.assertTrue(str(kw.get("schema")).endswith("size.json"))
+            self.assertIn("intake sizer", prompt)
+            return {"structured": structured, "error": error, "usage": {}, "returncode": 0}
         return fake
 
     def test_auto_leaves_class_unset_and_s_is_approved_after_sizing(self):
         t = T.new("z", "fix a typo", "auto", "fix the typo in README", actor="burak")
         self.assertIsNone(t["class"]); self.assertEqual(t["envelope"], {})
-        real = engines.claude_print
-        engines.claude_print = self._fake({"class": "S", "why": "doc sync", "paths": ["README.md"]})
+        real = engines.codex_exec
+        engines.codex_exec = self._fake({"class": "S", "why": "doc sync", "paths": ["README.md"]})
         try:
             res = intake.size("z", t["slug"])
         finally:
-            engines.claude_print = real
+            engines.codex_exec = real
         t2 = S.load_task("z", t["slug"])
         self.assertEqual(res["class"], "S")
         self.assertEqual(t2["class"], "S"); self.assertEqual(t2["envelope"]["subagent_launches"], 3)
@@ -42,12 +43,12 @@ class TestAutoSize(unittest.TestCase):
 
     def test_m_stays_requested_for_the_proposal_flow(self):
         t = T.new("z", "add a feature", "auto", "add the thing", actor="burak", paths=["altitude/x.py"])
-        real = engines.claude_print
-        engines.claude_print = self._fake({"class": "M", "why": "feature within architecture", "paths": ["altitude/y.py"]})
+        real = engines.codex_exec
+        engines.codex_exec = self._fake({"class": "M", "why": "feature within architecture", "paths": ["altitude/y.py"]})
         try:
             intake.size("z", t["slug"])
         finally:
-            engines.claude_print = real
+            engines.codex_exec = real
         t2 = S.load_task("z", t["slug"])
         self.assertEqual((t2["class"], t2["state"]), ("M", "requested"))
         self.assertEqual(t2["paths"], ["altitude/x.py"], "declared paths win over the sizer's")
@@ -55,14 +56,14 @@ class TestAutoSize(unittest.TestCase):
     def test_failure_is_a_fault_not_a_default_class(self):
         t = T.new("z", "vague", "auto", "do something", actor="burak")
         faults = []
-        real, real_fault = engines.claude_print, improve.system_fault
-        engines.claude_print = self._fake(None, error="boom")
+        real, real_fault = engines.codex_exec, improve.system_fault
+        engines.codex_exec = self._fake(None, error="boom")
         improve.system_fault = lambda kind, detail, **kw: faults.append(kind)
         try:
             with self.assertRaises(RuntimeError):
                 intake.size("z", t["slug"])
         finally:
-            engines.claude_print, improve.system_fault = real, real_fault
+            engines.codex_exec, improve.system_fault = real, real_fault
         t2 = S.load_task("z", t["slug"])
         self.assertIsNone(t2["class"]); self.assertEqual(t2["state"], "requested"); self.assertIn("boom", t2["size_error"])
         self.assertEqual(faults, ["sizer"])

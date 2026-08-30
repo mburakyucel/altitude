@@ -5,7 +5,8 @@ from __future__ import annotations
 
 from . import config, state as S
 
-ROLE_ENGINES = {"l3": "claude", "l2": "claude", "critic": "codex"}  # fixed by design: L3/L2 are Claude sessions; the critic is the other engine
+ROLE_ENGINES = {"l3": "claude", "l2": "claude", "proposal": "codex", "sizer": "codex"}  # by design: L2 is a Claude session; L3 is Claude with a Codex
+# turn whenever the Claude window is exhausted (decision 56); proposals and sizing are Codex (decision 56); the critic is the *other* engine from the proposal
 QUOTA_CODEX = "quota-codex.json"
 
 

@@ -407,10 +407,10 @@ def tick() -> None:
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
             for t in S.list_tasks(project):
-                if t["state"] == "requested" and not t.get("class") and not t.get("size_error") and not engines.usage_hold():
+                if t["state"] == "requested" and not t.get("class") and not t.get("size_error"):  # sizer is Codex (decision 56)
                     spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
                     continue
-                if t["state"] == "requested" and t["class"] in ("M", "L") and not engines.usage_hold():
+                if t["state"] == "requested" and t["class"] in ("M", "L"):  # proposal is Codex, L3 turn falls to Codex when held (decision 56)
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
                     alive = (_bg.get(key) or threading.Thread()).is_alive()

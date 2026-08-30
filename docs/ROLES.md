@@ -69,6 +69,10 @@ Burak does not have to pick the class: a request filed as `auto` (the UI default
 
 The "spin up a session to design, then propose, then build, then another to verify" instructions Burak keeps repeating are these stages; once they are in the personas they are never typed again.
 
+## Engines (decisions 45, 56)
+
+Codex is the working seat: L1 implementers by quota (Codex while Claude is unreadable), proposals, the intake sizer, and the critic when the proposal was Claude's. Claude: the L3 (Fable), every L2 (Opus), the reviewer when the author was Codex and Claude has room, and the critic when the proposal was Codex's (research tier). When the Claude window is exhausted the L3 turn runs on Codex — same persona, the state file and recent chat as memory, labelled `codex` in the chat log and project log; the critic runs same-engine and says so. Nothing switches engines silently: every choice lands in the events with its reason (decision 36).
+
 ## The spend envelope — proportionality (decision 31)
 
 Every brief carries an **envelope**, set by size class and adjusted by L3 at proposal time: max L1 subagents in flight, max total subagent launches, max turns (`--max-turns`), and a verification share. The envelope is a mechanism, not advice: the launcher passes the caps, a hook counts subagent launches and blocks past the cap, and the server pauses dispatch when the seat's 5-hour quota passes the reserve line so Burak's own sessions are never starved.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config, engines, state as S, tasks as T
+from . import config, engines, route, state as S, tasks as T
 
 
 def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
@@ -32,16 +32,24 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
                   "the summary with what changed because of it." % (task.get("revisions", 0) + task.get("feedback_rounds", 0) + 1))
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
-    res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
-                               permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
-                               max_turns=60, timeout=1200)
+    choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
+    if choice["engine"] == "codex":  # decision 56: the proposal is Codex work — persona inline, read-only sandbox, strict schema
+        res = engines.codex_exec((config.PERSONAS / "proposal.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
+                                 schema=config.SCHEMAS / "proposal.json", timeout=1200, effort=config.CODEX_EFFORT.get("proposal"))
+        res.setdefault("turns", 1); res.setdefault("cost", 0.0)
+    else:
+        res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
+                                   permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
+                                   max_turns=60, timeout=1200)
     if res["error"] and not res["structured"]:
         raise RuntimeError(res["error"])
     p = res["structured"] or {}
     S.write_json(d / "proposal.json", p)
     S.atomic_write(d / "proposal.md", render_proposal_md(p))
-    S.append_event(project, slug, "proposal", turns=res["turns"], cost=res["cost"], cls=p.get("class"),
-                   decision_needed=p.get("decision_needed"), hits=p.get("always_list_hits"))
+    with S.project_lock(project):
+        t2 = S.load_task(project, slug); t2["proposal_engine"] = choice["engine"]; S.save_task(project, t2)
+    S.append_event(project, slug, "proposal", turns=res["turns"], cost=res["cost"], cls=p.get("class"), engine=choice["engine"],
+                   why=choice["why"], decision_needed=p.get("decision_needed"), hits=p.get("always_list_hits"))
     return p
 
 
@@ -67,21 +75,33 @@ def render_proposal_md(p: dict) -> str:
 
 
 def run_critic(project: str, slug: str) -> dict:
-    """Other-engine critique (decision 13): Codex reads the proposal read-only."""
+    """Other-engine critique (decision 13): the engine that did not write the proposal reads it, read-only.
+    With a Codex proposal that is Claude (research tier); when the Claude window is exhausted the critique still runs,
+    on a second Codex session, labelled `degraded` in the critique and the event (decision 56 — never silently)."""
     d = S.task_dir(project, slug)
+    task = S.load_task(project, slug)
     prompt = ((config.PERSONAS / "critic.md").read_text() + "\n\n## Request\n" + (d / "request.md").read_text()
               + "\n\n## Proposal\n" + (d / "proposal.md").read_text()
               + "\n\nAnswer as JSON per the output schema.")
-    res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json", effort=config.CODEX_EFFORT.get("critic"))
-    res["engine"] = "codex"
+    eng, degraded = route.other(task.get("proposal_engine") or "claude"), None
+    if eng == "claude" and engines.usage_hold():
+        eng, degraded = "codex", f"same-engine critique: the Claude window is exhausted until {engines.usage_hold()}"
+    if eng == "codex":
+        res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json", effort=config.CODEX_EFFORT.get("critic"))
+    else:
+        res = engines.claude_print(prompt, cwd=config.project_path(project), permission_mode="plan", schema=config.SCHEMAS / "critic.json",
+                                   model=config.MODELS["research"], max_turns=30, timeout=900)
+    res["engine"] = eng
     if res["structured"] is None:
         # decision 36: no silent fallback to the same engine — the other-engine critique is the point. Raise it.
         from . import improve
         err = (res.get("error") or res.get("text") or "no structured output")[-600:]
-        improve.system_fault("critic-engine", f"codex exec produced no critique: {err}", project=project, task=slug)
+        improve.system_fault("critic-engine", f"{eng} produced no critique: {err}", project=project, task=slug)
         c = {"verdict": "unavailable", "issues": [], "error": err}
     else:
         c = res["structured"]
+    if degraded:
+        c["degraded"] = degraded
     S.write_json(d / "critique.json", c)
-    S.append_event(project, slug, "critique", verdict=c.get("verdict"), issues=len(c.get("issues") or []), engine=res.get("engine"))
+    S.append_event(project, slug, "critique", verdict=c.get("verdict"), issues=len(c.get("issues") or []), engine=eng, degraded=degraded)
     return c

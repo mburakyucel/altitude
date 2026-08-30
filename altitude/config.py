@@ -47,7 +47,7 @@ ENGINES = ("claude", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
-CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None}
+CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None}
 L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
 L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
