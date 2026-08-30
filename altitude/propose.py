@@ -52,6 +52,13 @@ def _normalise_proposal_files(project: str, proposal: dict) -> None:
     proposal["files"] = normalised
 
 
+def _record_proposal_error(project: str, slug: str, error: RuntimeError) -> None:
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        task["proposal_error"] = {"message": str(error), "at": S.now()}
+        S.save_task(project, task)
+
+
 def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
@@ -76,6 +83,10 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         prior += ("\n\nThis is revision %d. Produce a corrected proposal, not a defence of the previous one. Burak's feedback (the "
                   "'## Burak's feedback' sections of the request and the revision note above) is binding: address every point and open "
                   "the summary with what changed because of it." % (task.get("revisions", 0) + task.get("feedback_rounds", 0) + 1))
+    failure = task.get("proposal_error") or {}
+    if failure.get("message"):  # the stale-run retry is a fresh session, so carry its only validation context in the prompt
+        prior += ("\n\n## Previous proposal run rejected by validation\n" + failure["message"]
+                  + "\n\nCorrect only this validation failure and otherwise produce a full proposal.")
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
     choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
@@ -87,14 +98,18 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
                                    permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
                                    max_turns=60, timeout=1200)
-    if res["error"] and not res["structured"]:
-        raise RuntimeError(res["error"])
-    p = res["structured"] or {}
-    _normalise_proposal_files(project, p)
+    try:
+        if res["error"] and not res["structured"]:
+            raise RuntimeError(res["error"])
+        p = res["structured"] or {}
+        _normalise_proposal_files(project, p)
+    except RuntimeError as error:
+        _record_proposal_error(project, slug, error)
+        raise
     S.write_json(d / "proposal.json", p)
     S.atomic_write(d / "proposal.md", render_proposal_md(p))
     with S.project_lock(project):
-        t2 = S.load_task(project, slug); t2["proposal_engine"] = choice["engine"]; S.save_task(project, t2)
+        t2 = S.load_task(project, slug); t2["proposal_engine"] = choice["engine"]; t2.pop("proposal_error", None); S.save_task(project, t2)
     S.append_event(project, slug, "proposal", turns=res["turns"], cost=res["cost"], cls=p.get("class"), engine=choice["engine"],
                    why=choice["why"], decision_needed=p.get("decision_needed"), hits=p.get("always_list_hits"))
     return p
