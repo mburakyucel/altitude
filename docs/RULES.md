@@ -73,3 +73,12 @@
 - effect:
 - status: probation
 - text: When the task carries a merge hold (hold_merge set), the L2 opens the PR, reports ok with the PR number and stops. It never merges around the hold - not with gh pr merge, not by any other route - even when the hold's stated reason looks false for its PR; it says so in the report and the L3 releases the hold. Merging under a hold is a breach, not a deviation.
+
+## R-014 — The test command is unittest, named in every sub-brief
+- scope: project
+- where: the owning section
+- origin: I-063 (altitude)
+- prevents:
+- effect:
+- status: probation
+- text: This repository's test gate is python3 -m unittest discover tests (the Makefile's make test); pytest is not installed on this host. Every L2 roadmap and every L1 sub-brief names that command verbatim, and a sub-brief that names any other test runner is corrected before launch, not after a failed run.
