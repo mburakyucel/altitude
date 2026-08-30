@@ -1,10 +1,10 @@
-"""The test process must never inherit Altitude's live state root.
+"""The test process must never inherit Altitude's live state or Claude home.
 
 Many older test modules assign ALTITUDE_HOME immediately before their own Altitude imports.  That is not process
 isolation: unittest discovery imports all modules into one interpreter, and altitude.config caches ROOT and its
 derived paths on the first import.  Import config here, first in the repository's sorted discovery order, against
-one suite-level throwaway home.  config.py independently refuses the live default so safety does not depend on
-this filename or discovery order.
+one suite-level throwaway Altitude root and OS home.  config.py independently refuses the live Altitude default so
+safety does not depend on this filename or discovery order.
 """
 import os
 import subprocess
@@ -15,14 +15,29 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parent.parent
+OPERATOR_HOME = Path.home()
 SUITE_HOME = Path(tempfile.mkdtemp(prefix="altitude-test-suite-"))
+SUITE_OS_HOME = SUITE_HOME / "home"
+SUITE_OS_HOME.mkdir()
+
+# ALTITUDE_HOME protects Altitude's own state.  HOME must also be isolated before the first Altitude import:
+# dispatch, monitor, mechanize and server intentionally use ~/.claude in production, and a test that exercises one
+# of those boundaries must never read or write the operator's live Claude jobs, projects or settings.
+os.environ["HOME"] = str(SUITE_OS_HOME)
 os.environ["ALTITUDE_HOME"] = str(SUITE_HOME)
 
 # Freeze the process-wide path constants before any per-module ALTITUDE_HOME assignment can race discovery.
 from altitude import config as _suite_config  # noqa: E402,F401
+INITIAL_ALTITUDE_ROOT = _suite_config.ROOT
 
 
 class TestStateIsolation(unittest.TestCase):
+    def test_suite_process_uses_a_throwaway_os_home(self):
+        self.assertEqual(Path.home(), SUITE_OS_HOME)
+        self.assertEqual(_suite_config.HOME, SUITE_OS_HOME)
+        self.assertEqual(INITIAL_ALTITUDE_ROOT, SUITE_HOME)
+        self.assertNotEqual(_suite_config.ROOT.resolve(), (OPERATOR_HOME / ".altitude").resolve())
+
     def run_import(self, fake_home: Path, altitude_home: Path | None) -> subprocess.CompletedProcess:
         env = dict(os.environ, HOME=str(fake_home))
         if altitude_home is None:
