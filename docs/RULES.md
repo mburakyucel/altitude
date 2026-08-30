@@ -28,3 +28,12 @@
 - effect: one merge by Burak per stage PR instead of one at the end - the L2 exits at each stage PR and is resumed after the merge
 - status: probation
 - text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, checkpoint progress.md, report Blocked: stage 1 PR awaits merge, and exit - the L merge policy stands, Burak merges, and you are resumed on merged main. Later stages open their own PRs from merged main, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice.
+
+## R-005 — A mechanism named in a request or brief is a suggestion the implementer verifies at the call sites
+- scope: project
+- where: CLAUDE.md (new section: Briefs and mechanisms); the L3 side applies immediately to requests this L3 writes
+- origin: I-019 (altitude)
+- prevents: request-prescribes-unverified-mechanism
+- effect: one L1 build round and one reviewer launch per recurrence (#37: 2 rounds, 3/3 launches, 34/40 turns)
+- status: probation
+- text: A mechanism named in a request or brief (a lock to take, an ordering, a shared file to write) is a suggestion, not a spec: the request states the invariant and the evidence, and whoever implements verifies the mechanism against every path that reaches the new code before adopting it - for a lock, who already holds it on those paths and whether it is reentrant. A mechanism that fails the check is replaced and the failed check is recorded under Deviations; that is a documented default, not a question and not a block.
