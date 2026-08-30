@@ -207,6 +207,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
                 return
             T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
             return
+    hits = p.get("always_list_hits")
+    if hits and t2["state"] == "proposed" and not t2.get("hold_merge"):  # decision 48: always-list → Burak merges
+        hits = hits if isinstance(hits, list) else [hits]
+        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
     # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note

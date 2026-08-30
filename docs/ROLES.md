@@ -46,7 +46,7 @@ Worked example: "add a beta stage to the pipeline with alarm-based rollback." De
 - **Owns:** the code, the tests, the PR body, conformance to `ENGINEERING.md`.
 - **Decides alone:** everything local — naming, structure within repository patterns, test cases.
 - **Hands up to L2:** anything not covered by its brief that changes behavior; conflicts; a guardrail it cannot satisfy; scope that turns out larger than its brief.
-- **Never:** touches paths outside its brief; weakens CI, quotas, throttles, caps, or tests; merges high-impact classes; contacts Burak; retries in a loop; spawns subagents of its own beyond what its sub-brief allows (default: none).
+- **Never:** touches paths outside its brief; weakens CI, quotas, throttles, caps, or tests; merges a PR the brief marks *held* (decision 48: everything else merges); contacts Burak; retries in a loop; spawns subagents of its own beyond what its sub-brief allows (default: none).
 - **Collapse signals:** diffs outside the brief's paths; "also fixed" items; disabled tests.
 
 ## V — validators (fresh sessions, never the author)

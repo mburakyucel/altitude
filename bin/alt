@@ -50,7 +50,7 @@ def main(argv=None) -> None:
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
     pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--context"); pr.add_argument("--detail"); pr.add_argument("--option", action="append")
     ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
@@ -58,6 +58,8 @@ def main(argv=None) -> None:
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("resume", "unpark", "show", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
+    hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
+    hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
@@ -121,7 +123,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine))
+            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine, hold_merge=args.hold_merge))
         elif tc == "propose":
             out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR, detail=args.detail, context=args.context))
         elif tc == "approve":
@@ -138,6 +140,10 @@ def main(argv=None) -> None:
             out(T.resume(p, args.slug, actor=ACTOR))
         elif tc == "unpark":
             out(T.unpark(p, args.slug, actor=ACTOR))
+        elif tc == "hold-merge":
+            if not args.off and not args.why:
+                sys.exit("alt task hold-merge: --why <reason> (or --off)")
+            out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "done":
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
         elif tc == "brief":
