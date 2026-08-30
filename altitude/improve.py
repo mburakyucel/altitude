@@ -320,7 +320,7 @@ def propose_rule(project: str, *, incident: str, title: str, text: str, mechanis
     inc_path = config.project_dir(project) / "incidents" / f"{incident}.md"
     request = (f"Apply rule {rid} from incident {incident} (scope: {scope}, mechanism: {mechanism}).\n\n"
                f"1. Add the incident file `docs/incidents/{incident}.md` with this content:\n\n```\n{inc_path.read_text() if inc_path.exists() else '(missing)'}\n```\n\n"
-               f"2. Append this entry to `{ledger.name if scope == 'project' else ledger}` (create the ledger with a one-line header if missing):\n\n```\n{entry}\n```\n\n"
+               f"2. Append this entry to `{'docs/RULES.md' if scope == 'project' else ledger}` (create the ledger with a one-line header if missing):\n\n```\n{entry}\n```\n\n"
                f"3. Apply the {mechanism}: " + {
                    "rule": f"add the rule text to `CLAUDE.md` in the most fitting section, tagged `[{rid}]`.",
                    "instruction": f"add the instruction to the section/skill that owns that step, tagged `[{rid}]`.",
@@ -345,15 +345,16 @@ def audit_input(project: str) -> dict:
     proj = config.project(project)
     all_rules = rules.global_rules() + rules.stack_rules(proj.get("stacks", [])) + rules.project_rules(config.project_path(project))
     inc = [r for r in index() if r.get("project") == project]
-    by_rule: dict[str, list] = {}
+    by_rule: dict[tuple[str, str], list] = {}
     for r in inc:
-        if r.get("rule"):
-            by_rule.setdefault(r["rule"], []).append(r["id"])
+        scope_family = (r.get("scope") or "").split(":", 1)[0].strip()
+        if scope_family and r.get("rule"):
+            by_rule.setdefault((scope_family, r["rule"]), []).append(r["id"])
     tag_counts: dict[str, dict[str, int]] = {}
     for r in index():
         for t in r.get("tags") or []:
             tag_counts.setdefault(t, {})
             tag_counts[t][r["project"]] = tag_counts[t].get(r["project"], 0) + 1
     promotions = [{"tag": t, "projects": c} for t, c in tag_counts.items() if len(c) > 1]
-    return {"rules": [{**r, "incidents": by_rule.get(r["id"], [])} for r in all_rules], "incidents": inc[-30:],
+    return {"rules": [{**r, "incidents": by_rule.get(((r.get("scope") or "").split(":", 1)[0].strip(), r["id"]), [])} for r in all_rules], "incidents": inc[-30:],
             "promotion_candidates": promotions}
