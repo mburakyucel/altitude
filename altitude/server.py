@@ -114,21 +114,30 @@ def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
     return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
 
 
-def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_proposed: bool = False) -> bool:
-    """Clear the in-flight marker and log a proposal-ready turn skipped after a state change.
-
-    A proposal made outside this flow still reaches the FYI-only auto-approve check when asked;
-    every other caller is finished once the skipped turn has been recorded.
-    """
+def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_proposed: bool = False) -> None:
+    """Clear the in-flight marker and log a proposal-ready turn skipped after a state change."""
     with S.project_lock(project):
         latest = S.load_task(project, slug)
         latest["proposal_started"] = None
         S.save_task(project, latest)
     if task["state"] == "proposed" and keep_fyi_proposed:
         log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
-        return False
+        return
     log(f"[{project}/{slug}] no longer requested (state={task['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
-    return True
+
+
+def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
+    """Apply proposal-state policy after either a completed or skipped proposal-ready turn."""
+    if task["state"] != "proposed":
+        return
+    hits = p.get("always_list_hits")
+    if hits and not task.get("hold_merge"):  # decision 48: always-list → Burak merges
+        hits = hits if isinstance(hits, list) else [hits]
+        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
+    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
+    if not task.get("decision") and task["class"] in ("S", "M") and not p.get("always_list_hits"):
+        T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
+        T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
 
 
 def run_proposal_flow(project: str, slug: str) -> None:
@@ -155,6 +164,7 @@ def run_proposal_flow(project: str, slug: str) -> None:
             tcrit = S.load_task(project, slug)
             if tcrit["state"] != "requested":
                 _skip_proposal_ready_turn(project, slug, tcrit)
+                _finish_proposal(project, slug, p, tcrit)
                 return
             log(f"[{project}/{slug}] critic")
             crit = propose.run_critic(project, slug)
@@ -177,10 +187,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
     # (requested only) if it comes back to requested later.
     t1 = S.load_task(project, slug)
     if t1["state"] != "requested":
-        if _skip_proposal_ready_turn(project, slug, t1, keep_fyi_proposed=True):
-            return
-        t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
-    else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
+        _skip_proposal_ready_turn(project, slug, t1, keep_fyi_proposed=True)
+        _finish_proposal(project, slug, p, t1)
+        return
+    else:
         task_at_turn = None
 
         def still_requested() -> bool:
@@ -194,11 +204,13 @@ def run_proposal_flow(project: str, slug: str) -> None:
         finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
             _record_l3_turn(project, slug, None)
         if res.get("skipped"):
-            _skip_proposal_ready_turn(project, slug, task_at_turn or S.load_task(project, slug))
+            skipped_task = task_at_turn or S.load_task(project, slug)
+            _skip_proposal_ready_turn(project, slug, skipped_task)
+            _finish_proposal(project, slug, p, skipped_task)
             return
         turn_start = res.get("_turn_started_at")
         if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
-            log(f"[{project}/{slug}] no chat entry for the proposal-ready turn — cannot date it, so any park stands")
+            log(f"[{project}/{slug}] l3.turn returned no start timestamp — cannot date the turn, so any park stands")
         t2 = S.load_task(project, slug)
         # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
         # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
@@ -214,14 +226,7 @@ def run_proposal_flow(project: str, slug: str) -> None:
                 return
             T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
             return
-    hits = p.get("always_list_hits")
-    if hits and t2["state"] == "proposed" and not t2.get("hold_merge"):  # decision 48: always-list → Burak merges
-        hits = hits if isinstance(hits, list) else [hits]
-        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
-    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
-    if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
-        T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
-        T.fyi(project, slug, f"{slug} ({t2['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
+    _finish_proposal(project, slug, p, t2)
 
 
 def on_l2_finished(project: str, item: dict) -> None:

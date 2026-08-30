@@ -7,7 +7,9 @@ The branches of server.run_proposal_flow, with the proposal/critic/L3 agents stu
   * the turn cannot be dated at all  -> the park stands (the guard fails closed, decision 36);
   * the task left `requested` before the turn -> the turn is skipped and proposal_started cleared;
   * it leaves `requested` while waiting on l3.lock -> the engine turn is skipped without a trace;
+  * it becomes FYI-only `proposed` while waiting on l3.lock -> skipped, then auto-approved;
   * it leaves `requested` after the proposal -> the critic and L3 turn are both skipped;
+  * it becomes always-list `proposed` after the proposal -> the critic is skipped and merge held;
   * it left `requested` by becoming `proposed` -> skipped, but still auto-approved as FYI-only.
 """
 import importlib
@@ -183,6 +185,56 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertFalse(t.get("revisions"), "no revision may be queued for the skipped turn")
         self.assertEqual(len([line for line in logs if "skipping the proposal-ready L3 turn" in line]), 1)
 
+    def test_fyi_only_proposal_while_waiting_on_l3_lock_is_auto_approved(self):
+        slug = self._task("l3 proposes while proposal turn waits on l3 lock", cls="M")
+        sent: list = []
+        errors: list[BaseException] = []
+        entered = threading.Event()
+        project_l3_lock = l3.lock(PROJECT)
+        real_turn = self._orig[2]
+        real_engine = engines.claude_print
+
+        def waiting_turn(project, prompt, **kwargs):
+            entered.set()
+            return real_turn(project, prompt, **kwargs)
+
+        def fake_engine(*args, **kwargs):
+            sent.append(args[0])
+            return {"text": "", "session_id": "test-session", "usage": {}, "context_tokens": 0,
+                    "cost": 0.0, "turns": 1, "structured": None, "error": None, "tools": []}
+
+        def run_flow():
+            try:
+                server.run_proposal_flow(PROJECT, slug)
+            except BaseException as exc:
+                errors.append(exc)
+
+        l3.turn = waiting_turn
+        engines.claude_print = fake_engine
+        project_l3_lock.acquire()
+        worker = threading.Thread(target=run_flow)
+        try:
+            worker.start()
+            reached_lock = entered.wait(5)
+            if reached_lock:
+                T.propose(PROJECT, slug, "# Proposal\nBody.\n", dict(PROPOSAL))
+        finally:
+            project_l3_lock.release()
+            worker.join(5)
+            engines.claude_print = real_engine
+
+        self.assertTrue(reached_lock, "the proposal-ready turn should reach the held L3 lock")
+        self.assertFalse(worker.is_alive(), "the proposal flow should finish after the lock is released")
+        self.assertEqual(errors, [])
+        self.assertEqual(sent, [], "a task proposed while queued must not be sent to the engine")
+        t = S.load_task(PROJECT, slug)
+        self.assertEqual(t["state"], "approved", "an FYI-only proposal must not be stranded in `proposed`")
+        self.assertIsNone(t.get("proposal_started"))
+        last = self._state_events(slug)[-1]
+        self.assertEqual((last["frm"], last["to"], last["by"]), ("proposed", "approved", "burak"))
+        self.assertIn("auto", last.get("note", ""), "recorded as an automatic approval (decision 13)")
+        self.assertTrue(self._events(slug, "fyi"), "Burak is told it is dispatching")
+
     def test_park_between_proposal_and_critic_skips_the_critic(self):
         slug = self._task("burak parks between proposal and critic", on_disk=False)
         critic_calls: list[str] = []
@@ -215,6 +267,30 @@ class TestProposalFlowPark(unittest.TestCase):
         self.assertIsNone(t.get("proposal_started"))
         self.assertFalse(t.get("revisions"))
         self.assertEqual(len([line for line in logs if "skipping the proposal-ready L3 turn" in line]), 1)
+
+    def test_always_list_proposal_between_proposal_and_critic_holds_merge(self):
+        slug = self._task("l3 proposes always-list task before critic", cls="M", on_disk=False)
+        critic_calls: list[str] = []
+        proposal = dict(PROPOSAL, always_list_hits=["production auth"])
+
+        def run_proposal(project, task_slug):
+            T.propose(project, task_slug, "# Proposal\nBody.\n", proposal)
+            return proposal
+
+        def run_critic(project, task_slug):
+            critic_calls.append(task_slug)
+            return {"verdict": "approve", "issues": []}
+
+        propose.run_proposal = run_proposal
+        propose.run_critic = run_critic
+
+        server.run_proposal_flow(PROJECT, slug)  # l3.turn stub fails the test if it is called
+
+        self.assertEqual(critic_calls, [], "a proposal after the proposal run must prevent the critic run")
+        t = S.load_task(PROJECT, slug)
+        self.assertEqual(t["state"], "proposed")
+        self.assertIsNone(t.get("proposal_started"))
+        self.assertEqual(t.get("hold_merge"), "always-list: production auth")
 
     def test_park_by_l3_in_an_earlier_turn_is_not_overridden(self):
         """Finding 1: we stamp the queue time, then block on l3.lock behind a chat turn in which the
