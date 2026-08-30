@@ -52,7 +52,7 @@ def _normalise_proposal_files(project: str, proposal: dict) -> None:
     proposal["files"] = normalised
 
 
-def _record_proposal_error(project: str, slug: str, error: RuntimeError) -> None:
+def _record_proposal_error(project: str, slug: str, error: Exception) -> None:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         task["proposal_error"] = {"message": str(error), "at": S.now()}
@@ -85,8 +85,9 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
                   "the summary with what changed because of it." % (task.get("revisions", 0) + task.get("feedback_rounds", 0) + 1))
     failure = task.get("proposal_error") or {}
     if failure.get("message"):  # the stale-run retry is a fresh session, so carry its only validation context in the prompt
-        prior += ("\n\n## Previous proposal run rejected by validation\n" + failure["message"]
-                  + "\n\nCorrect only this validation failure and otherwise produce a full proposal.")
+        fix = ("Fix this validation failure in addition to everything above." if prev_md else  # a revision run's brief above is
+               "Correct only this validation failure and otherwise produce a full proposal.")  # binding; "only this" would contradict it
+        prior += "\n\n## Previous proposal run rejected by validation\n" + failure["message"] + "\n\n" + fix
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
     choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
@@ -103,8 +104,8 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
             raise RuntimeError(res["error"])
         p = res["structured"] or {}
         _normalise_proposal_files(project, p)
-    except RuntimeError as error:
-        _record_proposal_error(project, slug, error)
+    except Exception as error:  # noqa: BLE001 — a malformed engine payload raises AttributeError, not RuntimeError, and would
+        _record_proposal_error(project, slug, error)  # otherwise leave the stale-run retry replaying the identical prompt forever
         raise
     S.write_json(d / "proposal.json", p)
     S.atomic_write(d / "proposal.md", render_proposal_md(p))

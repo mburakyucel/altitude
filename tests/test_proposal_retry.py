@@ -33,9 +33,11 @@ class TestProposalRetry(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.repo = self.root / "repo"
         self.repo.mkdir()
+        self.addCleanup(self.temp.cleanup)
         self.config_paths = {
             name: getattr(config, name) for name in ("ROOT", "PROJECTS_FILE", "MONITOR_DIR", "INCIDENT_INDEX", "DIGEST_FILE")
         }
+        self.addCleanup(self.restore_config)  # registered before the first mutation: a failure below still restores the globals
         config.ROOT = self.root / "state"
         config.PROJECTS_FILE = config.ROOT / "projects.json"
         config.MONITOR_DIR = config.ROOT / "monitor"
@@ -44,10 +46,9 @@ class TestProposalRetry(unittest.TestCase):
         config.save_projects({"proposal-retry": {"name": "proposal-retry", "path": str(self.repo), "stacks": []}})
         self.task = T.new("proposal-retry", "Retry a rejected proposal", "M", "Make a focused change.", actor="burak")
 
-    def tearDown(self):
+    def restore_config(self):
         for name, value in self.config_paths.items():
             setattr(config, name, value)
-        self.temp.cleanup()
 
     def create(self, relative: str) -> None:
         path = self.repo / relative
@@ -105,6 +106,39 @@ class TestProposalRetry(unittest.TestCase):
 
         self.assertIn(message, self.engine.call_args.args[0])
         self.assertNotIn("proposal_error", S.load_task("proposal-retry", self.task["slug"]))
+
+    def test_malformed_engine_payload_is_recorded_and_threaded_through(self):
+        # codex_exec json.loads()es the output with no type check, so a JSON array reaches _normalise_proposal_files
+        # as a list and raises AttributeError, not RuntimeError — that must still break the identical-prompt replay
+        with self.assertRaises(AttributeError) as raised:
+            self.run_proposal({"structured": ["not", "an", "object"], "error": None, "turns": 1, "cost": 0.0})
+
+        message = str(raised.exception)
+        self.assertEqual(self.recorded_error()["message"], message)
+        self.assertNotIn(REJECTION_HEADING, self.engine.call_args.args[0])
+
+        self.create("altitude/propose.py")
+        self.run_proposal(self.result(["altitude/propose.py"]))
+
+        self.assertIn(message, self.engine.call_args.args[0])
+        self.assertNotIn("proposal_error", S.load_task("proposal-retry", self.task["slug"]))
+
+    def test_a_revision_retry_is_told_to_fix_the_failure_as_well_as_the_revision_brief(self):
+        message = "proposal files entry 'missing.py' is invalid"
+        S.atomic_write(S.task_dir("proposal-retry", self.task["slug"]) / "proposal.md", "Previous proposal\n")
+        with S.project_lock("proposal-retry"):
+            task = S.load_task("proposal-retry", self.task["slug"])
+            task["proposal_error"] = {"message": message, "at": S.now()}
+            S.save_task("proposal-retry", task)
+
+        self.create("altitude/propose.py")
+        self.run_proposal(self.result(["altitude/propose.py"]))
+
+        prompt = self.engine.call_args.args[0]
+        self.assertIn(message, prompt)
+        # the revision block above is binding, so "correct only this" would contradict it
+        self.assertIn("Fix this validation failure in addition to everything above.", prompt)
+        self.assertNotIn("Correct only this validation failure", prompt)
 
     def test_critic_prompt_and_task_error_are_unchanged(self):
         message = "proposal files entry 'missing.py' is invalid"
