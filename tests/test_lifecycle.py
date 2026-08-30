@@ -52,6 +52,10 @@ class TestLifecycle(unittest.TestCase):
         self.assertEqual(S.load_task("demo", t["slug"])["attempt"], 1)
 
         T.block("demo", t["slug"], "envelope reached")
+        self.assertEqual(T.decisions("demo"), [], "operational blockers stay with Altitude")
+        T.needs_user("demo", t["slug"], "Approve more than twice the class envelope")
+        with self.assertRaisesRegex(T.TransitionError, "L3-only"):
+            T.needs_user("demo", t["slug"], "bypass", actor="l2")
         self.assertEqual(T.decisions("demo")[0]["kind"], "blocked")
 
         T.resume("demo", t["slug"])

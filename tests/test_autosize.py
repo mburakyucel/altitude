@@ -26,6 +26,19 @@ class TestAutoSize(unittest.TestCase):
             return {"structured": structured, "error": error, "usage": {}, "returncode": 0}
         return fake
 
+    def test_task_l1_engine_override_does_not_override_fixed_codex_sizer(self):
+        task = T.new("z", "size despite L1 override", "auto", "size me", actor="burak", engine="claude")
+        real_codex, real_claude = engines.codex_exec, engines.claude_print
+        engines.codex_exec = self._fake({"class": "S", "why": "small", "paths": []})
+        engines.claude_print = lambda *_a, **_kw: self.fail("task.engine must not route the sizer")
+        try:
+            result = intake.size("z", task["slug"])
+        finally:
+            engines.codex_exec, engines.claude_print = real_codex, real_claude
+        self.assertEqual(result["class"], "S")
+        event = [row for row in S.read_events("z", task["slug"]) if row.get("kind") == "size-run"][-1]
+        self.assertEqual(event["engine"], "codex")
+
     def test_auto_leaves_class_unset_and_s_is_approved_after_sizing(self):
         t = T.new("z", "fix a typo", "auto", "fix the typo in README", actor="burak")
         self.assertIsNone(t["class"]); self.assertEqual(t["envelope"], {})

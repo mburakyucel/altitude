@@ -77,6 +77,17 @@ export const QuotaSchema = z
   })
   .passthrough();
 
+export const CodexQuotaSchema = z
+  .object({
+    known: z.boolean(),
+    primary_used: z.number().nullish(),
+    primary_window_minutes: z.number().nullish(),
+    secondary_used: z.number().nullish(),
+    secondary_window_minutes: z.number().nullish(),
+    why: z.string().nullish(),
+  })
+  .passthrough();
+
 // Decision 46 — the card is executive. `question` is the dilemma in plain words and `options` are
 // short labels; `context` is the situation in ≤2 plain sentences that goes *above* it, and `detail`
 // holds the reasoning, ids and file names that must stay *behind* it. Both are optional: older
@@ -215,6 +226,7 @@ export const SessionSchema = z
 export const MonitorSchema = z
   .object({
     quota: QuotaSchema,
+    codex_quota: CodexQuotaSchema.nullish(),
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
     tool_shapes: z.record(z.string(), z.unknown()).nullish(),
@@ -257,6 +269,7 @@ export const RulesSchema = z
   .passthrough();
 
 export type Quota = z.infer<typeof QuotaSchema>;
+export type CodexQuota = z.infer<typeof CodexQuotaSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Fyi = z.infer<typeof FyiSchema>;

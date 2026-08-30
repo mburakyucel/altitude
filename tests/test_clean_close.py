@@ -69,7 +69,7 @@ class TestCleanClose(unittest.TestCase):
         turns = []
         logs = []
         original_turn, original_log = l3.turn, server.log
-        l3.turn = lambda project, header, trigger: turns.append((project, header, trigger)) or {}
+        l3.turn = lambda project, header, trigger, **kw: turns.append((project, header, trigger)) or {}
         server.log = lambda message: logs.append(message)
         try:
             server.report_turn(PROJECT, task, verdict)

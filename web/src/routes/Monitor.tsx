@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { useMonitor } from "../data/api";
-import type { Quota, Session } from "../data/api";
+import type { CodexQuota, Quota, Session } from "../data/api";
 import { launchLabel } from "../data/launches";
 
 /**
@@ -54,24 +54,59 @@ function Bar({ percent }: { percent: number }) {
 function QuotaCard({ quota }: { quota: Quota }) {
   const five = num(quota.five_hour);
   const seven = num(quota.seven_day);
-  if (!quota.known || five == null || seven == null) {
+  if (!quota.known) {
     return (
       <section className="card space-y-1">
-        <h2 className="label">Seat quota</h2>
+        <h2 className="label">Claude quota</h2>
         <p className="text-meta text-muted">
-          unknown — needs the statusline wrapper (<code>alt install-statusline</code>) and one
-          interactive session
+          unknown — no fresh statusline or OAuth quota reading is available
         </p>
       </section>
     );
   }
   return (
     <section className="card space-y-2">
-      <h2 className="label">Seat quota</h2>
-      <p className="text-meta text-muted">5-hour window {Math.round(five)}%</p>
-      <Bar percent={five} />
-      <p className="text-meta text-muted">7-day {Math.round(seven)}%</p>
-      <Bar percent={seven} />
+      <h2 className="label">Claude quota</h2>
+      <p className="text-meta text-muted">
+        {five == null ? "5-hour window unknown — no fresh 5-hour reading" : `5-hour window ${Math.round(five)}%`}
+      </p>
+      {five == null ? null : <Bar percent={five} />}
+      <p className="text-meta text-muted">
+        {seven == null ? "7-day unknown — no fresh 7-day reading" : `7-day ${Math.round(seven)}%`}
+      </p>
+      {seven == null ? null : <Bar percent={seven} />}
+    </section>
+  );
+}
+
+function codexWindowName(minutes: number | null): string {
+  if (minutes === 10_080) return "weekly";
+  if (minutes === 300) return "5-hour window";
+  return minutes == null ? "window" : String(minutes) + "-minute window";
+}
+
+function CodexQuotaCard({ quota }: { quota: CodexQuota | null | undefined }) {
+  const primary = num(quota?.primary_used);
+  const secondary = num(quota?.secondary_used);
+  if (!quota?.known) {
+    return (
+      <section className="card space-y-1">
+        <h2 className="label">Codex quota</h2>
+        <p className="text-meta text-muted">unknown or stale — {str(quota?.why) || "no fresh Codex account reading"}</p>
+      </section>
+    );
+  }
+  return (
+    <section className="card space-y-2">
+      <h2 className="label">Codex quota</h2>
+      <p className="text-meta text-muted">
+        {codexWindowName(num(quota.primary_window_minutes)) + " " + (primary == null ? "unknown" : Math.round(primary) + "%")}
+      </p>
+      {primary == null ? null : <Bar percent={primary} />}
+      <p className="text-meta text-muted">
+        {codexWindowName(num(quota.secondary_window_minutes)) + " " + (secondary == null ? "unknown" : Math.round(secondary) + "%")}
+      </p>
+      {secondary == null ? null : <Bar percent={secondary} />}
     </section>
   );
 }
@@ -84,15 +119,31 @@ function SessionCard({ session }: { session: Session }) {
   const agent = dict(session["agent"]);
   const when = age(session.at);
 
-  const meta: string[] = [`context ${context ?? "?"}%`];
+  const meta: string[] = [];
+  const taskState = str(session["state"]);
+  if (session.kind === "l2" && taskState) meta.push(`task ${taskState}`);
+  meta.push(`context ${context ?? "?"}%`);
   // The counter is spelled "launches N · cap M" everywhere. "N/M" read as a plan to launch M.
   if (session["subagent_launches"] != null) {
     meta.push(launchLabel(session["subagent_launches"], session["cap"]));
     meta.push(`edits ${num(session["edits"]) ?? 0}`);
   }
-  const status = [str(agent["status"]), str(agent["state"])].filter(Boolean).join(" ");
-  if (status) meta.push(status);
-  if (str(session.context_state)) meta.push(str(session.context_state));
+  const workerState = str(agent["state"]);
+  const workerStatus = str(agent["status"]);
+  if (["done", "failed", "stopped"].includes(workerState)) meta.push(`worker ${workerState}`);
+  else if (workerStatus) meta.push(`worker ${workerStatus}`);
+  else if (workerState) meta.push(`worker ${workerState}`);
+  const lifecycle = str(session["lifecycle"]);
+  const lifecycleLabel: Record<string, string> = {
+    awaiting_closeout: "awaiting L3 closeout",
+    needs_user: "needs your decision",
+    resume_scheduled: "automatic resume scheduled",
+    resume_in_progress: "automatic resume in progress",
+    awaiting_l3_recovery: "awaiting Altitude/L3 recovery",
+    recovery_pending: "automatic recovery pending",
+  };
+  if (session.kind === "l2" && lifecycleLabel[lifecycle]) meta.push(lifecycleLabel[lifecycle]);
+  if (str(session.context_state)) meta.push(`context ${str(session.context_state)}`);
   if (session["rotate_next"]) meta.push("rotating");
 
   return (
@@ -120,6 +171,7 @@ export default function Monitor() {
   const { quota, sessions } = monitor.data;
   const workers = arr(monitor.data.agents)
     .map(dict)
+    .filter((a) => !["done", "failed", "stopped"].includes(str(a["state"])) && str(a["status"]) !== "exited")
     .map((a) =>
       `${str(a["id"]).slice(0, 8)} ${str(a["name"])} ${str(a["status"])} ${str(a["state"])} ${str(a["cwd"])}`.trimEnd(),
     );
@@ -132,10 +184,17 @@ export default function Monitor() {
     <div className="mx-auto max-w-3xl space-y-6">
       <h1 className="text-page-title font-semibold">Monitor</h1>
 
-      <QuotaCard quota={quota} />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <QuotaCard quota={quota} />
+        <CodexQuotaCard quota={monitor.data.codex_quota} />
+      </div>
 
       <section className="space-y-2">
         <h2 className="label">Sessions ({sessions.length})</h2>
+        <p className="text-meta text-muted">
+          Task state, worker state, and context health are separate. A done worker only means its process exited;
+          the task remains listed until Altitude closes it or completes automatic recovery.
+        </p>
         {sessions.length === 0 ? (
           <p className="card text-muted">no sessions</p>
         ) : (
@@ -148,7 +207,7 @@ export default function Monitor() {
       <section className="space-y-2">
         {/* The 0.1 app called this "claude agents"; the word is reserved for the launch
             counter, so the raw process list is titled by what it lists. */}
-        <h2 className="label">Claude workers</h2>
+        <h2 className="label">Live Claude workers</h2>
         <pre className="card overflow-x-auto whitespace-pre-wrap text-meta text-ink-2">
           {workers.length > 0 ? workers.join("\n") : "none"}
         </pre>

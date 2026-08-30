@@ -27,7 +27,7 @@ def size(project: str, slug: str) -> dict:
         return {"skipped": f"state {task['state']}, class {task.get('class')}"}
     request = (S.task_dir(project, slug) / "request.md").read_text()
     prompt = f"Request `{slug}` for project `{project}`:\n\n{request}\n\nPick the class and the paths as JSON per the schema."
-    choice = route.pick_engine("sizer", task=task)
+    choice = route.pick_engine("sizer")
     try:
         if choice["engine"] == "codex":  # decision 56
             res = engines.codex_exec((config.PERSONAS / "size.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),

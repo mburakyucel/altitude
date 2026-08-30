@@ -4,6 +4,7 @@
 ``dispatch.wip_hold``, which is the dispatcher's state-advancing check.
 """
 from __future__ import annotations
+import hashlib
 
 from . import config, dispatch, git_policy, l1, state as S, verify
 
@@ -176,7 +177,9 @@ def status(project: str, slug: str) -> dict:
     report = None
     try:
         report_path = S.task_dir(project, slug) / "report.json"
-        out["report_json"] = {"exists": report_path.exists(), "path": str(report_path)}
+        exists = report_path.exists()
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest() if exists else None
+        out["report_json"] = {"exists": exists, "path": str(report_path), "sha256": digest}
         report = S.read_json(report_path, None)
     except Exception as e:
         _error(errors, "report_json", e)
