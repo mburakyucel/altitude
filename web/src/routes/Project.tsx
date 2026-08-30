@@ -8,7 +8,7 @@ import {
   useProject,
   useTaskAction,
 } from "../data/api";
-import type { TaskRow } from "../data/api";
+import type { ProjectDecision, TaskRow } from "../data/api";
 import { launchLabel } from "../data/launches";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
@@ -181,8 +181,12 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   );
 }
 
-/** The project page's own copy of a Decision card — same POST as the Inbox, scoped to this project. */
-function DecisionCard({ project, row }: { project: string; row: Record<string, unknown> }) {
+/**
+ * The project page's own copy of a Decision card — same POST as the Inbox, scoped to this project,
+ * and the same executive shape (decision 46): context above the question, the reasoning behind it
+ * in a closed "Why" disclosure. A card without context/detail renders exactly as it did before.
+ */
+function DecisionCard({ project, row }: { project: string; row: ProjectDecision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
   const queryClient = useQueryClient();
@@ -198,7 +202,10 @@ function DecisionCard({ project, row }: { project: string; row: Record<string, u
         <h3 className="text-card-title font-semibold">{title}</h3>
         <span className="ml-auto text-meta text-muted">{age(row.asked)}</span>
       </div>
-      {str(row.question) ? <p className="text-body text-ink-2">{str(row.question)}</p> : null}
+      {row.context ? <p className="text-body text-muted">{row.context}</p> : null}
+      {str(row.question) ? (
+        <p className="text-body font-semibold text-ink">{str(row.question)}</p>
+      ) : null}
       <input
         className="field w-full"
         placeholder="Note (optional)"
@@ -227,6 +234,12 @@ function DecisionCard({ project, row }: { project: string; row: Record<string, u
           </button>
         ))}
       </div>
+      {row.detail ? (
+        <details>
+          <summary className="text-meta text-muted">Why</summary>
+          <p className="mt-2 whitespace-pre-wrap text-meta text-ink-2">{row.detail}</p>
+        </details>
+      ) : null}
     </article>
   );
 }

@@ -77,6 +77,11 @@ export const QuotaSchema = z
   })
   .passthrough();
 
+// Decision 46 — the card is executive. `question` is the dilemma in plain words and `options` are
+// short labels; `context` is the situation in ≤2 plain sentences that goes *above* it, and `detail`
+// holds the reasoning, ids and file names that must stay *behind* it. Both are optional: older
+// cards (and blocked cards before altitude/tasks.py started attaching the block reason) carry
+// neither, and such a card must still render exactly as it did before.
 export const DecisionSchema = z
   .object({
     project: z.string(),
@@ -85,10 +90,19 @@ export const DecisionSchema = z
     class: z.string().nullish(),
     title: z.string().nullish(),
     question: z.string().nullish(),
+    context: z.string().nullish(),
+    detail: z.string().nullish(),
     asked: z.string().nullish(),
     options: z.array(z.string()).nullish(),
   })
   .passthrough();
+
+/**
+ * /api/project's `decisions` are the same rows as the Inbox queue (altitude/tasks.py decisions()),
+ * but the project page has always read them defensively — every field stays optional here so a
+ * thin row still parses, while the card fields keep their types instead of arriving as `unknown`.
+ */
+export const ProjectDecisionSchema = DecisionSchema.partial().passthrough();
 
 export const FyiSchema = z
   .object({
@@ -161,7 +175,7 @@ export const ProjectViewSchema = z
     tasks: z.array(TaskRowSchema),
     archive: z.array(TaskRowSchema).nullish(),
     inbox: z.array(z.record(z.string(), z.unknown())).nullish(),
-    decisions: z.array(z.record(z.string(), z.unknown())).nullish(),
+    decisions: z.array(ProjectDecisionSchema).nullish(),
     log: z.array(z.record(z.string(), z.unknown())).nullish(),
     incidents: z.array(z.record(z.string(), z.unknown())).nullish(),
     hold: z.unknown().nullish(),
@@ -243,6 +257,7 @@ export const RulesSchema = z
 
 export type Quota = z.infer<typeof QuotaSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
+export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Fyi = z.infer<typeof FyiSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;

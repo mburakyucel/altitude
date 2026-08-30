@@ -16,6 +16,12 @@ function age(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+/**
+ * Decision 46 — the card is executive: the situation on top in plain words, then the one question,
+ * then the short options. The reasoning (ids, file names, the critic's conditions) goes behind the
+ * question in a closed "Why" disclosure, never in front of it. A card without context/detail
+ * renders exactly as it did before them.
+ */
 function DecisionCard({ d }: { d: Decision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
@@ -32,7 +38,8 @@ function DecisionCard({ d }: { d: Decision }) {
           {age(d.asked) ? ` · ${age(d.asked)}` : ""}
         </span>
       </div>
-      {d.question ? <p className="text-body text-ink-2">{d.question}</p> : null}
+      {d.context ? <p className="text-body text-muted">{d.context}</p> : null}
+      {d.question ? <p className="text-body font-semibold text-ink">{d.question}</p> : null}
       <input
         className="field w-full"
         placeholder="Note (optional)"
@@ -58,6 +65,12 @@ function DecisionCard({ d }: { d: Decision }) {
           Details
         </Link>
       </div>
+      {d.detail ? (
+        <details>
+          <summary className="text-meta text-muted">Why</summary>
+          <p className="mt-2 whitespace-pre-wrap text-meta text-ink-2">{d.detail}</p>
+        </details>
+      ) : null}
     </article>
   );
 }

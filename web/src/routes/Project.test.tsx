@@ -207,3 +207,73 @@ describe("Project", () => {
     });
   });
 });
+
+// The project page keeps its own copy of the decision card; decision 46 applies to it too, so the
+// same three things hold here: situation above, one question, reasoning behind it.
+describe("Project decision card (executive shape)", () => {
+  const executive = {
+    slug: "quota-reader",
+    class: "M",
+    title: "Quota reader",
+    context:
+      "Altitude only learns your window usage from an interactive session. Overnight it dispatches blind.",
+    question: "When no fresh reading can be had, should Altitude stop dispatching or carry on?",
+    asked: ago(6),
+    options: ["Stop until a reading returns", "Carry on and warn"],
+    detail: "Reserve line comes from decision 31; the headless reader is I-007 in altitude/quota.py.",
+    kind: "decision",
+  };
+
+  function stubDecisions(decisions: unknown[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/project/altitude")) return jsonResponse({ ...project, decisions });
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+  }
+
+  /** True when `first` precedes `second` in document order — "above" as the reader sees it. */
+  function precedes(first: Element, second: Element): boolean {
+    return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+
+  it("puts the context line above the question and the reasoning behind it", async () => {
+    stubDecisions([executive]);
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    const question = await screen.findByText(
+      "When no fresh reading can be had, should Altitude stop dispatching or carry on?",
+    );
+    const card = cardFor(question);
+    const context = within(card).getByText(/Altitude only learns your window usage/);
+    expect(precedes(context, question)).toBe(true);
+
+    const reasoning = within(card).getByText(/Reserve line comes from decision 31/);
+    expect(reasoning).not.toBeVisible();
+    expect(precedes(question, reasoning)).toBe(true);
+
+    await user.click(within(card).getByText("Why"));
+    expect(reasoning).toBeVisible();
+  });
+
+  it("renders a card with no context or reasoning exactly as before", async () => {
+    stubDecisions([executive, ...project.decisions]);
+    renderApp({ route: "/projects/altitude" });
+
+    const plain = cardFor(await screen.findByText("Proposal ready — approve?"));
+    expect(within(plain).queryByText("Why")).toBeNull();
+    expect(
+      within(plain)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Approve", "Revise", "Reject"]);
+
+    const rich = cardFor(screen.getByText(/Altitude only learns your window usage/));
+    expect(within(rich).getByText("Why")).toBeVisible();
+    expect(within(rich).getByText(/Altitude only learns your window usage/)).toBeVisible();
+  });
+});
