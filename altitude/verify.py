@@ -51,6 +51,10 @@ def _verify(project: str, slug: str) -> dict:
     for k in ("landed", "review", "deviations", "decisions", "fyi", "blocked", "follow_ups", "spend"):
         if k not in rep:
             out["problems"].append(f"report.json lacks `{k}`")
+    review = rep.get("review") or []
+    open_findings = [finding for finding in review if finding.get("disposition") == "open"]
+    if open_findings and not rep.get("blocked"):
+        out["problems"].append("open finding on an unblocked report")
     landed = rep.get("landed") or {}
     for pr in landed.get("prs") or []:
         n = pr.get("number")
@@ -78,6 +82,8 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"{len(rep['deviations'])} deviation(s)")
     if rep.get("blocked"):
         out["signals"].append(f"blocked: {rep['blocked'][:120]}")
+    if open_findings:
+        out["signals"].append(f"{len(open_findings)} open review findings")
     sp = rep.get("spend") or {}
     if sp.get("reverts"):
         out["signals"].append(f"{sp['reverts']} revert(s)")
@@ -89,7 +95,7 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"turns {sp['turns']} > 2× estimate {est['turns']}")
     if env.get("subagent_launches") and int(sp.get("subagent_launches", 0) or 0) >= int(env["subagent_launches"]):
         out["signals"].append(f"subagent launches {sp['subagent_launches']} hit the cap {env['subagent_launches']}")
-    tags = [r.get("tag") for r in rep.get("review") or [] if r.get("tag")]
+    tags = [r.get("tag") for r in review if r.get("tag")]
     seen = _seen_tags(project, slug)
     rep_tags = sorted(set(t for t in tags if t in seen))
     if rep_tags:
