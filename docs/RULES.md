@@ -1,6 +1,6 @@
 # Project rules — altitude
 
-*Ledger (decision 14/32). Each entry: five fields + the rule text that gets compiled into briefs and personas. Project scope: these apply to work in this repo only; global and stack rules live in `rules/`.*
+*Ledger (decision 14/32). Each entry: five fields + the rule text. Project scope: these apply to work in this repo only; global and stack rules live in `rules/`. Unlike those, project rules are **not** compiled into personas or briefs — an entry here is a record, and it only takes effect once its text is applied by hand to the file named in its `where:` field.*
 
 ## R-002 — reserve a launch for the mandated reviewer
 - scope: project
