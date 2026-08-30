@@ -207,5 +207,13 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             "error": None if p.returncode == 0 else p.stderr.strip()[:500]}
 
 
-def context_percent(context_tokens: int) -> float:
-    return round(100.0 * context_tokens / config.CONTEXT_WINDOW, 1)
+def context_percent(context_tokens: int, engine: str = "claude") -> float:
+    return round(100.0 * context_tokens / config.CONTEXT_LINES[engine][2], 1)
+
+
+def context_state(pct: float | None, engine: str = "claude") -> str:
+    """ok | warn | act against the engine's lines (decision 12)."""
+    if pct is None:
+        return "unknown"
+    warn, act, _ = config.CONTEXT_LINES[engine]
+    return "act" if pct >= act * 100 else "warn" if pct >= warn * 100 else "ok"

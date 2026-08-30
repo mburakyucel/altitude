@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from . import config, state as S
+from . import engines, config, state as S
 
 
 def sessions() -> list[dict]:
@@ -21,6 +21,7 @@ def sessions() -> list[dict]:
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
             out.append({"kind": "l3", "project": name, "session_id": inf.get("session_id"), "context_percent": inf.get("context_percent"),
+                    "engine": "claude", "context_state": engines.context_state(inf.get("context_percent")),
                         "at": inf.get("last_turn"), "turns": inf.get("turns"), "rotate_next": inf.get("rotate_next")})
         for t in S.list_tasks(name):
             if t["state"] in ("running", "blocked", "reported"):
@@ -30,7 +31,8 @@ def sessions() -> list[dict]:
                             "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),
                             "subagent_launches": counts.get("subagent_launches", 0), "edits": counts.get("edits", 0),
                             "cap": (t.get("envelope") or {}).get("subagent_launches"),
-                            "context_percent": transcript_context_percent(t.get("session_id"), config.project_path(name))})
+                            "context_percent": (cp := transcript_context_percent(t.get("session_id"), config.project_path(name))),
+                            "engine": "claude", "context_state": engines.context_state(cp)})
     return out
 
 

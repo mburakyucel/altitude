@@ -89,8 +89,9 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
                     "context_percent": pct, "last_turn": S.now(), "last_cost": res["cost"],
                     "started": inf.get("started") if not fresh else S.now(),
                     "last_audit": inf.get("last_audit") or S.now(),   # first weekly audit a week after the first turn
-                    "rotate_next": pct >= config.CONTEXT_WARN * 100,
-                    "rotate_reason": f"context {pct}% ≥ warn" if pct >= config.CONTEXT_WARN * 100 else None})
+                    "context_state": engines.context_state(pct),
+                    "rotate_next": pct >= config.CONTEXT_ACT * 100,
+                    "rotate_reason": f"context {pct}% ≥ act line {int(config.CONTEXT_ACT * 100)}% (decision 12)" if pct >= config.CONTEXT_ACT * 100 else None})
         save_info(project, inf)
         chat_log(project, "assistant", res["text"] or (res["error"] or ""), trigger=trigger, context_percent=pct,
                  turns=res["turns"], tools=res["tools"][:40])
