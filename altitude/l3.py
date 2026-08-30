@@ -9,8 +9,13 @@ from . import config, engines, permissions, rules, state as S
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
-# I-064: the Bash rules come from the one renderer (altitude/permissions.py); only the non-Bash tools are named here.
-ALLOWED_TOOLS = permissions.allowed_tools(extra=("Read", "Grep", "Glob", "Agent"))
+
+
+def allowed_tools(project: str) -> str:
+    """The L3's `--allowedTools`, rendered at turn time (I-064): the non-Bash tools it needs, then every Bash rule from the
+    one renderer (altitude/permissions.py) for the project's own checkout. The pulls route follows the project, so this
+    cannot be an import-time constant."""
+    return permissions.allowed_tools(extra=("Read", "Grep", "Glob", "Agent"), repo=config.project_path(project))
 
 
 def lock(project: str) -> threading.Lock:
@@ -100,7 +105,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                                reason=f"Claude window exhausted until {held}" if held else "project pins l3_engine=codex")
         res = engines.claude_print(
             _header(project, trigger, fresh) + prompt, cwd=config.project_path(project),
-            resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
+            resume=None if fresh else sid, persona=persona, allowed_tools=allowed_tools(project),
             permission_mode="auto", model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text,
             on_start=on_start,
             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})

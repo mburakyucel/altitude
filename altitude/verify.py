@@ -117,6 +117,7 @@ def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None)
     hook = S.read_json(counts_p, {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
                     "subagent_launches_hook": hook.get("subagent_launches"), "edits_hook": hook.get("edits"),
+                    "permission_denials_hook": hook.get("permission_denials"),   # I-064: residual prompts
                     "retries": (sp or {}).get("retries"), "cap": (task.get("envelope") or {}).get("subagent_launches")}
     return out
 

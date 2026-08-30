@@ -37,7 +37,8 @@ class TestContextWindow(unittest.TestCase):
         sp = dispatch.session_settings("altitude", "ctx-task", "key")
         st = json.loads(sp.read_text())
         self.assertEqual(st["autoCompactWindow"], 300_000)
-        self.assertEqual(st["permissions"], permissions.permissions_block())
+        # the L2 file renders the allowlist for the project's own checkout (I-064 A1), not for this one
+        self.assertEqual(st["permissions"], permissions.permissions_block(config.project_path("altitude")))
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", st.get("env", {}))
 
 

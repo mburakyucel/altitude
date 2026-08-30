@@ -1,5 +1,6 @@
 """Subscription CLIs driven headlessly (decision 1). Claude Code and Codex command builders + runners."""
 from __future__ import annotations
+import hashlib
 import json
 import os
 import re
@@ -142,12 +143,25 @@ def clean_env() -> dict:
     return env
 
 
-def claude_settings() -> Path:
+def _settings_name(repo: Path | None) -> str:
+    """`claude-settings.json` for this checkout (the default) and a path-derived name for any other repository: the
+    allowlist's pulls route follows the checkout (I-064), so two projects must never share — or overwrite — one file."""
+    if repo is None:
+        return "claude-settings.json"
+    r = Path(repo).expanduser().resolve()
+    if r == config.REPO.resolve():
+        return "claude-settings.json"
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", r.name)[:40]
+    return f"claude-settings-{stem}-{hashlib.sha1(str(r).encode()).hexdigest()[:8]}.json"
+
+
+def claude_settings(repo: Path | None = None) -> Path:
     """The settings every Claude launch without a per-dispatch file gets (decision 49): auto-compact at the 300k umbrella,
     stated explicitly rather than inherited from ~/.claude/settings.json, and the permission allowlist (I-064) from the
-    one renderer. Rewritten when either changes."""
-    p = config.ROOT / "claude-settings.json"
-    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW, "permissions": permissions.permissions_block()}
+    one renderer, rendered for `repo` — the checkout the session runs in (None: this checkout). One file per repository,
+    on decision 49's per-launch-settings-file precedent; rewritten only when its content changes."""
+    p = config.ROOT / _settings_name(repo)
+    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW, "permissions": permissions.permissions_block(repo)}
     try:
         cur = json.loads(p.read_text())
     except (OSError, ValueError):
@@ -188,7 +202,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--model", model]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings(cwd))]  # decision 49: the 300k umbrella rides on every launch; I-064: rules for this checkout
     if resume:
         cmd += ["--resume", resume]
     env = clean_env()
@@ -302,7 +316,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
         cmd += ["--max-turns", str(max_turns)]
     if model:
         cmd += ["--model", model]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings(cwd))]  # decision 49: the 300k umbrella rides on every launch; I-064: rules for this checkout
     env = clean_env()
     env.update(extra_env or {})
     p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)
@@ -344,7 +358,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
         cmd += ["--append-system-prompt-file", str(persona)]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings(cwd))]  # decision 49: the 300k umbrella rides on every launch; I-064: rules for this checkout
     env = clean_env()
     env.update(extra_env or {})
     p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)

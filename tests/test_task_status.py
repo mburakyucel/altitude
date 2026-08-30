@@ -151,7 +151,7 @@ class TestTaskStatus(unittest.TestCase):
         }
         self.assertTrue(expected_fields.issubset(result))
         self.assertEqual(result["errors"], [])
-        self.assertEqual(result["counts"], {"subagent_launches": 2, "edits": 7})
+        self.assertEqual(result["counts"], {"subagent_launches": 2, "edits": 7, "permission_denials": 0})
         self.assertEqual(result["envelope_file"], self.enforced)
         self.assertEqual(result["l1_runs"]["in_flight"], 1)
         self.assertEqual(result["lease"], ["altitude/status.py", "bin/alt"])
@@ -292,7 +292,14 @@ class TestTaskStatus(unittest.TestCase):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
                      {"subagent_launches": 4, "edits": 11})
         result = task_status.status("demo", "task-one")
-        self.assertEqual(result["counts"], {"subagent_launches": 4, "edits": 11})
+        self.assertEqual(result["counts"], {"subagent_launches": 4, "edits": 11, "permission_denials": 0})
+        self.assertEqual(result["errors"], [])
+
+    def test_permission_denials_surface_beside_the_launch_count(self):
+        S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
+                     {"subagent_launches": 4, "edits": 11, "permission_denials": 2, "prompts_seen": ["toolu_1", "toolu_2"]})
+        result = task_status.status("demo", "task-one")
+        self.assertEqual(result["counts"], {"subagent_launches": 4, "edits": 11, "permission_denials": 2})
         self.assertEqual(result["errors"], [])
 
     def test_missing_main_run_names_the_merge_sha(self):

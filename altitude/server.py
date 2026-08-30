@@ -393,15 +393,61 @@ def dispatch_waiting(project: str) -> None:
         hp.unlink()
 
 
+PROMPT_FAULT_PREFIX = "permission_prompt_fault.py "   # hooks/permission_prompt_fault.py: prefix + one JSON object
+
+
+def _permission_prompt_line(ln: str) -> dict | None:
+    """The structured record of a permission-prompt line, or None for the plain lines the hooks write on their own faults."""
+    if not ln.startswith(PROMPT_FAULT_PREFIX):
+        return None
+    rest = ln[len(PROMPT_FAULT_PREFIX):].strip()
+    if not rest.startswith("{"):
+        return None
+    try:
+        rec = json.loads(rest)
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def raise_permission_prompt(rec: dict) -> None:
+    """One `permission-prompt` system fault for a distinct project/task/actor/command (I-064), plus a task event."""
+    project, task, actor, command = (rec.get(k) for k in ("project", "task", "actor", "command"))
+    n = int(rec.get("occurrences") or 1)
+    what = f"`{command}`" if command else (rec.get("message") or "a tool call")
+    where = (project or "?") + (f"/{task}" if task else "")
+    detail = (f"a {actor or 'claude'} session of {where} parked on a permission prompt for {what}"
+              + (f" ({n}×)" if n > 1 else "") + " — no rule in altitude/permissions.py matched; nobody can answer it")
+    fault = improve.system_fault("permission-prompt", detail[:400], project=project, task=task)
+    if project and task and (S.task_dir(project, task) / "status.json").exists():
+        S.append_event(project, task, "permission-prompt", actor=actor, command=command, tool=rec.get("tool"),
+                       message=rec.get("message"), occurrences=n, incident=(fault or {}).get("incident"))
+
+
 def drain_hook_faults() -> None:
-    """Hooks run inside L2 sessions and cannot reach the server: they append to monitor/hook-faults.log; the tick raises them."""
+    """Hooks run inside L2 sessions and cannot reach the server: they append to monitor/hook-faults.log; the tick raises them.
+
+    Lines from `edit_count.py` / `subagent_cap.py` (and a prompt hook's own failure) are raised as before. Permission-prompt
+    lines (`hooks/permission_prompt_fault.py`, I-064) are structured and deduplicated: one `permission-prompt` system fault
+    per distinct project/task/actor/command however often it was seen, plus one task event when the line names a task."""
     p = config.MONITOR_DIR / "hook-faults.log"
     if not p.exists():
         return
     lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
     p.unlink()
-    for ln in lines[-20:]:
+    plain, prompts = [], {}
+    for ln in lines:
+        rec = _permission_prompt_line(ln)
+        if rec is None:
+            plain.append(ln)
+            continue
+        key = tuple(rec.get(k) for k in ("project", "task", "actor", "command"))
+        entry = prompts.setdefault(key, {**rec, "occurrences": 0})
+        entry["occurrences"] += 1
+    for ln in plain[-20:]:
         improve.system_fault("hook", ln[:400])
+    for rec in prompts.values():
+        raise_permission_prompt(rec)
 
 
 def tick() -> None:

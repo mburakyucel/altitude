@@ -1,4 +1,5 @@
-"""Verify and monitor prefer dispatch-keyed counts while retaining legacy session counts."""
+"""Verify and monitor prefer dispatch-keyed counts while retaining legacy session counts; both surface I-064's
+`permission_denials` beside the launch count."""
 import json
 import shutil
 import tempfile
@@ -22,16 +23,18 @@ class CountReaders(unittest.TestCase):
         (self.monitor_dir / f"counts-{key}.json").write_text(json.dumps(counts))
 
     def test_verify_reads_dispatch_key_and_session_fallbacks(self):
-        self.write_counts("demo--task-1", subagent_launches=2, edits=3)
-        self.write_counts("new-session", subagent_launches=9, edits=9)
+        self.write_counts("demo--task-1", subagent_launches=2, edits=3, permission_denials=1)
+        self.write_counts("new-session", subagent_launches=9, edits=9, permission_denials=9)
         keyed = verify._spend({}, "demo", {"dispatch_id": "task-1", "session_id": "new-session"}, Path("."))
         self.assertEqual(keyed["spend"]["subagent_launches_hook"], 2)
         self.assertEqual(keyed["spend"]["edits_hook"], 3)
+        self.assertEqual(keyed["spend"]["permission_denials_hook"], 1)
 
         self.write_counts("old-session", subagent_launches=4, edits=5)
         unkeyed = verify._spend({}, "demo", {"session_id": "old-session"}, Path("."))
         self.assertEqual(unkeyed["spend"]["subagent_launches_hook"], 4)
         self.assertEqual(unkeyed["spend"]["edits_hook"], 5)
+        self.assertIsNone(unkeyed["spend"]["permission_denials_hook"])   # absent from a pre-I-064 file: never invented
 
         self.write_counts("pre-change-session", subagent_launches=6)
         legacy = verify._spend({}, "demo", {"dispatch_id": "task-2", "session_id": "pre-change-session"}, Path("."))
@@ -43,8 +46,8 @@ class CountReaders(unittest.TestCase):
             {"slug": "unkeyed", "state": "blocked", "session_id": "old-session"},
             {"slug": "legacy", "state": "reported", "dispatch_id": "legacy-1", "session_id": "pre-change-session"},
         ]
-        self.write_counts("demo--keyed-1", subagent_launches=2, edits=3)
-        self.write_counts("new-session", subagent_launches=9, edits=9)
+        self.write_counts("demo--keyed-1", subagent_launches=2, edits=3, permission_denials=1)
+        self.write_counts("new-session", subagent_launches=9, edits=9, permission_denials=9)
         self.write_counts("old-session", subagent_launches=4, edits=5)
         self.write_counts("pre-change-session", subagent_launches=6, edits=7)
         originals = config.load_projects, S.list_tasks, monitor.transcript_context_percent
@@ -58,6 +61,7 @@ class CountReaders(unittest.TestCase):
         self.assertEqual((rows["keyed"]["subagent_launches"], rows["keyed"]["edits"]), (2, 3))
         self.assertEqual((rows["unkeyed"]["subagent_launches"], rows["unkeyed"]["edits"]), (4, 5))
         self.assertEqual((rows["legacy"]["subagent_launches"], rows["legacy"]["edits"]), (6, 7))
+        self.assertEqual([rows[s]["permission_denials"] for s in ("keyed", "unkeyed", "legacy")], [1, 0, 0])
 
 
 if __name__ == "__main__":

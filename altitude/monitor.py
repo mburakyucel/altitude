@@ -34,6 +34,7 @@ def sessions() -> list[dict]:
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),
                             "subagent_launches": counts.get("subagent_launches", 0), "edits": counts.get("edits", 0),
+                            "permission_denials": counts.get("permission_denials", 0),   # I-064: residual prompts
                             "cap": (t.get("envelope") or {}).get("subagent_launches"),
                             "context_percent": (cp := transcript_context_percent(t.get("session_id"), config.project_path(name))),
                             "engine": "claude", "context_state": engines.context_state(cp)})

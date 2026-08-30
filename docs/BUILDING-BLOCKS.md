@@ -63,6 +63,8 @@ https://code.claude.com/docs/en/tools-reference.md
 
 https://code.claude.com/docs/en/hooks-guide.md — `SessionStart`, `SessionEnd`, `PreCompact`, `PostCompact`, `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop`, `Notification`, `Idle`, `TaskCreated`/`TaskCompleted` (veto with exit 2), plus prompt- and agent-based hooks. A `Stop`/`SessionEnd` hook can `curl` a webhook — that is how an orchestrator process can announce "report ready" to the chief of staff without polling.
 
+**`Notification` for permission prompts — verified in the 2.1.251 binary on 2026-08-30 (I-064).** The hook's stdin is `{hook_event_name: "Notification", message, title?, notification_type}` and its `matcher` is tested against `notification_type` (values include `permission_prompt`, `worker_permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`, `agent_needs_input`, `agent_completed`). A permission prompt that stays open for 6 s emits `notification_type: "permission_prompt"` with `message: "Claude needs your permission to use <Tool>"` — the prompt §Phone access says blocks an unattended session. That is the mechanism `hooks/permission_prompt_fault.py` builds on: a `PreToolUse(Bash)` capture plus this notification turn a residual prompt into a counted `permission_denials` and a `permission-prompt` system fault, without granting, denying or retrying anything. `CLAUDE_CODE_DISABLE_PERMISSION_PROMPT_NOTIFY_HOOKS` would silence the event, which is one more reason `engines.clean_env()` strips every `CLAUDE*` variable before a launch. `PermissionDenied` and `PermissionRequest` also exist in the binary; neither is verified here and nothing depends on them.
+
 ## Subagents, teams, workflows (inside one session)
 
 - Subagents: `.claude/agents/*.md` with `model`, `tools`, `permissionMode`, `maxTurns`, `isolation: worktree`, `background: true` (https://code.claude.com/docs/en/sub-agents.md). This is the worker layer as career-platform already uses it.
@@ -76,6 +78,8 @@ https://code.claude.com/docs/en/hooks-guide.md — `SessionStart`, `SessionEnd`,
 ## Codex side (subscription-billed as well)
 
 Verified from `codex --help` / `codex exec --help` (0.151.0): `codex exec [PROMPT]` is the headless mode; `--json` streams JSONL events; `--output-schema <file>` enforces a JSON Schema on the final message and `-o <file>` writes it; `resume <id>` / `fork <id>` give resumable threads; `-C <dir>` / `--add-dir` scope the workspace; `-s <sandbox>` and the approval flags (`--full-auto`, `--dangerously-bypass-approvals-and-sandbox`) set the guardrail level; `-m <model>` and `-p <profile>` pick the engine; `--ephemeral` skips persistence. `codex review` runs a headless code review (the cross-review step career-platform already does by hand). Structured output + resumable threads + `codex queue` means Codex can fill the orchestrator role behind the same contract as Claude Code, and can also be the *proposal reviewer* (one engine proposes, the other critiques) cheaply.
+
+**Permissions (I-064, 2026-08-30):** `codex exec` takes no per-launch rules file — its approvals come from the sandbox/approval flags (`-s`, `--full-auto`) and `~/.codex/config.toml`, and there is nothing Altitude can render per launch the way it renders Claude's `--settings` `permissions.allow` block. Codex sessions are therefore deliberately unchanged by the Claude allowlist in `altitude/permissions.py`; the Codex-side merge refusals recorded in I-064 remain an open item on that engine.
 
 ## API-side facts relevant to the summarizer
 

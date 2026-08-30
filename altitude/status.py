@@ -101,7 +101,8 @@ def status(project: str, slug: str) -> dict:
             if not isinstance(counts, dict):
                 raise TypeError("counter file is not an object")
             out["counts"] = {"subagent_launches": counts.get("subagent_launches", 0),
-                             "edits": counts.get("edits", 0)}
+                             "edits": counts.get("edits", 0),
+                             "permission_denials": counts.get("permission_denials", 0)}  # I-064: residual prompts
         except Exception as e:
             _error(errors, "counts", e)
 
