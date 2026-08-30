@@ -26,11 +26,15 @@ _POCKETBOOK_TLS = HOME / ".local/state/tutor/tls"
 TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", str(_POCKETBOOK_TLS if (_POCKETBOOK_TLS / "server.crt").exists() else ROOT / "tls"))).expanduser()
 TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
-# Context lines per engine (decision 12, settled 2026-08-30): Claude quality degrades past ~25–30% of the window in
-# Burak's experience, so Altitude rotates/compacts Claude sessions early; Codex compacts itself at its native limit.
-CONTEXT_WINDOW = 200_000          # Claude, tokens; used to turn usage into a percentage
-CONTEXT_WARN = 0.25               # Claude: warn line (monitor colour, "rotate next" for L3)
-CONTEXT_ACT = 0.30                # Claude: act line — L3 rotates to a fresh session; L2/L1 autocompact is asked at this line
+# Context lines per engine (decision 12, settled 2026-08-30; numbers fixed by decision 49): Claude quality degrades past
+# ~25–30% of the window in Burak's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
+# 1,000,000-token window (probed 2026-08-30: result JSON `modelUsage[..].contextWindow`), so the umbrella for all Claude
+# sessions is **300k**: auto-compact there (explicit `autoCompactWindow` on every launch — never a percent override on
+# top of the user's setting, which had them compacting at ~90k) and rotate the L3 there. Codex compacts at its own limit.
+CONTEXT_WINDOW = 1_000_000        # Claude, tokens; used to turn usage into a percentage
+CONTEXT_WARN = 0.25               # Claude: warn line (monitor colour, "rotate next" for L3) — 250k
+CONTEXT_ACT = 0.30                # Claude: act line — L3 rotates to a fresh session; sessions auto-compact here — 300k
+AUTOCOMPACT_WINDOW = int(CONTEXT_WINDOW * CONTEXT_ACT)   # 300_000, passed as Claude Code's `autoCompactWindow`
 CONTEXT_WINDOW_CODEX = 256_000
 CONTEXT_WARN_CODEX = 0.80
 CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude only watches

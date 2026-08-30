@@ -89,10 +89,22 @@ def clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     env["PATH"] = env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
-    # decision 12: every Claude process Altitude launches (L3 turns, proposal/critic, L2 --bg and the L1s it spawns)
-    # auto-compacts at the act line — percent of the window *used*, verified in `-p` and `--bg` sessions
-    env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = str(int(config.CONTEXT_ACT * 100))
     return env
+
+
+def claude_settings() -> Path:
+    """The settings every Claude launch without a per-dispatch file gets (decision 49): auto-compact at the 300k umbrella,
+    stated explicitly rather than inherited from ~/.claude/settings.json. Rewritten when the number changes."""
+    p = config.ROOT / "claude-settings.json"
+    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW}
+    try:
+        cur = json.loads(p.read_text())
+    except (OSError, ValueError):
+        cur = None
+    if cur != want:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(want, indent=2) + "\n")
+    return p
 
 
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
@@ -123,8 +135,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--model", model]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    if settings:
-        cmd += ["--settings", str(settings)]
+    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
     if resume:
         cmd += ["--resume", resume]
     env = clean_env()
@@ -220,8 +231,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
         cmd += ["--max-turns", str(max_turns)]
     if model:
         cmd += ["--model", model]
-    if settings:
-        cmd += ["--settings", str(settings)]
+    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
     env = clean_env()
     env.update(extra_env or {})
     p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)
@@ -263,8 +273,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
         cmd += ["--append-system-prompt-file", str(persona)]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    if settings:
-        cmd += ["--settings", str(settings)]
+    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
     env = clean_env()
     env.update(extra_env or {})
     p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)
