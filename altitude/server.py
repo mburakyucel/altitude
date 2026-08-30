@@ -505,8 +505,36 @@ class Handler(BaseHTTPRequestHandler):
         if ip not in self._seen_clients:
             self._seen_clients.add(ip)
             log(f"first request from {ip}: {self.command} {self.path}")
-        if "/api/" not in (args[0] if args else ""):
+        if "/api/" not in str(args[0] if args else ""):
             return
+
+    def end_headers(self) -> None:
+        super().end_headers()
+        if getattr(self.wfile, "head_only", False):
+            self.wfile.drop = True
+
+    def do_HEAD(self) -> None:
+        class _HeadWriter:
+            """Pass GET's headers through while dropping its entity body."""
+
+            head_only = True
+
+            def __init__(self, wfile):
+                self._wfile = wfile
+                self.drop = False
+
+            def write(self, data):
+                return len(data) if self.drop else self._wfile.write(data)
+
+            def flush(self):
+                return self._wfile.flush()
+
+        wfile = self.wfile
+        self.wfile = _HeadWriter(wfile)
+        try:
+            self.do_GET()
+        finally:
+            self.wfile = wfile
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, default=str).encode()
