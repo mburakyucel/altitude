@@ -13,23 +13,40 @@ def _normalise_proposal_files(project: str, proposal: dict) -> None:
     normalised = []
     for raw_entry in proposal.get("files") or []:
         entry = str(raw_entry).strip()
-        expanded = _expand_entry(entry)
+        if entry[:1] in "/~$<":
+            expanded = _expand_entry(entry)
+            normalised.append(expanded[0] if len(expanded) == 1 else entry)
+            continue
         parts = _split_top_level(entry)
         if len(parts) > 1:  # _expand_entry's literal-path fast path intentionally preserves a plain comma list.
-            expanded_with_new = [
-                (path, part.strip().endswith("(new)")) for part in parts for path in _expand_entry(part)
-            ]
+            expanded_with_new = []
+            for part in parts:
+                part = part.strip()
+                if part[:1] in "/~$<":
+                    host_paths = _expand_entry(part)
+                    normalised.append(host_paths[0] if len(host_paths) == 1 else part)
+                    continue
+                part_paths = _expand_entry(part)
+                if not part_paths:
+                    raise RuntimeError(
+                        f"proposal files entry {part!r} is invalid: it expands to no repo-relative paths"
+                    )
+                expanded_with_new.extend((path, part.endswith(" (new)"), part) for path in part_paths)
         else:
-            expanded_with_new = [(path, entry.endswith("(new)")) for path in expanded]
+            expanded = _expand_entry(entry)
+            expanded_with_new = [(path, entry.endswith(" (new)"), entry) for path in expanded]
         if not expanded_with_new:
             raise RuntimeError(f"proposal files entry {entry!r} is invalid: it expands to no repo-relative paths")
-        for path, is_new in expanded_with_new:
+        for path, is_new, source in expanded_with_new:
+            while path.startswith("./"):
+                path = path[2:]
             relative = Path(path)
-            if relative.is_absolute() or ".." in relative.parts or path.startswith("./"):
-                raise RuntimeError(f"proposal files entry {entry!r} is invalid: {path!r} is not a bare repo-relative path")
+            malformed = not path or any(char.isspace() for char in path) or any(char in path for char in "*{}()")
+            if malformed or relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError(f"proposal files entry {source!r} is invalid: {path!r} is not a bare repo-relative path")
             if not is_new and not (repo / relative).exists():
                 raise RuntimeError(
-                    f"proposal files entry {entry!r} is invalid: {path!r} does not exist at proposal base {repo}"
+                    f"proposal files entry {source!r} is invalid: {path!r} does not exist at proposal base {repo}"
                 )
             normalised.append(path)
     proposal["files"] = normalised

@@ -1,4 +1,6 @@
 """Proposal file entries are normalised and validated before the proposal is stored."""
+import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +98,91 @@ class TestProposalPaths(unittest.TestCase):
     def test_trailing_new_marker_allows_a_new_path(self):
         self.run_proposal(["web/new-component.ts (new)"])
         self.assertEqual(self.stored_files(), ["web/new-component.ts"])
+
+    def test_host_state_entries_are_accepted_and_stored(self):
+        entries = [
+            "~/.altitude/settings.json",
+            "~/.altitude/projects.json",
+            "~/.altitude/altitude/events.log",
+            "~/.altitude/.dispatch.lock",
+            "~/.altitude/.projects.lock",
+            "~/.altitude/<project>/tasks/<slug>/status.json",
+            "$ALTITUDE_HOME/<project>/tasks/<slug>/.altitude-codex-write-probe-* (transient, removed)",
+            "<repo>/.claude/worktrees/<slug>/.altitude-codex-write-probe-* (transient, removed)",
+            "/etc/apparmor.d/bwrap-userns-restrict (approval-dependent host file, not committed)",
+        ]
+        expected = entries[:6] + [
+            "$ALTITUDE_HOME/<project>/tasks/<slug>/.altitude-codex-write-probe-*",
+            "<repo>/.claude/worktrees/<slug>/.altitude-codex-write-probe-*",
+            "/etc/apparmor.d/bwrap-userns-restrict",
+        ]
+
+        proposal = self.run_proposal(entries)
+
+        self.assertEqual(proposal["files"], expected)
+        self.assertEqual(self.stored_files(), expected)
+
+    def test_malformed_paths_are_rejected_even_when_marked_new(self):
+        entries = [
+            "web/src/routes/{Inbox,Project}.tsx + .test.tsx (new)",
+            "altitude/foo.py(new)",
+        ]
+        for entry in entries:
+            with self.subTest(entry=entry):
+                with self.assertRaisesRegex(RuntimeError, re.escape(entry)):
+                    self.run_proposal([entry])
+                self.assertFalse(self.proposal_path().exists())
+
+    def test_empty_part_of_comma_list_is_rejected_with_part_text(self):
+        self.create("web/app.js")
+        entry = "web/app.js, (and the rest of web/)"
+
+        with self.assertRaisesRegex(RuntimeError, re.escape("(and the rest of web/)")):
+            self.run_proposal([entry])
+
+        self.assertFalse(self.proposal_path().exists())
+
+    def test_file_guidance_uses_existing_approach_field(self):
+        persona = (config.PERSONAS / "proposal.md").read_text()
+        schema = json.loads((config.SCHEMAS / "proposal.json").read_text())
+        description = schema["properties"]["files"]["description"]
+
+        for guidance in (persona, description):
+            self.assertIn("`approach`", guidance)
+            self.assertNotIn("proposal rationale", guidance)
+            self.assertIn("is recorded, not leased", guidance)
+            self.assertIn("must end with a space followed by `(new)`", guidance)
+            for invalid_marker in ("(new file)", "(NEW)", "(created)", "foo.ts(new)"):
+                self.assertIn(invalid_marker, guidance)
+
+    def test_only_space_delimited_lowercase_new_marker_allows_missing_path(self):
+        invalid_entries = [
+            "web/new-component.ts (new file)",
+            "web/new-component.ts (NEW)",
+            "web/new-component.ts (created)",
+            "web/new-component.ts(new)",
+        ]
+        for entry in invalid_entries:
+            with self.subTest(entry=entry):
+                with self.assertRaisesRegex(RuntimeError, re.escape(entry)):
+                    self.run_proposal([entry])
+                self.assertFalse(self.proposal_path().exists())
+
+    def test_leading_dot_slash_is_normalised(self):
+        self.create("web/app.js")
+
+        self.run_proposal(["./web/app.js"])
+
+        self.assertEqual(self.stored_files(), ["web/app.js"])
+
+    def test_comma_list_expands_only_its_individual_parts(self):
+        self.create("web/app.js")
+        self.create("web/style.css")
+
+        with patch.object(propose, "_expand_entry", wraps=propose._expand_entry) as expand:
+            self.run_proposal(["web/app.js, web/style.css"])
+
+        self.assertEqual(expand.call_count, 2)
 
 
 if __name__ == "__main__":
