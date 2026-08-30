@@ -91,3 +91,12 @@
 - effect: one sentence in the L2 persona and one in the brief template
 - status: probation
 - text: alt l1 run cuts a fresh worktree from origin/main, so a sub-brief that asks an L1 to push to an existing PR branch cannot be satisfied and the launch is lost. A fix round on an open PR is launched as alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>: with --cwd the launcher skips worktree and branch creation and the L1 amends the PR in place. The fix brief names the PR number and the findings to address, and the L2 checks the amended PR with git diff --stat origin/main <head> before merging.
+
+## R-017 — A post-fix review converges: it checks the previous findings and the fix diff; new findings block only when they defeat the definition of done
+- scope: project
+- where: personas/l2.md §How you work; the reviewer sub-brief in templates/brief.md
+- origin: I-073 (altitude)
+- prevents: S tasks looping through fresh full reviews past their envelope while a mergeable PR waits
+- effect: post-fix reviews converge on the fix; secondary findings become follow-up tasks instead of extra rounds
+- status: probation
+- text: A post-fix review checks the dispositions of the previous round's findings and the fix diff for regressions. A new finding blocks the merge only if it defeats the definition of done or breaches a guardrail (R-006); every other new finding is recorded with its file and line under Follow-ups, the L2 names or files the follow-up task in the report, and the PR merges (decision 48). One fix round per S task; a second round needs the L3's envelope answer, never a silent further reviewer.
