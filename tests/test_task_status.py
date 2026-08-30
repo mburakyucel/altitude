@@ -82,6 +82,7 @@ class TestTaskStatus(unittest.TestCase):
 
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
+        (self.repo / ".github" / "workflows").mkdir(parents=True)
         config.save_projects({"demo": {"path": str(self.repo), "stacks": [], "wip": 5}})
 
         self.bin_dir = self.tmp / "bin"
@@ -146,7 +147,7 @@ class TestTaskStatus(unittest.TestCase):
             "project", "slug", "state", "class", "title", "attempt", "dispatch_id", "session_id",
             "agent_id", "source", "hold_merge", "blocked_reason", "updated", "worktree", "branch",
             "envelope", "counts", "envelope_file", "l1_runs", "lease", "other_leases", "hold",
-            "wip_hold", "report_json", "prs", "main_run", "errors",
+            "wip_hold", "gate", "report_json", "prs", "main_run", "errors",
         }
         self.assertTrue(expected_fields.issubset(result))
         self.assertEqual(result["errors"], [])
@@ -159,6 +160,7 @@ class TestTaskStatus(unittest.TestCase):
             "hold_paths": ["altitude/server.py"],
         }])
         self.assertTrue(result["report_json"]["exists"])
+        self.assertEqual(result["gate"], "github-actions")
         self.assertEqual([pr["number"] for pr in result["prs"]], [17, 18])
         self.assertEqual(result["prs"][0]["merge_sha"], "merge-old")
         self.assertEqual(result["prs"][0]["checks"], {
@@ -204,6 +206,18 @@ class TestTaskStatus(unittest.TestCase):
         self.assertIsNone(result["wip_hold"])
         self.assertEqual(result["wip_hold"], dispatch.wip_hold("demo", task))
 
+    def test_both_hold_entry_points_use_the_shared_helper(self):
+        reason = "sentinel hold conflict"
+        task = S.read_json(S.task_dir("demo", "task-one") / "status.json")
+
+        with mock.patch.object(dispatch, "hold_conflict", return_value=reason) as helper:
+            result = task_status.status("demo", "task-one")
+            dispatcher_hold = dispatch.wip_hold("demo", task)
+
+        self.assertEqual(result["wip_hold"], reason)
+        self.assertEqual(dispatcher_hold, reason)
+        self.assertGreaterEqual(helper.call_count, 2)
+
     def test_file_lease_wip_hold_matches_dispatcher(self):
         task_path = S.task_dir("demo", "task-one") / "status.json"
         task = S.read_json(task_path)
@@ -223,6 +237,21 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(result["other_leases"], [{
             "slug": "other-task", "paths": ["tests/test_x.py"],
             "hold_paths": ["tests/test_x.py"],
+        }])
+
+        other["state"] = "blocked"
+        other["resume_after"] = "2026-08-30T12:00:00+00:00"
+        S.write_json(other_path, other)
+
+        result = task_status.status("demo", "task-one")
+        dispatcher_hold = dispatch.wip_hold("demo", task)
+
+        self.assertEqual(result["wip_hold"], dispatcher_hold)
+        self.assertEqual(result["wip_hold"],
+                         "file lease: `other-task` is blocked with a pending resume on tests/test_x.py")
+        self.assertEqual(result["other_leases"], [{
+            "slug": "other-task", "paths": ["tests/test_x.py"],
+            "pending_resume": True, "hold_paths": ["tests/test_x.py"],
         }])
 
     def test_other_leases_are_published_only_after_all_are_annotated(self):
@@ -270,7 +299,19 @@ class TestTaskStatus(unittest.TestCase):
         self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
         result = task_status.status("demo", "task-one")
         self.assertIsNone(result["main_run"])
+        self.assertEqual(result["gate"], "github-actions")
         self.assertIn("no main run found for merge-new", result["errors"])
+
+    def test_repo_without_workflows_uses_local_suite_without_main_run_error(self):
+        shutil.rmtree(self.repo / ".github")
+        self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
+
+        result = task_status.status("demo", "task-one")
+
+        self.assertEqual(result["errors"], [])
+        self.assertIsNone(result["main_run"])
+        self.assertEqual(result["gate"], "local-suite")
+        self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
 
     def test_one_pr_fault_keeps_other_summaries_and_checks_main(self):
         self._setenv("FAKE_GH_FAIL_PR", "18")
