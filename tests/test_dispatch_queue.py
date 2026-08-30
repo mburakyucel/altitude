@@ -18,7 +18,6 @@ class TestQueue(unittest.TestCase):
         config.ensure_root()
         (_TMP / "repo").mkdir()
         config.save_projects({"q": {"name": "q", "path": str(_TMP / "repo"), "stacks": ["python"], "wip": 5}})
-        engines.claude_agents = lambda: []
 
     def test_per_task_hold_does_not_block_the_queue(self):
         self.assertTrue(dispatch.per_task_hold("file lease: `x` is running on a.py"))
@@ -32,12 +31,13 @@ class TestQueue(unittest.TestCase):
         for t in (leased, free):
             t["state"] = "approved"; S.save_task("q", t)
         started = []
-        real = dispatch.run
+        real_run, real_agents = dispatch.run, engines.claude_agents
         dispatch.run = lambda project, slug: started.append(slug) or {"dispatch_id": slug, "agent": None}
+        engines.claude_agents = lambda: []
         try:
             server.dispatch_waiting("q")
         finally:
-            dispatch.run = real
+            dispatch.run, engines.claude_agents = real_run, real_agents
         self.assertEqual(started, [free["slug"]], "the leased task is skipped, the free one behind it dispatches")
 
 
