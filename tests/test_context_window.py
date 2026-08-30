@@ -32,7 +32,8 @@ class TestContextWindow(unittest.TestCase):
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
         p = engines.claude_settings()
         self.assertEqual(json.loads(p.read_text()),
-                         {"autoCompactWindow": 300_000, "permissions": permissions.permissions_block()})  # I-064 rides along
+                         {"autoCompactWindow": 300_000, "permissions": permissions.permissions_block(),   # I-064 rides along:
+                          "hooks": permissions.prompt_fault_hooks(), "env": {"ALTITUDE_HOME": str(config.ROOT)}})   # the allowlist and the passive hook
         T.new("altitude", "ctx-task", "S", "req")
         sp = dispatch.session_settings("altitude", "ctx-task", "key")
         st = json.loads(sp.read_text())

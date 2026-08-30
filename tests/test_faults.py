@@ -1,6 +1,8 @@
 """Decision 36: Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, improve, verify, engines, dispatch, server, tasks as T  # noqa: E402
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "permission_prompt_fault.py"
+_CAP = re.search(r"^PENDING_CAP = (\d+)", HOOK.read_text(), re.M)
+PENDING_CAP = int(_CAP.group(1)) if _CAP else None
 
 
 class TestSystemFault(unittest.TestCase):
@@ -96,6 +100,10 @@ class TestPermissionPromptHook(unittest.TestCase):
         return self.run_hook({"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash",
                               "tool_input": {"command": command}, "tool_use_id": tool_use_id}, env)
 
+    def post(self, command, tool_use_id="toolu_1", sid="s1", env=None):
+        return self.run_hook({"session_id": sid, "hook_event_name": "PostToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": command}, "tool_use_id": tool_use_id, "tool_response": {}}, env)
+
     def prompt(self, sid="s1", kind="permission_prompt", tool="Bash", env=None):
         # the 2.1.251 payload: message "Claude needs your permission to use <Tool>", notification_type, title
         return self.run_hook({"session_id": sid, "hook_event_name": "Notification", "title": "Claude Code",
@@ -104,6 +112,10 @@ class TestPermissionPromptHook(unittest.TestCase):
     def counts(self, key=None):
         p = self.mon / f"counts-{key or self.KEY}.json"
         return json.loads(p.read_text()) if p.exists() else {}
+
+    def pending(self, key=None):
+        p = self.mon / f"pending-bash-{key or self.KEY}.json"
+        return json.loads(p.read_text())["entries"] if p.exists() else []
 
     def fault_lines(self):
         p = self.mon / "hook-faults.log"
@@ -209,6 +221,107 @@ class TestPermissionPromptHook(unittest.TestCase):
         r = self.prompt(env={**self.env, "ALTITUDE_HOME": "/proc/altitude-cannot-exist"})
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
+    def test_two_parked_calls_are_two_faults(self):
+        """F6: parallel Bash calls used to overwrite one capture, so the second prompt borrowed the first's tool_use_id and
+        was dropped as a duplicate — a genuine fault suppressed (decision 36). Captures are pending per tool_use_id and
+        each is consumed at most once."""
+        self.assert_passive(self.pre("gh pr merge 56 --squash", "toolu_a"))
+        self.assert_passive(self.pre("git reset --hard origin/main", "toolu_b"))
+        self.assertEqual([e["tool_use_id"] for e in self.pending()], ["toolu_a", "toolu_b"])
+        self.assert_passive(self.prompt())
+        self.assert_passive(self.prompt())
+        self.assertEqual(self.counts()["permission_denials"], 2)
+        self.assertEqual({(r["tool_use_id"], r["command"]) for r in self.records()},
+                         {("toolu_a", "gh pr merge 56 --squash"), ("toolu_b", "git reset --hard origin/main")})
+        self.assertTrue(all(e["consumed"] for e in self.pending()))
+        self.assert_passive(self.prompt())                         # nothing left to consume: the last prompt again, billed once
+        self.assertEqual(self.counts()["permission_denials"], 2)
+        self.assertEqual(len(self.fault_lines()), 2)
+        c = self.counts()
+        self.assertNotIn("subagent_launches", c)
+        self.assertNotIn("cap", c)
+
+    def test_a_call_that_ran_is_released_and_never_billed(self):
+        self.assert_passive(self.pre("ls", "toolu_ok"))
+        self.assert_passive(self.post("ls", "toolu_ok"))            # PostToolUse: the call ran, so it was never parked
+        self.assertEqual(self.pending(), [])
+        self.pre("gh pr merge 56", "toolu_p"); self.prompt(); self.prompt()
+        self.assertEqual(self.counts()["permission_denials"], 1)
+        self.assertEqual([r["tool_use_id"] for r in self.records()], ["toolu_p"])
+        self.assert_passive(self.post("never captured", "toolu_x"))   # a release with no matching capture is a no-op
+        self.assertEqual([e["tool_use_id"] for e in self.pending()], ["toolu_p"])
+        self.assertEqual(self.fault_lines()[1:], [])                # and nothing the release did was a fault
+
+    def test_pending_captures_are_bounded_oldest_first(self):
+        self.assertIsNotNone(PENDING_CAP, "the hook declares its bound as PENDING_CAP")
+        for i in range(PENDING_CAP + 3):
+            self.pre(f"echo {i}", f"toolu_{i}")
+        ids = [e["tool_use_id"] for e in self.pending()]
+        self.assertEqual(len(ids), PENDING_CAP)
+        self.assertEqual(ids, [f"toolu_{i}" for i in range(3, PENDING_CAP + 3)])
+        self.prompt()
+        self.assertEqual(self.records()[0]["tool_use_id"], f"toolu_{PENDING_CAP + 2}")   # the newest is the one that parked
+
+
+class TestPromptThroughBothSettingsPaths(unittest.TestCase):
+    """F2: the hook rides on every Claude launch — the per-repository file every launch without a per-dispatch file gets
+    (the L3, where I-064 was observed; L1s, proposals, critic, sizer) and the L2's per-dispatch file. A residual prompt
+    through either path ends as a `permission-prompt` system fault; the first path carries no task, actor or session key,
+    and both the hook and the drain cope with the absent fields."""
+
+    def setUp(self):
+        config.ensure_root()
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        self.log = config.MONITOR_DIR / "hook-faults.log"
+        if self.log.exists():
+            self.log.unlink()
+        for d in config.MONITOR_DIR.glob("hook-faults.log.*.drain"):
+            d.unlink()
+        self.scratch_home = tempfile.mkdtemp(prefix="altitude-home-", dir=_TMP)   # a hook without ALTITUDE_HOME would write here
+
+    def run_wired(self, settings, event, payload):
+        """Run the prompt-fault command the settings file wires for `event`, with the file's own env and nothing else Altitude-specific."""
+        entries = [e for e in settings["hooks"].get(event, []) if any(h["command"].endswith("permission_prompt_fault.py") for h in e["hooks"])]
+        self.assertEqual(len(entries), 1, f"{event}: exactly one prompt-fault entry")
+        subject = payload.get("tool_name") or payload.get("notification_type")
+        self.assertTrue(re.fullmatch(entries[0]["matcher"], subject), (event, entries[0]["matcher"], subject))
+        env = {k: v for k, v in os.environ.items() if not k.startswith("ALTITUDE")}
+        env["HOME"] = self.scratch_home
+        env.update(settings.get("env") or {})
+        for h in entries[0]["hooks"]:
+            r = subprocess.run(shlex.split(h["command"]), input=json.dumps(payload), text=True, capture_output=True, env=env)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+
+    def test_a_residual_prompt_is_a_fault_through_both_paths(self):
+        t = T.new("altitude", "both paths", "S", "req")
+        slug = t["slug"]
+        key = f"altitude--{slug}-1"
+        global_st = json.loads(engines.claude_settings().read_text())
+        l2_st = json.loads(dispatch.session_settings("altitude", slug, key).read_text())
+        for st, sid in ((global_st, "sid-global"), (l2_st, "sid-l2")):
+            self.run_wired(st, "PreToolUse", {"session_id": sid, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                              "tool_input": {"command": "gh pr merge 56 --squash"}, "tool_use_id": f"toolu-{sid}"})
+            self.run_wired(st, "Notification", {"session_id": sid, "hook_event_name": "Notification", "title": "Claude Code",
+                                                "message": "Claude needs your permission to use Bash", "notification_type": "permission_prompt"})
+        self.assertEqual(os.listdir(self.scratch_home), [])                       # every line landed under config.ROOT
+        self.assertEqual(json.loads((config.MONITOR_DIR / "counts-sid-global.json").read_text())["permission_denials"], 1)
+        self.assertEqual(json.loads((config.MONITOR_DIR / f"counts-{key}.json").read_text())["permission_denials"], 1)
+        recs = [json.loads(ln.split(" ", 1)[1]) for ln in self.log.read_text().splitlines()]
+        self.assertEqual([(r["project"], r["task"], r["actor"], r["key"], r["command"]) for r in recs],
+                         [(None, None, None, "sid-global", "gh pr merge 56 --squash"), ("altitude", slug, "l2", key, "gh pr merge 56 --squash")])
+        calls = []
+        with mock.patch.object(improve, "system_fault", side_effect=lambda k, d, **kw: calls.append((k, d, kw)) or {"incident": "I-1", "count": 1}):
+            server.drain_hook_faults()
+        self.assertEqual([c[0] for c in calls], ["permission-prompt", "permission-prompt"])
+        self.assertEqual(calls[0][2], {"project": None, "task": None})           # the global path: no task, no actor
+        self.assertIn("a claude session of ? parked on a permission prompt for `gh pr merge 56 --squash`", calls[0][1])
+        self.assertEqual(calls[1][2], {"project": "altitude", "task": slug})
+        self.assertIn(f"a l2 session of altitude/{slug}", calls[1][1])
+        events = [e for e in S.read_events("altitude", slug) if e["kind"] == "permission-prompt"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual((events[0]["actor"], events[0]["incident"]), ("l2", "I-1"))
+        self.assertFalse(self.log.exists())
+
 
 class TestDrainPermissionPrompts(unittest.TestCase):
     """B2: the tick raises permission-prompt lines once per distinct project/task/actor/command, with a task event; the
@@ -218,6 +331,10 @@ class TestDrainPermissionPrompts(unittest.TestCase):
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
         self.log = config.MONITOR_DIR / "hook-faults.log"
+        if self.log.exists():
+            self.log.unlink()
+        for d in config.MONITOR_DIR.glob("hook-faults.log.*.drain"):
+            d.unlink()
 
     @staticmethod
     def line(**rec):
@@ -283,6 +400,47 @@ class TestDrainPermissionPrompts(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["incident"], rec["incident"])
         self.assertEqual(events[0]["occurrences"], 2)
+
+    def test_an_append_racing_the_drain_is_kept_for_the_next_tick(self):
+        """F7: read-then-unlink lost a line a hook appended in between. The log is rotated with os.replace() before it is
+        read, so the append lands in a fresh log the next tick raises."""
+        self.log.write_text(self.line(command="first") + "\n")
+        raced = self.line(command="second")
+        real = Path.read_text
+        state = {"raced": False}
+
+        def read_text(p, *a, **kw):
+            out = real(p, *a, **kw)
+            if not state["raced"] and p.name.startswith("hook-faults"):
+                state["raced"] = True
+                with open(self.log, "a") as f:                         # a hook appends while the tick is reading
+                    f.write(raced + "\n")
+            return out
+
+        calls = []
+        fake = lambda k, d, **kw: calls.append(d) or None   # noqa: E731
+        with mock.patch.object(Path, "read_text", read_text), mock.patch.object(improve, "system_fault", side_effect=fake):
+            server.drain_hook_faults()
+        self.assertTrue(state["raced"])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("`first`", calls[0])
+        self.assertTrue(self.log.exists(), "the raced append must survive in a fresh log")
+        with mock.patch.object(improve, "system_fault", side_effect=fake):
+            server.drain_hook_faults()
+        self.assertEqual(len(calls), 2)
+        self.assertIn("`second`", calls[1])
+        self.assertFalse(self.log.exists())
+        self.assertEqual(list(config.MONITOR_DIR.glob("hook-faults.log.*.drain")), [])
+
+    def test_a_drain_left_by_a_dead_tick_is_raised_next_time(self):
+        left = config.MONITOR_DIR / "hook-faults.log.123-456.drain"
+        left.write_text(self.line(command="orphaned") + "\n")
+        calls = []
+        with mock.patch.object(improve, "system_fault", side_effect=lambda k, d, **kw: calls.append(d) or None):
+            server.drain_hook_faults()
+        self.assertEqual(len(calls), 1)
+        self.assertIn("`orphaned`", calls[0])
+        self.assertFalse(left.exists())
 
 
 if __name__ == "__main__":

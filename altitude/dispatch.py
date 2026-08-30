@@ -88,14 +88,15 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
     hook, and the shared permission allowlist (I-064, from the one renderer, for the project's own checkout) — nothing
     else global."""
     hooks = config.HOOKS
-    prompt_fault = {"type": "command", "command": f"python3 {hooks / 'permission_prompt_fault.py'}", "timeout": 10}
+    prompt_fault = permissions.prompt_fault_hooks()   # I-064: the one definition, shared with engines.claude_settings
     settings = {"hooks": {
         "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]},
                        {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]},
-                       {"matcher": "Bash", "hooks": [prompt_fault]}],   # capture only — never a decision (I-064)
-        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
+                       *prompt_fault["PreToolUse"]],                # capture only — never a decision (I-064)
+        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]},
+                        *prompt_fault["PostToolUse"]],              # release: a call that ran was never parked
         # Claude Code 2.1.251 matches Notification hooks on `notification_type`: a prompt nobody answers becomes a counted fault
-        "Notification": [{"matcher": "permission_prompt|worker_permission_prompt", "hooks": [prompt_fault]}],
+        "Notification": prompt_fault["Notification"],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW,  # decision 49: the 300k umbrella, also for resumed sessions
@@ -168,9 +169,12 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
     if not task.get("worktree") or not cwd.is_dir():
         raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
     name = f"{project}/{task['dispatch_id']}"
+    env = l2_env(project, task)
+    # I-064: re-render the per-dispatch file from current code before every resume, under the same session key the fresh
+    # dispatch used — a task dispatched before a rule or hook change would otherwise resume with its dispatch-time file
+    settings = session_settings(project, slug, env["ALTITUDE_SESSION_KEY"])
     res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
-                                   max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
-                                   extra_env=l2_env(project, task))
+                                   max_turns=task["envelope"]["max_turns"], settings=settings, extra_env=env)
     live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
     if not live:
         raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")

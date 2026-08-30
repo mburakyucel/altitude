@@ -429,12 +429,23 @@ def drain_hook_faults() -> None:
 
     Lines from `edit_count.py` / `subagent_cap.py` (and a prompt hook's own failure) are raised as before. Permission-prompt
     lines (`hooks/permission_prompt_fault.py`, I-064) are structured and deduplicated: one `permission-prompt` system fault
-    per distinct project/task/actor/command however often it was seen, plus one task event when the line names a task."""
+    per distinct project/task/actor/command however often it was seen, plus one task event when the line names a task.
+
+    The log is rotated before it is read: `os.replace()` moves it to a private drain name, so a hook appending while the
+    tick reads lands in a fresh log for the next tick instead of in a file about to be unlinked (decision 36: no fault is
+    lost). A drain left behind by a tick that died mid-way is picked up by the next one."""
     p = config.MONITOR_DIR / "hook-faults.log"
-    if not p.exists():
+    drains = sorted(p.parent.glob("hook-faults.log.*.drain")) if p.parent.is_dir() else []
+    mine = p.with_name(f"hook-faults.log.{os.getpid()}-{time.time_ns()}.drain")
+    try:
+        os.replace(p, mine)
+    except FileNotFoundError:
+        pass                                                         # nothing appended since the last tick
+    else:
+        drains.append(mine)
+    if not drains:
         return
-    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
-    p.unlink()
+    lines = [ln for d in drains for ln in d.read_text().splitlines() if ln.strip()]
     plain, prompts = [], {}
     for ln in lines:
         rec = _permission_prompt_line(ln)
@@ -448,6 +459,8 @@ def drain_hook_faults() -> None:
         improve.system_fault("hook", ln[:400])
     for rec in prompts.values():
         raise_permission_prompt(rec)
+    for d in drains:                                                 # only once every line is raised
+        d.unlink(missing_ok=True)
 
 
 def tick() -> None:

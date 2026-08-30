@@ -158,10 +158,14 @@ def _settings_name(repo: Path | None) -> str:
 def claude_settings(repo: Path | None = None) -> Path:
     """The settings every Claude launch without a per-dispatch file gets (decision 49): auto-compact at the 300k umbrella,
     stated explicitly rather than inherited from ~/.claude/settings.json, and the permission allowlist (I-064) from the
-    one renderer, rendered for `repo` — the checkout the session runs in (None: this checkout). One file per repository,
-    on decision 49's per-launch-settings-file precedent; rewritten only when its content changes."""
+    one renderer, rendered for `repo` — the checkout the session runs in (None: this checkout), plus the passive
+    permission-prompt hook from the same one definition the L2 file uses (`permissions.prompt_fault_hooks`) and the
+    `ALTITUDE_HOME` the hook needs to land its line where altd drains it — the envelope hooks stay the L2's alone. One
+    file per repository, on decision 49's per-launch-settings-file precedent; rewritten only when its content changes."""
     p = config.ROOT / _settings_name(repo)
-    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW, "permissions": permissions.permissions_block(repo)}
+    want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW, "permissions": permissions.permissions_block(repo),
+            "hooks": permissions.prompt_fault_hooks(),            # I-064: a residual prompt is a counted fault in every session
+            "env": {"ALTITUDE_HOME": str(config.ROOT)}}
     try:
         cur = json.loads(p.read_text())
     except (OSError, ValueError):
