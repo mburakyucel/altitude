@@ -18,12 +18,18 @@ One small Python process — **`altd`, the same shape as the pocketbook server**
    │  state: ~/.altitude/<project>/STATE.md  tasks/<slug>/{request,proposal,brief,report,digest}.md  status.json  events.log
    │  research/proposal: fresh `claude -p --json-schema` · critic (V) on the other engine for L-class
    │  dispatch: claude --bg --name <project>/<slug>-<n> -w <slug> --append-system-prompt-file personas/l2.md … '<brief>'
-   │  L2 done: poll `claude agents --json` (state: done) → verify-report → L3 turn "report landed"
+   │  L2 done: poll `claude agents --json` (state: done) → verify-report → clean-close gate or L3 "report landed"
    │  timers: reconcile (status vs agents/git/gh) · digest (Decision queue, WIP limits) · Kokoro render
    ▼
  L2 (per task) → L1 subagents in worktrees → PRs → review (V) → merge → main green → deploy checked → report
                                                      (career-platform ENGINEERING.md flow, unchanged)
 ```
+
+The **clean-close gate** skips the L3 report-landed turn only for a live, unheld S/M task whose on-disk report is
+mechanically beyond judgment: verifier `ok` with no problems or post-mortem signals; merged PRs; well-shaped main
+runs; deploy `healthy` or `not-applicable`; every review disposition `fixed` or `dismissed`; and no decisions, blocked
+items, FYIs, or follow-ups. The gate fails closed to L3 on every doubt, including malformed shapes and a task-state race;
+corrupt `report.json` also files a decision-36 system fault rather than being swallowed.
 
 ## 1. State — files, one writer, atomic
 
