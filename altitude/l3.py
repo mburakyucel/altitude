@@ -65,13 +65,17 @@ def _header(project: str, trigger: str, fresh: bool) -> str:
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_start=None,
-         model: str | None = None) -> dict:
+         model: str | None = None, precheck=None) -> dict:
     """Run one L3 turn. Serialized per project. Handles start, resume, and rotation.
 
     `on_start(pid)` receives the turn subprocess's pid: it outlives an altd restart, so the caller can record
     it and tell an in-flight turn from a dead one afterwards (incident I-011)."""
-    proj = config.project(project)
     with lock(project):
+        if precheck is not None and not precheck():
+            return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
+                    "turns": 0, "structured": None, "error": None, "tools": [], "skipped": True,
+                    "_turn_started_at": None}
+        proj = config.project(project)
         S.regen_state_md(project)
         inf = info(project)
         sid = inf.get("session_id")
@@ -88,13 +92,16 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                         "rotated_from": sid, "rotated_at": S.now()})
             save_info(project, inf)
         persona = rules.compiled_persona("l3", project)
-        chat_log(project, "user", prompt, trigger=trigger)
+        turn_started_at = S.now()
+        chat_log(project, "user", prompt, trigger=trigger, at=turn_started_at)
         res = engines.claude_print(
             _header(project, trigger, fresh) + prompt, cwd=config.project_path(project),
             resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
             permission_mode="auto", model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text,
             on_start=on_start,
             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+        res["skipped"] = False
+        res["_turn_started_at"] = turn_started_at
         if res.get("limited") or (res["error"] and not res["session_id"]):
             chat_log(project, "error", res["error"], trigger=trigger)  # a held/limited turn is not a turn: nothing saved
             return res
