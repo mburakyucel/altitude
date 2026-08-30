@@ -140,6 +140,14 @@ def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
         T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
 
 
+def size_task(project: str, slug: str) -> None:
+    try:
+        res = intake.size(project, slug)
+        log(f"[{project}/{slug}] sized: {res}")
+    except Exception as e:  # noqa: BLE001 — the fault is already filed by intake.size
+        log(f"[{project}/{slug}] sizer failed: {e}")
+
+
 def run_proposal_flow(project: str, slug: str) -> None:
     task = S.load_task(project, slug)
     with S.project_lock(project):
@@ -362,6 +370,9 @@ def tick() -> None:
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
             for t in S.list_tasks(project):
+                if t["state"] == "requested" and not t.get("class") and not t.get("size_error") and not engines.usage_hold():
+                    spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
+                    continue
                 if t["state"] == "requested" and t["class"] in ("M", "L") and not engines.usage_hold():
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
@@ -646,7 +657,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "verify":
                     return self._json(verify.verify(project, slug))
                 elif action == "new":
-                    t = T.new(project, o["title"], o.get("class") or "M", o.get("request") or o["title"], actor="burak")
+                    t = T.new(project, o["title"], o.get("class") or "auto", o.get("request") or o["title"], actor="burak")
                     return self._json({"ok": True, "slug": t["slug"]})
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":

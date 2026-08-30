@@ -65,6 +65,8 @@ L3 runs every request through it. Which stages actually execute depends on the t
 | **M** | a feature or change within settled architecture | research → propose (one-page) → critique → build → review → verify → report | FYI, unless the proposal hits the Decision rule |
 | **L** | new architecture, always-list class, multi-task | full loop; proposal is a Decision; L2 may split into several L2s | Decision, then FYIs |
 
+Burak does not have to pick the class: a request filed as `auto` (the UI default, `alt task new` default) is sized by the intake sizer — a read-only research-tier session with the table above as its rubric — which also names the paths for the lease; S is approved at once, M/L enter the proposal flow (decision 53). L3 can override before approval with `alt task size`.
+
 The "spin up a session to design, then propose, then build, then another to verify" instructions Burak keeps repeating are these stages; once they are in the personas they are never typed again.
 
 ## The spend envelope — proportionality (decision 31)
