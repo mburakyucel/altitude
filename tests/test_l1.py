@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-l1-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
@@ -50,15 +51,28 @@ class TestL1Runs(unittest.TestCase):
         config.ensure_root()
         REPO.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=REPO, check=True)
-        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], cwd=REPO, check=True)
+        (REPO / ".gitignore").write_text(".claude/\n")
+        subprocess.run(["git", "add", ".gitignore"], cwd=REPO, check=True)
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"], cwd=REPO, check=True)
+        remote = _TMP / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], cwd=REPO, check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=REPO, check=True)
+        subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=REPO, check=True)
         config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
 
     def _task(self, slug, cls="S", engine=None):
         T.new("altitude", slug, cls, "req", actor="l3", engine=engine)
+        worktree = REPO / ".claude" / "worktrees" / slug
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", f"worktree-{slug}", str(worktree), "origin/main"],
+            cwd=REPO, check=True,
+        )
         with S.project_lock("altitude"):
-            t = S.load_task("altitude", slug); t["worktree"] = str(REPO); S.save_task("altitude", t)
+            t = S.load_task("altitude", slug)
+            t["worktree"], t["branch"] = str(worktree), f"worktree-{slug}"
+            S.save_task("altitude", t)
         brief = S.task_dir("altitude", slug) / "sub-1.md"; brief.write_text("# sub-brief\nchange one thing\n")
         return slug, brief
 
@@ -97,7 +111,10 @@ class TestL1Runs(unittest.TestCase):
         _wait_done("altitude", slug, first["name"])
         rev = l1.start("altitude", slug, brief, role="reviewer")
         self.assertEqual(rev["engine"], "claude", "author was codex → reviewer takes claude")
-        self.assertEqual(Path(rev["worktree"]).resolve(), REPO.resolve(), "a reviewer reads in place, no worktree")
+        self.assertEqual(
+            Path(rev["worktree"]).resolve(), (REPO / ".claude" / "worktrees" / slug).resolve(),
+            "a reviewer reads in the L2 checkout, without another worktree",
+        )
         done = _wait_done("altitude", slug, rev["name"])
         self.assertIsNone(done["result"]["error"])
         st = l1.status("altitude", slug)
@@ -114,6 +131,63 @@ class TestL1Runs(unittest.TestCase):
         self.assertTrue(ns["is_launch"]("alt l1 run --role reviewer --brief r.md"))
         self.assertFalse(ns["is_launch"]("alt l1 wait implementer-1"))
         self.assertFalse(ns["is_launch"]("alt l1 status"))
+
+    def test_immutable_parent_sha_is_used_if_l2_head_moves_after_validation(self):
+        slug, brief = self._task("l1-parent-race")
+        parent = REPO / ".claude" / "worktrees" / slug
+        captured = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=parent, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        real_check = l1.git_policy.commits_missing_task_trailer
+
+        def advance_after_check(*args, **kwargs):
+            missing = real_check(*args, **kwargs)
+            (parent / "raced.txt").write_text("later\n")
+            subprocess.run(["git", "add", "raced.txt"], cwd=parent, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "later",
+                 "-m", f"Altitude-Task: altitude/{slug}"],
+                cwd=parent, check=True,
+            )
+            return missing
+
+        with mock.patch.object(l1.git_policy, "commits_missing_task_trailer", side_effect=advance_after_check):
+            rec = l1.start("altitude", slug, brief)
+
+        nested_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=rec["worktree"], check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(nested_head, captured)
+        self.assertFalse((Path(rec["worktree"]) / "raced.txt").exists())
+        _wait_done("altitude", slug, rec["name"])
+
+    def test_z_implementer_refuses_parent_commit_from_another_provenance(self):
+        slug, brief = self._task("l1-bad-parent")
+        parent = REPO / ".claude" / "worktrees" / slug
+        (parent / "direct.txt").write_text("direct\n")
+        subprocess.run(["git", "add", "direct.txt"], cwd=parent, check=True)
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "direct commit"],
+            cwd=parent, check=True,
+        )
+
+        with self.assertRaisesRegex(T.TransitionError, "without exact.*provenance"):
+            l1.start("altitude", slug, brief)
+        self.assertEqual(l1.list_runs("altitude", slug), [])
+
+    def test_z_explicit_main_cwd_is_refused(self):
+        slug, brief = self._task("l1-explicit-main")
+        with self.assertRaisesRegex(T.TransitionError, "protected branch 'main'"):
+            l1.start("altitude", slug, brief, cwd=str(REPO))
+        self.assertEqual(l1.list_runs("altitude", slug), [])
+
+    def test_registered_task_worktree_is_allowed_for_review_fix_round(self):
+        slug, brief = self._task("l1-review-fix")
+        parent = REPO / ".claude" / "worktrees" / slug
+        rec = l1.start("altitude", slug, brief, cwd=str(parent))
+        self.assertEqual(Path(rec["worktree"]).resolve(), parent.resolve())
+        self.assertEqual(rec["branch"], f"worktree-{slug}")
+        _wait_done("altitude", slug, rec["name"])
 
 
 if __name__ == "__main__":

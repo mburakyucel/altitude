@@ -91,6 +91,7 @@ def main(argv=None) -> None:
     sub.add_parser("backlog")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
+    sub.add_parser("install-git-guards")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
@@ -271,6 +272,14 @@ def main(argv=None) -> None:
         from altitude import server; server.main(host=args.host, port=args.port); return
     if c == "install-statusline":
         from altitude import server; out(server.install_statusline()); return
+    if c == "install-git-guards":
+        from altitude import git_policy
+        try:
+            hooks_path = git_policy.install_hooks(Path.cwd())
+        except git_policy.GitPolicyError as e:
+            sys.exit(f"alt install-git-guards: {e}")
+        out({"ok": True, "hooks_path": str(hooks_path)})
+        return
     if c == "tls-init":
         from altitude import server; out(server.tls_init(args.ip)); return
 

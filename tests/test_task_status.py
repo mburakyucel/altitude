@@ -147,7 +147,7 @@ class TestTaskStatus(unittest.TestCase):
             "project", "slug", "state", "class", "title", "attempt", "dispatch_id", "session_id",
             "agent_id", "source", "hold_merge", "blocked_reason", "updated", "worktree", "branch",
             "envelope", "counts", "envelope_file", "l1_runs", "lease", "other_leases", "hold",
-            "wip_hold", "gate", "report_json", "prs", "main_run", "errors",
+            "wip_hold", "gate", "repository", "report_json", "prs", "main_run", "errors",
         }
         self.assertTrue(expected_fields.issubset(result))
         self.assertEqual(result["errors"], [])
@@ -171,6 +171,28 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
         run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
         self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
+
+    def test_repository_status_is_serialized_from_the_read_only_inspector(self):
+        repository = {
+            "branch": "main", "dirty": False, "head": "head-sha", "origin_sha": "origin-sha",
+            "ahead": 0, "behind": 2, "local_only_shas": [], "oldest_local_sha": None,
+            "determinate": True, "error": None,
+        }
+        inspected = mock.Mock()
+        inspected.as_dict.return_value = repository
+
+        with mock.patch.object(task_status.git_policy, "inspect_repository", return_value=inspected) as inspect:
+            result = task_status.status("demo", "task-one")
+
+        inspect.assert_called_once_with(self.repo)
+        self.assertEqual(result["repository"], repository)
+
+    def test_repository_status_fault_does_not_break_task_status(self):
+        with mock.patch.object(task_status.git_policy, "inspect_repository", side_effect=OSError("git unavailable")):
+            result = task_status.status("demo", "task-one")
+
+        self.assertIsNone(result["repository"])
+        self.assertTrue(any(error.startswith("repository: git unavailable") for error in result["errors"]))
 
     def test_bare_top_level_other_lease_does_not_create_wip_hold(self):
         task_path = S.task_dir("demo", "task-one") / "status.json"

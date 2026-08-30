@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""Block direct pushes to Altitude's protected base branch."""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from altitude.git_policy import main  # noqa: E402
+
+raise SystemExit(main(["hook", "pre-push"]))

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-cleanup-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -24,6 +25,7 @@ class TestCleanupScope(unittest.TestCase):
         env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
         os.environ.update(env)
         git("init", "-q", "-b", "main", cwd=cls.repo); (cls.repo / "f").write_text("1")
+        (cls.repo / ".gitignore").write_text(".claude/\n")
         git("add", "-A", cwd=cls.repo); git("commit", "-qm", "init", cwd=cls.repo)
         bare = Path(_TMP) / "origin.git"; git("init", "-q", "--bare", str(bare), cwd=cls.repo)
         git("remote", "add", "origin", str(bare), cwd=cls.repo); git("push", "-q", "origin", "main", cwd=cls.repo)
@@ -73,6 +75,21 @@ class TestSelfDeploy(unittest.TestCase):
     def test_not_self_deploy_projects_are_untouched(self):
         config.save_projects({"other": {"name": "other", "path": str(Path(_TMP) / "nowhere"), "stacks": []}})
         self.assertEqual(dispatch.pull_after_done("other", {"slug": "x"}), [])
+
+    def test_self_deploy_refuses_an_ahead_main(self):
+        repo = TestCleanupScope.repo
+        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "stacks": ["python"], "self_deploy": True}})
+        (repo / "direct.txt").write_text("must not deploy\n")
+        git("add", "direct.txt", cwd=repo)
+        git("commit", "-qm", "direct main commit", cwd=repo)
+        head = git("rev-parse", "HEAD", cwd=repo).strip()
+
+        with mock.patch("altitude.improve.system_fault") as fault:
+            notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
+
+        self.assertEqual(git("rev-parse", "HEAD", cwd=repo).strip(), head)
+        self.assertTrue(any("self-deploy refused" in note for note in notes), notes)
+        fault.assert_called_once()
 
 
 if __name__ == "__main__":
