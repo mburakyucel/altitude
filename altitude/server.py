@@ -392,7 +392,7 @@ def tick() -> None:
                 mechanize.run_due(project)
             except Exception as e:  # noqa: BLE001
                 log(f"[{project}] mechanize failed: {e}\n{traceback.format_exc()}")
-                improve.system_fault("mechanize", f"{project}: {e}", project=project)
+                improve.system_fault(f"mechanize:{project}", str(e), project=project)
             weekly_audit(project)
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
@@ -556,7 +556,14 @@ class Handler(BaseHTTPRequestHandler):
                 for project in config.load_projects():
                     path = config.MONITOR_DIR / f"tool-shapes-{project}.json"
                     if path.exists():
-                        tool_shapes[project] = (S.read_json(path, {}) or {}).get("shapes", [])[:10]
+                        try:
+                            histogram = S.read_json(path, {})
+                            if not isinstance(histogram, dict):
+                                raise TypeError(f"expected object in {path}")
+                            shapes = histogram.get("shapes", [])
+                            tool_shapes[project] = (shapes if isinstance(shapes, list) else [])[:10]
+                        except (ValueError, TypeError) as e:
+                            log(f"[{project}] warning: cannot display tool-shape histogram: {e}")
                 return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
                                    "agents": engines.claude_agents(), "tool_shapes": tool_shapes})
             if api == "digest":

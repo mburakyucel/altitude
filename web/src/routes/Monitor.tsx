@@ -175,7 +175,9 @@ export default function Monitor() {
                     {rows.map((row, i) => (
                       <tr key={`${str(row["shape"])}-${i}`}>
                         <td className="py-1 pr-4"><code>{str(row["shape"])}</code></td>
-                        <td className="py-1 pr-4 text-right tabular-nums">{num(row["turns"]) ?? 0}</td>
+                        <td className="py-1 pr-4 text-right tabular-nums">
+                          {(num(row["turns"]) ?? 0).toLocaleString()}
+                        </td>
                         <td className="py-1 text-right tabular-nums">
                           {(num(row["context_tokens"]) ?? 0).toLocaleString()}
                         </td>

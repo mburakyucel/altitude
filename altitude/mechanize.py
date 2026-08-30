@@ -18,6 +18,10 @@ INCIDENT_TURNS = 25
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 _SUBCOMMANDS = {"git", "gh", "alt", "claude"}
 _TARGET_COMMANDS = {"cat", "sed", "grep", "ls", "head", "tail"}
+_VALUE_FLAGS = {
+    "git": {"-C", "-c", "--git-dir", "--work-tree"},
+    "gh": {"-R", "--repo"},
+}
 _EXCLUDED_INCIDENT_SHAPES = {"Read", "Edit", "Write"}
 _SHELL_BREAKS = {"|", "||", "&&", ";", "&"}
 
@@ -48,11 +52,18 @@ def _command_words(command: str) -> list[str]:
     return words
 
 
-def _arguments(words: list[str]) -> list[str]:
+def _arguments(words: list[str], value_flags: set[str] | None = None) -> list[str]:
     out = []
+    skip_value = False
     for word in words:
         if word in _SHELL_BREAKS or word.startswith(">") or word.startswith("<"):
             break
+        if skip_value:
+            skip_value = False
+            continue
+        if word in (value_flags or set()):
+            skip_value = True
+            continue
         if not word.startswith("-"):
             out.append(word)
     return out
@@ -63,13 +74,19 @@ def _bash_shape(command: str) -> str | None:
     if not words:
         return None
     first, rest = words[0], words[1:]
-    args = _arguments(rest)
+    args = _arguments(rest, _VALUE_FLAGS.get(first))
     if first in _SUBCOMMANDS and args:
         return f"{first} {args[0]}"
     if first in _TARGET_COMMANDS and args:
-        # sed/grep take an expression before the file; head/tail often take a count.
-        target = args[-1] if first in {"sed", "grep", "head", "tail"} else args[0]
-        return f"{first} {Path(target).name}"
+        # sed/grep take an expression before the file; without both, there is no safe target to expose.
+        if first in {"sed", "grep"}:
+            if len(args) < 2:
+                return first
+            target = args[-1]
+        else:
+            # head/tail often take a count; cat/ls take their first non-flag target.
+            target = args[-1] if first in {"head", "tail"} else args[0]
+        return f"{first} {Path(target).name or target}"
     return first
 
 
@@ -85,28 +102,34 @@ def _tool_shape(block: dict) -> str | None:
 
 
 def _timestamp(value, fallback: float) -> float:
-    if value is None or value == "":
+    try:
+        if value is None or value == "":
+            return fallback
+        if isinstance(value, (int, float)):
+            return float(value)
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
         return fallback
-    if isinstance(value, (int, float)):
-        return float(value)
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
 
 
 def _transcripts(project: str, cutoff: float) -> list[tuple[Path, float]]:
     root = config.project_path(project)
-    cwds = [root]
-    worktrees = root / ".claude" / "worktrees"
+    project_slug = _cwd_slug(root)
+    worktree_prefix = f"{project_slug}--claude-worktrees-"
     try:
-        cwds.extend(p for p in worktrees.iterdir() if p.is_dir())
+        candidates = list(_transcript_root().iterdir())
     except OSError:
-        pass
+        return []
     found: dict[Path, float] = {}
-    for cwd in cwds:
-        directory = _transcript_root() / _cwd_slug(cwd)
+    for directory in candidates:
+        if directory.name != project_slug and not directory.name.startswith(worktree_prefix):
+            continue
         try:
+            if not directory.is_dir():
+                continue
             paths = directory.glob("*.jsonl")
             for path in paths:
                 try:
@@ -132,39 +155,46 @@ def _collect(project: str, now: float) -> list[dict]:
     cutoff = now - WINDOW_SECONDS
     counts: dict[str, dict] = defaultdict(lambda: {"turns": 0, "context_tokens": 0, "sessions": set()})
     for path, mtime in _transcripts(project, cutoff):
+        turns: dict[tuple[str, str], dict] = {}
         try:
-            lines = path.read_text(errors="replace").splitlines()
+            with path.open(errors="replace") as transcript:
+                for line_number, line in enumerate(transcript):
+                    try:
+                        obj = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(obj, dict) or obj.get("type") != "assistant":
+                        continue
+                    if _timestamp(obj.get("timestamp"), mtime) < cutoff:
+                        continue
+                    message = obj.get("message") or {}
+                    if not isinstance(message, dict):
+                        continue
+                    content = message.get("content") or []
+                    if not isinstance(content, list):
+                        continue
+                    message_id = message.get("id")
+                    request_id = obj.get("requestId")
+                    if isinstance(message_id, (str, int)) and message_id != "":
+                        key = ("message", str(message_id))
+                    elif isinstance(request_id, (str, int)) and request_id != "":
+                        key = ("request", str(request_id))
+                    else:
+                        key = ("line", str(line_number))
+                    turn = turns.setdefault(key, {"shapes": set(), "tokens": 0})
+                    turn["shapes"].update(
+                        shape for block in content
+                        if isinstance(block, dict) and block.get("type") == "tool_use"
+                        if (shape := _tool_shape(block))
+                    )
+                    # Lines in one turn repeat usage; max counts it once and tolerates a partial zero line.
+                    turn["tokens"] = max(turn["tokens"], _usage_tokens(message))
         except OSError:
             continue
-        for line in lines:
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(obj, dict) or obj.get("type") != "assistant":
-                continue
-            try:
-                if _timestamp(obj.get("timestamp"), mtime) < cutoff:
-                    continue
-            except (TypeError, ValueError, OverflowError):
-                continue
-            message = obj.get("message") or {}
-            if not isinstance(message, dict):
-                continue
-            content = message.get("content") or []
-            if not isinstance(content, list):
-                continue
-            shapes = {
-                shape for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_use"
-                if (shape := _tool_shape(block))
-            }
-            if not shapes:
-                continue
-            tokens = _usage_tokens(message)
-            for shape in shapes:
+        for turn in turns.values():
+            for shape in turn["shapes"]:
                 counts[shape]["turns"] += 1
-                counts[shape]["context_tokens"] += tokens
+                counts[shape]["context_tokens"] += turn["tokens"]
                 counts[shape]["sessions"].add(str(path))
     rows = [
         {"shape": shape, "turns": values["turns"], "context_tokens": values["context_tokens"],
@@ -189,8 +219,9 @@ def _file_incidents(project: str, rows: list[dict], now: float) -> None:
             continue
         previous = project_stamps.get(shape) or {}
         if previous.get("incident") and _recent(previous.get("last"), now):
-            project_stamps[shape] = {"last": S.now(), "incident": previous["incident"],
-                                     "count": int(previous.get("count", 0)) + 1}
+            # Keep the filing time fixed so the dedup window expires seven days after the actual incident.
+            previous["count"] = int(previous.get("count", 0)) + 1
+            project_stamps[shape] = previous
             changed = True
             continue
         incident = improve.new_incident(
@@ -222,13 +253,15 @@ def run_for(project: str) -> dict:
 
 
 def run_due(project: str) -> dict | None:
-    """Run at most once per project per 24 hours."""
+    """Attempt at most once per project per 24 hours, including failed attempts."""
     path = config.MONITOR_DIR / "mechanize-stamp.json"
     stamps = S.read_json(path, {}) or {}
     now = time.time()
     if project in stamps and now - _timestamp(stamps[project], 0) < RUN_INTERVAL_SECONDS:
         return None
-    result = run_for(project)
-    stamps[project] = S.now()
-    S.write_json(path, stamps)
-    return result
+    try:
+        return run_for(project)
+    finally:
+        # The outer tick files the system fault; stamping here prevents a persistent fault retrying every tick.
+        stamps[project] = S.now()
+        S.write_json(path, stamps)
