@@ -142,6 +142,9 @@ def status(project: str, slug: str) -> dict:
 
     try:
         out["other_leases"] = dispatch.leases(project, exclude=slug)
+        # ``paths`` is the raw staging lease; ``hold_paths`` is the narrowed lease used for holds.
+        for other in out["other_leases"]:
+            other["hold_paths"] = dispatch.narrow(other["paths"])
     except Exception as e:
         _error(errors, "other_leases", e)
 
@@ -153,7 +156,8 @@ def status(project: str, slug: str) -> dict:
     if task:
         try:
             for other in out["other_leases"]:
-                hit = dispatch.paths_overlap(out["lease"], other["paths"])
+                hit = dispatch.paths_overlap(dispatch.narrow(out["lease"]),
+                                             dispatch.narrow(other["paths"]))
                 if hit:
                     out["wip_hold"] = f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
                     break

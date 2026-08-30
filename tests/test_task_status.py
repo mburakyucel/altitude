@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, status as task_status  # noqa: E402
+from altitude import config, dispatch, state as S, status as task_status  # noqa: E402
 
 
 GH = """#!/usr/bin/env python3
@@ -153,7 +153,10 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(result["envelope_file"], self.enforced)
         self.assertEqual(result["l1_runs"]["in_flight"], 1)
         self.assertEqual(result["lease"], ["altitude/status.py", "bin/alt"])
-        self.assertEqual(result["other_leases"], [{"slug": "other-task", "paths": ["altitude/server.py"]}])
+        self.assertEqual(result["other_leases"], [{
+            "slug": "other-task", "paths": ["altitude/server.py"],
+            "hold_paths": ["altitude/server.py"],
+        }])
         self.assertTrue(result["report_json"]["exists"])
         self.assertEqual([pr["number"] for pr in result["prs"]], [17, 18])
         self.assertEqual(result["prs"][0]["merge_sha"], "merge-old")
@@ -165,6 +168,46 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
         run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
         self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
+
+    def test_bare_top_level_other_lease_does_not_create_wip_hold(self):
+        task_path = S.task_dir("demo", "task-one") / "status.json"
+        task = S.read_json(task_path)
+        task["paths"] = ["tests/test_x.py", "tests/"]
+        S.write_json(task_path, task)
+        other_path = S.task_dir("demo", "other-task") / "status.json"
+        other = S.read_json(other_path)
+        other["paths"] = ["tests/"]
+        S.write_json(other_path, other)
+
+        result = task_status.status("demo", "task-one")
+
+        self.assertIsNone(result["wip_hold"])
+        self.assertIsNone(dispatch.wip_hold("demo", task))
+        self.assertEqual(result["lease"], ["tests/test_x.py", "tests/"])
+        self.assertEqual(result["other_leases"], [{
+            "slug": "other-task", "paths": ["tests/"], "hold_paths": [],
+        }])
+
+    def test_file_lease_wip_hold_matches_dispatcher(self):
+        task_path = S.task_dir("demo", "task-one") / "status.json"
+        task = S.read_json(task_path)
+        task["paths"] = ["tests/test_x.py"]
+        S.write_json(task_path, task)
+        other_path = S.task_dir("demo", "other-task") / "status.json"
+        other = S.read_json(other_path)
+        other["paths"] = ["tests/test_x.py"]
+        S.write_json(other_path, other)
+
+        result = task_status.status("demo", "task-one")
+        dispatcher_hold = dispatch.wip_hold("demo", task)
+
+        self.assertEqual(dispatcher_hold,
+                         "file lease: `other-task` is running on tests/test_x.py")
+        self.assertEqual(result["wip_hold"], dispatcher_hold)
+        self.assertEqual(result["other_leases"], [{
+            "slug": "other-task", "paths": ["tests/test_x.py"],
+            "hold_paths": ["tests/test_x.py"],
+        }])
 
     def test_dispatch_keyed_counts_win_over_the_legacy_session_file(self):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
