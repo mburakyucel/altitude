@@ -5,7 +5,11 @@ The measured why: status → add → commit → push → `gh pr create` → `gh 
 command: stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
 push with one rebase retry on a non-fast-forward (never two), open or reuse the PR, wait for checks, merge only
 on green and only when asked. No model call anywhere — the commit message arrives as an argument. Idempotent:
-nothing to commit is a skip, an up-to-date push is a no-op, an open PR is reused."""
+nothing to commit is a skip, an up-to-date push is a no-op, an open PR is reused.
+
+Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
+first — that lookup is what decides whether committing is safe at all (a merged or closed PR is refused) — so
+a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
 from __future__ import annotations
 import json
 import os
@@ -21,6 +25,9 @@ CHECK_POLL_SECONDS = 15
 TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
 UNDECLARED = "(undeclared — all changes staged)"
 EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
+#: `_ensure_pr(pr=...)` default: no lookup has happened yet. `None` means the caller already looked and the
+#: branch has no PR, so the create path must not look a second time.
+NOT_PREFETCHED = object()
 
 
 class LandError(RuntimeError):
@@ -148,11 +155,13 @@ def _pr_files(root: Path, base: str) -> list[str]:
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
-               pr_body_file: str | None, task_ref: str, pr: dict | None = None) -> dict:
+               pr_body_file: str | None, task_ref: str, pr: dict | None | object = NOT_PREFETCHED) -> dict:
     """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it. `pr` is the
-    caller's already-fetched view of the branch's PR, so the happy path costs one `gh pr view`, not two."""
+    caller's already-fetched view of the branch's PR, so the happy path costs one `gh pr view`, not two —
+    and a prefetched `None` ("looked, there is no PR") is distinct from `NOT_PREFETCHED` ("nobody looked"),
+    so the create path reads the PR back exactly once instead of viewing it before and after creating it."""
     title = pr_title or message.splitlines()[0]
-    if pr is None:
+    if pr is NOT_PREFETCHED:
         pr = _pr_view(root, branch)
     if pr is not None:
         _note(f"PR #{pr.get('number')} exists — reusing it")
@@ -335,9 +344,16 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if ahead.returncode == 0 and ahead.stdout.strip() not in ("", "0"):
             _note(f"warning: {ahead.stdout.strip()} local commit(s) are not on origin/{branch} and will not be "
                   f"pushed onto a merged branch — cherry-pick them onto a new task branch")
-        return {"pr": pr.get("number"), "url": pr.get("url"), "checks": _checks_state(root, pr.get("number")),
+        # Nothing was pushed and nothing can be: the PR's checks are history, and asking for them costs a
+        # `gh pr checks` round trip whose answer cannot change this run. `merged` is its own checks value,
+        # never reported as a pass (decision 36).
+        return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "lease": lease_repr,
                 "staged": [], "hold": hold_merge}
+    if pr is not None and pr.get("state") == "CLOSED":
+        raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
+                        f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
+                        f"and re-run alt land, or start a new task branch")
     if groups:
         fd, spec = tempfile.mkstemp(prefix="alt-land-pathspec-")
         try:  # NUL-separated :(literal) pathspecs: a path like `a[1].py` is a filename, never a glob
