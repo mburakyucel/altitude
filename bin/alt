@@ -56,7 +56,7 @@ def main(argv=None) -> None:
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
     for name in ("reject", "park", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("resume", "unpark", "show", "events"):
+    for name in ("resume", "unpark", "show", "status", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
     hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
@@ -151,6 +151,9 @@ def main(argv=None) -> None:
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "show":
             out(S.load_task(p, args.slug))
+        elif tc == "status":
+            from altitude import status
+            out(status.status(p, args.slug))
         elif tc == "events":
             out(S.read_events(p, args.slug))
         elif tc == "list":
