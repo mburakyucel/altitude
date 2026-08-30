@@ -58,6 +58,7 @@ def main(argv=None) -> None:
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("unpark", "show", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
+    x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
     rs = ts.add_parser("resume", help="decision 52: re-attach a blocked L2 (its transcript, its worktree); raise the envelope first when the block was the cap")
     rs.add_argument("slug"); rs.add_argument("--launches", type=int); rs.add_argument("--turns", type=int)
     rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or the granted cap")
@@ -168,6 +169,12 @@ def main(argv=None) -> None:
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "show":
             out(S.load_task(p, args.slug))
+        elif tc == "status":
+            from altitude import status
+            slug = args.slug or os.environ.get("ALTITUDE_TASK")
+            if not slug:
+                sys.exit("alt task status: slug or ALTITUDE_TASK required")
+            out(status.status(p, slug))
         elif tc == "events":
             out(S.read_events(p, args.slug))
         elif tc == "list":
