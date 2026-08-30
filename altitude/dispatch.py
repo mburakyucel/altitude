@@ -131,6 +131,10 @@ def poll(project: str) -> list[dict]:
     by_id = {a.get("id"): a for a in agents.values()}
     finished = []
     for t in S.list_tasks(project):
+        has_report = (S.task_dir(project, t["slug"]) / "report.json").exists()
+        if t["state"] == "blocked" and has_report and "idle without a report" in (t.get("blocked_reason") or ""):
+            finished.append({"task": t, "agent": None})  # report landed after the idle check: hand it to the verifier
+            continue
         if t["state"] != "running":
             continue
         a = agents.get(t.get("session_id")) or by_id.get(t.get("agent_id"))
@@ -138,9 +142,9 @@ def poll(project: str) -> list[dict]:
         prev = S.read_json(live_p, {}) or {}
         live = {"status": a.get("status"), "state": a.get("state")} if a else None
         idle_since = None
-        if a and a.get("status") == "idle" and a.get("state") != "done":
+        if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             idle_since = prev.get("idle_since") or S.now()
-        if a is None or a.get("state") == "done" or a.get("status") == "exited":
+        if a is None or a.get("state") == "done" or a.get("status") == "exited" or (has_report and a.get("status") == "idle"):
             finished.append({"task": t, "agent": a})
         elif idle_since and _seconds_since(idle_since) > IDLE_NEEDS_INPUT_SECONDS:
             finished.append({"task": t, "agent": a, "needs_input": True})

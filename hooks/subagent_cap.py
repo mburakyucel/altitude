@@ -9,6 +9,8 @@ if inp.get("tool_name") == "Bash":
     cmd = str((inp.get("tool_input") or {}).get("command") or "")
     if not re.search(r"\bcodex\s+exec\b|\bclaude\s+(-p|--print|--bg)\b", cmd):
         sys.exit(0)  # ordinary shell command: not a launch
+    if re.search(r"(^|\s)(--help|-h|--version|-V)(\s|$)", cmd):
+        sys.exit(0)  # capability probe, not a launch (I-004 candidate: an L2 lost a launch to `codex exec --help`)
 root = Path(os.environ.get("ALTITUDE_HOME", Path.home() / ".altitude"))
 mon = root / "monitor"; mon.mkdir(parents=True, exist_ok=True)
 counts_p = mon / f"counts-{sid}.json"
