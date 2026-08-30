@@ -19,6 +19,7 @@
 | 10 | Gold set + scorecard; first end-to-end task on a project | next | end-to-end on Altitude itself (decision 28), then career-platform when Burak says so |
 
 ## Log
+- 2026-08-30 — Phone could not reach altd: ufw on this machine only allowed 8080/8443 on wg0 (pocketbook installers); 8890 needed `sudo ufw allow in on wg0 to any port 8890 proto tcp` (documented in README + `make install-service`). Server is TLS-only, so the URL is `https://`. Fixed `--json-schema` (Claude CLI wants the JSON text, not a path) — every M/L proposal had been failing; `tick()` now retries a proposal that left no `proposal.json` after 30 min. Server logs the first request per client address (requests were fully silent, which made this hard to diagnose).
 
 - **2026-08-29** — Design complete (docs/*.md, 33 decisions). Build started in the design session. Stage 0: name settled (Altitude), docs renamed, git initialised, private repo created.
 - **2026-08-29 (later)** — Stages 1–9 written (~1.9k lines Python + web). Verified: lifecycle test, CLI, cap hook, a real L3 turn, server endpoints + page. Not yet verified: proposal agent, `claude --bg` dispatch through the server, verify-report against GitHub, Codex critic.

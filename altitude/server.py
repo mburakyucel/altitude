@@ -63,12 +63,20 @@ def run_proposal_flow(project: str, slug: str) -> None:
             return
         task["proposal_started"] = S.now()
         S.save_task(project, task)
-    log(f"[{project}/{slug}] proposal agent")
-    p = propose.run_proposal(project, slug)
+    tdir = S.task_dir(project, slug)
+    if (tdir / "proposal.json").exists():  # resuming after a server restart: reuse what is already on disk
+        p = S.read_json(tdir / "proposal.json")
+        log(f"[{project}/{slug}] proposal reused from disk")
+    else:
+        log(f"[{project}/{slug}] proposal agent")
+        p = propose.run_proposal(project, slug)
     crit = None
     if task["class"] == "L" or (p.get("always_list_hits") and task["class"] == "M"):
-        log(f"[{project}/{slug}] critic")
-        crit = propose.run_critic(project, slug)
+        if (tdir / "critique.json").exists():
+            crit = S.read_json(tdir / "critique.json")
+        else:
+            log(f"[{project}/{slug}] critic")
+            crit = propose.run_critic(project, slug)
     header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
               f"Proposal says decision_needed={p.get('decision_needed')}, always-list hits={p.get('always_list_hits')}, "
               f"estimate={p.get('estimate')}."
@@ -143,8 +151,20 @@ def tick() -> None:
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             for t in S.list_tasks(project):
-                if t["state"] == "requested" and t["class"] in ("M", "L") and not t.get("proposal_started"):
-                    spawn(f"propose:{project}:{t['slug']}", run_proposal_flow, project, t["slug"])
+                if t["state"] == "requested" and t["class"] in ("M", "L"):
+                    started = t.get("proposal_started")
+                    key = f"propose:{project}:{t['slug']}"
+                    alive = (_bg.get(key) or threading.Thread()).is_alive()
+                    has_proposal = (S.task_dir(project, t["slug"]) / "proposal.json").exists()
+                    # a flow that is not running in this process died with the previous server: resume at once if the
+                    # proposal is on disk, otherwise wait 30 min in case an orphaned proposal agent is still writing it
+                    stale = started and not alive and (has_proposal or dispatch._seconds_since(started) > 1800)
+                    if not started or stale:
+                        if stale:
+                            with S.project_lock(project):
+                                t2 = S.load_task(project, t["slug"]); t2["proposal_started"] = None; S.save_task(project, t2)
+                            log(f"[{project}/{t['slug']}] proposal flow resumed (previous run did not finish)")
+                        spawn(key, run_proposal_flow, project, t["slug"])
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
@@ -201,7 +221,13 @@ def timer_loop() -> None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "altd/0.1"
 
-    def log_message(self, fmt, *args):  # quieter
+    _seen_clients: set = set()
+
+    def log_message(self, fmt, *args):  # quieter: one line per new client address, nothing per request
+        ip = self.client_address[0]
+        if ip not in self._seen_clients:
+            self._seen_clients.add(ip)
+            log(f"first request from {ip}: {self.command} {self.path}")
         if "/api/" not in (args[0] if args else ""):
             return
 

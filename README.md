@@ -26,7 +26,8 @@ Status 2026-08-29: **Burak decided to build** (decision 15 settled); settled sin
 
 ```
 make run                      # altd on 127.0.0.1:8890 (open http://127.0.0.1:8890)
-make install-service          # user systemd unit on 10.88.0.1:8890 — reachable from the phone over WireGuard
+make install-service          # user systemd unit on https://10.88.0.1:8890 — reachable from the phone over WireGuard
+                              # (ufw: sudo ufw allow in on wg0 to any port 8890 proto tcp — the pocketbook installers only opened 8080/8443)
 bin/alt project add <name> --path ~/Projects/<name> --stacks python,cdk   # or press "Start L3" on the Projects tab
 bin/alt -p <name> chat "…"    # talk to L3 from a terminal; the page does the same with streaming
 bin/alt install-statusline    # optional: wraps ~/.claude/statusline.sh so the seat quota shows on the Monitor tab (edits ~/.claude/settings.json)

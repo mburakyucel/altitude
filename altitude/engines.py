@@ -32,8 +32,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--allowedTools", allowed_tools]
     if tools is not None:
         cmd += ["--tools", tools]
-    if schema:
-        cmd += ["--json-schema", str(schema)]
+    if schema:  # the flag takes the JSON text itself, not a path
+        cmd += ["--json-schema", Path(schema).read_text() if Path(schema).exists() else str(schema)]
     if model:
         cmd += ["--model", model]
     if max_turns:
