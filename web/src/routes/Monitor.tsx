@@ -123,6 +123,10 @@ export default function Monitor() {
     .map((a) =>
       `${str(a["id"]).slice(0, 8)} ${str(a["name"])} ${str(a["status"])} ${str(a["state"])} ${str(a["cwd"])}`.trimEnd(),
     );
+  const toolShapes = Object.entries(monitor.data.tool_shapes ?? {}).map(([project, value]) => ({
+    project,
+    rows: arr(value).map(dict),
+  }));
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -148,6 +152,43 @@ export default function Monitor() {
         <pre className="card overflow-x-auto whitespace-pre-wrap text-meta text-ink-2">
           {workers.length > 0 ? workers.join("\n") : "none"}
         </pre>
+      </section>
+
+      <section className="card space-y-3">
+        <h2 className="label">Tool shapes (7 days)</h2>
+        {toolShapes.length === 0 ? (
+          <p className="text-meta text-muted">no tool-shape history</p>
+        ) : (
+          toolShapes.map(({ project, rows }) => (
+            <div key={project} className="space-y-2">
+              <h3 className="text-body font-semibold">{project}</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-meta">
+                  <thead className="text-muted">
+                    <tr>
+                      <th className="pb-1 pr-4 font-normal">shape</th>
+                      <th className="pb-1 pr-4 text-right font-normal">turns</th>
+                      <th className="pb-1 text-right font-normal">context-tokens</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, i) => (
+                      <tr key={`${str(row["shape"])}-${i}`}>
+                        <td className="py-1 pr-4"><code>{str(row["shape"])}</code></td>
+                        <td className="py-1 pr-4 text-right tabular-nums">
+                          {(num(row["turns"]) ?? 0).toLocaleString()}
+                        </td>
+                        <td className="py-1 text-right tabular-nums">
+                          {(num(row["context_tokens"]) ?? 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))
+        )}
       </section>
     </div>
   );
