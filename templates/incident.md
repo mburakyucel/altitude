@@ -11,3 +11,8 @@
 - scope: {scope}
 - rule: {rule}
 - status: {status}
+
+<!-- Corrections (`alt incident amend`) append one block below, oldest first; the fields above are rewritten in
+     place and nothing is ever deleted:
+     amended: YYYY-MM-DD by <actor>: <reason>
+     - was <field label>: <the replaced text, verbatim> -->

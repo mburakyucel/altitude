@@ -66,6 +66,7 @@ def main(argv=None) -> None:
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
     inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[]); inew.add_argument("--generalizable", default="unknown"); inew.add_argument("--mechanism", default="incident-only"); inew.add_argument("--scope", default="project")
+    iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--reason", required=True)
     ics.add_parser("list")
     ru = sub.add_parser("rule"); rus = ru.add_subparsers(dest="rcmd", required=True)
     rp = rus.add_parser("propose"); rp.add_argument("--incident", required=True); rp.add_argument("--title", required=True); rp.add_argument("--text", required=True); rp.add_argument("--mechanism", default="rule", choices=["rule", "instruction", "skill", "incident-only"]); rp.add_argument("--scope", default="project", choices=["project", "stack", "global"]); rp.add_argument("--stack"); rp.add_argument("--where", default=""); rp.add_argument("--prevents", default=""); rp.add_argument("--effect", default="")
@@ -160,6 +161,12 @@ def main(argv=None) -> None:
         if args.icmd == "new":
             out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause, tags=args.tag,
                                      generalizable=args.generalizable, mechanism=args.mechanism, scope=args.scope, actor=ACTOR))
+        elif args.icmd == "amend":
+            fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status)) if v is not None}
+            try:
+                out(improve.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
+            except ValueError as e:
+                sys.exit(f"alt: {e}")
         else:
             out([r for r in improve.index() if r["project"] == p])
         return

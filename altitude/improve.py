@@ -8,6 +8,9 @@ from . import config, rules, state as S, tasks as T
 
 MECHANISMS = ("rule", "instruction", "skill", "incident-only")
 SCOPES = ("project", "stack", "global")
+STATUSES = ("open", "watch", "closed")
+# Fields `alt incident amend` may rewrite, in template order → the bullet label each one owns in incident.md.
+AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cause", "status": "status"}
 
 
 def _index_append(row: dict) -> None:
@@ -89,6 +92,54 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     S.project_log(project, "incident", id=iid, title=title, tags=row["tags"])
     S.regen_state_md(project)
     return {"id": iid, "path": str(d / f"{iid}.md"), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
+
+
+def _field_re(label: str):
+    """The template writes one `- <label>: <value>` bullet per field; a value may wrap over several lines,
+    so a field runs up to the next bullet, the blank line before the amendment history, or the end of file."""
+    return re.compile(rf"^- {re.escape(label)}: (.*?)(?=\n- |\n\n|\n*\Z)", re.S | re.M)
+
+
+def _incident_task(body: str) -> str | None:
+    m = re.search(r"^- task: (.*)$", body, re.M)
+    task = m.group(1).strip() if m else ""
+    return task if task and task != "-" else None
+
+
+def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3", **fields) -> dict:
+    """Correct a filed incident in place: rewrite only the named fields, keep the replaced text beneath a dated
+    `amended:` line. Nothing is ever deleted — an incident is the provenance of a rule (decision 14), so a
+    correction that lost the original would break the audit trail it exists for."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("an amendment needs a --reason; an unexplained correction is not auditable")
+    unknown = sorted(set(fields) - set(AMENDABLE))
+    if unknown:
+        raise ValueError(f"unknown field(s) {', '.join(unknown)}; amendable fields are {', '.join(AMENDABLE)}")
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if not fields:
+        raise ValueError(f"nothing to amend: give at least one of {', '.join('--' + k for k in AMENDABLE)}")
+    if "status" in fields and fields["status"] not in STATUSES:
+        raise ValueError(f"status in {STATUSES}")
+    path = config.project_dir(project) / "incidents" / f"{incident}.md"
+    if not path.exists():
+        raise ValueError(f"unknown incident {incident!r} in project {project!r} (no {path})")
+    body = path.read_text()
+    was = []
+    for key, label in AMENDABLE.items():   # template order, so the history reads like the file
+        if key not in fields:
+            continue
+        m = _field_re(label).search(body)
+        if not m:
+            raise ValueError(f"{incident} has no `- {label}:` line to amend")
+        was.append(f"- was {label}: {m.group(1)}")
+        body = body[:m.start(1)] + fields[key].strip() + body[m.end(1):]
+    body = body.rstrip("\n") + f"\n\namended: {S.now()[:10]} by {actor}: {reason}\n" + "\n".join(was) + "\n"
+    S.atomic_write(path, body)
+    task = _incident_task(body)
+    if task:
+        S.append_event(project, task, "incident-amended", id=incident, fields=sorted(fields), reason=reason, by=actor)
+    return {"id": incident, "path": str(path), "amended": sorted(fields), "task": task, "by": actor}
 
 
 def matches_elsewhere(project: str, tags: list[str]) -> list[dict]:
