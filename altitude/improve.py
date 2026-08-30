@@ -1,8 +1,11 @@
 """Self-improvement (ARCHITECTURE §8): incidents, right-sized rules, scopes, promotion, audit input."""
 from __future__ import annotations
+import fcntl
 import json
+import os
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import config, rules, state as S, tasks as T
@@ -72,25 +75,100 @@ def index() -> list[dict]:
     return out
 
 
+_IID = re.compile(r"^I-(\d+)$")
+INCIDENT_ID_ATTEMPTS = 20
+
+
+@contextmanager
+def _alloc_lock(directory: Path):
+    """A lock of its own for incident-id allocation, deliberately NOT `S.project_lock` (I-013). This is a leaf:
+    it is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
+    with itself nor invert an order against the project lock — and `dispatch.run` does hold a project lock while
+    `wip_hold` files a `quota-unknown` fault, so reusing that lock here would deadlock altd outright."""
+    directory.mkdir(parents=True, exist_ok=True)
+    with open(directory / ".alloc.lock", "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _issued_incident_numbers(project: str) -> list[int]:
+    """Every incident number this project has already issued, wherever it was recorded: the global index, the
+    per-project ledger, the Altitude-side folder `new_incident` writes, and the repo copy. Anything that is not a
+    strict `I-NNN` is skipped rather than crashed on."""
+    nums: list[int] = []
+
+    def take(value: object) -> None:
+        m = _IID.match(str(value))
+        if m:
+            nums.append(int(m.group(1)))
+
+    for r in index():
+        if r.get("project") == project:
+            take(r.get("id"))
+    ledger = config.project_dir(project) / "incidents.jsonl"
+    if ledger.exists():
+        for line in ledger.read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                take(row.get("id"))
+    for d in (config.project_dir(project) / "incidents", config.project_path(project) / "docs" / "incidents"):
+        if d.is_dir():
+            for f in d.glob("I-*.md"):
+                take(f.stem)
+    return nums
+
+
 def next_incident_id(project: str) -> str:
-    n = sum(1 for r in index() if r.get("project") == project)
-    repo_dir = config.project_path(project) / "docs" / "incidents"
-    if repo_dir.is_dir():
-        n = max(n, len(list(repo_dir.glob("I-*.md"))))
-    return f"I-{n + 1:03d}"
+    """One past the highest id ever issued — never a count (I-013): two `l2-died` faults in the same second both
+    counted the same 8 rows and both got `I-009`, and the blind overwrite behind it kept only the second. A gap
+    left by a lost or renumbered record is never handed out again either. Same shape as `rules.next_id`."""
+    nums = _issued_incident_numbers(project)
+    return f"I-{(max(nums) + 1) if nums else 1:03d}"
 
 
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
                  tags: list[str], generalizable: str = "unknown", mechanism: str = "incident-only",
                  scope: str = "project", rule: str | None = None, actor: str = "l3") -> dict:
-    """Write the incident into the project's Altitude folder (the repo copy lands via the apply S-task)."""
-    iid = next_incident_id(project)
-    body = (config.TEMPLATES / "incident.md").read_text().format(
-        id=iid, title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
-        cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-", status="open" if rule else "watch")
+    """Write the incident into the project's Altitude folder (the repo copy lands via the apply S-task).
+    Safe to call while holding any project lock — allocation takes a leaf lock of its own (I-013), precisely so a
+    caller that already holds one (`dispatch.run` does, around the `wip_hold` that files `quota-unknown`) cannot
+    deadlock on it."""
+    template = (config.TEMPLATES / "incident.md").read_text()
+    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
+                  cause=cause.strip(), generalizable=generalizable, mechanism=mechanism, scope=scope, rule=rule or "-",
+                  status="open" if rule else "watch")
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
-    S.atomic_write(d / f"{iid}.md", body)
+    # Render once before anything is reserved, with a placeholder id: a template placeholder this function does not
+    # pass — or a stray brace in incident.md — must blow up here, not after O_EXCL has burned an id and left a
+    # zero-byte file behind. The real id is not known until the reservation succeeds, and only that value differs,
+    # so if this pass renders the one below cannot fail.
+    template.format(id="I-000", **fields)
+    # (I-013) Reserve the id with an exclusive create, then fill the file atomically. The empty file IS the
+    # reservation and holds the id against every other racer — process or thread — while `atomic_write` replaces
+    # it whole, so a crash mid-write can never leave a half-parsed incident. An existing incidents/I-NNN.md is
+    # never overwritten: we take the next free id, or give up loudly. The lock only stops racers spinning here.
+    iid, path = "", d
+    with _alloc_lock(d):
+        for _ in range(INCIDENT_ID_ATTEMPTS):
+            iid = next_incident_id(project)
+            path = d / f"{iid}.md"
+            try:
+                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            except FileExistsError:
+                continue                    # someone took it between the max and the open — recompute and retry
+            break
+        else:
+            raise RuntimeError(f"cannot file an incident on {project}: {iid or '(none allocated)'} already exists at {path} "
+                               f"and so did every id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident "
+                               "file is never overwritten")
+    S.atomic_write(path, template.format(id=iid, **fields))
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "scope": scope, "mechanism": mechanism, "rule": rule, "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
@@ -100,7 +178,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         S.append_event(project, task, "incident", id=iid, tags=row["tags"], mechanism=mechanism, scope=scope, by=actor)
     S.project_log(project, "incident", id=iid, title=title, tags=row["tags"])
     S.regen_state_md(project)
-    return {"id": iid, "path": str(d / f"{iid}.md"), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
+    return {"id": iid, "path": str(path), "matches_elsewhere": matches_elsewhere(project, row["tags"])}
 
 
 def _field_spans(body: str, incident: str) -> dict[str, tuple[int, int]]:
@@ -134,8 +212,8 @@ def _incident_task(body: str, spans: dict[str, tuple[int, int]]) -> str | None:
 
 
 def _index_correct(path: Path, project: str, incident: str, updates: dict) -> bool:
-    """Rewrite one incident's existing index row. Never appends: `next_incident_id` counts rows, so an extra
-    row would burn an incident id — and the audit would then read the old cause beside the new one."""
+    """Rewrite one incident's existing index row. Never appends: a second row for the same id would leave the
+    audit reading the old cause beside the new one."""
     if not updates or not path.exists():
         return False
     lines, hit = [], False
