@@ -179,6 +179,37 @@ describe("Inbox", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders a fresh partial quota in both the shell and inbox", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input).includes("/api/overview")
+          ? jsonResponse({ ...overview, quota: { known: true, five_hour: 63, seven_day: null } })
+          : jsonResponse({ error: "not found" }, 404),
+      ),
+    );
+    renderApp({ route: "/" });
+
+    const labels = await screen.findAllByText("Claude 5h 63%");
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("Claude quota unknown")).toBeNull();
+  });
+
+  it("does not present stale numeric windows when quota is unknown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input).includes("/api/overview")
+          ? jsonResponse({ ...overview, quota: { known: false, five_hour: 12, seven_day: 34 } })
+          : jsonResponse({ error: "not found" }, 404),
+      ),
+    );
+    renderApp({ route: "/" });
+
+    expect((await screen.findAllByText("Claude quota unknown")).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("Claude 5h 12% · 7d 34%")).toBeNull();
+  });
+
   it("shows the empty state when nothing is queued", async () => {
     vi.stubGlobal(
       "fetch",

@@ -6,14 +6,18 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+_POPEN_TYPE = subprocess.Popen
 
 from . import config
 
@@ -22,6 +26,12 @@ logger = logging.getLogger(__name__)
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends; L1 applies the same default cap to the artifacts it exposes.
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
+CODEX_PATCH_NOTE = (
+    "[altitude] Host patch constraint: the custom and shell `apply_patch` verifier can be scoped to the service "
+    "checkout and may not see this task worktree. If that happens, apply a unified patch with the shell command "
+    "`git apply` from this worktree. This edits files only; it does not bypass Git provenance hooks, commit, push, "
+    "or change refs."
+)
 
 
 def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
@@ -138,7 +148,10 @@ def usage_hold() -> str | None:
 
 def claude_stop(agent_id: str) -> str:
     p = subprocess.run([config.CLAUDE_BIN, "stop", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
-    return (p.stdout or p.stderr).strip()
+    note = (p.stdout or p.stderr).strip()
+    if p.returncode != 0:
+        raise RuntimeError(f"claude stop {agent_id} failed: {note[:300] or f'exit {p.returncode}'}")
+    return note
 
 
 def clean_env() -> dict:
@@ -168,7 +181,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
-                 timeout: int = config.L3_TURN_TIMEOUT) -> dict:
+                 timeout: int = config.L3_TURN_TIMEOUT, start_new_session: bool = False) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
     made while a hold is in force.
@@ -201,9 +214,27 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     env.update(extra_env or {})
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env)
+                            text=True, env=env, start_new_session=start_new_session)
+    private_group = bool(start_new_session and isinstance(proc, _POPEN_TYPE))
+    leader_start = None
+    if private_group:
+        identity = _process_group_identity(proc.pid)
+        if not identity or identity[1] != proc.pid:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError(f"Claude pid {proc.pid} did not establish its private process group")
+        leader_start = identity[0]
     if on_start:
-        on_start(proc.pid)
+        try:
+            on_start(proc.pid)
+        except BaseException:
+            terminated = _terminate_spawned_process(proc, private_group=private_group,
+                                                    leader_start=leader_start)
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                stream.close()
+            if not terminated:
+                raise RuntimeError(f"could not reap Claude process group {proc.pid} after on_start failed")
+            raise
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
@@ -217,7 +248,20 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
-    killer = threading.Timer(timeout, proc.kill)
+    timed_out = [False]
+    termination_failed = [False]
+    termination_lock = threading.Lock()
+
+    def terminate() -> bool:
+        with termination_lock:
+            return _terminate_spawned_process(proc, private_group=private_group,
+                                              leader_start=leader_start)
+
+    def kill_for_timeout() -> None:
+        timed_out[0] = True
+        termination_failed[0] = not terminate()
+
+    killer = threading.Timer(timeout, kill_for_timeout)
     killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
@@ -262,12 +306,20 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                     out["error"] = str(o.get("result") or o.get("error") or "")[:500]
                 elif not parts and o.get("result"):
                     parts.append(str(o["result"]))
-        proc.wait()
+        if not _finish_spawned_process(proc, private_group=private_group, leader_start=leader_start):
+            termination_failed[0] = True
     except BaseException as exc:
         failure = exc
+        killer.cancel()
+        if not terminate():
+            failure = RuntimeError(f"could not reap Claude process group {proc.pid} after stream failure")
+            failure.__cause__ = exc
+            raise failure
         raise
     finally:
         killer.cancel()
+        if killer.is_alive():
+            killer.join()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()
@@ -280,12 +332,16 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     out.update({"raw_stdout": raw_stdout, "raw_stderr": raw_stderr,
                 "raw_stdout_truncated": raw_stdout_truncated, "raw_stderr_truncated": raw_stderr_truncated})
     out["text"] = "".join(parts).strip()
+    if termination_failed[0]:
+        raise RuntimeError(f"could not reap timed-out Claude process group {proc.pid}")
     lim = usage_limit_in(out.get("synthetic") or out["text"] or raw_stderr, out.get("quota"))
     if lim:
         note_usage_limit(lim, (out.get("synthetic") or out["text"])[:200])
         out["limited"] = lim
         out["error"] = f"usage limit: window exhausted until {lim}"
-    if proc.returncode != 0 and not out["error"]:
+    if timed_out[0]:
+        out["error"] = f"Claude turn timed out after {timeout}s"
+    elif proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     if schema and out["structured"] is None and out["text"]:
         try:
@@ -461,13 +517,139 @@ done
     raise CodexSandboxPreflightError(roots, detail)
 
 
+def _process_group_identity(pid: int) -> tuple[str, int] | None:
+    """Return (start_time, process_group) for a live non-zombie process."""
+    try:
+        fields = Path(f"/proc/{int(pid)}/stat").read_text().rsplit(")", 1)[1].split()
+        if fields[0] == "Z":
+            return None
+        return fields[19], int(fields[2])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def process_group_members(pgid: int, *, exclude_pid: int | None = None) -> dict[int, str]:
+    """Snapshot exact live identities in one owned process group."""
+    members: dict[int, str] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == exclude_pid:
+            continue
+        identity = _process_group_identity(pid)
+        if identity and identity[1] == int(pgid):
+            members[pid] = identity[0]
+    return members
+
+
+def reap_process_group_members(pgid: int, *, exclude_pid: int | None = None, grace: float = 1.0) -> bool:
+    """Reap an owned wrapper group's descendants without signaling the wrapper itself."""
+    members = process_group_members(pgid, exclude_pid=exclude_pid)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid, started in members.items():
+            if _process_group_identity(pid) == (started, int(pgid)):
+                try:
+                    os.kill(pid, sig)
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    return False
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            live = {pid: start for pid, start in members.items()
+                    if _process_group_identity(pid) == (start, int(pgid))}
+            if not live:
+                return not process_group_members(pgid, exclude_pid=exclude_pid)
+            time.sleep(0.02)
+        members = live
+    return not process_group_members(pgid, exclude_pid=exclude_pid)
+
+
+def _terminate_spawned_process(proc, *, private_group: bool, leader_start: str | None,
+                               grace: float = 1.0) -> bool:
+    """Stop one child and prove its private group has no executable survivors.
+
+    A ``Popen`` leader remains waitable (and therefore its PID cannot be reused) until this
+    helper reaps it. That makes the captured start identity plus ``pgid == pid`` sufficient
+    ownership proof even when the leader exits before a SIGTERM-ignoring tool descendant.
+    """
+    if not private_group:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        try:
+            proc.wait()
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return True
+
+    pgid = int(proc.pid)
+    identity = _process_group_identity(pgid)
+    if identity is not None and identity != (str(leader_start), pgid):
+        return False
+    if leader_start is None:
+        return False
+
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            return False
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if not process_group_members(pgid):
+                try:
+                    proc.wait()
+                except (OSError, subprocess.SubprocessError):
+                    return False
+                return not process_group_members(pgid)
+            time.sleep(0.02)
+
+    # Resnapshot and target exact member identities once more. This closes the narrow fork
+    # race between the group-wide signals and the emptiness check, while remaining PID-safe.
+    empty = reap_process_group_members(pgid, grace=grace)
+    try:
+        proc.wait()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return empty and not process_group_members(pgid)
+
+
+def _finish_spawned_process(proc, *, private_group: bool, leader_start: str | None,
+                            exit_grace: float = 0.25) -> bool:
+    """Let a completed CLI leader exit naturally, then prove its whole group empty."""
+    if not private_group:
+        try:
+            proc.wait()
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+    expected = (str(leader_start), int(proc.pid))
+    deadline = time.monotonic() + exit_grace
+    while time.monotonic() < deadline and _process_group_identity(proc.pid) == expected:
+        time.sleep(0.01)
+    return _terminate_spawned_process(proc, private_group=True, leader_start=leader_start)
+
+
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
-               effort: str | None = None, extra_env: dict | None = None,
+               effort: str | None = None, extra_env: dict | None = None, resume: str | None = None,
+               on_start=None, on_text=None, on_session=None, bypass_hook_trust: bool = False,
+               unset_env: tuple[str, ...] = (), start_new_session: bool = True,
                fault_context: dict[str, str] | None = None) -> dict:
-    """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
-    the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
-    `turn.completed` events on stdout."""
+    """Run one preflighted Codex exec turn, fresh or resumed, and parse its JSONL lifecycle events.
+
+    The process is streamed so callers can durably record its PID and thread id before an altd restart. Raw stdout and
+    stderr remain bounded evidence artifacts, independently of the lifecycle values parsed from the stream. Resume has
+    its own CLI surface: sandbox mode is a config override and ``cwd`` remains the process working directory.
+    Workspace-write turns prove every promised writable root before the engine process is launched.
+    """
     if sandbox == "workspace-write":
         try:
             codex_sandbox_preflight(cwd, extra_config)
@@ -486,57 +668,171 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             # Callers already persist and stamp ordinary failures; returning that contract avoids duplicate faults
             # and stranded L3 turns while still guaranteeing Codex was never invoked.
             return {"text": "", "structured": None, "returncode": 1, "engine_started": False,
-                    "fault_recorded": fault_recorded,
-                    "usage": {}, "error": error,
+                    "fault_recorded": fault_recorded, "usage": {}, "session_id": resume, "error": error,
                     "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
                     "raw_stderr_truncated": False}
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
         out_path = outf.name
-    cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd), "--skip-git-repo-check"]
+    if resume:
+        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "-o", out_path, "--skip-git-repo-check"]
+        configs = [f'sandbox_mode="{sandbox}"', *(extra_config or [])]
+    else:
+        cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd),
+               "--skip-git-repo-check"]
+        configs = list(extra_config or [])
     if schema:
         cmd += ["--output-schema", str(schema)]
+    if bypass_hook_trust:
+        cmd += ["--dangerously-bypass-hook-trust"]
     if model:
         cmd += ["-m", model]
-    for kv in extra_config or []:
+    for kv in configs:
         cmd += ["-c", kv]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
+    if resume:
+        cmd += [resume]
+    cmd += [prompt]
+
+    env = clean_env()
+    for key in unset_env:
+        env.pop(key, None)
+    env.update(extra_env or {})
+    stdout_capture, stderr_capture = _BoundedRawCapture(), _BoundedRawCapture()
+    usage: dict = {}
+    messages: list[str] = []
+    session_id = resume
+    timed_out = [False]
+    proc = None
     try:
-        env = clean_env(); env.update(extra_env or {})
-        p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                           stdin=subprocess.DEVNULL, env=env)
+        try:
+            proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, env=env, start_new_session=start_new_session)
+        except OSError as exc:
+            return {"text": "", "structured": None, "returncode": 127, "usage": {}, "session_id": session_id,
+                    "error": f"codex exec could not start: {exc}"[:500], "raw_stdout": "", "raw_stderr": "",
+                    "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+
+        private_group = bool(start_new_session and isinstance(proc, _POPEN_TYPE))
+        leader_start = None
+        if private_group:
+            identity = _process_group_identity(proc.pid)
+            if not identity or identity[1] != proc.pid:
+                proc.kill()
+                proc.wait()
+                raise RuntimeError(f"Codex pid {proc.pid} did not establish its private process group")
+            leader_start = identity[0]
+        termination_failed = [False]
+        termination_lock = threading.Lock()
+
+        def terminate() -> bool:
+            with termination_lock:
+                return _terminate_spawned_process(proc, private_group=private_group,
+                                                  leader_start=leader_start)
+
+        if on_start:
+            try:
+                on_start(proc.pid)
+            except BaseException:
+                terminated = terminate()
+                for stream in (proc.stdout, proc.stderr):
+                    stream.close()
+                if not terminated:
+                    raise RuntimeError(f"could not reap Codex process group {proc.pid} after on_start failed")
+                raise
+
+        def drain_stderr() -> None:
+            while chunk := proc.stderr.read(65536):
+                stderr_capture.add(chunk)
+
+        def kill_for_timeout() -> None:
+            timed_out[0] = True
+            termination_failed[0] = not terminate()
+
+        drain = threading.Thread(target=drain_stderr, daemon=True)
+        drain.start()
+        killer = threading.Timer(timeout, kill_for_timeout)
+        killer.start()
+        failure = None
+        try:
+            for line in proc.stdout:
+                stdout_capture.add(line)
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "thread.started":
+                    session_id = (event.get("thread_id") or event.get("threadId")
+                                  or event.get("session_id") or session_id)
+                    if session_id and on_session:
+                        on_session(str(session_id))
+                elif event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
+                    for key, value in event["usage"].items():
+                        usage[key] = usage.get(key, 0) + (value or 0)
+                elif (event.get("type") == "item.completed"
+                      and (event.get("item") or {}).get("type") == "agent_message"):
+                    message = str((event.get("item") or {}).get("text") or "")
+                    messages.append(message)
+                    if message and on_text:
+                        on_text(message)
+            if not _finish_spawned_process(proc, private_group=private_group,
+                                           leader_start=leader_start):
+                termination_failed[0] = True
+        except BaseException as exc:
+            failure = exc
+            killer.cancel()
+            if not terminate():
+                failure = RuntimeError(f"could not reap Codex process group {proc.pid} after stream failure")
+                failure.__cause__ = exc
+                raise failure
+            raise
+        finally:
+            killer.cancel()
+            if killer.is_alive():
+                killer.join()
+            proc.stdout.close()
+            drain.join(timeout=2)
+            proc.stderr.close()
+            if failure is not None:
+                failure.raw_stdout, failure.raw_stdout_truncated = stdout_capture.render()
+                failure.raw_stderr, failure.raw_stderr_truncated = stderr_capture.render()
+
+        if termination_failed[0]:
+            raise RuntimeError(f"could not reap Codex process group {proc.pid}")
         text = Path(out_path).read_text() if Path(out_path).exists() else ""
     finally:
         try:
             os.unlink(out_path)
         except OSError:
             pass
+
+    raw_stdout, raw_stdout_truncated = stdout_capture.render()
+    raw_stderr, raw_stderr_truncated = stderr_capture.render()
     structured = None
     try:
         structured = json.loads(text)
     except ValueError:
         pass
-    usage, messages = {}, []
-    for line in (p.stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
-            for k, v in ev["usage"].items():
-                usage[k] = usage.get(k, 0) + (v or 0)
-        elif ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
-            messages.append(str((ev["item"] or {}).get("text") or ""))
     if not text.strip() and messages:  # no -o file (or empty): the last agent message is the answer
         text = messages[-1]
-    return {"text": text.strip(), "structured": structured, "returncode": p.returncode, "usage": usage,
-            "error": None if p.returncode == 0 else p.stderr.strip()[:500],
-            "raw_stdout": p.stdout or "", "raw_stderr": p.stderr or "",
-            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+    if timed_out[0]:
+        error = f"codex exec timed out after {timeout}s"
+    elif proc.returncode != 0:
+        error = raw_stderr.strip()[:500] or f"codex exit {proc.returncode}"
+    else:
+        error = None
+    # Usage is cumulative accounting for this exec/resume process, not live context-window occupancy.
+    return {"text": text.strip(), "structured": structured, "returncode": proc.returncode, "usage": usage,
+            "session_id": session_id, "error": error, "raw_stdout": raw_stdout, "raw_stderr": raw_stderr,
+            "raw_stdout_truncated": raw_stdout_truncated, "raw_stderr_truncated": raw_stderr_truncated}
 
 
 def context_percent(context_tokens: int, engine: str = "claude") -> float:
-    return round(100.0 * context_tokens / config.CONTEXT_LINES[engine][2], 1)
+    try:
+        value = 100.0 * max(0, int(context_tokens)) / config.CONTEXT_LINES[engine][2]
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+    return min(100.0, round(value, 1))
 
 
 def context_state(pct: float | None, engine: str = "claude") -> str:

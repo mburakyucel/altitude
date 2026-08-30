@@ -8,6 +8,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from altitude.alt_broker import forward_if_configured  # noqa: E402
+
+_broker_exit = forward_if_configured(sys.argv[1:])
+if _broker_exit is not None:
+    raise SystemExit(_broker_exit)
 from altitude import config, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
@@ -43,6 +48,9 @@ def main(argv=None) -> None:
     l1s.add_parser("status")
     lx = l1s.add_parser("_exec"); lx.add_argument("slug"); lx.add_argument("name")
 
+    l2p = sub.add_parser("l2", help=argparse.SUPPRESS); l2s = l2p.add_subparsers(dest="l2cmd", required=True)
+    l2x = l2s.add_parser("_exec", help=argparse.SUPPRESS); l2x.add_argument("slug"); l2x.add_argument("dispatch_id")
+
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--stacks", default=""); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
     ps.add_parser("list"); ps.add_parser("discover")
@@ -54,8 +62,14 @@ def main(argv=None) -> None:
     pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--context"); pr.add_argument("--detail"); pr.add_argument("--option", action="append")
     ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
-    for name in ("reject", "park", "block"):
+    for name in ("reject", "park", "needs-user"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
+    bl = ts.add_parser("block"); bl.add_argument("slug"); bl.add_argument("--reason", required=True)
+    bl.add_argument("--recovery-batch", help="reconciliation batch being acknowledged (L3 only)")
+    ck = ts.add_parser("checkpoint", help="publish a Codex L2 progress/report file through its host broker")
+    ck.add_argument("slug")
+    ck.add_argument("--name", required=True, choices=("progress.md", "report.md", "report.json"))
+    ck.add_argument("--source", required=True)
     for name in ("unpark", "show", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
@@ -112,6 +126,11 @@ def main(argv=None) -> None:
         elif args.lcmd == "_exec":
             out(L1.exec_run(p, slug, args.name))
         return
+    if c == "l2":
+        from altitude import dispatch
+        if args.l2cmd == "_exec":
+            out(dispatch.exec_codex_l2(_project(args), args.slug, args.dispatch_id))
+        return
     if c == "project":
         P = config.load_projects()
         if args.pcmd == "add":
@@ -142,19 +161,21 @@ def main(argv=None) -> None:
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "park":
-            out(T.park(p, args.slug, args.reason, actor=ACTOR))
+            out(T.park(p, args.slug, args.reason, actor=ACTOR, trigger=os.environ.get("ALTITUDE_TRIGGER")))
         elif tc == "block":
-            out(T.block(p, args.slug, args.reason, actor=ACTOR))
+            out(T.block(p, args.slug, args.reason, actor=ACTOR, recovery_batch=args.recovery_batch))
+        elif tc == "needs-user":
+            out(T.needs_user(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
             if args.launches or args.turns:
                 T.raise_envelope(p, args.slug, launches=args.launches, turns=args.turns, actor=ACTOR)
             t = S.load_task(p, args.slug)
-            if t["state"] == "blocked" and t.get("session_id"):
+            if t["state"] == "blocked":
                 answer = args.answer or "Continue from your progress file; finish to *done* and rewrite the report."
                 if args.launches:
                     answer = f"Envelope raised to {args.launches} subagent launches. " + answer
                 from altitude import dispatch
-                res = dispatch.resume_blocked(p, args.slug, answer, prefix="Altitude: ")
+                res = dispatch.resume_or_retry_blocked(p, args.slug, "Altitude: " + answer)
                 resumed = S.load_task(p, args.slug)
                 if res.get("deferred"):
                     out({"slug": args.slug, "state": "blocked", "deferred": True,
@@ -162,8 +183,15 @@ def main(argv=None) -> None:
                 else:
                     out({"slug": args.slug, "state": "running", "deferred": False,
                          "agent": (res.get("agent") or {}).get("id"), "envelope": resumed["envelope"]})
+            elif t["state"] == "reported":
+                gap = args.answer or "The report is not yet complete; continue from progress.md and close the verified gap."
+                T.block(p, args.slug, gap, actor=ACTOR)
+                from altitude import dispatch
+                res = dispatch.resume_or_retry_blocked(p, args.slug, "Altitude verifier: " + gap)
+                out({"slug": args.slug, "state": S.load_task(p, args.slug)["state"],
+                     "agent": (res.get("agent") or {}).get("id")})
             else:
-                out(T.resume(p, args.slug, actor=ACTOR))
+                raise T.TransitionError(f"{args.slug}: resume requires a blocked or reported task (state {t['state']})")
         elif tc == "unpark":
             out(T.unpark(p, args.slug, actor=ACTOR))
         elif tc == "size":
@@ -184,6 +212,8 @@ def main(argv=None) -> None:
             if not args.off and not args.why:
                 sys.exit("alt task hold-merge: --why <reason> (or --off)")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
+        elif tc == "checkpoint":
+            sys.exit("alt task checkpoint: requires an active Codex L2 broker")
         elif tc == "done":
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
         elif tc == "brief":

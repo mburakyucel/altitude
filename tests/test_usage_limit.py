@@ -66,9 +66,15 @@ class TestPollAndResume(unittest.TestCase):
         self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
 
     def test_job_detail_reads_the_file_and_its_time(self):
-        d = dispatch.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
-        (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
-        text, at = dispatch.job_detail("t-detail")
+        with tempfile.TemporaryDirectory(prefix="altitude-jobs-") as tmp:
+            original = dispatch.JOBS_DIR
+            dispatch.JOBS_DIR = Path(tmp)
+            try:
+                d = dispatch.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
+                (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
+                text, at = dispatch.job_detail("t-detail")
+            finally:
+                dispatch.JOBS_DIR = original
         self.assertEqual(text, LIMIT)
         self.assertLess((datetime.now(timezone.utc) - at).total_seconds(), 60)
         self.assertEqual(dispatch.job_detail("no-such-job"), ("", None))

@@ -139,14 +139,16 @@ export default function Inbox() {
   if (overview.isPending) return <p className="text-muted">Loading…</p>;
   if (overview.isError) return <p className="text-danger">{overview.error.message}</p>;
   const { queue, fyis, wip, quota } = overview.data;
+  const quotaWindows = [
+    quota.known && quota.five_hour != null ? "5h " + Math.round(quota.five_hour) + "%" : null,
+    quota.known && quota.seven_day != null ? "7d " + Math.round(quota.seven_day) + "%" : null,
+  ].filter(Boolean).join(" · ");
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="flex items-baseline gap-3">
         <h1 className="text-page-title font-semibold">Inbox</h1>
         <span className="text-meta text-muted">
-          {quota.known && quota.five_hour != null && quota.seven_day != null
-            ? `5h ${Math.round(quota.five_hour)}% · 7d ${Math.round(quota.seven_day)}%`
-            : "quota unknown"}
+          {quotaWindows ? "Claude " + quotaWindows : "Claude quota unknown"}
         </span>
       </header>
       <section className="space-y-3">

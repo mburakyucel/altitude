@@ -8,7 +8,7 @@
 2. `docs/BUILDING-BLOCKS.md` — what Claude Code and Codex already provide (verified 2026-08-29), and what that settles.
 3. `docs/LANDSCAPE.md` — existing tools (Claude Code native, Paperclip, OpenClaw, Gas Town/Beads, Symphony, Codex, kanban/phone clients) scored against the requirement; verdict, what to borrow, policy risk, recommendation.
 4. `docs/ROLES.md` — **binding altitude contract**: what Burak / L3 / L2 / L1 / validators own, hand up, never do, and how collapse is detected; the Decision-vs-FYI rule; the standard loop with size classes; model tiering.
-5. `docs/ARCHITECTURE.md` — **v1, authoritative**: interactive Remote-Control L3, `claude --bg` L2s, file state with invariants, five-state lifecycle, `AskUserQuestion` approvals, report contract, cross-project Decision queue, validation tiering, ledgers as conventions, phase-0 build list with scorecard and kill criterion; Appendix A holds the deferred design.
+5. `docs/ARCHITECTURE.md` — **v1, authoritative**: server-driven L3 turns, Claude/Codex L2s, file state with invariants, lifecycle, web approvals, report contract, cross-project Decision queue, validation tiering, ledgers as conventions, phase-0 build list with scorecard and kill criterion; Appendix A holds the deferred design.
 6. `docs/DECISIONS.md` — proposed decisions with trade-offs, open questions for Burak, and a keep/adjust/defer assessment of the brainstormed ideas.
 7. `docs/BEFORE-BUILDING.md` — the critical case: are viral tools beneficial, evidence from Burak's own runs, adopt vs fork vs build, the staged plan with metrics, where our own design deserves suspicion, independent reviews. **Read before committing to anything.**
 
@@ -32,7 +32,7 @@ make install-service          # user systemd unit on https://10.88.0.1:8890 — 
                               # (ufw: sudo ufw allow in on wg0 to any port 8890 proto tcp — the pocketbook installers only opened 8080/8443)
 bin/alt project add <name> --path ~/Projects/<name> --stacks python,cdk   # or press "Start L3" on the Projects tab
 bin/alt -p <name> chat "…"    # talk to L3 from a terminal; the page does the same with streaming
-bin/alt install-statusline    # optional: wraps ~/.claude/statusline.sh so the seat quota shows on the Monitor tab (edits ~/.claude/settings.json)
+bin/alt install-statusline    # optional: adds per-session context snapshots; account quota is also read persistently through Claude OAuth
 ```
 
 Web app: a Vite 7 / React 19 / TypeScript SPA in `web/` — Tailwind 4 over `web/design/tokens.css`, react-router, TanStack Query 5 polling the JSON API, zod at the edge — built by `make web` into `web/dist`, which altd serves with an SPA fallback (any unknown path returns `index.html`, so deep links and a phone refresh work). Seven routes: Inbox, Projects, Project, Task, Chat, Monitor, Listen. The Python server owns the API; the SPA owns nothing but rendering.

@@ -18,6 +18,25 @@ from altitude import monitor  # noqa: E402
 
 class TestResumeHold(unittest.TestCase):
     _number = 0
+    @classmethod
+    def setUpClass(cls):
+        cls._config_paths = {
+            name: getattr(config, name)
+            for name in ("ROOT", "PROJECTS_FILE", "MONITOR_DIR", "INCIDENT_INDEX", "DIGEST_FILE")
+        }
+        config.ROOT = _TMP
+        config.PROJECTS_FILE = _TMP / "projects.json"
+        config.MONITOR_DIR = _TMP / "monitor"
+        config.INCIDENT_INDEX = _TMP / "incidents.jsonl"
+        config.DIGEST_FILE = _TMP / "DIGEST.md"
+        cls.addClassCleanup(cls._restore_config_paths)
+        config.ensure_root()
+
+    @classmethod
+    def _restore_config_paths(cls):
+        for name, value in cls._config_paths.items():
+            setattr(config, name, value)
+
 
     def setUp(self):
         type(self)._number += 1
@@ -119,7 +138,9 @@ class TestResumeHold(unittest.TestCase):
         self.assertFalse(result["deferred"])
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
         self.assertEqual([call["slug"] for call in self.resumed], [blocked["slug"]])
-        self.assertEqual(self.stopped, [blocked["agent_id"]])
+        # The real resume_session owns stop-before-replace; this test replaces
+        # that function with a recorder, so resume_blocked must not double-stop.
+        self.assertEqual(self.stopped, [])
 
     def test_only_blocked_task_with_pending_resume_holds_its_files(self):
         pending = self._task("pending lease", "blocked", "altitude/pending.py", "2026-01-01T00:00:00+00:00")

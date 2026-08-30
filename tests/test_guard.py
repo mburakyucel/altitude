@@ -340,6 +340,44 @@ class TestGuardExecutedText(unittest.TestCase):
         )
         self.assertIn("Matched: systemctl --user restart altitude", result.stderr)
 
+    def test_wrapper_options_cannot_conceal_shell_code(self):
+        for command in (
+            'env -u X bash -c "systemctl --user restart altitude"',
+            'env --unset X bash -c "systemctl --user restart altitude"',
+            'env --unset=X bash -c "systemctl --user restart altitude"',
+            'timeout --signal KILL 5 bash -c "systemctl --user restart altitude"',
+            'timeout --signal=KILL 5 bash -c "systemctl --user restart altitude"',
+            'timeout --kill-after 2 5 bash -c "systemctl --user restart altitude"',
+        ):
+            self.assert_blocked(command)
+
+    def test_global_git_options_do_not_conceal_protected_push(self):
+        self.assert_blocked("git --git-dir=/tmp/repo.git push origin HEAD:main")
+        self.assert_blocked("git -C /tmp/repo push --force origin HEAD")
+
+    def test_per_command_hooks_path_overrides_are_blocked(self):
+        self.assert_blocked("git -c core.hooksPath=/dev/null commit -m nope")
+        self.assert_blocked("git --config-env=core.hooksPath=HOOKS push origin HEAD")
+        self.assert_blocked("git --config-env core.hooksPath=HOOKS push origin HEAD")
+        self.assert_allowed("git -c color.ui=false status")
+
+
+    def test_dynamic_git_common_dir_write_is_blocked(self):
+        self.assert_blocked(
+            'printf "[core]\\nhooksPath=/dev/null\\n" '
+            '>> "$(git rev-parse --git-common-dir)/config"'
+        )
+        self.assert_blocked(
+            'printf x | tee "$(git rev-parse --git-common-dir)/config"'
+        )
+        self.assert_allowed('echo "$(git rev-parse --git-common-dir)"')
+
+    def test_exact_hooks_bypass_chain_is_blocked(self):
+        self.assert_blocked(
+            'printf "[core]\\nhooksPath=/dev/null\\n" >> "$(git rev-parse --git-common-dir)/config"; '
+            'git --git-dir="$(git rev-parse --git-common-dir)" push origin HEAD:main'
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
