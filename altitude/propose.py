@@ -18,8 +18,8 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
             prior += f"\n\nBurak's revision note: {ev[-1]['note']}"
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
-    res = engines.claude_print(model=config.MODELS["proposal"], prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
-                               permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model,
+    res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
+                               permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
                                max_turns=60, timeout=1200)
     if res["error"] and not res["structured"]:
         raise RuntimeError(res["error"])
