@@ -56,8 +56,9 @@ def main(argv=None) -> None:
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
     for name in ("reject", "park", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("resume", "unpark", "show", "status", "events"):
+    for name in ("resume", "unpark", "show", "events"):
         x = ts.add_parser(name); x.add_argument("slug")
+    x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
     hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
@@ -153,7 +154,10 @@ def main(argv=None) -> None:
             out(S.load_task(p, args.slug))
         elif tc == "status":
             from altitude import status
-            out(status.status(p, args.slug))
+            slug = args.slug or os.environ.get("ALTITUDE_TASK")
+            if not slug:
+                sys.exit("alt task status: slug or ALTITUDE_TASK required")
+            out(status.status(p, slug))
         elif tc == "events":
             out(S.read_events(p, args.slug))
         elif tc == "list":

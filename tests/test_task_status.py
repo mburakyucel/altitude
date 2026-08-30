@@ -22,6 +22,9 @@ with open(os.environ["FAKE_GH_LOG"], "a") as f:
 if os.environ.get("FAKE_GH_FAIL"):
     print("fake gh failure", file=sys.stderr)
     sys.exit(2)
+if args[:2] == ["pr", "view"] and os.environ.get("FAKE_GH_FAIL_PR") == args[2]:
+    print("fake gh PR failure", file=sys.stderr)
+    sys.exit(2)
 if args[:2] == ["pr", "view"]:
     number = int(args[2])
     prs = {
@@ -35,12 +38,19 @@ if args[:2] == ["pr", "view"]:
              "mergeCommit": {"oid": "merge-new"}, "headRefName": "worktree-new",
              "headRefOid": "head-new", "statusCheckRollup": []}}
     print(json.dumps(prs[number]))
+elif args[:2] == ["pr", "list"]:
+    number = os.environ.get("FAKE_GH_BRANCH_PR")
+    print(json.dumps([{"number": int(number)}] if number else []))
 elif args[:2] == ["run", "list"]:
-    print(json.dumps([
-        {"databaseId": 9, "headSha": "merge-new", "conclusion": "success",
-         "status": "completed", "workflowName": "CI"},
-        {"databaseId": 6, "headSha": "merge-old", "conclusion": "success",
-         "status": "completed", "workflowName": "CI"}]))
+    if os.environ.get("FAKE_GH_NO_RUN_MATCH"):
+        print(json.dumps([{"databaseId": 2, "headSha": "other-sha", "conclusion": "success",
+                           "status": "completed", "workflowName": "CI"}]))
+    else:
+        print(json.dumps([
+            {"databaseId": 9, "headSha": "merge-new", "conclusion": "success",
+             "status": "completed", "workflowName": "CI"},
+            {"databaseId": 6, "headSha": "merge-old", "conclusion": "success",
+             "status": "completed", "workflowName": "CI"}]))
 else:
     print("unhandled fake gh call", file=sys.stderr)
     sys.exit(64)
@@ -153,6 +163,73 @@ class TestTaskStatus(unittest.TestCase):
             "id": 9, "workflow": "CI", "status": "completed", "conclusion": "success",
             "head_sha": "merge-new"})
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
+        run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
+        self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
+
+    def test_missing_main_run_names_the_merge_sha(self):
+        self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
+        result = task_status.status("demo", "task-one")
+        self.assertIsNone(result["main_run"])
+        self.assertIn("no main run found for merge-new", result["errors"])
+
+    def test_one_pr_fault_keeps_other_summaries_and_checks_main(self):
+        self._setenv("FAKE_GH_FAIL_PR", "18")
+        result = task_status.status("demo", "task-one")
+        self.assertEqual([pr["number"] for pr in result["prs"]], [17])
+        self.assertTrue(any("fake gh PR failure" in error for error in result["errors"]))
+        self.assertEqual(result["main_run"]["head_sha"], "merge-old")
+        self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
+
+    def test_report_prs_are_reused_before_branch_fallback(self):
+        task_path = S.task_dir("demo", "task-one") / "status.json"
+        task = S.read_json(task_path)
+        task["prs"] = []
+        S.write_json(task_path, task)
+        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
+        run = S.read_json(run_path)
+        run["result"] = None
+        S.write_json(run_path, run)
+        S.write_json(S.task_dir("demo", "task-one") / "report.json",
+                     {"landed": {"prs": [{"number": 17}]}})
+
+        result = task_status.status("demo", "task-one")
+
+        self.assertEqual([pr["number"] for pr in result["prs"]], [17])
+        self.assertFalse(any(call[:2] == ["pr", "list"] for call in self.calls()))
+
+    def test_branch_fallback_finds_one_live_pr(self):
+        task_path = S.task_dir("demo", "task-one") / "status.json"
+        task = S.read_json(task_path)
+        task["prs"] = []
+        S.write_json(task_path, task)
+        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
+        run = S.read_json(run_path)
+        run["result"] = None
+        S.write_json(run_path, run)
+        S.write_json(S.task_dir("demo", "task-one") / "report.json", {"landed": {}})
+        self._setenv("FAKE_GH_BRANCH_PR", "17")
+
+        result = task_status.status("demo", "task-one")
+
+        self.assertEqual([pr["number"] for pr in result["prs"]], [17])
+        self.assertEqual(len([call for call in self.calls() if call[:2] == ["pr", "list"]]), 1)
+
+    def test_stale_l1_is_reported_without_writing(self):
+        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
+        run = S.read_json(run_path)
+        run["pid"] = 999_999_999
+        S.write_json(run_path, run)
+        before = {str(path.relative_to(self.root)): path.read_bytes()
+                  for path in self.root.rglob("*") if path.is_file()}
+
+        result = task_status.status("demo", "task-one")
+
+        after = {str(path.relative_to(self.root)): path.read_bytes()
+                 for path in self.root.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
+        self.assertTrue(result["l1_runs"]["runs"][0]["stale"])
+        self.assertIsNone(result["l1_runs"]["runs"][0]["done"])
+        self.assertEqual(result["l1_runs"]["in_flight"], 0)
 
     def test_broken_gh_degrades_without_raising(self):
         self._setenv("FAKE_GH_FAIL", "1")
@@ -169,6 +246,14 @@ class TestTaskStatus(unittest.TestCase):
         result = json.loads(proc.stdout)
         self.assertEqual(result["slug"], "task-one")
         self.assertEqual(result["main_run"]["head_sha"], "merge-new")
+
+    def test_cli_defaults_slug_from_altitude_task(self):
+        self._setenv("ALTITUDE_TASK", "task-one")
+        alt = Path(__file__).resolve().parent.parent / "bin" / "alt"
+        proc = subprocess.run([str(alt), "task", "status"], capture_output=True,
+                              text=True, env=os.environ.copy(), timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["slug"], "task-one")
 
 
 if __name__ == "__main__":
