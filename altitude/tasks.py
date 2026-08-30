@@ -255,7 +255,7 @@ def decisions(project: str) -> list[dict]:
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
                         "question": t["decision"]["question"], "options": t["decision"]["options"],
                         "asked": t["decision"].get("asked"), "kind": "decision"})
-        elif t["state"] == "blocked":
+        elif t["state"] == "blocked" and not t.get("resume_after"):  # held by Altitude (decision 44) is not a decision
             out.append({"project": project, "slug": t["slug"], "class": t["class"], "title": t["title"],
                         "question": f"Blocked: {t.get('blocked_reason') or '?'}", "options": ["Resume", "Park", "Reject"],
                         "asked": t.get("updated"), "kind": "blocked"})

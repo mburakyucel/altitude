@@ -42,7 +42,7 @@ async function renderInbox(v) {
   const w = o.wip;
   v.innerHTML = `<h1>Decisions <span class="muted">(${o.queue.length})</span></h1>` +
     (o.queue.length ? o.queue.map(decisionCard).join("") : `<div class="card muted">Nothing needs you.</div>`) +
-    `<h2>Running</h2><div class="card small">${w.machine} orchestrator(s) — ${Object.entries(w.per_project).filter(([p,n])=>n).map(([p,n])=>`${esc(p)} ${n}`).join(", ") || "none"}${w.waiting.length?`<br>waiting for a slot: ${w.waiting.map(x=>esc(x.project+"/"+x.slug)).join(", ")}`:""}</div>` +
+    `<h2>Running</h2><div class="card small">${w.machine} orchestrator(s) — ${Object.entries(w.per_project).filter(([p,n])=>n).map(([p,n])=>`${esc(p)} ${n}`).join(", ") || "none"}${w.waiting.length?`<br>waiting for a slot: ${w.waiting.map(x=>esc(x.project+"/"+x.slug+(x.why==="resume"?" (resume)":""))).join(", ")}`:""}</div>` +
     `<h2>FYI</h2>` + (o.fyis.length ? o.fyis.map(f => `<div class="card small"><span class="muted">${esc(f.project)}${f.slug?" · "+esc(f.slug):""} · ${age(f.at)}</span><br>${esc(f.text)}</div>`).join("") : `<div class="card muted">No FYIs yet.</div>`);
 }
 
@@ -74,7 +74,8 @@ function taskCard(p, t) {
   const extra = [];
   if (t.state === "running") extra.push(`L2 ${a.status || "?"}${a.state?"/"+a.state:""}`, `ctx ${live.context_percent ?? "?"}%`, `agents ${live.subagent_launches ?? 0}/${env.subagent_launches ?? "?"}`, `edits ${live.edits ?? 0}`);
   if (t.prs && t.prs.length) extra.push("PRs " + t.prs.map(n => `#${n}`).join(" "));
-  if (t.blocked_reason) extra.push("blocked: " + t.blocked_reason);
+  if (t.state === "blocked" && t.resume_after) extra.push("queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold clears (" + (t.blocked_reason || "") + ")");
+  else if (t.blocked_reason) extra.push("blocked: " + t.blocked_reason);
   const btns = [];
   if (t.state === "requested") btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','propose')">propose</button>`);
   if (["requested","parked","proposed"].includes(t.state)) btns.push(`<button class="btn small primary" title="Executive override: approve as requested and dispatch now, skipping the proposal/critic loop" onclick="act('${p}','${t.slug}','build')">build now</button>`);
@@ -82,7 +83,7 @@ function taskCard(p, t) {
   if (t.state === "parked") btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','unpark')">unpark</button>`);
   if (["running","blocked"].includes(t.state)) btns.push(`<button class="btn small" onclick="messageL2('${p}','${t.slug}')">message L2</button>`);
   if (["requested","proposed","approved","blocked","reported"].includes(t.state)) btns.push(`<button class="btn small" onclick="act('${p}','${t.slug}','park')">park</button>`);
-  return `<div class="card ${t.state==='blocked'?'blocked':''}"><div class="row"><span class="pill ${t.class}">${t.class}</span><span class="pill ${t.state}">${t.state}</span><b class="grow" style="cursor:pointer" onclick="openTask('${p}','${t.slug}')">${esc(t.title)}</b><span class="muted small">${age(t.updated)}</span></div>
+  return `<div class="card ${t.state==='blocked'&&!t.resume_after?'blocked':''}"><div class="row"><span class="pill ${t.class}">${t.class}</span><span class="pill ${t.state}">${t.state}</span><b class="grow" style="cursor:pointer" onclick="openTask('${p}','${t.slug}')">${esc(t.title)}</b><span class="muted small">${age(t.updated)}</span></div>
     ${extra.length?`<div class="muted small" style="margin-top:4px">${esc(extra.join(" · "))}</div>`:""}
     ${t.progress_tail?`<details><summary class="small">progress</summary><pre>${esc(t.progress_tail)}</pre></details>`:""}
     <div class="row" style="margin-top:6px">${btns.join("")}<button class="btn small" onclick="openTask('${p}','${t.slug}')">open</button></div></div>`;

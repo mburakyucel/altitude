@@ -10,7 +10,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-limit-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, engines, dispatch  # noqa: E402
+from altitude import config, state as S, engines, dispatch, tasks as T, digest  # noqa: E402
 
 LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 
@@ -88,6 +88,9 @@ class TestPollAndResume(unittest.TestCase):
         finally:
             dispatch.resume_blocked, dispatch.wip_hold = orig
         self.assertEqual(back, ["a-oldest", "b-middle"])
+        # the one still queued is Altitude's to resume: not a "Needs you" card, but listed as waiting for a slot
+        self.assertNotIn("c-newest", [d["slug"] for d in T.decisions("altitude")])
+        self.assertIn(("c-newest", "resume"), [(w["slug"], w["why"]) for w in digest.wip()["waiting"]])
         self.assertEqual(resumed, ["a-oldest", "b-middle"])
         self.assertIsNone(S.load_task("altitude", "a-oldest").get("resume_after"))
         self.assertEqual(S.load_task("altitude", "c-newest").get("resume_after"), past)
