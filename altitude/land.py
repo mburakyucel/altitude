@@ -140,7 +140,7 @@ def _pr_view(root: Path, branch: str) -> dict | None:
     p = _run(["gh", "pr", "view", branch, "--json", "number,url,state"], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
-        if "no pull requests found" in err.lower() or "not found" in err.lower():
+        if "no pull requests found" in err.lower():
             return None  # legitimately missing, not a tooling failure (decision 36)
         raise LandError(f"gh pr view {branch}: {err[-200:]}")
     try:

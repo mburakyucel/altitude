@@ -146,6 +146,7 @@ class TestLand(unittest.TestCase):
         self.leased_change("src/has space.py")
         self.leased_change("src/a[1].py")  # a bracket-expression name must stage as a literal, not a glob
         self.leased_change("docs/NOTES.md")
+        self.assertIsNone(land._pr_view(self.repo, "worktree-fix-x"))
         res = land.land("fix: land the thing\n\nlonger body", cwd=self.repo, wait=0)
         self.assertEqual(res["pr"], 101)
         self.assertEqual(res["url"], "https://example.invalid/pr/101")
@@ -495,16 +496,21 @@ class TestLand(unittest.TestCase):
         # the prefetch that gates committing, then the read-back after create — not a third
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 2)
 
-    def test_broken_gh_stops_the_run_before_it_commits(self):
+    def test_gh_404_stops_the_run_before_any_mutation(self):
         self.leased_change()
         head = self.git("rev-parse", "HEAD").strip()
-        (self.ghdir / "view_error.txt").write_text(
-            "gh: To get started with GitHub CLI, please run: gh auth login")
-        with self.assertRaisesRegex(land.LandError, "gh pr view"):
+        message = "gh: Not Found (HTTP 404)"
+        (self.ghdir / "view_error.txt").write_text(message)
+        with self.assertRaises(land.LandError) as cm:
             land.land("fix: no gh", cwd=self.repo, wait=0)
+        self.assertIn("gh pr view worktree-fix-x", str(cm.exception))
+        self.assertIn(message, str(cm.exception))
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertIn("?? src/thing.py", self.git("status", "--short", "--untracked-files=all").splitlines())
+        self.assertEqual((self.repo / "src" / "thing.py").read_text(), "changed\n")
         self.assertEqual(self.remote_heads(), ["main"])
+        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
         doc = land.__doc__
         self.assertIn("authenticated `gh`", doc)  # the precondition this behaviour is documented by
         self.assertIn("nothing committed", doc)
