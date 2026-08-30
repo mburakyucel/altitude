@@ -25,7 +25,11 @@ def sessions() -> list[dict]:
                         "at": inf.get("last_turn"), "turns": inf.get("turns"), "rotate_next": inf.get("rotate_next")})
         for t in S.list_tasks(name):
             if t["state"] in ("running", "blocked", "reported"):
-                counts = S.read_json(config.MONITOR_DIR / f"counts-{t.get('session_id')}.json", {}) or {}
+                dispatch_id = t.get("dispatch_id")
+                counts_p = config.MONITOR_DIR / f"counts-{name}--{dispatch_id}.json" if dispatch_id else None
+                if not counts_p or not counts_p.exists():
+                    counts_p = config.MONITOR_DIR / f"counts-{t.get('session_id')}.json"
+                counts = S.read_json(counts_p, {}) or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),

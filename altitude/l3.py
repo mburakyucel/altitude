@@ -94,6 +94,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         persona = rules.compiled_persona("l3", project)
         turn_started_at = S.now()
         chat_log(project, "user", prompt, trigger=trigger, at=turn_started_at)
+        held = engines.usage_hold()
+        if proj.get("l3_engine") == "codex" or held:  # decision 56: the L3 does not stop when the Claude window is out
+            return _codex_turn(project, prompt, trigger, persona, turn_started_at,
+                               reason=f"Claude window exhausted until {held}" if held else "project pins l3_engine=codex")
         res = engines.claude_print(
             _header(project, trigger, fresh) + prompt, cwd=config.project_path(project),
             resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
@@ -102,8 +106,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
         res["skipped"] = False
         res["_turn_started_at"] = turn_started_at
-        if res.get("limited") or (res["error"] and not res["session_id"]):
-            chat_log(project, "error", res["error"], trigger=trigger)  # a held/limited turn is not a turn: nothing saved
+        if res.get("limited"):  # the window closed under this very turn: run it again on Codex, now
+            return _codex_turn(project, prompt, trigger, persona, turn_started_at, reason=f"Claude window exhausted until {res['limited']}")
+        if res["error"] and not res["session_id"]:
+            chat_log(project, "error", res["error"], trigger=trigger)  # a failed turn is not a turn: nothing saved
             return res
         pct = engines.context_percent(res["context_tokens"])
         inf.update({"session_id": res["session_id"], "turns": (0 if fresh else inf.get("turns", 0)) + 1,
@@ -119,6 +125,37 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         S.regen_state_md(project)
         res["context_percent"] = pct
         return res
+
+
+def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_started_at: str, *, reason: str) -> dict:
+    """One L3 turn on Codex (decision 56). No transcript: the state file and the recent chat are its memory, exactly as a
+    fresh Claude session. The Claude session id is kept for when the window reopens; the turn is labelled `codex` in the
+    chat log, the project log and the result — a degraded state that is visible, never a silent substitution (decision 36)."""
+    inf = info(project)
+    recent = chat_history(project, 20)
+    history = "\n".join(f"- {m.get('role')}: {str(m.get('text') or '')[:600]}" for m in recent if m.get("role") in ("user", "assistant"))
+    text = (persona.read_text() + "\n\n" + _header(project, trigger, True)
+            + f"[altitude] Engine: Codex — {reason}. You have no transcript: the state file and the recent chat below are your memory. "
+              "Same persona, same commands (`alt …`); the state and task files live under ALTITUDE_HOME.\n\n"
+            + ("## Recent chat (oldest first)\n" + history + "\n\n" if history else "") + prompt)
+    S.project_log(project, "l3-codex", reason=reason, trigger=trigger)
+    res = engines.codex_exec(text, cwd=config.ROOT, sandbox="workspace-write", timeout=1200, effort=config.CODEX_EFFORT.get("l3"),
+                             extra_config=[f'sandbox_workspace_write.writable_roots=["{config.ROOT}"]', "sandbox_workspace_write.network_access=true"],
+                             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+    usage = res.get("usage") or {}
+    tokens = int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
+    out = {"text": res.get("text") or "", "session_id": inf.get("session_id") or "", "usage": usage, "context_tokens": tokens,
+           "cost": 0.0, "turns": 1, "structured": None, "error": res.get("error"), "tools": [], "skipped": False,
+           "_turn_started_at": turn_started_at, "engine": "codex", "degraded": reason}
+    if res.get("error") and not out["text"]:
+        chat_log(project, "error", f"codex L3 turn failed: {res['error']}", trigger=trigger, engine="codex")
+        return out
+    inf.update({"last_turn": S.now(), "last_cost": 0.0, "engine_last": "codex", "codex_turns": int(inf.get("codex_turns") or 0) + 1,
+                "codex_context_percent": engines.context_percent(tokens, "codex")})
+    save_info(project, inf)
+    chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex", degraded=reason)
+    S.regen_state_md(project)
+    return out
 
 
 def reset(project: str, reason: str = "manual") -> None:

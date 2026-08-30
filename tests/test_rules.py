@@ -1,9 +1,11 @@
 """Tests for altitude.rules: ledger parsing, section compilation, id allocation, entry rendering."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from altitude import rules, config
+from altitude import config, improve, rules
 
 
 class TestParseLedgerReal(unittest.TestCase):
@@ -214,6 +216,77 @@ class TestRenderEntryRoundTrip(unittest.TestCase):
         self.assertTrue(rendered.startswith("## R-042 — some title"))
         self.assertTrue(rendered.endswith("\n"))
         self.assertFalse(rendered.endswith("\n\n"))
+
+
+class TestAuditInput(unittest.TestCase):
+    def test_incident_join_uses_rule_scope_and_id(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            repo = root / "repo"
+            project_ledger = repo / "docs" / "RULES.md"
+            project_ledger.parent.mkdir(parents=True)
+            project_ledger.write_text(rules.render_entry(
+                "R-003", "project rule", scope="project", status="active", text="project text",
+            ))
+
+            rules_root = root / "rules"
+            global_ledger = rules_root / "global" / "RULES.md"
+            global_ledger.parent.mkdir(parents=True)
+            global_ledger.write_text(rules.render_entry(
+                "R-003", "global rule", scope="global", status="active", text="global text",
+            ))
+
+            incident_index = root / "incidents.jsonl"
+            incidents = [
+                {"project": "demo", "id": "I-001", "scope": "project", "rule": "R-003"},
+                {"project": "demo", "id": "I-002", "scope": "global", "rule": "R-003"},
+            ]
+            incident_index.write_text("\n".join(json.dumps(row) for row in incidents) + "\n")
+
+            with (
+                patch.object(config, "project", return_value={"path": str(repo), "stacks": []}),
+                patch.object(config, "RULES", rules_root),
+                patch.object(config, "INCIDENT_INDEX", incident_index),
+            ):
+                audited = improve.audit_input("demo")["rules"]
+
+        by_scope = {r["scope"]: r["incidents"] for r in audited if r["id"] == "R-003"}
+        self.assertEqual(by_scope, {"global": ["I-002"], "project": ["I-001"]})
+
+    def test_uncontested_id_keeps_incidents_filed_under_another_scope(self):
+        """A rule only one ledger carries keeps its origin incident after promotion, when the incident row still
+        records the scope it was filed under."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            repo = root / "repo"
+            project_ledger = repo / "docs" / "RULES.md"
+            project_ledger.parent.mkdir(parents=True)
+            project_ledger.write_text("# none\n")
+
+            rules_root = root / "rules"
+            global_ledger = rules_root / "global" / "RULES.md"
+            global_ledger.parent.mkdir(parents=True)
+            global_ledger.write_text(rules.render_entry(
+                "R-007", "promoted rule", scope="global", status="active", text="global text",
+            ))
+
+            incident_index = root / "incidents.jsonl"
+            incidents = [
+                {"project": "demo", "id": "I-010", "scope": "project", "rule": "R-007"},
+                {"project": "demo", "id": "I-011", "rule": "R-007"},
+            ]
+            incident_index.write_text("\n".join(json.dumps(row) for row in incidents) + "\n")
+
+            with (
+                patch.object(config, "project", return_value={"path": str(repo), "stacks": []}),
+                patch.object(config, "RULES", rules_root),
+                patch.object(config, "INCIDENT_INDEX", incident_index),
+            ):
+                audited = improve.audit_input("demo")["rules"]
+
+        found = [r for r in audited if r["id"] == "R-007"]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["incidents"], ["I-010", "I-011"])
 
 
 if __name__ == "__main__":

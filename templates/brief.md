@@ -2,7 +2,7 @@
 
 **Goal:** {title}
 
-**Definition of done:** every PR merged on `origin/main`; `main` run green; deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
+**Definition of done:** every PR merged on `origin/main`; [R-006] the gates this repository has are green (where it has CI — a `.github/workflows` directory — the `main` run after merge, and where it has none, the full local test suite on merged `main` with the count stated in the report; a `skipped` or no-checks-reported value is never read as passed, and a gate is never satisfied by its absence); deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
 
 **Change class / merge policy:** {merge_policy}
 
@@ -17,6 +17,8 @@
 **Parallel work (decision 39):** your lease: {paths}. Other L2s running in this project right now: {leases}. Stay inside your lease; if you must touch a path another running task holds, stop with `Blocked: lease` rather than racing it. Never restart/stop the `altitude` or `tutor` units, never bind ports 8890/8080/8443 (a hook blocks these) — for a smoke test run `ALTITUDE_TIMERS=0 ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=<ephemeral> bin/alt serve` and report "needs `systemctl --user restart altitude`" after merge. Land with `alt land --message "<msg>"` — it stages only your lease (refusing if anything outside it changed), commits with the Altitude trailer, pushes, opens or reuses the PR and waits for checks: one plain command, nothing for the Safety Net (R-003) to refuse.
 
 **Context:** the proposal below is approved{approval_note}. Repo: `{repo}`. Task folder: `{task_dir}` (write `progress.md`, `report.md`, `report.json` there). Worktree: this session runs in its own worktree/branch `{branch}`.
+
+**Orientation:** use `alt task status {slug}` — one JSON with task state, worktree and branch, PRs and their checks, the `main` run, live envelope counts, leases and holds. Never read transcripts, hook counters (`~/.altitude/monitor/*.json`) or `claude agents` yourself.
 
 ---
 

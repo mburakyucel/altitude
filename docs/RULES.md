@@ -1,13 +1,13 @@
 # Project rules — altitude
 
-*Ledger (decision 14/32). Each entry: five fields + the rule text. Project scope: these apply to work in this repo only; global and stack rules live in `rules/`. Unlike those, project rules are **not** compiled into personas or briefs — an entry here is a record, and it only takes effect once its text is applied by hand to the file named in its `where:` field.*
+*Ledger (decision 14/32). Each entry: six fields + the rule text. Project scope: these apply to work in this repo only; global and stack rules live in `rules/`. Unlike those, project rules are **not** compiled into personas or briefs — an entry here is a record, and it only takes effect once its text is applied by hand to the file named in its `where:` field.*
 
 ## R-002 — reserve a launch for the mandated reviewer
 - scope: project
 - where: CLAUDE.md
 - origin: I-004 (altitude)
-- prevents: 
-- effect: 
+- prevents: s-envelope-no-slack-for-mandated-reviewer
+- effect: S envelopes sized implementers+1, so the mandated reviewer always runs; verify: no `Blocked: envelope (needed N)` on a reviewer (I-004: reviewer refused, PR merged by hand after a waiver)
 - status: probation
 - text: Size the launch budget so the verification a brief mandates always fits: subagent_launches = expected implementers + 1 reserved for the reviewer (an S task with one L1 gets 3, not 2). The reserved launch is spent on nothing else, and capability probes are not launches. A reviewer that cannot run because the budget is full is a dispatch-time sizing bug, not a mid-run block.
 
@@ -28,3 +28,21 @@
 - effect: one merge by Burak per stage PR instead of one at the end - the L2 exits at each stage PR and is resumed after the merge
 - status: probation
 - text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, checkpoint progress.md, report Blocked: stage 1 PR awaits merge, and exit - the L merge policy stands, Burak merges, and you are resumed on merged main. Later stages open their own PRs from merged main, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice.
+
+## R-005 — A mechanism named in a request or brief is a suggestion the implementer verifies at the call sites
+- scope: project
+- where: CLAUDE.md (new section: Briefs and mechanisms); the L3 side applies immediately to requests this L3 writes
+- origin: I-019 (altitude)
+- prevents: request-prescribes-unverified-mechanism
+- effect: one L1 build round and one reviewer launch per recurrence (#37: 2 rounds, 3/3 launches, 34/40 turns)
+- status: probation
+- text: A mechanism named in a request or brief (a lock to take, an ordering, a shared file to write) is a suggestion, not a spec: the request states the invariant and the evidence, and whoever implements verifies the mechanism against every path that reaches the new code before adopting it - for a lock, who already holds it on those paths and whether it is reentrant. A mechanism that fails the check is replaced and the failed check is recorded under Deviations; that is a documented default, not a question and not a block.
+
+## R-006 — The definition of done names only gates the repository has
+- scope: project
+- where: templates/brief.md (the Definition of done line)
+- origin: I-020 (altitude)
+- prevents: brief-names-gate-the-repo-lacks
+- effect: one recorded deviation and a not-applicable argument per task in this repo (#37, #38), plus the risk of checks skipped read as green
+- status: probation
+- text: The definition of done names only gates the repository has. Where the repo has CI (a .github/workflows directory), the main run is green after merge. Where it has none, the full local test suite runs on merged main and the report states the count, and a checks value of skipped or no-checks-reported is never read as passed. A gate is never satisfied by its absence.

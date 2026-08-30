@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from . import config, engines, l3, state as S
+from . import config, engines, l3, route, state as S
 
 
 def idea(project: str, text: str, on_text=None) -> dict:
@@ -12,6 +12,42 @@ def idea(project: str, text: str, on_text=None) -> dict:
               "(`alt task new`), or park it with a one-line reason, or say it is already covered. Answer in ≤5 sentences.\n\n"
               f"Idea: {text}")
     return l3.turn(project, prompt, trigger="idea", on_text=on_text)
+
+
+def size(project: str, slug: str) -> dict:
+    """Decision 53: a task filed with `--class auto` gets its class from a read-only sizer session (research tier), then
+    follows the class table: S is approved at once (decision 13), M/L go to the proposal flow on the next tick.
+    A sizer that fails is a system fault (decision 36): the task stays requested with `size_error`, never a default class."""
+    from . import improve, tasks as T
+    task = S.load_task(project, slug)
+    if task["state"] != "requested" or task.get("class"):
+        return {"skipped": f"state {task['state']}, class {task.get('class')}"}
+    request = (S.task_dir(project, slug) / "request.md").read_text()
+    prompt = f"Request `{slug}` for project `{project}`:\n\n{request}\n\nPick the class and the paths as JSON per the schema."
+    choice = route.pick_engine("sizer", task=task)
+    try:
+        if choice["engine"] == "codex":  # decision 56
+            res = engines.codex_exec((config.PERSONAS / "size.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
+                                     schema=config.SCHEMAS / "size.json", timeout=600, effort=config.CODEX_EFFORT.get("sizer"))
+        else:
+            res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "size.md",
+                                       permission_mode="plan", schema=config.SCHEMAS / "size.json", model=config.MODELS["research"],
+                                       max_turns=20, timeout=600)
+        out = res.get("structured") or {}
+        if res.get("error") and not out:
+            raise RuntimeError(res["error"])
+        if out.get("class") not in S.CLASSES:
+            raise RuntimeError(f"sizer returned no class: {json.dumps(out)[:200]}")
+    except Exception as e:  # noqa: BLE001 — every failure is one fault line + a stuck-visible task, not a guessed class
+        with S.project_lock(project):
+            t = S.load_task(project, slug); t["size_error"] = str(e)[:300]; S.save_task(project, t)
+        improve.system_fault("sizer", f"intake sizer failed for {project}/{slug}: {str(e)[:200]}", project=project, task=slug)
+        raise
+    T.set_class(project, slug, out["class"], out["why"], paths=out.get("paths") or [], actor="sizer")
+    S.append_event(project, slug, "size-run", engine=choice["engine"], why=choice["why"], turns=res.get("turns"), cost=res.get("cost"))
+    if out["class"] == "S":
+        T.auto_approve(project, slug, f"sized S by the intake sizer: {out['why']}")
+    return {"class": out["class"], "why": out["why"], "paths": out.get("paths") or []}
 
 
 def backlog_issues(project: str, limit: int = 60) -> list[dict]:

@@ -259,7 +259,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
 
 function NewTask({ project }: { project: string }) {
   const [title, setTitle] = useState("");
-  const [taskClass, setTaskClass] = useState("M");
+  const [taskClass, setTaskClass] = useState("auto");
   const act = useTaskAction(project);
   return (
     <form
@@ -292,6 +292,7 @@ function NewTask({ project }: { project: string }) {
         value={taskClass}
         onChange={(event) => setTaskClass(event.target.value)}
       >
+        <option value="auto">Auto</option>
         <option value="S">S</option>
         <option value="M">M</option>
         <option value="L">L</option>

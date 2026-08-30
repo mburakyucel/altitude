@@ -19,6 +19,23 @@ class TestQueue(unittest.TestCase):
         (_TMP / "repo").mkdir()
         config.save_projects({"q": {"name": "q", "path": str(_TMP / "repo"), "stacks": ["python"], "wip": 5}})
 
+    def test_top_level_directory_claims_do_not_lease(self):
+        self.assertEqual(dispatch.narrow(["tests/", "tests/test_x.py", "docs", "web/dist/assets/", "altitude/server.py"]),
+                         ["tests/test_x.py", "web/dist/assets/", "altitude/server.py"])
+        running = T.new("q", "broad", "S", "r", actor="l3", paths=["tests/", "altitude/lane.py"])
+        running["state"] = "running"; S.save_task("q", running)
+        t = T.new("q", "narrow", "S", "r", actor="l3", paths=["tests/test_other.py"])
+        t["state"] = "approved"; S.save_task("q", t)
+        real = engines.claude_agents; engines.claude_agents = lambda: []
+        try:
+            self.assertIsNone(dispatch.wip_hold("q", t), "a bare tests/ claim must not hold a task touching one test file")
+            t2 = T.new("q", "same-file", "S", "r", actor="l3", paths=["altitude/lane.py"]); t2["state"] = "approved"; S.save_task("q", t2)
+            self.assertIn("file lease", dispatch.wip_hold("q", t2) or "")
+        finally:
+            engines.claude_agents = real
+        for x in (running, t, t2):
+            x["state"] = "rejected"; S.save_task("q", x)
+
     def test_per_task_hold_does_not_block_the_queue(self):
         self.assertTrue(dispatch.per_task_hold("file lease: `x` is running on a.py"))
         self.assertTrue(dispatch.per_task_hold("one rule-application task at a time (they edit the same ledger)"))

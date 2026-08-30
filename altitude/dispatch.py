@@ -219,8 +219,19 @@ def paths_overlap(a: list[str], b: list[str]) -> list[str]:
     return sorted(set(out))
 
 
+BROAD_CLAIMS = ("tests", "docs", "altitude", "web", "hooks", "bin", "personas", "schemas", "templates", "src", "lib", "app")
+
+
+def narrow(paths: list[str]) -> list[str]:
+    """Decision 51 addendum: a claim on a whole top-level directory (`tests/`, `docs/`) is not a lease — it would hold every
+    task in the project behind one (2026-08-30: 23 approved tasks waited on a single `tests/` claim). Files and deeper
+    directories lease; top-level directory claims are dropped here, so briefs still show them but nothing waits on them."""
+    return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
+
+
 def task_paths(project: str, task: dict) -> list[str]:
-    """The paths a task has declared: `--paths` on the task, else the proposal's `files`."""
+    """The paths a task has declared: `--paths` on the task, else the proposal's `files`. This is the *staging* lease
+    (`alt land` refuses changes outside it); the *hold* lease is `narrow()` of it — see wip_hold."""
     if task.get("paths"):
         return list(task["paths"])
     p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
@@ -269,9 +280,9 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     if task and rule_application(task) and any(rule_application(t) for t in running):
         return "one rule-application task at a time (they edit the same ledger)"
     if task:
-        mine = task_paths(project, task)
+        mine = narrow(task_paths(project, task))  # hold lease: top-level directory claims do not hold anyone
         for other in leases(project, exclude=task["slug"]):
-            hit = paths_overlap(mine, other["paths"])
+            hit = paths_overlap(mine, narrow(other["paths"]))
             if hit:
                 return f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
     live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed", "stopped")]  # stopped = no process

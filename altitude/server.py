@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, improve, intake, l3, mechanize, monitor, propose, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, improve, intake, l3, mechanize, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -138,6 +138,14 @@ def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
     if not task.get("decision") and task["class"] in ("S", "M") and not p.get("always_list_hits"):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
         T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
+
+
+def size_task(project: str, slug: str) -> None:
+    try:
+        res = intake.size(project, slug)
+        log(f"[{project}/{slug}] sized: {res}")
+    except Exception as e:  # noqa: BLE001 — the fault is already filed by intake.size
+        log(f"[{project}/{slug}] sizer failed: {e}")
 
 
 def run_proposal_flow(project: str, slug: str) -> None:
@@ -281,6 +289,43 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     """The L3's report-landed turn. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart
     cut short is re-run by `resume_stranded_reports` instead of leaving the task waiting for nobody."""
     slug = t["slug"]
+    if (v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals")
+            and t.get("class") != "L" and not t.get("hold_merge")):
+        try:
+            with S.project_lock(project):
+                live = S.load_task(project, slug)
+                report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+        except (KeyError, OSError, ValueError):
+            live, report = {}, None
+        if isinstance(report, dict):
+            landed = report.get("landed") or {}
+            if not isinstance(landed, dict):
+                landed = {}
+            deploy = str(landed.get("deploy") or "")
+            deploy_status = (deploy.split(maxsplit=1) or [""])[0].rstrip(":")
+            prs = landed.get("prs") or []
+            runs = landed.get("main_runs") or []
+            review = report.get("review") or []
+            if (not report.get("decisions") and not report.get("blocked") and not report.get("fyi")
+                    and not report.get("follow_ups") and deploy_status in ("healthy", "not-applicable")
+                    and isinstance(prs, list) and all(isinstance(pr, dict) and pr.get("merged") is True for pr in prs)
+                    and isinstance(runs, list) and all(isinstance(run, dict) for run in runs)
+                    and isinstance(review, list) and all(isinstance(item, dict) for item in review)
+                    and live.get("state") == "reported"):
+                pr_text = ", ".join("PR #{} ({})".format(pr.get("number"), pr.get("title") or "untitled") for pr in prs) or "No PRs recorded"
+                run_text = ", ".join("{}: {}".format(run.get("id"), run.get("conclusion")) for run in runs) or "none recorded"
+                fixed = sum(item.get("disposition") == "fixed" for item in review)
+                dismissed = sum(item.get("disposition") == "dismissed" for item in review)
+                clean_digest = (f"No decisions. {pr_text} merged. Main runs: {run_text}. Deploy: {deploy}. "
+                                f"Review findings: {fixed} fixed, {dismissed} dismissed.")
+                T.done(project, slug, actor="altd", digest=clean_digest)
+                T.fyi(project, slug, f"{slug}: closed by altd without an L3 turn — nothing to judge: verifier verdict ok; "
+                      f"task class {t.get('class')}; hold_merge unset; PRs merged: {pr_text}; main runs: {run_text}; "
+                      f"deploy: {deploy}; no decisions, blocked items, FYIs, follow-ups, or post-mortem signals.", actor="altd")
+                with S.project_lock(project):
+                    t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+                log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
+                return
     inc = improve.index()
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
@@ -349,6 +394,10 @@ def drain_hook_faults() -> None:
 
 
 def tick() -> None:
+    try:
+        quota_codex.refresh_if_due()
+    except Exception as e:  # noqa: BLE001
+        log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
@@ -358,7 +407,10 @@ def tick() -> None:
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
             for t in S.list_tasks(project):
-                if t["state"] == "requested" and t["class"] in ("M", "L") and not engines.usage_hold():
+                if t["state"] == "requested" and not t.get("class") and not t.get("size_error"):  # sizer is Codex (decision 56)
+                    spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
+                    continue
+                if t["state"] == "requested" and t["class"] in ("M", "L"):  # proposal is Codex, L3 turn falls to Codex when held (decision 56)
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
                     alive = (_bg.get(key) or threading.Thread()).is_alive()
@@ -660,7 +712,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == "verify":
                     return self._json(verify.verify(project, slug))
                 elif action == "new":
-                    t = T.new(project, o["title"], o.get("class") or "M", o.get("request") or o["title"], actor="burak")
+                    t = T.new(project, o["title"], o.get("class") or "auto", o.get("request") or o["title"], actor="burak")
                     return self._json({"ok": True, "slug": t["slug"]})
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":

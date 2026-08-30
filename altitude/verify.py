@@ -47,7 +47,7 @@ def _verify(project: str, slug: str) -> dict:
         out["verdict"] = "missing"
         if not (d / "report.md").exists():
             out["problems"].append("report.md missing")
-        return _spend(out, task, d)
+        return _spend(out, project, task, d)
     for k in ("landed", "review", "deviations", "decisions", "fyi", "blocked", "follow_ups", "spend"):
         if k not in rep:
             out["problems"].append(f"report.json lacks `{k}`")
@@ -100,11 +100,15 @@ def _verify(project: str, slug: str) -> dict:
         out["verdict"] = "blocked"
     out["report"] = {"blocked": rep.get("blocked"), "decisions": rep.get("decisions"), "fyi": rep.get("fyi"),
                      "follow_ups": rep.get("follow_ups"), "deviations": rep.get("deviations")}
-    return _spend(out, task, d, sp)
+    return _spend(out, project, task, d, sp)
 
 
-def _spend(out: dict, task: dict, d: Path, sp: dict | None = None) -> dict:
-    hook = S.read_json(config.MONITOR_DIR / f"counts-{task.get('session_id')}.json", {}) or {}
+def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None) -> dict:
+    dispatch_id = task.get("dispatch_id")
+    counts_p = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
+    if not counts_p or not counts_p.exists():
+        counts_p = config.MONITOR_DIR / f"counts-{task.get('session_id')}.json"
+    hook = S.read_json(counts_p, {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
                     "subagent_launches_hook": hook.get("subagent_launches"), "edits_hook": hook.get("edits"),
                     "retries": (sp or {}).get("retries"), "cap": (task.get("envelope") or {}).get("subagent_launches")}
