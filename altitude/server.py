@@ -72,6 +72,20 @@ def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
     return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
 
 
+def _turn_started_at(project: str, header: str, fallback: str) -> str:
+    """When our proposal-ready turn actually began (incident I-008).
+
+    `l3.turn` serializes on a per-project lock and logs the prompt verbatim *inside* it, right
+    before the engine runs — so the chat entry's `at` is the moment the L3 started on our turn,
+    not the moment we queued behind another one. Using the queue time instead would read a park
+    the L3 made for Burak during that earlier turn as an in-turn park, and override it.
+    """
+    for ev in reversed(l3.chat_history(project, limit=200)):
+        if ev.get("role") == "user" and ev.get("text") == header:
+            return ev.get("at") or fallback
+    return fallback
+
+
 def run_proposal_flow(project: str, slug: str) -> None:
     task = S.load_task(project, slug)
     with S.project_lock(project):
@@ -106,35 +120,40 @@ def run_proposal_flow(project: str, slug: str) -> None:
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
-    # Burak may have parked, approved or rejected the task while the proposal and the critic ran (incident I-008):
-    # re-read the state and skip the turn rather than talk to the L3 about a task he has already decided. proposal.json
-    # stays on disk; clearing proposal_started lets tick() re-run the flow (requested only) if he unparks it later.
+    # Burak (or the L3 in a chat turn) may have parked, approved, rejected or proposed the task while the proposal and
+    # the critic ran (incident I-008): re-read the state and skip the turn rather than talk to the L3 about a task that
+    # has already been decided. proposal.json stays on disk; clearing proposal_started lets tick() re-run the flow
+    # (requested only) if it comes back to requested later.
     t1 = S.load_task(project, slug)
     if t1["state"] != "requested":
         with S.project_lock(project):
             t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
         log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
-        return
-    turn_start = S.now()
-    res = l3.turn(project, header, trigger="proposal-ready")
-    t2 = S.load_task(project, slug)
-    # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
-    # waits for Burak. A park by Burak (I-008) never queues a revision — his park must stand.
-    if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise"
-            and _l3_parked_during_turn(project, slug, turn_start)):
-        n = int(t2.get("revisions", 0))
-        if n < 2:
-            with S.project_lock(project):
-                t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
-            for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
-                src = S.task_dir(project, slug) / old
-                if src.exists():
-                    src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
-            T.unpark(project, slug, actor="altd")
-            log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
+        if t1["state"] != "proposed":
             return
-        T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
-        return
+        t2 = t1  # proposed outside this flow: the FYI-only auto-approve check below is the only thing that would
+    else:       # ever approve it (an FYI-only proposal raises no card), so it still owes this task a decision
+        queued_at = S.now()
+        res = l3.turn(project, header, trigger="proposal-ready")
+        turn_start = _turn_started_at(project, header, queued_at)
+        t2 = S.load_task(project, slug)
+        # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
+        # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
+        if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise"
+                and _l3_parked_during_turn(project, slug, turn_start)):
+            n = int(t2.get("revisions", 0))
+            if n < 2:
+                with S.project_lock(project):
+                    t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
+                for old in ("proposal.md", "proposal.json", "critique.json"):  # history as -vN; the reviser reads the latest critique-vN
+                    src = S.task_dir(project, slug) / old
+                    if src.exists():
+                        src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
+                T.unpark(project, slug, actor="altd")
+                log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
+                return
+            T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
+            return
     # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
