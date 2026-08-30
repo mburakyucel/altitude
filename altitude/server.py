@@ -126,6 +126,14 @@ def on_l2_finished(project: str, item: dict) -> None:
         T.fyi(project, slug, f"{slug}: L2 idle {dispatch.IDLE_NEEDS_INPUT_SECONDS}s without finishing — needs input? attach {a.get('id', '')}")
         log(f"[{project}/{slug}] L2 idle → blocked (needs input)")
         return
+    if item.get("died"):
+        a = item.get("agent") or {}
+        improve.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
+                             f"`claude agents` state=failed", project=project, task=slug)
+        T.block(project, slug, f"L2 session died before reporting (Altitude fault, not the L2's) — Resume from the card "
+                               f"re-attaches its transcript (agent {a.get('id', '')})")
+        log(f"[{project}/{slug}] L2 died → blocked; fault raised")
+        return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})

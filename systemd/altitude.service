@@ -9,6 +9,10 @@ WorkingDirectory=%h/Projects/agent-orchestrator
 ExecStart=%h/Projects/agent-orchestrator/bin/alt serve
 Restart=on-failure
 RestartSec=20
+# `claude --bg` workers (and the claude daemon that forks them) are started from altd and therefore live in this
+# cgroup. With the default KillMode=control-group every `systemctl restart altitude` killed all running L2s
+# (2026-08-30, two L2s lost). Only altd itself is stopped; the workers are meant to outlive it.
+KillMode=process
 Environment=ALTITUDE_HOST=10.88.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin

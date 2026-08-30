@@ -192,7 +192,10 @@ def poll(project: str) -> list[dict]:
         idle_since = None
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             idle_since = prev.get("idle_since") or S.now()
-        if a is None or a.get("state") == "done" or a.get("status") == "exited" or (has_report and a.get("status") == "idle"):
+        died = a is not None and a.get("state") == "failed" and not has_report
+        if died:  # worker gone before a report: raised as a system fault by the server, never read as "still running"
+            finished.append({"task": t, "agent": a, "died": True})
+        elif a is None or a.get("state") in ("done", "failed") or a.get("status") == "exited" or (has_report and a.get("status") == "idle"):
             finished.append({"task": t, "agent": a})
         elif idle_since and _seconds_since(idle_since) > IDLE_NEEDS_INPUT_SECONDS:
             finished.append({"task": t, "agent": a, "needs_input": True})
