@@ -17,6 +17,38 @@ def project_never_list(repo: Path) -> str:
     return "no changes outside the brief; no weakened guardrails; high-impact classes: open the PR and stop"
 
 
+JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
+
+
+def _git_branch(worktree: str | Path) -> str | None:
+    """The branch git reports for `worktree`, or None if it is absent, detached or git failed."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=15)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    b = (r.stdout or "").strip()
+    return b if r.returncode == 0 and b and b != "HEAD" else None
+
+
+def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str | None = None) -> str:
+    """The branch `claude --bg -w <slug>` really checks out — `worktree-<slug>`, never the bare slug.
+
+    The harness records the real name in `~/.claude/jobs/<agent_id>/state.json` (`worktreeBranch`); before an agent id
+    exists the name is derived and confirmed against the worktree itself. Every failure degrades to the derived name:
+    a wrong branch in the brief is bad, a dispatch that dies reading a state file is worse."""
+    derived = f"worktree-{slug}"
+    if agent_id:
+        try:
+            st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
+            b = (st.get("worktreeBranch") or "").strip() if isinstance(st, dict) else ""
+            if b:
+                return b
+        except (OSError, ValueError, AttributeError):
+            pass
+    return (_git_branch(worktree) or derived) if worktree else derived
+
+
 def build_brief(project: str, slug: str) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
@@ -36,7 +68,8 @@ def build_brief(project: str, slug: str) -> str:
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
         l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
         verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
-        branch=slug, proposal=proposal, **{"class": task["class"]})
+        branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
+        proposal=proposal, **{"class": task["class"]})
     stack = rules.compile_section(rules.stack_rules(proj.get("stacks", [])), "Stack rules")
     return text + ("\n" + stack if stack else "")
 
@@ -92,7 +125,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
     worktree = str(config.project_path(project) / ".claude" / "worktrees" / slug)
     T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent.get("sessionId"), agent_id=agent.get("id"),
-               worktree=worktree, branch=agent.get("branch") or slug)
+               worktree=worktree, branch=worktree_branch(slug, worktree, agent.get("id")))
     if agent.get("sessionId"):
         S.write_json(config.MONITOR_DIR / f"session-{agent['sessionId']}.json",
                      {"project": project, "slug": slug, "dispatch_id": dispatch_id, "level": "l2"})
