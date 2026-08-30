@@ -377,7 +377,8 @@ def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
 
     Non-existent roots stay in the list so the in-sandbox write fails closed instead of silently narrowing access.
     """
-    roots = [str(cwd)]
+    base = Path(cwd).resolve()
+    roots = [str(base)]
     for override in extra_config or []:
         key, separator, value = override.partition("=")
         if not separator or key.strip() != "sandbox_workspace_write.writable_roots":
@@ -385,14 +386,28 @@ def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
         try:
             parsed = ast.literal_eval(value.strip())
         except (SyntaxError, ValueError):
+            logger.warning("Codex sandbox preflight ignored unparseable writable-roots override: %r", override)
             continue
         if isinstance(parsed, (list, tuple)):
-            roots.extend(root for root in parsed if isinstance(root, str))
+            roots.extend(str((base / root).resolve()) for root in parsed if isinstance(root, str))
     return list(dict.fromkeys(roots))
 
 
+def _codex_network_access(extra_config: list[str] | None) -> bool:
+    """Return the effective workspace-write network setting from Codex's TOML-style overrides."""
+    network_access = False
+    for override in extra_config or []:
+        key, separator, value = override.partition("=")
+        if not separator or key.strip() != "sandbox_workspace_write.network_access":
+            continue
+        normalized = value.strip().lower()
+        if normalized in {"true", "false"}:
+            network_access = normalized == "true"
+    return network_access
+
+
 def codex_sandbox_preflight(cwd: Path, extra_config: list[str] | None = None, timeout: int = 15) -> None:
-    """Prove Linux user/network namespaces can create, sync, and remove a sentinel in every writable root.
+    """Prove the requested Linux sandbox can create, sync, and remove a sentinel in every writable root.
 
     `codex sandbox` cannot express these inline roots reliably, so probe the capability Codex depends on directly.
     Other platforms and hosts without bwrap are outside I-030's failure mode and stay available with one warning.
@@ -418,8 +433,10 @@ for root do
     }
 done
 """
-    cmd = [bwrap, "--dev-bind", "/", "/", "--unshare-user", "--unshare-net", "--die-with-parent",
-           "/bin/sh", "-c", script, "altitude-codex-write-probe", sentinel, *roots]
+    cmd = [bwrap, "--dev-bind", "/", "/", "--unshare-user"]
+    if not _codex_network_access(extra_config):
+        cmd.append("--unshare-net")
+    cmd += ["--die-with-parent", "/bin/sh", "-c", script, "altitude-codex-write-probe", sentinel, *roots]
     detail = ""
     try:
         probe = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
@@ -458,8 +475,15 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             try:
                 improve.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}")
             except Exception:  # noqa: BLE001 — fault persistence must not replace the deterministic gate failure
-                pass
-            raise
+                logger.exception("Failed to record Codex sandbox preflight system fault")
+            error = str(exc)
+            if len(error) > 500:
+                error = error[:245] + " ... " + error[-250:]
+            # Callers already persist and stamp ordinary failures; returning that contract avoids duplicate faults
+            # and stranded L3 turns while still guaranteeing Codex was never invoked.
+            return {"text": "", "structured": None, "returncode": 1, "usage": {}, "error": error,
+                    "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
+                    "raw_stderr_truncated": False}
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
         out_path = outf.name
     cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd), "--skip-git-repo-check"]
