@@ -12,7 +12,7 @@
 | 3 | L3 turn runner (`l3.py`, `engines.py`) | done | `engines.py` (stdin prompt — `--allowedTools` is variadic), `l3.py`; real turn verified: 4 turns, 11.6% ctx |
 | 4 | Proposal + critic (`propose.py`) | built, untested | `propose.py`: proposal agent (`--json-schema`, plan mode) + Codex critic with Claude fallback; server runs it automatically for M/L |
 | 5 | Dispatch + done signal (`dispatch.py`, `verify.py`) | built, untested | `dispatch.py` (`claude --bg`, per-task `--settings` with hooks, poll), `verify.py` (gh pr/run checks, signals) |
-| 6 | Spend envelope (`envelope.py`, `hooks/`) | done | class table in `tasks.py`, `hooks/subagent_cap.py` blocks past cap (tested), quota reserve in `monitor.py` (needs statusline wrapper) |
+| 6 | Spend envelope (`envelope.py`, `hooks/`) | done | class table in `tasks.py`, `hooks/subagent_cap.py` blocks past cap (tested), quota reserve in `monitor.py` (needs statusline wrapper); I-005: Bash launches billed by command position (heredoc bodies and quoted args are data) + per-tool-call dedupe key, `tests/test_subagent_cap.py` |
 | 7 | Self-improvement (`improve.py`, `rules/`) | built, tested locally | `improve.py`: incidents, `rule propose` → S-task + FYI-with-veto, scopes with promotion evidence, audit input |
 | 8 | Web app (`server.py`, `web/`) | built, smoke-tested | `server.py` + `web/`: Inbox, Projects (discover + Start L3), Project, Chat (streamed), Monitor, Listen; all endpoints 200 |
 | 9 | Intake (`intake.py`) | built, untested | `intake.py`: `/idea`, `/backlog` (gh issue list) |
