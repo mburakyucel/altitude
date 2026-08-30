@@ -10,7 +10,8 @@ in `:*` is a legacy prefix; a rule with a bare `*` is a wildcard where `*` match
 trailing ` *` also admits the bare command; anything else is an exact match. It is what makes the negative cases below
 evidence rather than string trivia — in particular it shows why the table carries no push rule, why every verb rule
 ends in ` *` with the space (`git diff*` admitted `git difftool --extcmd=…`), why `git fetch` is exact forms
-(`git fetch *` admitted `--upload-pack=<program>`), and why the `gh api` rule is the merge route alone."""
+(`git fetch *` admitted `--upload-pack=<program>`), and why there is no `gh api` rule at all (a middle `*` spans
+spaces, so the "exact" merge route matched a PR-closing PATCH that reconstructed the route in a later argument)."""
 import io
 import json
 import os
@@ -29,15 +30,6 @@ from altitude import config, dispatch, engines, l3, permissions, state as S, tas
 
 REPO = str(config.REPO)
 DOCS = config.REPO / "docs"
-OWNER_REPO = permissions.github_repo()   # this checkout's origin; the route tests need a GitHub remote
-
-
-def routes(owner_repo: str) -> list[str]:
-    """The two merge-route rules of one repository (F5): the PR number is the one wildcard, nothing else under pulls."""
-    return [f"Bash(gh api repos/{owner_repo}/pulls/*/merge)", f"Bash(gh api repos/{owner_repo}/pulls/*/merge *)"]
-
-
-OWN_ROUTES = routes(OWNER_REPO)
 
 
 def make_checkout(name: str, origin: str) -> Path:
@@ -51,8 +43,6 @@ def make_checkout(name: str, origin: str) -> Path:
 
 WIDGETS = make_checkout("widgets", "git@github.com:acme/widgets.git")
 GIZMOS = make_checkout("gizmos", "https://github.com/beta/gizmos.git")
-WIDGETS_ROUTES = routes("acme/widgets")
-GIZMOS_ROUTES = routes("beta/gizmos")
 
 
 def register_projects() -> None:
@@ -94,7 +84,9 @@ GIT_RULES += [f"Bash(git {v} *)" for v in ("branch", "rev-parse", "add", "commit
 GIT_RULES += ["Bash(git rebase origin/main)", "Bash(git reset --hard origin/main)"]
 
 # ---- the exact commands I-064 recorded as denied, plus the everyday role forms -------------------------------------
-COVERED_BASE = [
+# (I-064's `gh api …/pulls/…/merge` denial is deliberately NOT here: it was only the L2's fallback after `gh pr merge`
+# was denied, and `gh pr merge` below covers that need — C1/C2, the second review of PR #89.)
+COVERED = [
     "alt task hold-merge apply-r-010-i-030 --off",
     "alt incident amend I-055",
     f"{REPO}/bin/alt task status foo",
@@ -109,16 +101,6 @@ COVERED_BASE = [
     "git add altitude/permissions.py", "git commit -m msg", "git rebase origin/main",
 ]
 
-
-def covered(owner_repo: str) -> list[str]:
-    """…plus the merge route of `owner_repo`: bare (a GET answers "is it merged") and the PUT with its flags after the route."""
-    return COVERED_BASE + [f"gh api repos/{owner_repo}/pulls/56/merge",
-                           f"gh api repos/{owner_repo}/pulls/56/merge -X PUT -f merge_method=squash",
-                           f"gh api repos/{owner_repo}/pulls/56/merge --method PUT"]
-
-
-COVERED = covered(OWNER_REPO)
-
 # ---- never-list and out-of-table commands: no rule may admit any of these -------------------------------------------
 PRIVILEGE_ESCALATION = ["sudo systemctl restart altitude", "sudo -i", "sudo rm -rf /tmp/x", "doas sh", "su -"]
 SERVICE_UNITS = ["systemctl --user restart altitude", "systemctl stop tutor", "systemctl --user daemon-reload"]
@@ -127,9 +109,19 @@ FORCE_PUSH = ["git push --force origin feature", "git push origin --force featur
               "git push --force-with-lease origin feature", "git push -u origin feature --force-with-lease",
               "git push origin feature --force"]
 PUSH_TO_MAIN = ["git push origin main", "git push -u origin main", "git push origin HEAD:main", "git push origin feature:main"]
-OTHER_REPO_ROUTE = ["gh api repos/someone-else/other/pulls/1", "gh api repos/someone-else/other/pulls/1/merge",
-                    "gh api repos/someone-else/other/pulls/1/merge -X PUT -f merge_method=squash",
-                    "gh api -X PUT repos/someone-else/other/pulls/1/merge"]
+# C1/C2 (the second review of PR #89): no `gh api` rule exists, so nothing under `gh api` may match — not the merge
+# route this PR first carried, not any other route, of any repository. `gh pr merge` is the covered form.
+GH_API = ["gh api repos/acme/widgets/pulls/56/merge", "gh api repos/acme/widgets/pulls/56/merge -X PUT -f merge_method=squash",
+          "gh api repos/acme/widgets/pulls/56/merge --method PUT", "gh api repos/acme/widgets/pulls",
+          "gh api repos/acme/widgets/pulls/1 --method PATCH -f title=x", "gh api repos/acme/widgets/pulls/comments/5 -X DELETE",
+          "gh api repos/acme/widgets/pulls/1/reviews/2 -X DELETE", "gh api repos/acme/widgets/pulls/1/merge/x",
+          "gh api repos/someone-else/other/pulls/1", "gh api repos/someone-else/other/pulls/1/merge",
+          "gh api -X PUT repos/someone-else/other/pulls/1/merge", "gh api user", "gh api graphql -f query=x"]
+# the C1 construction: the route rule's middle `*` spanned spaces, so a PR-closing PATCH whose *argument* ends in
+# `/merge` matched the "exact" route `gh api repos/o/r/pulls/*/merge` — with or without further arguments after it
+MERGE_IN_ARGUMENT = ["gh api repos/acme/widgets/pulls/1 -X PATCH -f state=closed -f body=/merge",
+                     "gh api repos/acme/widgets/pulls/1 -X PATCH -f state=closed -f body=/merge -f x=y",
+                     "gh api repos/someone-else/other/pulls/1 -X PATCH -f state=closed -f body=/merge"]
 OUT_OF_TABLE = ["gh repo delete x", "gh auth logout", "gh api repos/x/y/git/refs/heads/main", "git reset --hard HEAD~3",
                 "git rebase -i origin/main", "git checkout main", "git clean -fdx", "altd", "kill -9 1", "echo alt task status"]
 # plain pushes are not in the table either: the landing push runs inside `alt land`, the rest stays with the classifier
@@ -175,16 +167,6 @@ ISSUE_WRITES = [
 ]
 
 
-def pulls_namespace(owner_repo: str) -> list[str]:
-    """F5: everything under `repos/<owner_repo>/pulls…` that is not the merge route — with the method flag written after the
-    route, where the old `pulls*` rule admitted it."""
-    r = f"gh api repos/{owner_repo}/pulls"
-    return [r, f"{r}/1", f"{r}/1 -X PATCH -f state=closed", f"{r}/1 --method PATCH -f title=x",
-            f"{r}/comments/5 -X DELETE", f"{r}/1/reviews/2 -X DELETE", f"{r}/1/requested_reviewers -X DELETE -f reviewers[]=x",
-            f"{r}/1/update-branch -X PUT", f"{r}/1/reviews/2/dismissals -X PUT -f message=x", f"{r}/1/merge/x",
-            f"gh api -X PATCH repos/{owner_repo}/pulls/1 -f state=closed"]
-
-
 class TestMatcherPort(unittest.TestCase):
     def test_semantics_read_from_the_binary(self):
         self.assertTrue(rule_matches("Bash(alt *)", "alt"))
@@ -206,14 +188,17 @@ class TestMatcherPort(unittest.TestCase):
         # F1/F5: a wildcard tail carries every option of the verb, and a wildcard in the middle matches spaces too
         self.assertTrue(rule_matches("Bash(git fetch *)", "git fetch --upload-pack=/tmp/pwned origin"))
         self.assertTrue(rule_matches("Bash(gh api repos/o/r/pulls*)", "gh api repos/o/r/pulls/1 -X PATCH -f state=closed"))
-        self.assertTrue(rule_matches("Bash(gh api repos/o/r/pulls/*/merge *)", "gh api repos/o/r/pulls/1/merge -X PUT"))
-        self.assertFalse(rule_matches("Bash(gh api repos/o/r/pulls/*/merge *)", "gh api repos/o/r/pulls/1 -X PATCH"))
+        # C1: the middle `*` spans spaces, so even the "exact" merge route this PR first carried matched a PR-closing
+        # PATCH that reconstructs the route inside a later argument — why the table now has no `gh api` rule at all
+        self.assertTrue(rule_matches("Bash(gh api repos/o/r/pulls/*/merge)",
+                                     "gh api repos/o/r/pulls/1 -X PATCH -f state=closed -f body=/merge"))
+        self.assertTrue(rule_matches("Bash(gh api repos/o/r/pulls/*/merge *)",
+                                     "gh api repos/o/r/pulls/1 -X PATCH -f state=closed -f body=/merge -f x=y"))
 
 
 class TestTable(unittest.TestCase):
     def test_every_listed_form_is_a_rule_in_table_order(self):
-        self.assertIsNotNone(OWNER_REPO, "this checkout's origin must be a GitHub remote for the route tests")
-        expected = ALT_RULES + GH_RULES + OWN_ROUTES + GIT_RULES
+        expected = ALT_RULES + GH_RULES + GIT_RULES
         self.assertEqual(permissions.allow_rules(), expected)
 
     def test_i064_commands_are_covered(self):
@@ -224,8 +209,7 @@ class TestTable(unittest.TestCase):
     def test_never_list_and_out_of_table_commands_match_no_rule(self):
         rules = permissions.allow_rules()
         for group in (PRIVILEGE_ESCALATION, SERVICE_UNITS, RECURSIVE_REMOVE, FORCE_PUSH, PUSH_TO_MAIN,
-                      OTHER_REPO_ROUTE, OUT_OF_TABLE, PLAIN_PUSH, NEIGHBOURS, PROGRAM_OPTIONS, ISSUE_WRITES,
-                      pulls_namespace(OWNER_REPO)):
+                      GH_API, MERGE_IN_ARGUMENT, OUT_OF_TABLE, PLAIN_PUSH, NEIGHBOURS, PROGRAM_OPTIONS, ISSUE_WRITES):
             for cmd in group:
                 self.assertEqual(matching(rules, cmd), [], f"{cmd!r} is admitted")
 
@@ -267,28 +251,36 @@ class TestTable(unittest.TestCase):
                 self.assertTrue(matching(rules, cmd), cmd)
             self.assertEqual([r for r in rules if r.startswith("Bash(gh issue")], ["Bash(gh issue view *)", "Bash(gh issue list *)"])
 
-    def test_gh_api_is_the_merge_route_only(self):
-        """F5: `pulls*` covered the whole namespace whenever the method flag came after the route — `pulls/1 -X PATCH`
-        closed a PR, `pulls/comments/5 -X DELETE` deleted a review comment. Only `pulls/<n>/merge` remains."""
+    def test_no_rule_matches_gh_api_at_all(self):
+        """C1/C2 (the second review of PR #89): the merge-route rules and the remote parsing behind them are gone. The
+        old `pulls*` shape covered the whole namespace whenever the method flag came after the route, and even the
+        "exact" `pulls/*/merge` matched a PR-closing PATCH (the middle `*` spans spaces, so the route can be
+        reconstructed inside a later argument); the unanchored remote regex behind it took `evil-github.com/a/b` for a
+        GitHub remote. No rule shape bounds an API route, so no `gh api` command may match any rule, ever."""
         old = "Bash(gh api repos/acme/widgets/pulls*)"
         self.assertTrue(rule_matches(old, "gh api repos/acme/widgets/pulls/1 -X PATCH -f state=closed"))
         self.assertTrue(rule_matches(old, "gh api repos/acme/widgets/pulls/comments/5 -X DELETE"))
-        w = permissions.allow_rules(WIDGETS)
-        self.assertEqual([r for r in w if "gh api" in r], WIDGETS_ROUTES)
-        for cmd in pulls_namespace("acme/widgets") + OTHER_REPO_ROUTE + pulls_namespace("someone-else/other"):
-            self.assertEqual(matching(w, cmd), [], f"{cmd!r} is admitted")
-        for cmd in covered("acme/widgets")[-3:]:
-            self.assertTrue(matching(w, cmd), f"{cmd!r} is covered by no rule")
+        for repo in (None, WIDGETS, GIZMOS, config.REPO):
+            rules = permissions.allow_rules(repo)
+            self.assertEqual([r for r in rules if "gh api" in r], [], repo)
+            for cmd in GH_API:
+                self.assertEqual(matching(rules, cmd), [], f"{cmd!r} is admitted")
+        for name in ("github_repo", "merge_route_rules", "_remote_url", "_GITHUB_REMOTE"):
+            self.assertFalse(hasattr(permissions, name), f"{name} must be gone with the rules it served")
+
+    def test_merge_in_a_post_route_argument_matches_nothing(self):
+        """C1's construction on the live table: a command that spells `/merge` inside a post-route argument (the shape
+        that matched the removed route rules and closed a PR) matches no rule."""
+        for repo in (None, WIDGETS):
+            rules = permissions.allow_rules(repo)
+            for cmd in MERGE_IN_ARGUMENT:
+                self.assertEqual(matching(rules, cmd), [], f"{cmd!r} is admitted")
 
     def test_every_verb_rule_has_the_space_before_its_wildcard(self):
-        """The whole table, not just `_GIT`: a wildcard verb rule is `<verb> *` — the one documented exception is the merge
-        route, whose PR number is the wildcard in the middle and whose tail form keeps the space."""
+        """The whole table: a wildcard verb rule is `<verb> *` — with the merge route gone there is no exception left."""
         for rule in permissions.allow_rules(WIDGETS):
             c = rule[len("Bash("):-1]
             if "*" not in c:
-                continue
-            if c.startswith("gh api repos/"):
-                self.assertIn(rule, WIDGETS_ROUTES)
                 continue
             self.assertTrue(c.endswith(" *") and c.count("*") == 1, c)
 
@@ -303,31 +295,7 @@ class TestTable(unittest.TestCase):
         self.assertNotIn("git *", contents)
         self.assertNotIn("gh issue *", contents)
         self.assertNotIn("git fetch *", contents)
-        self.assertEqual([c for c in contents if c.startswith("gh api")], [r[len("Bash("):-1] for r in OWN_ROUTES])
-
-    def test_gh_api_route_is_this_repository_only(self):
-        with mock.patch.object(permissions, "_remote_url", return_value="git@github.com:acme/widgets.git"):
-            rules = permissions.allow_rules()
-        api = [r for r in rules if "gh api" in r]
-        self.assertEqual(api, WIDGETS_ROUTES)
-        self.assertTrue(matching(api, "gh api repos/acme/widgets/pulls/56/merge"))
-        self.assertTrue(matching(api, "gh api repos/acme/widgets/pulls/56/merge -X PUT -f merge_method=squash"))
-        for cmd in OTHER_REPO_ROUTE + ["gh api repos/acme/widgets/git/refs/heads/main", "gh api repos/acme/widgets-2/pulls/1/merge",
-                                       "gh api repos/acme/widgets/pulls"]:
-            self.assertEqual(matching(api, cmd), [], cmd)
-
-    def test_remote_forms_parse_and_an_unreadable_remote_omits_the_route(self):
-        for url in ("git@github.com:acme/widgets.git", "https://github.com/acme/widgets", "https://github.com/acme/widgets.git",
-                    "ssh://git@github.com/acme/widgets.git", "https://github.com/acme/widgets/"):
-            with mock.patch.object(permissions, "_remote_url", return_value=url):
-                self.assertEqual(permissions.github_repo(), "acme/widgets", url)
-        for url in (None, "", "https://gitlab.com/acme/widgets.git", "not a url"):
-            with mock.patch.object(permissions, "_remote_url", return_value=url):
-                self.assertIsNone(permissions.github_repo(), url)
-                rules = permissions.allow_rules()
-                self.assertEqual([r for r in rules if "gh api" in r], [], url)   # omitted, never widened
-                self.assertEqual(rules, ALT_RULES + GH_RULES + GIT_RULES)
-        self.assertRegex(permissions.github_repo(), r"^[^/\s]+/[^/\s]+$")   # the live remote of this checkout parses
+        self.assertEqual([c for c in contents if c.startswith("gh api")], [])
 
     def test_no_absolute_home_path_in_the_module(self):
         src = Path(permissions.__file__).read_text()
@@ -335,16 +303,16 @@ class TestTable(unittest.TestCase):
         self.assertIn(f"Bash({config.REPO}/bin/alt *)", permissions.allow_rules())
 
     def test_residual_risk_is_recorded_not_fixed(self):
-        """A4: `gh pr merge *` admits `--admin` and `--repo other/x`; the module says so and leaves it to guard.py. The same
-        for the merge route's middle wildcard (a field value ending in `/merge` rides through) and for the file-writing and
-        file-publishing options: recorded, not silently admitted."""
+        """A4: `gh pr merge *` admits `--admin` and `--repo other/x`; the module says so and leaves it to guard.py. The
+        same for the file-writing and file-publishing options: recorded, not silently admitted. The removal of the
+        `gh api` rules is recorded too, so the next reader does not re-add "just the merge route"."""
         rules = permissions.allow_rules()
         self.assertTrue(matching(rules, "gh pr merge 1 --admin --repo other/project"))
-        self.assertTrue(matching(rules, f"gh api repos/{OWNER_REPO}/pulls/1 -X PATCH -f state=closed -f body=/merge -f x=y"))
         src = Path(permissions.__file__).read_text()
         self.assertIn("Residual risk", src)
-        self.assertIn("field value ending in `/merge`", src)
         self.assertIn("--output=<file>", src)
+        self.assertIn("fallback", src)                                   # the gh api rationale: gh pr merge covers I-064
+        self.assertIn("no repository-specific rule in the table", src)
         self.assertEqual(set(permissions.permissions_block()), {"allow"})
 
     def test_block_and_allowed_tools_share_one_source(self):
@@ -356,24 +324,19 @@ class TestTable(unittest.TestCase):
 
 
 class TestPerCheckout(unittest.TestCase):
-    """A1: the merge route follows the checkout the session runs in — never Altitude's own."""
+    """A1, amended by C1/C2: the renderer still takes the checkout (the per-repo settings files and the threading are
+    the shape a future repository-specific rule needs), but with the merge route gone no rule varies by checkout — the
+    rendered allowlist is identical for every checkout, GitHub remote or none."""
 
-    def test_each_checkout_renders_only_its_own_route(self):
+    def test_every_checkout_renders_the_identical_table(self):
         w, g = permissions.allow_rules(WIDGETS), permissions.allow_rules(GIZMOS)
-        self.assertEqual([r for r in w if "gh api" in r], WIDGETS_ROUTES)
-        self.assertEqual([r for r in g if "gh api" in r], GIZMOS_ROUTES)
-        for r in OWN_ROUTES:
-            self.assertNotIn(r, w)
-            self.assertNotIn(r, g)
-            self.assertIn(r, permissions.allow_rules())                     # None: this checkout, the default
-            self.assertIn(r, permissions.allow_rules(config.REPO))          # and by path
-        self.assertEqual([r for r in w if "gh api" not in r], [r for r in g if "gh api" not in r])   # the rest is one table
-        self.assertEqual(permissions.github_repo(WIDGETS), "acme/widgets")
-        self.assertEqual(permissions.github_repo(GIZMOS), "beta/gizmos")
-        self.assertIsNone(permissions.github_repo(_TMP))                        # not a checkout: omitted, never widened
-        for cmd in covered("acme/widgets"):
+        self.assertEqual(w, g)
+        self.assertEqual(w, permissions.allow_rules())                      # None: this checkout, the default
+        self.assertEqual(w, permissions.allow_rules(config.REPO))           # and by path
+        self.assertEqual(w, permissions.allow_rules(_TMP))                  # not even a checkout: same table
+        for cmd in COVERED:
             self.assertTrue(matching(w, cmd), f"{cmd!r} is covered by no widgets rule")
-        for cmd in covered("acme/widgets")[-3:] + OTHER_REPO_ROUTE:
+        for cmd in GH_API + MERGE_IN_ARGUMENT:
             self.assertEqual(matching(g, cmd), [], f"{cmd!r} is admitted in gizmos")
 
     def test_settings_file_is_per_repository(self):
@@ -382,16 +345,11 @@ class TestPerCheckout(unittest.TestCase):
         self.assertEqual(pd.name, "claude-settings.json")
         self.assertEqual(engines.claude_settings(config.REPO), pd)              # this checkout by path is the default file
         self.assertEqual(engines.claude_settings(Path(str(WIDGETS) + "/")), pw)  # a spelling of the same path is the same file
-        for p, route, other in ((pw, WIDGETS_ROUTES, GIZMOS_ROUTES), (pg, GIZMOS_ROUTES, WIDGETS_ROUTES)):
+        for p in (pw, pg, pd):
             st = json.loads(p.read_text())
-            for r in route:
-                self.assertIn(r, st["permissions"]["allow"])
-            for r in other + OWN_ROUTES:
-                self.assertNotIn(r, st["permissions"]["allow"])
+            self.assertEqual(st["permissions"]["allow"], permissions.allow_rules())   # one identical table per file (C1/C2)
             self.assertEqual(st["autoCompactWindow"], 300_000)
             self.assertEqual(set(st), {"autoCompactWindow", "permissions", "hooks", "env"})
-        for r in OWN_ROUTES:
-            self.assertIn(r, json.loads(pd.read_text())["permissions"]["allow"])
         before, g_before = pw.stat().st_mtime_ns, pg.read_text()
         engines.claude_settings(WIDGETS)                                        # unchanged content: not rewritten
         self.assertEqual(pw.stat().st_mtime_ns, before)
@@ -431,8 +389,8 @@ class TestPerCheckout(unittest.TestCase):
         want = [engines.claude_settings(WIDGETS), engines.claude_settings(GIZMOS), engines.claude_settings(WIDGETS), Path("/tmp/explicit.json")]
         for cmd, p in zip(seen, want):
             self.assertEqual(Path(cmd[cmd.index("--settings") + 1]), p)
-        self.assertIn(WIDGETS_ROUTES[0], json.loads(want[0].read_text())["permissions"]["allow"])
-        self.assertIn(GIZMOS_ROUTES[0], json.loads(want[1].read_text())["permissions"]["allow"])
+        for p in want[:2]:
+            self.assertEqual(json.loads(p.read_text())["permissions"]["allow"], permissions.allow_rules())
 
 
 class TestConsumers(unittest.TestCase):
@@ -457,16 +415,10 @@ class TestConsumers(unittest.TestCase):
         self.assertEqual(self.l2_settings["env"]["ALTITUDE_ACTOR"], "l2")
         self.assertEqual(set(self.global_settings), {"autoCompactWindow", "permissions", "hooks", "env"})
 
-    def test_l2_file_carries_its_own_projects_route(self):
-        for r in WIDGETS_ROUTES:
-            self.assertIn(r, self.l2_settings["permissions"]["allow"])
-            self.assertNotIn(r, self.l2_gizmos["permissions"]["allow"])
-        for r in GIZMOS_ROUTES:
-            self.assertIn(r, self.l2_gizmos["permissions"]["allow"])
-            self.assertNotIn(r, self.l2_settings["permissions"]["allow"])
+    def test_l2_files_carry_the_identical_table_and_no_gh_api(self):
+        self.assertEqual(self.l2_settings["permissions"]["allow"], self.l2_gizmos["permissions"]["allow"])   # C1/C2
         for st in (self.l2_settings, self.l2_gizmos):
-            for r in OWN_ROUTES:
-                self.assertNotIn(r, st["permissions"]["allow"])        # never Altitude's own route in another project
+            self.assertEqual([r for r in st["permissions"]["allow"] if "gh api" in r], [])
 
     def test_l2_file_wires_the_prompt_fault_hook_beside_the_existing_ones(self):
         hooks = self.l2_settings["hooks"]
@@ -518,10 +470,10 @@ class TestConsumers(unittest.TestCase):
 
     def test_i064_commands_are_covered_by_both_files(self):
         for st in (self.widgets_settings, self.l2_settings):
-            for cmd in covered("acme/widgets"):
+            for cmd in COVERED:
                 self.assertTrue(matching(st["permissions"]["allow"], cmd), f"{cmd!r} is covered by no rule")
-            for cmd in (FORCE_PUSH + PUSH_TO_MAIN + PRIVILEGE_ESCALATION + SERVICE_UNITS + RECURSIVE_REMOVE + OTHER_REPO_ROUTE
-                        + NEIGHBOURS + PROGRAM_OPTIONS + ISSUE_WRITES + pulls_namespace("acme/widgets")):
+            for cmd in (FORCE_PUSH + PUSH_TO_MAIN + PRIVILEGE_ESCALATION + SERVICE_UNITS + RECURSIVE_REMOVE
+                        + NEIGHBOURS + PROGRAM_OPTIONS + ISSUE_WRITES + GH_API + MERGE_IN_ARGUMENT):
                 self.assertEqual(matching(st["permissions"]["allow"], cmd), [], f"{cmd!r} is admitted")
 
     def test_global_settings_rewritten_when_the_block_changes(self):
@@ -608,7 +560,7 @@ class TestOneSource(unittest.TestCase):
                    json.loads(dispatch.session_settings("widgets", "sentinel-task", "key").read_text())):
             self.assertNotIn(self.SENTINEL[0], st["permissions"]["allow"])
         self.assertNotIn(self.SENTINEL[0], l3.allowed_tools("widgets"))
-        self.assertIn(WIDGETS_ROUTES[0], l3.allowed_tools("widgets"))
+        self.assertIn("Bash(gh pr merge *)", l3.allowed_tools("widgets"))
 
     def test_hook_sentinel_reaches_both_settings_files(self):
         """F2: the hook wiring comes from `permissions.prompt_fault_hooks()` in both files, so the two cannot drift."""

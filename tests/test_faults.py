@@ -1,4 +1,5 @@
 """Decision 36: Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
+import fcntl
 import json
 import os
 import re
@@ -6,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -149,10 +151,18 @@ class TestPermissionPromptHook(unittest.TestCase):
         self.assertEqual((rec["notification_type"], rec["tool"], rec["tool_use_id"]), ("permission_prompt", "Bash", "toolu_1"))
 
     def test_a_new_tool_call_is_a_new_prompt(self):
+        """A second call parking on an identical payload is a new prompt — but opened *after* the first billing it is
+        indistinguishable from that prompt re-delivered, and C3 resolves the tie toward no false fault: its first
+        delivery is absorbed, its next delivery bills it. (Two calls parked side by side keep billing on their own
+        deliveries — see test_two_parked_calls_are_two_faults — and the drain collapses same-command lines into one
+        system fault anyway, so nothing real is lost by the absorbed delivery.)"""
         self.pre("gh pr merge 56", "toolu_1"); self.prompt()
-        self.pre("gh pr merge 56", "toolu_2"); self.prompt()
+        self.pre("gh pr merge 56", "toolu_2"); self.prompt()          # could be toolu_1's prompt delivered again (C3)
+        self.assertEqual(self.counts()["permission_denials"], 1)
+        self.prompt()
         self.assertEqual(self.counts()["permission_denials"], 2)
         self.assertEqual(len(self.fault_lines()), 2)
+        self.assertEqual([r["tool_use_id"] for r in self.records()], ["toolu_1", "toolu_2"])
 
     def test_other_notifications_are_ignored(self):
         self.pre("ls")
@@ -240,6 +250,65 @@ class TestPermissionPromptHook(unittest.TestCase):
         c = self.counts()
         self.assertNotIn("subagent_launches", c)
         self.assertNotIn("cap", c)
+
+    def test_a_redelivered_notification_does_not_consume_another_open_capture(self):
+        """C3 (the second review of PR #89): prompt A billed, capture B opens, A's notification delivered again — the
+        duplicate used to consume B and bill it as a distinct fault for a command that may then run fine. Now the
+        duplicate is absorbed (no consume, no count, B stays open) and B's own notification bills B."""
+        self.assert_passive(self.pre("gh pr merge 56 --squash", "toolu_a"))
+        self.assert_passive(self.prompt())                            # A's prompt: billed with A's command
+        self.assertEqual(self.counts()["permission_denials"], 1)
+        self.assert_passive(self.pre("git reset --hard origin/main", "toolu_b"))
+        self.assert_passive(self.prompt())                            # A's prompt delivered again, while B is open
+        self.assertEqual(self.counts()["permission_denials"], 1)      # not billed again
+        self.assertEqual(len(self.fault_lines()), 1)
+        self.assertEqual([e["tool_use_id"] for e in self.pending() if not e["consumed"]], ["toolu_b"])   # B left open
+        self.assert_passive(self.prompt())                            # B's own prompt: a genuinely new fault
+        self.assertEqual(self.counts()["permission_denials"], 2)
+        self.assertEqual([(r["tool_use_id"], r["command"]) for r in self.records()],
+                         [("toolu_a", "gh pr merge 56 --squash"), ("toolu_b", "git reset --hard origin/main")])
+        self.assertTrue(all(e["consumed"] for e in self.pending()))
+
+    def test_a_redelivered_notification_then_a_release_leaves_no_false_fault(self):
+        """C3, the run-fine tail: the duplicate absorbed, B's call then runs — the release removes B and no fault for
+        B ever exists; one more duplicate after that is keyed to the last consumed capture and billed once."""
+        self.pre("gh pr merge 56", "toolu_a"); self.prompt()
+        self.pre("ls", "toolu_b")
+        self.assert_passive(self.prompt())                            # duplicate: absorbed, B untouched
+        self.assert_passive(self.post("ls", "toolu_b"))               # B ran fine
+        self.assert_passive(self.prompt())                            # still the same prompt delivered again
+        self.assertEqual(self.counts()["permission_denials"], 1)
+        self.assertEqual([r["tool_use_id"] for r in self.records()], ["toolu_a"])
+
+    def test_fault_line_append_waits_for_the_log_lock(self):
+        """C4: the hook appends its fault line under monitor/hook-faults.log.lock — the lock the drain's rotate holds —
+        so a line can never land in an inode the drain has already read. With the lock held elsewhere the hook blocks
+        at the append (counts already billed, all other locks released) instead of writing unlocked."""
+        self.pre("gh pr merge 56")
+        self.mon.mkdir(parents=True, exist_ok=True)
+        lock_f = open(self.mon / "hook-faults.log.lock", "w")
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            e = dict(os.environ, ALTITUDE_HOME=self.home, **self.env)
+            p = subprocess.Popen([sys.executable, str(HOOK)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, env=e)
+            p.stdin.write(json.dumps({"session_id": "s1", "hook_event_name": "Notification", "title": "Claude Code",
+                                      "message": "Claude needs your permission to use Bash",
+                                      "notification_type": "permission_prompt"}))
+            p.stdin.close()
+            try:
+                p.wait(timeout=1.0)
+                self.fail("the hook must wait for hook-faults.log.lock before appending its fault line")
+            except subprocess.TimeoutExpired:
+                pass
+            self.assertEqual(self.fault_lines(), [])                  # nothing appended while the lock is held
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+            lock_f.close()
+        self.assertEqual(p.wait(timeout=10), 0)
+        self.assertEqual((p.stdout.read(), p.stderr.read()), ("", ""))
+        self.assertEqual(len(self.fault_lines()), 1)                  # the line lands once the lock is free
+        self.assertEqual(self.records()[0]["command"], "gh pr merge 56")
 
     def test_a_call_that_ran_is_released_and_never_billed(self):
         self.assert_passive(self.pre("ls", "toolu_ok"))
@@ -429,6 +498,35 @@ class TestDrainPermissionPrompts(unittest.TestCase):
             server.drain_hook_faults()
         self.assertEqual(len(calls), 2)
         self.assertIn("`second`", calls[1])
+        self.assertFalse(self.log.exists())
+        self.assertEqual(list(config.MONITOR_DIR.glob("hook-faults.log.*.drain")), [])
+
+    def test_a_locked_appender_serializes_with_the_rotate_and_loses_no_line(self):
+        """C4: os.replace() alone still lost the line of an appender that opened the log before the rename and wrote
+        after the drain had read — the write landed in the renamed inode post-read. The rotate now holds
+        monitor/hook-faults.log.lock, the lock hooks/permission_prompt_fault.py holds across its appends: the drain
+        waits, the line lands before the rename, and both lines are raised. (edit_count.py and subagent_cap.py do not
+        take this lock yet — lease boundary — so only permission-prompt lines get this guarantee.)"""
+        self.log.write_text(self.line(command="first") + "\n")
+        lock_f = open(config.MONITOR_DIR / "hook-faults.log.lock", "w")
+        fcntl.flock(lock_f, fcntl.LOCK_EX)                        # the appender's lock, held across open+write
+        appender = open(self.log, "a")                            # opened before the rotate — the racing inode
+        calls = []
+        with mock.patch.object(improve, "system_fault", side_effect=lambda k, d, **kw: calls.append(d) or None):
+            th = threading.Thread(target=server.drain_hook_faults)
+            th.start()
+            th.join(0.5)
+            self.assertTrue(th.is_alive(), "the rotate must wait for the appender's hook-faults.log.lock")
+            self.assertEqual(calls, [])                           # and nothing was read around the lock
+            appender.write(self.line(command="second") + "\n")
+            appender.close()
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+            lock_f.close()
+            th.join(10)
+            self.assertFalse(th.is_alive())
+        self.assertEqual(len(calls), 2)                           # both lines raised: the appended one was not lost
+        self.assertTrue(any("`first`" in c for c in calls))
+        self.assertTrue(any("`second`" in c for c in calls))
         self.assertFalse(self.log.exists())
         self.assertEqual(list(config.MONITOR_DIR.glob("hook-faults.log.*.drain")), [])
 

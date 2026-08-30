@@ -1,5 +1,6 @@
 """altd — the Altitude server: web app + JSON API + timers. Stdlib http.server, the pocketbook's shape (decision 29)."""
 from __future__ import annotations
+import fcntl
 import json
 import mimetypes
 import os
@@ -433,16 +434,34 @@ def drain_hook_faults() -> None:
 
     The log is rotated before it is read: `os.replace()` moves it to a private drain name, so a hook appending while the
     tick reads lands in a fresh log for the next tick instead of in a file about to be unlinked (decision 36: no fault is
-    lost). A drain left behind by a tick that died mid-way is picked up by the next one."""
+    lost). The rotate holds `monitor/hook-faults.log.lock` — the advisory lock `hooks/permission_prompt_fault.py` holds
+    across each of its appends — so a permission-prompt line whose writer opened the log before the rename is fully
+    written before the rename happens and is read below, never left in a renamed inode after this tick has read it.
+    `hooks/edit_count.py` and `hooks/subagent_cap.py` do NOT take this lock yet (guardrail files outside I-064's task
+    lease): their appends keep the previous tiny open-before-rename window, unchanged and unweakened. A drain left
+    behind by a tick that died mid-way is picked up by the next one."""
     p = config.MONITOR_DIR / "hook-faults.log"
     drains = sorted(p.parent.glob("hook-faults.log.*.drain")) if p.parent.is_dir() else []
     mine = p.with_name(f"hook-faults.log.{os.getpid()}-{time.time_ns()}.drain")
+    lock_f = None
+    try:
+        lock_f = open(p.with_name(f"{p.name}.lock"), "w")
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+    except OSError:                                                  # no monitor dir yet, or the lock cannot be taken:
+        if lock_f:                                                   # rotate unlocked rather than skip the drain
+            lock_f.close()
+        lock_f = None
     try:
         os.replace(p, mine)
     except FileNotFoundError:
         pass                                                         # nothing appended since the last tick
     else:
         drains.append(mine)
+    finally:
+        if lock_f:
+            try: fcntl.flock(lock_f, fcntl.LOCK_UN)
+            except OSError: pass
+            lock_f.close()
     if not drains:
         return
     lines = [ln for d in drains for ln in d.read_text().splitlines() if ln.strip()]

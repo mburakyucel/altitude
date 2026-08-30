@@ -14,9 +14,16 @@ Three events, wired into every Claude launch by `permissions.prompt_fault_hooks(
                                    `server.drain_hook_faults()`. A Bash prompt consumes the newest unconsumed capture,
                                    each capture at most once, so two calls parked side by side are two faults with two
                                    commands — never one borrowed tool_use_id and a second prompt dropped as a duplicate.
-                                   With nothing left to consume the notification is the same prompt delivered again: it
-                                   is keyed to the last consumed capture and billed once. A prompt for another tool, or
-                                   with no capture at all, is keyed on the session and the message.
+                                   Re-delivery (C3, the second review of PR #89): a notification whose exact payload
+                                   (session, notification_type, tool, message) was already billed may not consume a
+                                   capture opened *after* that billing — with only newer captures open it is the same
+                                   prompt delivered again, so nothing is consumed and nothing is counted; it only
+                                   advances the payload's watermark (`notif_seen` in the counts file), and the next
+                                   identical notification — a genuinely new prompt for one of those calls — bills
+                                   normally. A duplicate therefore never turns an open capture for a command that then
+                                   runs fine into a fault. With nothing open at all the notification is keyed to the
+                                   last consumed capture and billed once; a prompt for another tool, or with no capture
+                                   at all, is keyed on the session and the message.
 
 Sessions without ALTITUDE_SESSION_KEY (everything but an L2) key their files on the Claude session id, and the fault
 line carries whatever of ALTITUDE_PROJECT / ALTITUDE_TASK / ALTITUDE_ACTOR the launcher set — possibly none of them;
@@ -24,7 +31,10 @@ the drain copes with the absent fields.
 
 It never grants, denies or retries: it prints no permission decision, and it exits 0 in every case — a broken hook
 must not become a second way to park the session. `subagent_launches` and `cap` are never touched; the counts file
-keeps its fcntl lock discipline, and the pending file takes the same kind of lock.
+keeps its fcntl lock discipline, and the pending file takes the same kind of lock. Every append to
+monitor/hook-faults.log holds monitor/hook-faults.log.lock (`_append_log`) — the advisory lock
+`server.drain_hook_faults()` takes around its rotate — so a line this hook writes cannot land in an inode the drain
+has already read and is about to unlink (C4). Lock order, fixed: pending file → counts file → hook-faults.log.
 """
 import fcntl, hashlib, json, os, re, sys
 from pathlib import Path
@@ -62,6 +72,34 @@ def _write(path, obj):
     tmp.write_text(json.dumps(obj)); os.replace(tmp, path)
 
 
+def _append_log(mon, text):
+    """One line into monitor/hook-faults.log, held under monitor/hook-faults.log.lock — the same advisory lock
+    `server.drain_hook_faults()` takes around its rotate (C4): an append that opened the log before the rotate finishes
+    before the rename, so the drain reads it instead of losing it in the renamed inode. In the fixed lock order
+    (pending file → counts file → this log lock) this lock is always last: taken innermost by `fault()` or with the
+    other two already released (the billed record). If the lock cannot be taken the line is appended unlocked — the
+    exit-0 contract outranks the residual race."""
+    log_p = mon / "hook-faults.log"
+    lock_f = None
+    try:
+        lock_f = open(log_p.with_name(f"{log_p.name}.lock"), "w")
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+    except OSError:
+        if lock_f:
+            lock_f.close()
+        lock_f = None
+    try:
+        with open(log_p, "a") as f:
+            f.write(text)
+    except OSError:
+        pass
+    finally:
+        if lock_f:
+            try: fcntl.flock(lock_f, fcntl.LOCK_UN)
+            except OSError: pass
+            lock_f.close()
+
+
 def _pending(path, fault):
     """The pending captures on disk: (seq, entries) — entries newest last, never more than PENDING_CAP."""
     try: pend = json.loads(path.read_text()) if path.exists() else {}
@@ -84,9 +122,7 @@ def main() -> None:
     counts_p = mon / f"counts-{key or sid}.json"
 
     def fault(msg):  # decision 36: a hook cannot reach the server, so it leaves a line the tick raises as a system fault
-        try:
-            with open(mon / "hook-faults.log", "a") as f: f.write(f"permission_prompt_fault.py session={sid} key={key or sid}: {msg}\n")
-        except OSError: pass
+        _append_log(mon, f"permission_prompt_fault.py session={sid} key={key or sid}: {msg}\n")
 
     event = inp.get("hook_event_name")
     if inp.get("notification_type") is None and event != "Notification":
@@ -121,65 +157,69 @@ def main() -> None:
     message = str(inp.get("message") or "")[:MESSAGE_CAP]
     m = TOOL_IN_MESSAGE.search(message)
     tool = m.group(1) if m else None
+    # the payload key (C3): one prompt as Claude delivers it, identical however many times it is re-delivered
+    nkey = hashlib.sha1((sid + "\0" + str(kind) + "\0" + str(tool) + "\0" + message).encode()).hexdigest()[:16]
 
-    cap = None
-    if tool in (None, "Bash") and pending_p.exists():
-        lock_f = _lock(pending_p, fault)
+    # The consume-or-absorb decision needs both files, so their locks nest here — in the fixed order (docstring):
+    # pending file first, counts file second, hook-faults.log last and never while wanting either of the other two.
+    use_pending = tool in (None, "Bash") and pending_p.exists()
+    pend_f = _lock(pending_p, fault) if use_pending else None
+    cap, seq, billed = None, None, False
+    try:
+        counts_f = _lock(counts_p, fault)
         try:
-            seq, entries = _pending(pending_p, fault)
-            open_ = [e for e in entries if not e.get("consumed")]
-            if open_:                                                # the newest parked call, consumed exactly once
-                cap = open_[-1]; cap["consumed"] = True
-                _write(pending_p, {"seq": seq, "entries": entries})
-            else:                                                    # nothing left: the last prompt delivered again
-                done = [e for e in entries if e.get("consumed")]
-                cap = done[-1] if done else None
+            legacy_p = mon / f"counts-{sid}.json"
+            source_p = legacy_p if key and not counts_p.exists() and legacy_p.exists() else counts_p
+            try: counts = json.loads(source_p.read_text()) if source_p.exists() else {}
+            except Exception as e: counts = {}; fault(f"counts file unreadable, counter reset: {e}")
+            if not isinstance(counts, dict):
+                counts = {}
+            notif_seen = counts.get("notif_seen") if isinstance(counts.get("notif_seen"), dict) else {}
+            try: watermark = int(notif_seen[nkey])                   # the pending seq when this payload last billed
+            except (KeyError, TypeError, ValueError): watermark = None
+
+            def mark(at):                                            # notif_seen[nkey] = at, newest last, bounded
+                notif_seen.pop(nkey, None); notif_seen[nkey] = at
+                counts["notif_seen"] = dict(list(notif_seen.items())[-200:])
+
+            if use_pending:
+                seq, entries = _pending(pending_p, fault)
+                open_ = [e for e in entries if not e.get("consumed")]
+                billable = open_ if watermark is None else [e for e in open_ if int(e.get("seq") or 0) <= watermark]
+                if billable:                                         # the newest parked call this payload may bill,
+                    cap = billable[-1]; cap["consumed"] = True       # consumed exactly once
+                    _write(pending_p, {"seq": seq, "entries": entries})
+                elif open_:                                          # every open capture postdates this payload's last
+                    mark(seq)                                        # billing: the same prompt delivered again (C3).
+                    _write(counts_p, counts)                         # Consume and count nothing; advance the watermark
+                    return                                           # so the next delivery — a new prompt — bills them.
+                else:                                                # nothing left: the last prompt delivered again
+                    done = [e for e in entries if e.get("consumed")]
+                    cap = done[-1] if done else None
+            command = cap.get("command") if cap else None
+            # one bill per tool call: the capture's tool_use_id ties the PreToolUse record and this notification
+            # together; a prompt for another tool (or without a capture) is keyed on the session and the message
+            dkey = (cap.get("tool_use_id") if cap else None) \
+                or hashlib.sha1((sid + "\0" + str(tool) + "\0" + message).encode()).hexdigest()[:16]
+            seen = counts.get("prompts_seen") or []
+            if dkey not in seen:                                     # the same prompt re-delivered is billed once
+                counts["permission_denials"] = int(counts.get("permission_denials", 0)) + 1
+                counts["prompts_seen"] = (seen + [dkey])[-200:]
+                if seq is not None:
+                    mark(seq)
+                _write(counts_p, counts)
+                billed = True
         finally:
-            _unlock(lock_f, fault)
-    command = cap.get("command") if cap else None
-    # one bill per tool call: the capture's tool_use_id ties the PreToolUse record and this notification together;
-    # a prompt for another tool (or without a capture) is keyed on the session and the message instead
-    dkey = (cap.get("tool_use_id") if cap else None) \
-        or hashlib.sha1((sid + "\0" + str(tool) + "\0" + message).encode()).hexdigest()[:16]
-
-    lock_f = None
-    try:
-        lock_f = open(counts_p.with_name(f"{counts_p.name}.lock"), "w")
-        fcntl.flock(lock_f, fcntl.LOCK_EX)
-    except OSError as e:
-        if lock_f:
-            lock_f.close()
-        lock_f = None
-        fault(f"counts file lock unavailable, proceeding unlocked: {e}")
-
-    billed = False
-    try:
-        legacy_p = mon / f"counts-{sid}.json"
-        source_p = legacy_p if key and not counts_p.exists() and legacy_p.exists() else counts_p
-        try: counts = json.loads(source_p.read_text()) if source_p.exists() else {}
-        except Exception as e: counts = {}; fault(f"counts file unreadable, counter reset: {e}")
-        seen = counts.get("prompts_seen") or []
-        if dkey not in seen:                                         # the same prompt re-delivered is billed once
-            counts["permission_denials"] = int(counts.get("permission_denials", 0)) + 1
-            counts["prompts_seen"] = (seen + [dkey])[-200:]
-            _write(counts_p, counts)
-            billed = True
+            _unlock(counts_f, fault)
     finally:
-        if lock_f:
-            try: fcntl.flock(lock_f, fcntl.LOCK_UN)
-            except OSError as e: fault(f"counts file unlock failed: {e}")
-            lock_f.close()
+        _unlock(pend_f, fault)
 
     if not billed:
         return
     rec = {"project": os.environ.get("ALTITUDE_PROJECT"), "task": os.environ.get("ALTITUDE_TASK"),
            "actor": os.environ.get("ALTITUDE_ACTOR"), "session": sid, "key": key or sid, "notification_type": kind,
            "tool": tool, "command": command, "message": message, "tool_use_id": cap.get("tool_use_id") if cap else None}
-    try:
-        with open(mon / "hook-faults.log", "a") as f:
-            f.write("permission_prompt_fault.py " + json.dumps(rec, sort_keys=True).replace("\n", " ") + "\n")
-    except OSError:
-        pass
+    _append_log(mon, "permission_prompt_fault.py " + json.dumps(rec, sort_keys=True).replace("\n", " ") + "\n")
 
 
 try:

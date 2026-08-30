@@ -4,10 +4,11 @@ one definition of the passive permission-prompt hook that rides beside it.
 Consumers: the `permissions.allow` block of a settings file (`engines.claude_settings(repo)` for every launch without a
 per-dispatch file — L1s, proposals, critic, sizer, intake, improve, verify — and `dispatch.session_settings` for fresh
 and resumed L2s) and the `--allowedTools` string the L3 turn passes (`l3.allowed_tools(project)`). Nothing is
-hand-copied: a rule exists in this table or it does not exist. The table is rendered **per checkout**: the one rule that
-names a repository (the `gh api` merge route) is read from the remote of the checkout the session runs in, so a session
-serving project X carries X's route and never Altitude's own. The hook wiring (`prompt_fault_hooks`) is shared the same
-way: both settings files take it from here, so neither can drift from the other.
+hand-copied: a rule exists in this table or it does not exist. Every consumer still takes the checkout it renders for
+(`repo`/`cwd`, one settings file per repository), but no rule currently varies by checkout, so the rendered allowlist is
+identical for every checkout; the threading stays because it is the shape any future repository-specific rule needs.
+The hook wiring (`prompt_fault_hooks`) is shared the same way: both settings files take it from here, so neither can
+drift from the other.
 
 Why an allowlist and not the classifier: in auto mode the wording-based classifier decides case by case, and when it
 denies, a non-interactive session parks on an approval prompt nobody can answer (I-064: the L3 could not run
@@ -47,25 +48,27 @@ checked for options that name a program to run or inject configuration — `--up
   `BROWSER`/`GH_EDITOR`/gh config, `gh pr checkout` (which runs git) is not in the table, and gh has no `-c`
   configuration injection. `gh issue` is read verbs only (`view`, `list`): a write verb with a ` *` tail would also
   admit `--repo other/x` (and `delete`, `transfer`), and no role writes issues — `alt backlog` reads them.
-- `gh api`: the only route is the merge route of the checkout's own repository (`pulls/<n>/merge`, bare and with a flag
-  tail); `pulls/<n>`, `pulls/comments/<id>`, reviews and every other repository match nothing, whichever side of the
-  route the method flag is written on.
+- `gh api`: **no rule at all** (the second review of PR #89 removed the merge-route rules this PR first carried).
+  I-064's evidence shows the pulls API route was only ever an L2's *fallback* after `gh pr merge` was denied;
+  `Bash(gh pr merge *)` is in the table and covers that need directly, so the API route buys nothing. And no
+  prefix/wildcard rule shape can bound an API route safely: `*` matches anything including spaces, so even the
+  exact-looking `gh api repos/<o>/<r>/pulls/*/merge` matched `gh api repos/o/r/pulls/1 -X PATCH -f state=closed
+  -f body=/merge` — the route reconstructed inside a later argument — and closed a PR; and the owner/repo the rule
+  interpolated came from an unanchored, unvalidated remote URL (`evil-github.com/a/b` parsed as a GitHub remote, and
+  a permission metacharacter in owner/repo would have landed in the rule verbatim). With those rules gone there is
+  no repository-specific rule in the table at all.
 
 Residual risk (accepted, 2026-08-30): `Bash(gh pr merge *)` also matches `gh pr merge 1 --admin --repo other/project`.
 Claude's Bash rules are prefix/wildcard shapes and cannot express "not `--admin`" or "this repository only", and
 `gh pr merge` is the exact command I-064 requires. The allow rule removes the prompt; it does not authorise the act:
 `--admin` and cross-repository merges stay forbidden by the never-list and R-013 (a merge under a hold is a breach),
-and narrowing them belongs in `hooks/guard.py` (deny runs before allow), not in this table. Two more of the same
-shape, recorded so the next reader does not re-derive them: (a) the PR number in the merge route is a wildcard, and a
-wildcard matches spaces, so a field value ending in `/merge` (`gh api repos/o/r/pulls/1 -X PATCH -f state=closed
--f body=/merge -f x=y`) rides through — a deliberate construction, not a command a role would write; (b) `--output=<file>`
-on `git log`/`git diff`/`git show` writes the output to a file, and `--body-file <file>`, `-F key=@<file>` and
-`--input <file>` on the gh verbs read a local file and publish it — neither runs a program. A residual prompt is not
-silent either: `hooks/permission_prompt_fault.py` counts it and the tick raises it as a system fault (decision 36).
+and narrowing them belongs in `hooks/guard.py` (deny runs before allow), not in this table. One more of the same
+shape, recorded so the next reader does not re-derive it: `--output=<file>` on `git log`/`git diff`/`git show` writes
+the output to a file, and `--body-file <file>` on the gh verbs reads a local file and publishes it — neither runs a
+program. A residual prompt is not silent either: `hooks/permission_prompt_fault.py` counts it and the tick raises it
+as a system fault (decision 36).
 """
 from __future__ import annotations
-import re
-import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -73,8 +76,8 @@ from . import config
 
 # gh: the verbs the roles use, one rule each, never a bare `gh *`. `gh pr diff` (fresh review) and `gh pr comment`
 # (review disposition) are role needs with no production call site today — intentional. `gh issue` is `view` and `list`
-# only (module docstring: the write verbs have no call site and a wildcard tail would carry `--repo`). The `gh api`
-# merge route is rendered per checkout from the git remote (`github_repo`), never as a wildcard over repositories.
+# only (module docstring: the write verbs have no call site and a wildcard tail would carry `--repo`). There is no
+# `gh api` rule at all (module docstring: no rule shape bounds an API route; `gh pr merge` covers I-064's need).
 _GH = ("gh pr view", "gh pr list", "gh pr diff", "gh pr checks", "gh pr create", "gh pr merge", "gh pr comment",
        "gh pr ready", "gh run view", "gh run list", "gh run watch", "gh issue view", "gh issue list")
 
@@ -92,43 +95,13 @@ _GIT_FETCH = ("git fetch", "git fetch origin", "git fetch origin main", "git fet
 _GIT = ("git status *", "git log *", "git diff *", "git show *", *_GIT_FETCH, "git branch *", "git rev-parse *",
         "git add *", "git commit *", "git rebase origin/main", "git reset --hard origin/main")
 
-_GITHUB_REMOTE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
-
-
-def _remote_url(repo: Path | None = None) -> str | None:
-    """`remote.origin.url` of `repo` (default: this checkout), or None when git or the remote is not there."""
-    try:
-        p = subprocess.run(["git", "-C", str(repo or config.REPO), "config", "--get", "remote.origin.url"],
-                           capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return (p.stdout.strip() or None) if p.returncode == 0 else None
-
-
-def github_repo(repo: Path | None = None) -> str | None:
-    """`owner/repo` of the GitHub origin of `repo` (default: this checkout), read at render time; None when the remote
-    cannot be read or is not GitHub — the merge route is then omitted rather than widened."""
-    url = _remote_url(repo)
-    m = _GITHUB_REMOTE.search(url) if url else None
-    return f"{m.group(1)}/{m.group(2)}" if m else None
-
-
-def merge_route_rules(owner_repo: str) -> list[str]:
-    """The two rule contents for one repository's merge route (I-064's API form): the PR number is the one wildcard.
-    `pulls/*/merge` is the exact route (a GET answers "is it merged"); `pulls/*/merge *` is the PUT with its flags
-    written after the route. Nothing else under `repos/<owner>/<repo>/pulls…` matches (module docstring)."""
-    route = f"gh api repos/{owner_repo}/pulls/*/merge"
-    return [route, f"{route} *"]
-
 
 def allow_rules(repo: Path | None = None) -> list[str]:
     """The `Bash(...)` rule strings for a session running in `repo` (default: this checkout), in table order: alt (both
-    invocation forms), gh, the merge route of that checkout, git."""
+    invocation forms), gh, git. No rule currently varies by checkout, so the result is the same for every `repo`; the
+    parameter stays because it is the shape any future repository-specific rule needs (module docstring)."""
     rules = ["alt *", f"{config.REPO / 'bin' / 'alt'} *"]   # `alt` is on PATH in every nested launch (engines.clean_env)
     rules += [f"{verb} *" for verb in _GH]
-    owner_repo = github_repo(repo)
-    if owner_repo:
-        rules += merge_route_rules(owner_repo)
     rules += _GIT
     return [f"Bash({r})" for r in rules]
 
