@@ -73,7 +73,7 @@ Every brief carries an **envelope**, set by size class and adjusted by L3 at pro
 
 | Class | L1s in flight | subagent launches total | verification | typical turns |
 |---|---|---|---|---|
-| **S** | 0–1 | ≤ 2 | reviewer only, one pass | ≤ 40 |
+| **S** | 0–1 | ≤ 3 | reviewer only, one pass | ≤ 40 |
 | **M** | ≤ 3 | ≤ 8 | one reviewer per PR, one critic on the proposal if it touches architecture | ≤ 120 |
 | **L** | ≤ 5 | ≤ 20 | critic + reviewer, one verifier pass per artifact class | set per proposal, a Decision if it exceeds a third of a day's quota |
 

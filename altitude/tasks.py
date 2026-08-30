@@ -17,7 +17,7 @@ TRANSITIONS = {
 }
 
 ENVELOPE = {  # decision 31 / ROLES.md table
-    "S": {"l1_in_flight": 1, "subagent_launches": 2, "max_turns": 40, "verification": "reviewer"},
+    "S": {"l1_in_flight": 1, "subagent_launches": 3, "max_turns": 40, "verification": "reviewer"},
     "M": {"l1_in_flight": 3, "subagent_launches": 8, "max_turns": 120, "verification": "reviewer+critic-if-arch"},
     "L": {"l1_in_flight": 5, "subagent_launches": 20, "max_turns": 250, "verification": "critic+reviewer"},
 }
