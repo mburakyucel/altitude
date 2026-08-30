@@ -84,18 +84,18 @@ Rules that follow from it, for every level:
 - **Retries are counted.** One retry per failing step; the second failure is a report, not a third attempt.
 - **Spend past 2× the estimate is an incident** (post-mortem signal), even when the task landed — the lesson is usually a brief that under-specified the work or an orchestrator that fanned out per item.
 
-## Model and cost tiering (policy, per level — options, not settled)
+## Model and cost tiering (settled — decision 38, Burak 2026-08-30)
 
-The principle: **judgment per token goes up the stack; volume per token goes down it.** L3 makes few, high-judgment calls and holds a tiny context → the strongest model, cheaply, because it says little. L1 produces most of the tokens → tier by the sub-task, not by habit.
+The principle: **judgment per token goes up the stack; volume per token goes down it** — and **Fable is the scarce window**: it is what Burak's own sessions run on, so Altitude never spends it on research, proposals, documentation, reviews or routine coordination.
 
-| Level | Default | Cheaper alternative and when the L2 picks it |
+| Role | Default (`config.MODELS`) | Notes |
 |---|---|---|
-| L3 | strongest available (Fable/Opus class) | never downgraded — it is low volume |
-| L2 | Opus class | — (planning quality is what the whole task rides on) |
-| L1 | Opus class for design-heavy or wide-blast-radius changes | Sonnet class for mechanical work (ports, tests, docs, lint, renames); Codex as an alternate L1 when Claude quota is tight |
-| V | the *other* engine from the author | Sonnet/Codex for S-class PR review |
-
-L2 picks the L1 tier per sub-brief with a two-question rubric: *novelty* (is there a pattern in the repo to copy?) and *blast radius* (how many callers / is it user-visible?). Low/low → cheaper tier. Every brief carries a token budget; `altd` tracks spend per task and per level so this table can be tuned from data instead of taste.
+| L3 | Opus | frequent short turns; Opus is plenty for coordination and post-mortems |
+| Proposal agent / research / docs | Opus | never Fable |
+| Critic | Codex (other engine) | no same-engine fallback (decision 36) |
+| L2 | Opus | a task may carry `model: fable` (`alt task new --model fable`, by Burak or by the L3 with a stated reason) for genuinely hard reasoning |
+| L1 | Sonnet for mechanical sub-briefs; Opus for novel or wide-blast-radius ones | picked per sub-brief by the L2 (novelty × blast radius rubric); Codex as an alternate L1 when Claude quota is tight |
+| Reviewer | Sonnet or the other engine | never the author's session |
 
 ## Enforcement (so this is a contract, not a wish)
 

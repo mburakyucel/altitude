@@ -76,7 +76,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     settings = session_settings(project, slug, f"{project}--{dispatch_id}")
     persona = rules.compiled_persona("l2", project)
     proj = config.project(project)
-    res = engines.claude_bg(name, brief_md, cwd=config.project_path(project), worktree=slug, persona=persona,
+    res = engines.claude_bg(model=task.get("model") or config.MODELS["l2"], name, brief_md, cwd=config.project_path(project), worktree=slug, persona=persona,
                             permission_mode="auto", max_turns=task["envelope"]["max_turns"],
                             model=model or proj.get("l2_model"), settings=settings,
                             extra_env={"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project,

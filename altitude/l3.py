@@ -76,7 +76,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
             S.project_log(project, "l3-rotate", old=sid, reason=inf.get("rotate_reason", "requested"))
         persona = rules.compiled_persona("l3", project)
         chat_log(project, "user", prompt, trigger=trigger)
-        res = engines.claude_print(
+        res = engines.claude_print(model=config.MODELS["l3"], 
             _header(project, trigger, fresh) + prompt, cwd=config.project_path(project),
             resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
             permission_mode="auto", model=model or proj.get("l3_model"), on_text=on_text,

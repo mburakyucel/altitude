@@ -44,9 +44,11 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     return task
 
 
-def new(project: str, title: str, cls: str, request: str, actor: str = "l3", source: str = "chat") -> dict:
+def new(project: str, title: str, cls: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None) -> dict:
     if cls not in S.CLASSES:
         raise TransitionError(f"class must be one of {S.CLASSES}")
+    if model and model not in config.MODEL_ALIASES:
+        raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
     config.project(project)
     with S.project_lock(project):
         base = S.slugify(title)
@@ -60,7 +62,7 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         task = {"slug": slug, "title": title, "class": cls, "state": "requested", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None, "worktree": None,
                 "branch": None, "prs": [], "envelope": dict(ENVELOPE[cls]), "estimate": {}, "spend": {},
-                "decision": None, "blocked_reason": None, "source": source, "verified": None}
+                "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model}
         S.save_task(project, task)
         S.append_event(project, slug, "new", by=actor, cls=cls, title=title, source=source)
         S.regen_state_md(project)

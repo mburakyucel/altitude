@@ -33,6 +33,10 @@ CONTEXT_ACT = 0.30                # Claude: act line — L3 rotates to a fresh s
 CONTEXT_WINDOW_CODEX = 256_000
 CONTEXT_WARN_CODEX = 0.80
 CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude only watches
+# Model tiers (decision 38): Fable is the scarce window — never for research, proposals, docs or routine coordination.
+# A task may carry an explicit `model` (alt task new --model fable) which overrides the L2 default.
+MODELS = {"l3": "opus", "proposal": "opus", "l2": "opus", "l1": "sonnet", "reviewer": "sonnet", "research": "opus"}
+MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
 WIP_PER_PROJECT = 3               # decision 21
