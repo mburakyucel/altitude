@@ -179,10 +179,33 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
 
 def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ") -> dict:
     task = S.load_task(project, slug)
+    if task["state"] == "blocked":
+        hold = wip_hold(project, task)
+        if hold:
+            waiting = (f"waiting for lease: {hold.removeprefix('file lease: ')}"
+                       if hold.startswith("file lease: ") else f"waiting: {hold}")
+            with S.project_lock(project):
+                task = S.load_task(project, slug)
+                if "blocked_question" not in task:
+                    task["blocked_question"] = task.get("blocked_reason")
+                task["resume_answer"] = answer
+                task["resume_prefix"] = prefix
+                task["resume_after"] = S.now()
+                task["blocked_reason"] = waiting
+                S.save_task(project, task)
+                S.append_event(project, slug, "resume-deferred", hold=hold, reason=waiting)
+            return {"deferred": True, "hold": hold, "waiting": waiting}
     if task.get("agent_id"):  # the idle worker that stopped at the block keeps nothing the transcript does not
         engines.claude_stop(task["agent_id"])
     res = resume_session(project, slug, f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
     T.resume(project, slug, answer=answer)
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        task.pop("resume_after", None)
+        task.pop("resume_answer", None)
+        task.pop("resume_prefix", None)
+        S.save_task(project, task)
+    res["deferred"] = False
     return res
 
 
@@ -192,14 +215,31 @@ def resume_due(project: str) -> list[str]:
         return []
     now, back = S.now(), []
     due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
-    for t in sorted(due, key=lambda t: t.get("created") or ""):
+    for t in sorted(due, key=_resume_order):
         if wip_hold(project, t):
             continue  # a lease or the improve-serialization rule holds this one; a younger unrelated task may still go
-        resume_blocked(project, t["slug"], "The usage window has reopened; Altitude held you, nothing is wrong with the task.", prefix="")
+        if "resume_answer" in t:
+            answer = t["resume_answer"]
+            prefix = t.get("resume_prefix", "")
+        else:
+            answer = "The usage window has reopened; Altitude held you, nothing is wrong with the task."
+            prefix = ""
+        res = resume_blocked(project, t["slug"], answer, prefix=prefix)
+        if res and res.get("deferred"):
+            continue
         with S.project_lock(project):
-            t2 = S.load_task(project, t["slug"]); t2["resume_after"] = None; S.save_task(project, t2)
+            t2 = S.load_task(project, t["slug"])
+            t2.pop("resume_after", None)
+            t2.pop("resume_answer", None)
+            t2.pop("resume_prefix", None)
+            S.save_task(project, t2)
         back.append(t["slug"])
     return back
+
+
+def _resume_order(task: dict) -> tuple[str, str]:
+    """The deterministic oldest-first order shared by due resumes and pending-resume leases."""
+    return (task.get("created") or "", task.get("slug") or "")
 
 
 def _norm(p: str) -> str:
@@ -323,10 +363,22 @@ def task_paths(project: str, task: dict) -> list[str]:
     return [path for entry in entries for path in _expand_entry(str(entry))]
 
 
+def _lease_tasks(project: str, exclude: str | None = None) -> list[dict]:
+    """Tasks that currently hold file leases, including blocked tasks queued to resume."""
+    return [t for t in S.list_tasks(project)
+            if t["slug"] != exclude
+            and (t["state"] == "running" or (t["state"] == "blocked" and t.get("resume_after")))]
+
+
 def leases(project: str, exclude: str | None = None) -> list[dict]:
-    """Running tasks and the paths they hold, for holds and for the brief."""
-    return [{"slug": t["slug"], "paths": task_paths(project, t)}
-            for t in S.list_tasks(project) if t["state"] == "running" and t["slug"] != exclude]
+    """Running and pending-resume tasks and the paths they hold, for status and briefs."""
+    out = []
+    for task in _lease_tasks(project, exclude):
+        lease = {"slug": task["slug"], "paths": task_paths(project, task)}
+        if task["state"] == "blocked":
+            lease["pending_resume"] = True
+        out.append(lease)
+    return out
 
 
 def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
@@ -366,10 +418,15 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
         return "one rule-application task at a time (they edit the same ledger)"
     if task:
         mine = narrow(task_paths(project, task))  # hold lease: top-level directory claims do not hold anyone
-        for other in leases(project, exclude=task["slug"]):
-            hit = paths_overlap(mine, narrow(other["paths"]))
+        mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
+        for other in _lease_tasks(project, exclude=task["slug"]):
+            pending_resume = other["state"] == "blocked"
+            if pending_resume and mine_pending and _resume_order(other) >= _resume_order(task):
+                continue  # among overlapping queued resumes, the deterministic oldest task proceeds first
+            hit = paths_overlap(mine, narrow(task_paths(project, other)))
             if hit:
-                return f"file lease: `{other['slug']}` is running on {', '.join(hit[:4])}"
+                activity = "blocked with a pending resume" if pending_resume else "running"
+                return f"file lease: `{other['slug']}` is {activity} on {', '.join(hit[:4])}"
     live = [a for a in engines.claude_agents() if a.get("kind") == "background" and a.get("state") not in ("done", "failed", "stopped")]  # stopped = no process
     if len(live) >= config.SESSIONS_PER_MACHINE:
         return f"session ceiling: {len(live)} live Claude sessions on this machine (cap {config.SESSIONS_PER_MACHINE})"
