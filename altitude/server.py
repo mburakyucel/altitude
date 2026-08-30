@@ -281,6 +281,31 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     """The L3's report-landed turn. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart
     cut short is re-run by `resume_stranded_reports` instead of leaving the task waiting for nobody."""
     slug = t["slug"]
+    report = S.read_json(S.task_dir(project, slug) / "report.json", {}) or v.get("report") or {}
+    summary = v.get("report") or {}
+    landed = report.get("landed") or {}
+    deploy = str(landed.get("deploy") or "")
+    deploy_status = deploy.split(maxsplit=1)[0].rstrip(":")
+    # No mechanical always-list definition exists; empty decisions and blocked are its report-level gate.
+    if (v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals")
+            and not summary.get("decisions") and not summary.get("blocked") and not summary.get("fyi")
+            and deploy_status in ("healthy", "not-applicable") and t.get("class") != "L"):
+        prs = landed.get("prs") or []
+        runs = landed.get("main_runs") or []
+        review = report.get("review") or []
+        pr_text = ", ".join("PR #{} ({})".format(pr.get("number"), pr.get("title") or "untitled") for pr in prs) or "No PRs recorded"
+        run_text = ", ".join("{}: {}".format(run.get("id"), run.get("conclusion")) for run in runs) or "none recorded"
+        fixed = sum(item.get("disposition") == "fixed" for item in review)
+        dismissed = sum(item.get("disposition") == "dismissed" for item in review)
+        clean_digest = (f"No decisions. {pr_text} merged. Main runs: {run_text}. Deploy: {deploy}. "
+                        f"Review findings: {fixed} fixed, {dismissed} dismissed.")
+        T.done(project, slug, actor="altd", digest=clean_digest)
+        T.fyi(project, slug, f"{slug}: verifier verdict ok; PRs merged: {pr_text}; main runs: {run_text}; "
+              f"deploy: {deploy}; no decisions, blocked items, FYIs, or post-mortem signals.", actor="altd")
+        with S.project_lock(project):
+            t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+        log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
+        return
     inc = improve.index()
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
