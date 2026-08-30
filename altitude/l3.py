@@ -88,6 +88,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
         inf.update({"session_id": res["session_id"], "turns": (0 if fresh else inf.get("turns", 0)) + 1,
                     "context_percent": pct, "last_turn": S.now(), "last_cost": res["cost"],
                     "started": inf.get("started") if not fresh else S.now(),
+                    "last_audit": inf.get("last_audit") or S.now(),   # first weekly audit a week after the first turn
                     "rotate_next": pct >= config.CONTEXT_WARN * 100,
                     "rotate_reason": f"context {pct}% ≥ warn" if pct >= config.CONTEXT_WARN * 100 else None})
         save_info(project, inf)

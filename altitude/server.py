@@ -122,7 +122,7 @@ def dispatch_waiting(project: str) -> None:
     for t in S.list_tasks(project):
         if t["state"] != "approved":
             continue
-        hold = dispatch.wip_hold(project)
+        hold = dispatch.wip_hold(project, t)
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             return
@@ -146,6 +146,13 @@ def tick() -> None:
                 if t["state"] == "requested" and t["class"] in ("M", "L") and not t.get("proposal_started"):
                     spawn(f"propose:{project}:{t['slug']}", run_proposal_flow, project, t["slug"])
             dispatch_waiting(project)
+            for t in S.list_tasks(project, include_archive=True):
+                if t["state"] == "done" and not t.get("cleaned"):
+                    notes = dispatch.cleanup_after_done(project, t)
+                    with S.project_lock(project):
+                        t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
+                    S.append_event(project, t["slug"], "cleanup", notes=notes)
+                    log(f"[{project}/{t['slug']}] cleanup: {notes}")
             weekly_audit(project)
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")

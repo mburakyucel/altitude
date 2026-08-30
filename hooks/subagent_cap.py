@@ -4,6 +4,11 @@ import json, os, sys
 from pathlib import Path
 inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 sid = inp.get("session_id") or "unknown"
+if inp.get("tool_name") == "Bash":
+    import re
+    cmd = str((inp.get("tool_input") or {}).get("command") or "")
+    if not re.search(r"\bcodex\s+exec\b|\bclaude\s+(-p|--print|--bg)\b", cmd):
+        sys.exit(0)  # ordinary shell command: not a launch
 root = Path(os.environ.get("ALTITUDE_HOME", Path.home() / ".altitude"))
 mon = root / "monitor"; mon.mkdir(parents=True, exist_ok=True)
 counts_p = mon / f"counts-{sid}.json"

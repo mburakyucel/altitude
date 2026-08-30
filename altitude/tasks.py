@@ -32,8 +32,14 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     if to not in TRANSITIONS.get(frm, set()):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
     task["state"] = to
+    if to == "running":
+        task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
+    if to in ("parked", "rejected") and frm in ("running", "blocked") and task.get("agent_id"):
+        from . import engines
+        note = engines.claude_rm(task["agent_id"])
+        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"], note=note[:200])
     S.regen_state_md(project)
     return task
 

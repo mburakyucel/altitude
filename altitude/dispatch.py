@@ -42,7 +42,7 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
     """Per-dispatch settings passed with --settings: hooks that enforce the envelope, nothing global."""
     hooks = config.HOOKS
     settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]}],
+        "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key}}
@@ -52,12 +52,17 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
-    task = S.load_task(project, slug)
-    if task["state"] != "approved":
-        raise T.TransitionError(f"{slug} is {task['state']}, not approved")
-    held = wip_hold(project)
-    if held:
-        raise T.TransitionError(held)
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task["state"] != "approved":
+            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
+            raise T.TransitionError(f"{slug} is already being dispatched")
+        held = wip_hold(project, task)
+        if held:
+            raise T.TransitionError(held)
+        task["dispatching"] = S.now()
+        S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
     dispatch_id = f"{slug}-{attempt}"
     name = f"{project}/{dispatch_id}"
@@ -77,6 +82,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
                                        "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{dispatch_id}"})
     agent = res.get("agent") or {}
     if res["returncode"] != 0 and not agent:
+        with S.project_lock(project):
+            t2 = S.load_task(project, slug); t2["dispatching"] = None; S.save_task(project, t2)
         S.append_event(project, slug, "dispatch-failed", stdout=res["stdout"][:300], stderr=res["stderr"][:300])
         raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
     worktree = str(config.project_path(project) / ".claude" / "worktrees" / slug)
@@ -101,9 +108,11 @@ def resume_blocked(project: str, slug: str, answer: str) -> dict:
     return res
 
 
-def wip_hold(project: str) -> str | None:
+def wip_hold(project: str, task: dict | None = None) -> str | None:
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
+    if task and task.get("source") == "improve" and any(t.get("source") == "improve" for t in running):
+        return "one rule-application task at a time (they edit the same ledger)"
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
         return f"WIP limit: {len(running)} running in {project}"
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")
@@ -150,3 +159,33 @@ def _seconds_since(iso: str) -> float:
         return time.time() - datetime.fromisoformat(iso).timestamp()
     except ValueError:
         return 0.0
+
+
+def cleanup_after_done(project: str, task: dict) -> list[str]:
+    """After `done`: drop the L2 background session and any worktree whose branch is fully merged into origin/main."""
+    import subprocess
+    repo = config.project_path(project)
+    notes = []
+    if task.get("agent_id"):
+        notes.append("claude rm: " + engines.claude_rm(task["agent_id"])[:120])
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
+        subprocess.run(["git", "worktree", "prune"], cwd=str(repo), capture_output=True, text=True, timeout=30)
+        out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout
+    except (subprocess.SubprocessError, OSError) as e:
+        return notes + [f"git: {e}"]
+    wt, branch = None, None
+    for line in out.splitlines() + [""]:
+        if line.startswith("worktree "):
+            wt = line.split(" ", 1)[1]
+        elif line.startswith("branch "):
+            branch = line.split(" ", 1)[1].replace("refs/heads/", "")
+        elif line == "":
+            if wt and branch and "/.claude/worktrees/" in wt:
+                merged = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo), capture_output=True).returncode == 0
+                if merged:
+                    subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
+                    subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
+                    notes.append(f"removed merged worktree {Path(wt).name}")
+            wt, branch = None, None
+    return notes
