@@ -2,7 +2,7 @@
 
 **Goal:** {title}
 
-**Definition of done:** every PR merged on `origin/main`; `main` run green; deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
+**Definition of done:** every PR merged on `origin/main`; the gates this repository has are green — [R-006] where it has CI (a `.github/workflows` directory), the `main` run after merge; where it has none, the full local test suite on merged `main`, with the count stated in the report; a `skipped` or no-checks-reported value is never read as passed; deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
 
 **Change class / merge policy:** {merge_policy}
 
