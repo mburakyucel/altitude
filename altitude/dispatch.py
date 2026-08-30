@@ -66,6 +66,7 @@ def build_brief(project: str, slug: str) -> str:
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
+        engine_line=(f"the engine is forced to **{task['engine']}** for this task." if task.get("engine") else "the engine is Altitude's choice."),
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the proposal's file list)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),

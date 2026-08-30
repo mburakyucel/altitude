@@ -277,8 +277,10 @@ def claude_rm(agent_id: str) -> str:
 
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
-               model: str | None = None, timeout: int = 900) -> dict:
-    """Codex as validator (critic/reviewer) — verified: needs stdin closed, -o for the answer."""
+               model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None) -> dict:
+    """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
+    the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
+    `turn.completed` events on stdout."""
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
         out_path = outf.name
     cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd), "--skip-git-repo-check"]
@@ -286,6 +288,8 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         cmd += ["--output-schema", str(schema)]
     if model:
         cmd += ["-m", model]
+    for kv in extra_config or []:
+        cmd += ["-c", kv]
     try:
         p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL, env=clean_env())
@@ -300,7 +304,20 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         structured = json.loads(text)
     except ValueError:
         pass
-    return {"text": text.strip(), "structured": structured, "returncode": p.returncode,
+    usage, messages = {}, []
+    for line in (p.stdout or "").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
+            for k, v in ev["usage"].items():
+                usage[k] = usage.get(k, 0) + (v or 0)
+        elif ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
+            messages.append(str((ev["item"] or {}).get("text") or ""))
+    if not text.strip() and messages:  # no -o file (or empty): the last agent message is the answer
+        text = messages[-1]
+    return {"text": text.strip(), "structured": structured, "returncode": p.returncode, "usage": usage,
             "error": None if p.returncode == 0 else p.stderr.strip()[:500]}
 
 

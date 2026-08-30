@@ -36,6 +36,12 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    l1p = sub.add_parser("l1", help="L1 runs on either engine (decision 45): run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
+    lr = l1s.add_parser("run"); lr.add_argument("--brief", required=True); lr.add_argument("--role", default="implementer", choices=("implementer", "reviewer"))
+    lr.add_argument("--engine", choices=("claude", "codex")); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
+    lw = l1s.add_parser("wait"); lw.add_argument("name", nargs="?"); lw.add_argument("--timeout", type=int, default=540)
+    l1s.add_parser("status")
+    lx = l1s.add_parser("_exec"); lx.add_argument("slug"); lx.add_argument("name")
 
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--stacks", default=""); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
@@ -44,7 +50,7 @@ def main(argv=None) -> None:
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--class", dest="cls", required=True, choices=list(S.CLASSES)); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
     pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--context"); pr.add_argument("--detail"); pr.add_argument("--option", action="append")
     ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
@@ -80,6 +86,21 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     config.ensure_root()
     c = args.cmd
+    if c == "l1":
+        from altitude import l1 as L1
+        p = _project(args)
+        slug = getattr(args, "slug", None) or os.environ.get("ALTITUDE_TASK")
+        if not slug:
+            sys.exit("alt l1: ALTITUDE_TASK required (every L2 session has it)")
+        if args.lcmd == "run":
+            out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model, name=args.name, cwd=args.cwd))
+        elif args.lcmd == "wait":
+            out(L1.wait(p, slug, args.name, timeout=args.timeout))
+        elif args.lcmd == "status":
+            out(L1.status(p, slug))
+        elif args.lcmd == "_exec":
+            out(L1.exec_run(p, slug, args.name))
+        return
     if c == "project":
         P = config.load_projects()
         if args.pcmd == "add":
@@ -100,7 +121,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None))
+            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine))
         elif tc == "propose":
             out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR, detail=args.detail, context=args.context))
         elif tc == "approve":
