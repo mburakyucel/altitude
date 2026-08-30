@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse hook on Agent|Task: count subagent launches per session; block past the envelope cap (decision 31)."""
-import hashlib, json, os, re, sys
+import fcntl, hashlib, json, os, re, sys
 from pathlib import Path
 
 # I-005: a Bash launch is billed only when it stands in *command position* — heredoc bodies and quoted
@@ -85,21 +85,42 @@ def fault(msg):  # decision 36: a hook cannot reach the server, so it leaves a l
     try:
         with open(mon / "hook-faults.log", "a") as f: f.write(f"subagent_cap.py session={sid} key={key or sid}: {msg}\n")
     except OSError: pass
-try: counts = json.loads(counts_p.read_text()) if counts_p.exists() else {}
-except Exception as e: counts = {}; fault(f"counts file unreadable, counter reset: {e}")
-cap = 8
-if key:
-    try: cap = int(json.loads((mon / f"envelope-{key}.json").read_text()).get("subagent_launches", cap))
-    except Exception as e: fault(f"envelope file for {key} unreadable, default cap {cap} used: {e}")
+
+lock_f = None
+try:
+    lock_f = open(counts_p.with_name(f"{counts_p.name}.lock"), "w")
+    fcntl.flock(lock_f, fcntl.LOCK_EX)
+except OSError as e:
+    if lock_f:
+        lock_f.close()
+    lock_f = None
+    fault(f"counts file lock unavailable, proceeding unlocked: {e}")
+
 def blocked(n):
     print(f"altitude: envelope reached ({n-1}/{cap} subagent launches). Do not launch more agents: checkpoint progress.md, write the report with `Blocked: envelope (needed N)`, and stop.", file=sys.stderr)
     sys.exit(2)
-seen = counts.get("seen") or []
-if dkey in seen:  # same tool call re-delivered: bill it once, but never weaken blocking (R-006)
-    n = int(counts.get("subagent_launches", 0))
+
+try:
+    legacy_p = mon / f"counts-{sid}.json"
+    source_p = legacy_p if key and not counts_p.exists() and legacy_p.exists() else counts_p
+    try: counts = json.loads(source_p.read_text()) if source_p.exists() else {}
+    except Exception as e: counts = {}; fault(f"counts file unreadable, counter reset: {e}")
+    cap = 8
+    if key:
+        try: cap = int(json.loads((mon / f"envelope-{key}.json").read_text()).get("subagent_launches", cap))
+        except Exception as e: fault(f"envelope file for {key} unreadable, default cap {cap} used: {e}")
+    seen = counts.get("seen") or []
+    if dkey in seen:  # same tool call re-delivered: bill it once, but never weaken blocking (R-006)
+        n = int(counts.get("subagent_launches", 0))
+        if n > cap: blocked(n)
+        sys.exit(0)
+    n = int(counts.get("subagent_launches", 0)) + 1
+    counts["subagent_launches"] = n; counts["cap"] = cap; counts["seen"] = (seen + [dkey])[-200:]
+    tmp = counts_p.with_name(f"{counts_p.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(counts)); os.replace(tmp, counts_p)
     if n > cap: blocked(n)
-    sys.exit(0)
-n = int(counts.get("subagent_launches", 0)) + 1
-counts["subagent_launches"] = n; counts["cap"] = cap; counts["seen"] = (seen + [dkey])[-200:]
-tmp = counts_p.with_suffix(".tmp"); tmp.write_text(json.dumps(counts)); os.replace(tmp, counts_p)
-if n > cap: blocked(n)
+finally:
+    if lock_f:
+        try: fcntl.flock(lock_f, fcntl.LOCK_UN)
+        except OSError as e: fault(f"counts file unlock failed: {e}")
+        lock_f.close()

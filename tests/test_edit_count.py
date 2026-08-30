@@ -1,6 +1,7 @@
 """The edit hook accumulates counts across resumed sessions in one dispatch."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ HOOK = Path(__file__).resolve().parent.parent / "hooks" / "edit_count.py"
 class EditCountHook(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="altitude-edit-count-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
 
     def run_hook(self, session_id, file_path, key=None):
         env = dict(os.environ, ALTITUDE_HOME=self.home)
@@ -35,6 +37,20 @@ class EditCountHook(unittest.TestCase):
         self.assertEqual(self.counts(key)["files"], ["a.py", "b.py"])
         self.assertFalse((Path(self.home) / "monitor" / "counts-old-session.json").exists())
         self.assertFalse((Path(self.home) / "monitor" / "counts-new-session.json").exists())
+
+    def test_first_keyed_edit_seeds_the_session_count(self):
+        mon = Path(self.home) / "monitor"
+        mon.mkdir(parents=True, exist_ok=True)
+        legacy = mon / "counts-old-session.json"
+        legacy.write_text(json.dumps({"edits": 4, "files": ["old.py"], "subagent_launches": 2}))
+
+        result = self.run_hook("old-session", "new.py", "demo--task-1")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.counts("demo--task-1")["edits"], 5)
+        self.assertEqual(self.counts("demo--task-1")["files"], ["new.py", "old.py"])
+        self.assertEqual(self.counts("demo--task-1")["subagent_launches"], 2)
+        self.assertEqual(json.loads(legacy.read_text())["edits"], 4)
 
     def test_without_dispatch_key_edits_remain_per_session(self):
         self.assertEqual(self.run_hook("session-a", "a.py").returncode, 0)

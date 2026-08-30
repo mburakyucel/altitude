@@ -151,6 +151,34 @@ class CapHook(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.counted(key="demo--task-1"), 2)
 
+    def test_first_keyed_launch_seeds_the_session_count(self):
+        mon = Path(self.home) / "monitor"
+        mon.mkdir(parents=True, exist_ok=True)
+        legacy = mon / "counts-old-session.json"
+        legacy.write_text(json.dumps({"subagent_launches": 3, "seen": ["old"], "edits": 4}))
+
+        r = self.run_hook({"session_id": "old-session", "tool_name": "Agent", "tool_input": {"prompt": "go"},
+                           "tool_use_id": "new"}, env={"ALTITUDE_SESSION_KEY": "demo--task-1"})
+
+        self.assertEqual(r.returncode, 0, r.stderr)
+        keyed = json.loads((mon / "counts-demo--task-1.json").read_text())
+        self.assertEqual(keyed["subagent_launches"], 4)
+        self.assertEqual(keyed["edits"], 4)
+        self.assertEqual(json.loads(legacy.read_text())["subagent_launches"], 3)
+
+    def test_seeded_count_at_cap_blocks_the_next_launch(self):
+        mon = Path(self.home) / "monitor"
+        mon.mkdir(parents=True, exist_ok=True)
+        (mon / "counts-old-session.json").write_text(json.dumps({"subagent_launches": 2}))
+        (mon / "envelope-demo--task-1.json").write_text(json.dumps({"subagent_launches": 2}))
+
+        r = self.run_hook({"session_id": "old-session", "tool_name": "Agent", "tool_input": {"prompt": "over"},
+                           "tool_use_id": "over"}, env={"ALTITUDE_SESSION_KEY": "demo--task-1"})
+
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("altitude: envelope reached (2/2 subagent launches)", r.stderr)
+        self.assertEqual(self.counted(key="demo--task-1"), 3)
+
     def test_dedupe_survives_a_resume(self):
         env = {"ALTITUDE_SESSION_KEY": "demo--task-1"}
         for sid in ("old-session", "new-session"):

@@ -1,5 +1,6 @@
 """Verify and monitor prefer dispatch-keyed counts while retaining legacy session counts."""
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from altitude import config, monitor, state as S, verify
 class CountReaders(unittest.TestCase):
     def setUp(self):
         self.monitor_dir = Path(tempfile.mkdtemp(prefix="altitude-count-readers-"))
+        self.addCleanup(shutil.rmtree, self.monitor_dir, ignore_errors=True)
         self.original_monitor_dir = config.MONITOR_DIR
         config.MONITOR_DIR = self.monitor_dir
 
