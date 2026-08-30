@@ -4,7 +4,7 @@
 
 **Definition of done:** every PR merged on `origin/main`; [R-006] the gates this repository has are green (where it has CI — a `.github/workflows` directory — the `main` run after merge, and where it has none, the full local test suite on merged `main` with the count stated in the report; a `skipped` or no-checks-reported value is never read as passed, and a gate is never satisfied by its absence); deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
 
-**Change class / merge policy:** {merge_policy}
+**Change class / merge policy:** {merge_policy} When the task carries a merge hold, open the PR, report ok with the PR number and stop; never merge around the hold, by `gh pr merge` or any other route, even if its reason looks false for your PR — say so in the report instead.
 
 **Never (project never-list, from CLAUDE.md):** {never_list}
 

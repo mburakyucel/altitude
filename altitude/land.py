@@ -249,6 +249,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         raise LandError(f"on {branch!r} (base {base!r}) — alt land runs from a task worktree branch, "
                         f"never the base branch itself")
     project, slug, task = _resolve(branch, project)
+    hold_merge = task.get("hold_merge") if task is not None else None
+    if hold_merge:  # Decision 48 / I-060: a merge hold is the one exception to merge-by-default.
+        if merge:
+            raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
+                            f"the L3 releases it with `alt task hold-merge {slug} --off`; "
+                            "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
+        _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
+              "the PR will be opened but not merged")
     if paths is not None:
         lease = [p.strip() for p in paths.split(",") if p.strip()]
         if not lease:

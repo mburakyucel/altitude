@@ -1,7 +1,7 @@
 """`alt land` runs the whole land-a-PR sequence offline here: a real temp repo with a bare
 remote stands in for GitHub's git side, and a fake `gh` first on PATH answers view/create/
 checks/merge/run-list from canned JSON while recording every argv it was called with."""
-import json, os, shutil, stat, subprocess, sys, tempfile, unittest
+import contextlib, io, json, os, shutil, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ.setdefault("ALTITUDE_HOME", tempfile.mkdtemp(prefix="altitude-land-"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -209,12 +209,59 @@ class TestLand(unittest.TestCase):
         self.assertFalse(res["merged"])
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "checks"]]), 1)
 
-    def test_merge_after_checks_pass(self):
+    def test_merge_hold_refuses_before_any_mutation(self):
+        reason = "production migration is costly"
+        d = S.tasks_dir("demo") / "fix-x"
+        task = json.loads((d / "status.json").read_text())
+        task["hold_merge"] = reason
+        (d / "status.json").write_text(json.dumps(task))
+        self.leased_change()
+        commands = []
+        real = land._run
+
+        def record(args, cwd, timeout=120):
+            commands.append(args)
+            return real(args, cwd, timeout=timeout)
+
+        land._run = record
+        self.addCleanup(setattr, land, "_run", real)
+        with self.assertRaises(land.LandError) as cm:
+            land.land("fix: held", cwd=self.repo, wait=0, merge=True)
+        message = str(cm.exception)
+        self.assertIn(reason, message)
+        self.assertIn("alt task hold-merge fix-x --off", message)
+        self.assertEqual(commands, [
+            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--git-dir"],
+            ["git", "symbolic-ref", "-q", "HEAD"],
+        ])
+
+    def test_merge_without_hold_after_checks_pass(self):
         self.leased_change()
         res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(res["merged"])
         self.assertEqual(res["main_run"], {"databaseId": 7, "status": "completed", "conclusion": "success"})
         self.assertIn(["pr", "merge", "101", "--squash", "--delete-branch"], self.gh_log())
+
+    def test_merge_hold_without_merge_opens_pr_and_emits_notice(self):
+        reason = "production migration is costly"
+        d = S.tasks_dir("demo") / "fix-x"
+        task = json.loads((d / "status.json").read_text())
+        task["hold_merge"] = reason
+        (d / "status.json").write_text(json.dumps(task))
+        self.leased_change()
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            res = land.land("fix: held", cwd=self.repo, wait=0)
+        notice = stderr.getvalue()
+        self.assertEqual(res["pr"], 101)
+        self.assertFalse(res["merged"])
+        self.assertIn(reason, notice)
+        self.assertIn("PR will be opened but not merged", notice)
+        self.assertEqual(notice.count(reason), 1)
+        self.assertIn(["pr", "create", "--base", "main", "--head", "worktree-fix-x", "--title",
+                       "fix: held", "--body-file"], [args[:-1] for args in self.gh_log()])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_no_merge_when_checks_fail(self):
         self.leased_change()
