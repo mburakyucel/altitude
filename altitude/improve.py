@@ -340,21 +340,39 @@ def _tags_for(project: str, incident: str) -> list[str]:
     return []
 
 
+def _scope_family(scope) -> str:
+    """`stack:python` and `stack:web` are one ledger family; a missing scope is the empty family."""
+    return (scope or "").split(":", 1)[0].strip()
+
+
 def audit_input(project: str) -> dict:
     """What the weekly audit turn gets: every rule with its incidents and recurrence, plus promotion candidates."""
     proj = config.project(project)
     all_rules = rules.global_rules() + rules.stack_rules(proj.get("stacks", [])) + rules.project_rules(config.project_path(project))
     inc = [r for r in index() if r.get("project") == project]
-    by_rule: dict[tuple[str, str], list] = {}
+    by_rule: dict[str, list] = {}
+    by_scope_rule: dict[tuple[str, str], list] = {}
     for r in inc:
-        scope_family = (r.get("scope") or "").split(":", 1)[0].strip()
-        if scope_family and r.get("rule"):
-            by_rule.setdefault((scope_family, r["rule"]), []).append(r["id"])
+        if r.get("rule"):
+            by_rule.setdefault(r["rule"], []).append(r["id"])
+            by_scope_rule.setdefault((_scope_family(r.get("scope")), r["rule"]), []).append(r["id"])
+    # An id two ledgers both carry (project R-003 and global R-003) must not share one incident list, so there the
+    # incident's own scope decides. An id only one ledger carries keeps the plain match: an incident is filed under
+    # the scope of the moment, and a rule later promoted to global or a stack would otherwise lose its origin.
+    families: dict[str, set] = {}
+    for r in all_rules:
+        families.setdefault(r["id"], set()).add(_scope_family(r.get("scope")))
+    contested = {rid for rid, fams in families.items() if len(fams) > 1}
+
+    def incidents_for(r: dict) -> list:
+        if r["id"] in contested:
+            return by_scope_rule.get((_scope_family(r.get("scope")), r["id"]), [])
+        return by_rule.get(r["id"], [])
     tag_counts: dict[str, dict[str, int]] = {}
     for r in index():
         for t in r.get("tags") or []:
             tag_counts.setdefault(t, {})
             tag_counts[t][r["project"]] = tag_counts[t].get(r["project"], 0) + 1
     promotions = [{"tag": t, "projects": c} for t, c in tag_counts.items() if len(c) > 1]
-    return {"rules": [{**r, "incidents": by_rule.get(((r.get("scope") or "").split(":", 1)[0].strip(), r["id"]), [])} for r in all_rules], "incidents": inc[-30:],
+    return {"rules": [{**r, "incidents": incidents_for(r)} for r in all_rules], "incidents": inc[-30:],
             "promotion_candidates": promotions}

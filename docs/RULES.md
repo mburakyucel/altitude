@@ -7,7 +7,7 @@
 - where: CLAUDE.md
 - origin: I-004 (altitude)
 - prevents: s-envelope-no-slack-for-mandated-reviewer
-- effect: mandated reviewer refused; PR manually merged after reviewer waiver (I-004)
+- effect: S envelopes sized implementers+1, so the mandated reviewer always runs; verify: no `Blocked: envelope (needed N)` on a reviewer (I-004: reviewer refused, PR merged by hand after a waiver)
 - status: probation
 - text: Size the launch budget so the verification a brief mandates always fits: subagent_launches = expected implementers + 1 reserved for the reviewer (an S task with one L1 gets 3, not 2). The reserved launch is spent on nothing else, and capability probes are not launches. A reviewer that cannot run because the budget is full is a dispatch-time sizing bug, not a mid-run block.
 
