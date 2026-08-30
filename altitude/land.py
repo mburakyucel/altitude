@@ -3,9 +3,10 @@
 The measured why: status → add → commit → push → `gh pr create` → `gh pr view` → merge → fetch → run list cost
 ~100 turns across L2/L1 sessions, and every compound form of it trips the Safety Net (R-003). Here it is one
 command: stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
-push with one rebase retry on a non-fast-forward (never two), open or reuse the PR, wait for checks, merge only
-on green and only when asked. No model call anywhere — the commit message arrives as an argument. Idempotent:
-nothing to commit is a skip, an up-to-date push is a no-op, an open PR is reused.
+push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
+reuse the PR, wait for checks, merge only on green and only when asked. No model call anywhere — the commit
+message arrives as an argument. Idempotent: nothing to commit is a skip, an up-to-date push is a no-op, an
+open PR is reused.
 
 Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
 first — that lookup is what decides whether committing is safe at all (a merged or closed PR is refused) — so
@@ -106,20 +107,32 @@ def _inside(path: str, lease: list[str]) -> bool:
     return any(p == l or p.startswith(l + "/") for l in map(norm, lease))
 
 
-def _push(root: Path, branch: str, base: str, task_ref: str) -> None:
-    """`git push -u origin <branch>`; on a non-fast-forward, exactly one `git pull --rebase` and one re-push."""
+def _fetch_remote_tip(root: Path, branch: str) -> str | None:
+    """Refresh and return origin/<branch>; a branch that does not exist yet has no tip to lease."""
+    ref = f"refs/remotes/origin/{branch}"
+    fetched = _git(root, "fetch", "-q", "origin", f"+refs/heads/{branch}:{ref}")
+    if fetched.returncode != 0:
+        err = ((fetched.stderr or "") + (fetched.stdout or "")).strip()
+        if any(s in err.lower() for s in ("couldn't find remote ref", "could not find remote ref")):
+            return None
+        raise LandError(f"git fetch origin {branch}: {err[-300:] or f'exit {fetched.returncode}'}")
+    tip = _git(root, "rev-parse", "--verify", "-q", ref)
+    if tip.returncode != 0 or not (tip.stdout or "").strip():
+        raise LandError(f"cannot record remote tip for origin/{branch}")
+    return tip.stdout.strip()
+
+
+def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None) -> None:
+    """Push once normally; retry a non-fast-forward once against the pre-commit remote-tip lease."""
     p = _git(root, "push", "-u", "origin", branch, timeout=300)
     if p.returncode == 0:
         return
     err = (p.stderr or "") + (p.stdout or "")
     if not any(s in err for s in ("non-fast-forward", "fetch first", "[rejected]")):
         raise LandError(f"git push: {err.strip()[-300:]}")
-    _note("push rejected (non-fast-forward) — one `git pull --rebase`, one re-push")
-    r = _git(root, "pull", "--rebase", "origin", branch, timeout=300)
-    if r.returncode != 0:
-        raise LandError("git pull --rebase failed — if it stopped on conflicts the worktree is now mid-rebase: "
-                        "resolve and `git rebase --continue`, or `git rebase --abort`, then re-run alt land: "
-                        f"{((r.stderr or '') + (r.stdout or '')).strip()[-300:]}")
+    if recorded_tip is None:
+        raise LandError(f"push rejected, but origin/{branch} had no tip when alt land began — refusing to force "
+                        "without a recorded lease; fetch the branch, inspect it, and re-run alt land")
     try:
         missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
     except git_policy.GitPolicyError as exc:
@@ -130,10 +143,26 @@ def _push(root: Path, branch: str, base: str, task_ref: str) -> None:
             f"rebased branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
             "stopping before the second push"
         )
-    p2 = _git(root, "push", "-u", "origin", branch, timeout=300)
+    audit = _need(
+        _git(root, "rev-list", "--oneline", "--max-count=10", recorded_tip, "^HEAD"),
+        f"cannot audit commits replaced on origin/{branch}",
+    )
+    _note(f"push rejected (non-fast-forward) — retrying once with a lease on {recorded_tip}; "
+          f"recorded remote-only commits (up to 10): {audit.replace(chr(10), ' | ') or '(none)'}")
+    lease = f"--force-with-lease={branch}:{recorded_tip}"
+    p2 = _git(root, "push", "-u", lease, "origin", branch, timeout=300)
     if p2.returncode != 0:
-        raise LandError(f"push failed again after one rebase — stopping, not retrying: "
-                        f"{((p2.stderr or '') + (p2.stdout or '')).strip()[-300:]}")
+        try:
+            current_tip = _fetch_remote_tip(root, branch)
+            current = current_tip or "(no remote branch)"
+        except LandError as exc:
+            current = f"(unavailable: {exc})"
+        push_err = ((p2.stderr or "") + (p2.stdout or "")).strip()[-300:]
+        raise LandError(
+            f"force-with-lease push refused — recorded remote tip: {recorded_tip}; current remote tip: "
+            f"{current}. Run `git fetch origin {branch}`, look at the foreign commits, rebase by hand, then "
+            f"re-run `alt land`. Push error: {push_err or f'exit {p2.returncode}'}"
+        )
 
 
 def _pr_view(root: Path, branch: str) -> dict | None:
@@ -294,6 +323,9 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
+    # Record the branch tip before anything is staged or committed: a later force may replace only this exact
+    # remote history, and a push from another worker after this point must make the lease fail.
+    recorded_tip = _fetch_remote_tip(root, branch)
     task_ref = f"{project}/{slug}"
     try:
         missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
@@ -333,7 +365,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _note("working tree clean — nothing to commit")
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
-                "commit": None, "lease": lease_repr, "staged": changed, "hold": hold_merge, "dry_run": True}
+                "commit": None, "head": None, "lease": lease_repr, "staged": changed, "hold": hold_merge,
+                "dry_run": True}
     pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
         if groups:
@@ -348,8 +381,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         # `gh pr checks` round trip whose answer cannot change this run. `merged` is its own checks value,
         # never reported as a pass (decision 36).
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
-                "merged": True, "main_run": None, "branch": branch, "commit": None, "lease": lease_repr,
-                "staged": [], "hold": hold_merge}
+                "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
+                "lease": lease_repr, "staged": [], "hold": hold_merge}
     if pr is not None and pr.get("state") == "CLOSED":
         raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
                         f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
@@ -370,8 +403,9 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note(f"committed {commit[:7]} ({len(staged)} path(s))")
         else:
             _note("staged changes match HEAD — nothing to commit")
-    _push(root, branch, base, task_ref)
-    pushed_head = _need(_git(root, "rev-parse", "HEAD"), "cannot capture the validated PR head")
+    _push(root, branch, base, task_ref, recorded_tip)
+    pushed_head = _need(_git(root, "rev-parse", f"origin/{branch}"), "cannot capture the pushed PR head")
+    _note(f"pushed head {pushed_head}")
     pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
     checks = _checks_state(root, number)
@@ -386,4 +420,5 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
-            "branch": branch, "commit": commit, "lease": lease_repr, "staged": staged, "hold": hold_merge}
+            "branch": branch, "commit": commit, "head": pushed_head, "lease": lease_repr, "staged": staged,
+            "hold": hold_merge}

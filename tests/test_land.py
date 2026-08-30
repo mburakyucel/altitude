@@ -164,6 +164,7 @@ class TestLand(unittest.TestCase):
         remote_sha = subprocess.run(["git", "-C", str(self.remote), "rev-parse", "worktree-fix-x"],
                                     capture_output=True, text=True).stdout.strip()
         self.assertEqual(remote_sha, self.git("rev-parse", "HEAD").strip())
+        self.assertEqual(res["head"], remote_sha)
         creates = [a for a in self.gh_log() if a[:2] == ["pr", "create"]]
         self.assertEqual(len(creates), 1)
         self.assertEqual(creates[0][creates[0].index("--title") + 1], "fix: land the thing")
@@ -179,47 +180,120 @@ class TestLand(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "create"]]), 1)
 
-    def test_nonff_push_retries_exactly_once(self):
+    def test_rebased_push_retries_with_recorded_tip_lease_exactly_once(self):
+        self.leased_change("src/original.py")
+        self.git("add", "src/original.py")
+        self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
+        self.git("push", "-q", "-u", "origin", "worktree-fix-x")
+        recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
+        self.git("commit", "--amend", "-q", "-m", "rebased", "-m", "Altitude-Task: demo/fix-x")
         self.leased_change()
-        calls = {"push": 0, "pull": 0}
+        commands = []
         real = land._run
 
         def fake(args, cwd, timeout=120):
-            if args[:2] == ["git", "push"]:
-                calls["push"] += 1
-                if calls["push"] == 1:
-                    return subprocess.CompletedProcess(args, 1, "", "! [rejected] (non-fast-forward)")
-                return real(args, cwd, timeout=timeout)
-            if args[:2] == ["git", "pull"]:
-                calls["pull"] += 1
-                return subprocess.CompletedProcess(args, 0, "", "")
+            commands.append(args)
             return real(args, cwd, timeout=timeout)
 
         land._run = fake
         self.addCleanup(setattr, land, "_run", real)
         res = land.land("fix: retry", cwd=self.repo, wait=0)
-        self.assertEqual(calls, {"push": 2, "pull": 1})
+        pushes = [a for a in commands if a[:2] == ["git", "push"]]
+        pulls = [a for a in commands if a[:2] == ["git", "pull"]]
+        self.assertEqual(len(pushes), 2)
+        self.assertEqual(pulls, [])
+        self.assertNotIn("--force-with-lease", " ".join(pushes[0]))
+        self.assertIn(f"--force-with-lease=worktree-fix-x:{recorded_tip}", pushes[1])
+        self.assertEqual(res["head"], self.git("rev-parse", "HEAD").strip())
         self.assertEqual(res["pr"], 101)
 
-    def test_second_nonff_rejection_is_an_error(self):
+    def test_refused_lease_reports_recorded_and_current_tips(self):
         self.leased_change()
-        calls = {"push": 0, "pull": 0}
+        self.git("add", "src/thing.py")
+        self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
+        self.git("push", "-q", "-u", "origin", "worktree-fix-x")
+        recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
+        self.git("commit", "--amend", "-q", "-m", "rebased", "-m", "Altitude-Task: demo/fix-x")
+        current_tip = "b" * 40
+        commands = []
+        tip_reads = 0
         real = land._run
 
         def fake(args, cwd, timeout=120):
+            nonlocal tip_reads
+            commands.append(args)
+            if args == ["git", "rev-parse", "--verify", "-q", "refs/remotes/origin/worktree-fix-x"]:
+                tip_reads += 1
+                tip = recorded_tip if tip_reads == 1 else current_tip
+                return subprocess.CompletedProcess(args, 0, tip + "\n", "")
             if args[:2] == ["git", "push"]:
-                calls["push"] += 1
                 return subprocess.CompletedProcess(args, 1, "", "! [rejected] (non-fast-forward)")
-            if args[:2] == ["git", "pull"]:
-                calls["pull"] += 1
-                return subprocess.CompletedProcess(args, 0, "", "")
             return real(args, cwd, timeout=timeout)
 
         land._run = fake
         self.addCleanup(setattr, land, "_run", real)
-        with self.assertRaisesRegex(land.LandError, "again"):
+        with self.assertRaises(land.LandError) as cm:
             land.land("fix: retry", cwd=self.repo, wait=0)
-        self.assertEqual(calls, {"push": 2, "pull": 1})
+        message = str(cm.exception)
+        self.assertIn(recorded_tip, message)
+        self.assertIn(current_tip, message)
+        self.assertIn("look at the foreign commits", message)
+        self.assertIn("rebase by hand", message)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 2)
+        self.assertEqual([a for a in commands if a[:2] == ["git", "pull"]], [])
+
+    def test_up_to_date_push_does_not_force_or_refetch_after_push(self):
+        self.leased_change()
+        land.land("fix: first", cwd=self.repo, wait=0)
+        commands = []
+        real = land._run
+
+        def fake(args, cwd, timeout=120):
+            commands.append(args)
+            return real(args, cwd, timeout=timeout)
+
+        land._run = fake
+        self.addCleanup(setattr, land, "_run", real)
+        res = land.land("fix: first", cwd=self.repo, wait=0)
+        pushes = [a for a in commands if a[:2] == ["git", "push"]]
+        branch_fetches = [a for a in commands if a[:4] == ["git", "fetch", "-q", "origin"]
+                            and a[-1].endswith(":refs/remotes/origin/worktree-fix-x")]
+        self.assertEqual(pushes, [["git", "push", "-u", "origin", "worktree-fix-x"]])
+        self.assertEqual(branch_fetches, [["git", "fetch", "-q", "origin",
+                                           "+refs/heads/worktree-fix-x:refs/remotes/origin/worktree-fix-x"]])
+        self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
+
+    def test_first_push_without_remote_tip_uses_plain_push(self):
+        self.leased_change()
+        commands = []
+        real = land._run
+
+        def fake(args, cwd, timeout=120):
+            commands.append(args)
+            return real(args, cwd, timeout=timeout)
+
+        land._run = fake
+        self.addCleanup(setattr, land, "_run", real)
+        res = land.land("fix: first push", cwd=self.repo, wait=0)
+        self.assertEqual([a for a in commands if a[:2] == ["git", "push"]],
+                         [["git", "push", "-u", "origin", "worktree-fix-x"]])
+        self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
+
+    def test_result_head_comes_from_remote_tracking_branch(self):
+        self.leased_change()
+        pushed_head = "a" * 40
+        real = land._run
+
+        def fake(args, cwd, timeout=120):
+            if args == ["git", "rev-parse", "origin/worktree-fix-x"]:
+                return subprocess.CompletedProcess(args, 0, pushed_head + "\n", "")
+            return real(args, cwd, timeout=timeout)
+
+        land._run = fake
+        self.addCleanup(setattr, land, "_run", real)
+        res = land.land("fix: report remote", cwd=self.repo, wait=0)
+        self.assertEqual(res["head"], pushed_head)
+        self.assertNotEqual(res["head"], self.git("rev-parse", "HEAD").strip())
 
     def test_wait_zero_reports_pending_without_waiting(self):
         self.leased_change()
@@ -364,7 +438,7 @@ class TestLand(unittest.TestCase):
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.remote_heads(), ["main"])
 
-    def test_conflicted_rebase_leaves_a_state_the_next_run_refuses(self):
+    def test_preexisting_remote_divergence_is_replaced_without_rebasing(self):
         # a real diverging remote: same branch, same file, different content in a second clone
         seed = self.repo / "src" / "f.py"
         seed.parent.mkdir(parents=True, exist_ok=True)
@@ -388,11 +462,12 @@ class TestLand(unittest.TestCase):
         og("commit", "-q", "-m", "remote change", "-m", "Altitude-Task: demo/fix-x")
         og("push", "-q")
         seed.write_text("local\n")
-        with self.assertRaisesRegex(land.LandError, "mid-rebase"):
-            land.land("fix: conflict", cwd=self.repo, wait=0)
-        # the worktree is now mid-rebase; the follow-up run must refuse, never commit conflict markers
-        with self.assertRaisesRegex(land.LandError, "rebase is in progress"):
-            land.land("fix: conflict again", cwd=self.repo, wait=0)
+        res = land.land("fix: conflict", cwd=self.repo, wait=0)
+        self.assertEqual(res["head"], self.git("rev-parse", "HEAD").strip())
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), res["head"])
+        # No pull/rebase state was created, so an idempotent follow-up remains safe.
+        again = land.land("fix: conflict again", cwd=self.repo, wait=0)
+        self.assertEqual(again["head"], res["head"])
         self.assertEqual(self.git("log", "--all", "-S", "<<<<<<<", "--oneline").strip(), "")
 
     def test_resolved_task_with_empty_lease_fails_loudly(self):
