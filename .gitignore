@@ -5,3 +5,4 @@ __pycache__/
 *.log
 /state/
 web/node_modules/
+design/wireframes/shots/

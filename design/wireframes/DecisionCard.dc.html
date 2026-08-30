@@ -1,0 +1,175 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+        <style>
+          /* Every hex and px below is a value from web/design/tokens.css (light block) — see README for the derived values. */
+          body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; color: #0f172a; -webkit-font-smoothing: antialiased; }
+          *, *::before, *::after { box-sizing: border-box; }
+          h1, h2, p, ul { margin: 0; }
+          a { color: #4f46e5; text-decoration: none; }
+          .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+          /* board chrome (wireframe, not product) */
+          .board-h { display: flex; align-items: center; gap: 12px; height: 40px; }
+          .board-h h1 { font-size: 17px; font-weight: 600; }
+          .draft { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 10px; background: #eef2ff; border: 1px solid #c7d2fe; color: #4f46e5; font-size: 13px; font-weight: 500; line-height: 1.2; }
+          .cap { font-size: 13px; color: #64748b; }
+          .note { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; line-height: 18px; color: #4f46e5; }
+          .annotated .row { position: relative; }
+          .annotated .row > .note { position: absolute; right: calc(100% + 24px); top: 0; width: 236px; text-align: right; white-space: nowrap; }
+          .callouts { display: flex; gap: 8px; padding: 6px 16px 0; }
+          .rule { padding: 4px 0; border-top: 1px solid #f1f5f9; font-size: 13px; line-height: 18px; color: #475569; }
+          .rule:last-of-type { padding-bottom: 0; }
+          .rule b { font-weight: 600; color: #0f172a; }
+          .tip { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 6px 10px; border-radius: 6px; background: #0f172a; color: #ffffff; font-size: 13px; line-height: 18px; font-weight: 400; white-space: nowrap; z-index: 1; }
+          /* atoms — identical to Inbox.dc.html */
+          .pill { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid #e2e8f0; border-radius: 999px; background: #ffffff; font-size: 11px; font-weight: 500; letter-spacing: 0.05em; color: #475569; white-space: nowrap; line-height: 14px; }
+          .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+          .eyebrow { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 18px; color: #64748b; }
+          .eyebrow .title { color: #475569; font-weight: 500; }
+          .eyebrow .right { margin-left: auto; }
+          .ctx { margin-top: 6px; font-size: 14px; line-height: 20px; color: #64748b; }
+          .q { margin-top: 8px; font-size: 17px; line-height: 22px; font-weight: 600; color: #0f172a; }
+          .strip { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+          .why { font-size: 13px; line-height: 18px; color: #64748b; white-space: nowrap; }
+          .field { flex: 1; min-width: 0; display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; background: #ffffff; font-size: 14px; color: #64748b; white-space: nowrap; overflow: hidden; }
+          .field span { overflow: hidden; text-overflow: ellipsis; }
+          .field.typed { color: #0f172a; }
+          .btn { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #ffffff; font-size: 14px; font-weight: 500; color: #0f172a; white-space: nowrap; }
+          .btn.primary { background: #4f46e5; border-color: #4f46e5; color: #ffffff; font-weight: 600; }
+          .btn.disabled { opacity: 0.6; }
+          .detail { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f5f9; font-size: 13px; line-height: 18px; color: #475569; white-space: pre-wrap; }
+        </style>
+      </helmet>
+      <div style="width: 1440px; height: 900px; background: #f8fafc; overflow: hidden; padding: 24px 32px; box-sizing: border-box;">
+        <div class="board-h">
+          <h1>Decision card — anatomy and states</h1>
+          <span class="draft">draft</span>
+          <span class="cap">One card at 700px: at rest with its parts called out, with Why open, and the Revise pair. Callouts in the mono face are wireframe notes, not UI.</span>
+        </div>
+
+        <!-- Row 1: the annotated card (rail on the left) and what the card must obey -->
+        <div style="display: flex; gap: 24px; margin-top: 16px; align-items: flex-start;">
+          <div style="width: 960px; flex: none; padding-left: 260px;">
+            <article class="card annotated" style="width: 700px;">
+              <div class="row eyebrow">
+                <span class="note">class · title · project · age</span>
+                <span class="pill">M</span>
+                <span class="title">Codex quota reader</span>
+                <span>· altitude · 2h</span>
+                <a class="right" href="#">Details</a>
+              </div>
+              <div class="row">
+                <span class="note">context — ≤ 320 chars, plain</span>
+                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+              </div>
+              <div class="row">
+                <span class="note">the one question — ≤ 280 chars</span>
+                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+              </div>
+              <div class="row strip">
+                <span class="note">Why · feedback · options</span>
+                <span class="why">Why ▸</span>
+                <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                <span class="btn primary">Approve</span>
+                <span class="btn">Revise</span>
+                <span class="btn">Reject</span>
+              </div>
+            </article>
+            <div class="callouts note">
+              <span style="width: 40px; flex: none;">↑ Why</span>
+              <span style="flex: 1;">↑ feedback — one line at rest</span>
+              <span style="flex: none;">↑ options — the first is recommended</span>
+            </div>
+            <div class="note" style="padding: 2px 16px 0;">Why opens the reasoning under the strip · Details (top right) opens the task page</div>
+          </div>
+
+          <section class="card" style="flex: 1; min-width: 0;">
+            <h2 style="font-size: 14px; font-weight: 600; line-height: 18px; margin-bottom: 6px;">What every card obeys</h2>
+            <div class="rule"><span><b>Context</b> — the situation, ≤ 2 plain sentences, ≤ 320 chars.</span></div>
+            <div class="rule"><span><b>Question</b> — one sentence, ≤ 280 chars, saying what each answer does.</span></div>
+            <div class="rule"><span><b>Options</b> — short verbs, ≤ 80 chars; the recommended one first, drawn primary.</span></div>
+            <div class="rule"><span><b>In front of the question</b> — no ids, file names or code; those live behind Why, where ids open the ledger.</span></div>
+            <div class="rule"><span><b>Revise</b> waits for feedback; a note with Approve travels with the answer, binding. Blocked cards are on the Inbox board.</span></div>
+          </section>
+        </div>
+
+        <!-- Row 2: Why open, and the Revise pair -->
+        <div style="display: flex; gap: 24px; margin-top: 24px; align-items: flex-start;">
+          <div style="width: 700px; flex: none;">
+            <article class="card">
+              <div class="eyebrow">
+                <span class="pill">M</span>
+                <span class="title">Codex quota reader</span>
+                <span>· altitude · 2h</span>
+                <a class="right" href="#">Details</a>
+              </div>
+              <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+              <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+              <div class="strip">
+                <span class="why">Why ▾</span>
+                <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                <span class="btn primary">Approve</span>
+                <span class="btn">Revise</span>
+                <span class="btn">Reject</span>
+              </div>
+              <div class="detail">Reader: harvest the rate-limit event from every headless Claude stream (altitude/quota.py); a reading older than 600 s is stale and does not count. Probe: one Haiku turn, about 0.1% of the window, skipped while a reading is under 10 minutes old.
+Critic's conditions: (a) stale never counts as fresh; (b) a probe failure is an incident, never a silent fallback (<a href="#">decision 36</a>); (c) the reader writes monitor/quota-codex.json and nothing else.
+Refs: <a href="#">I-007</a> · <a href="#">decision 31</a> · <a href="#">decision 45</a> · <a href="#">R-003</a> — spend: M envelope, ≤ 8 launches, about 1% of today's window.</div>
+            </article>
+            <div class="note" style="padding: 8px 16px 0;">Why open — reasoning, the critic's conditions, file names and ids; ids are links to the ledger. Nothing here is needed to answer.</div>
+          </div>
+
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 24px;">
+            <div>
+              <article class="card">
+                <div class="eyebrow">
+                  <span class="pill">M</span>
+                  <span class="title">Codex quota reader</span>
+                  <span>· altitude · 2h</span>
+                  <a class="right" href="#">Details</a>
+                </div>
+                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                <div class="strip">
+                  <span class="why">Why ▸</span>
+                  <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                  <span class="btn primary">Approve</span>
+                  <span class="btn disabled">Revise<span class="tip">Type what should change first</span></span>
+                  <span class="btn">Reject</span>
+                </div>
+              </article>
+              <div class="note" style="padding: 24px 16px 0;">Revise, empty field — disabled; hovering shows the tooltip. Approve and Reject stay live.</div>
+            </div>
+            <div>
+              <article class="card">
+                <div class="eyebrow">
+                  <span class="pill">M</span>
+                  <span class="title">Codex quota reader</span>
+                  <span>· altitude · 2h</span>
+                  <a class="right" href="#">Details</a>
+                </div>
+                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                <div class="strip">
+                  <span class="why">Why ▸</span>
+                  <div class="field typed"><span>Skip the probe for now; the reader alone is enough.</span></div>
+                  <span class="btn primary">Approve</span>
+                  <span class="btn">Revise</span>
+                  <span class="btn">Reject</span>
+                </div>
+              </article>
+              <div class="note" style="padding: 8px 16px 0;">Revise, feedback typed — live; the note travels with the answer. With Approve it travels too, as binding.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </x-dc>
+  </body>
+</html>

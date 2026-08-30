@@ -1,0 +1,178 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+        <style>
+          /* Every hex and px below is a value from web/design/tokens.css (light block) — see README for the two derived values. */
+          body { margin: 0; font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; color: #0f172a; -webkit-font-smoothing: antialiased; }
+          *, *::before, *::after { box-sizing: border-box; }
+          h1, h2, p, ul { margin: 0; }
+          ul { padding: 0; list-style: none; }
+          a { color: #4f46e5; text-decoration: none; }
+          .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+          /* board chrome (wireframe, not product) */
+          .board-h { display: flex; align-items: center; gap: 12px; height: 40px; flex: none; padding: 0 32px; border-bottom: 1px solid #e2e8f0; }
+          .board-h h1 { font-size: 17px; font-weight: 600; }
+          .draft { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 10px; background: #eef2ff; border: 1px solid #c7d2fe; color: #4f46e5; font-size: 13px; font-weight: 500; line-height: 1.2; }
+          .cap { font-size: 13px; color: #64748b; }
+          /* shell */
+          .nav { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-radius: 8px; color: #475569; font-weight: 500; font-size: 14px; }
+          .nav.active { background: #eef2ff; color: #4f46e5; }
+          .toggle { display: inline-flex; border: 1px solid #e2e8f0; border-radius: 8px; padding: 2px; font-size: 13px; }
+          .toggle span { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 6px; font-weight: 500; color: #475569; }
+          .toggle .on { background: #eef2ff; color: #4f46e5; }
+          /* atoms */
+          .label { font-size: 11px; font-weight: 500; letter-spacing: 0.07em; text-transform: uppercase; color: #64748b; line-height: 14px; }
+          .pill { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid #e2e8f0; border-radius: 999px; background: #ffffff; font-size: 11px; font-weight: 500; letter-spacing: 0.05em; color: #475569; white-space: nowrap; line-height: 14px; }
+          .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; }
+          .card.blocked { border-color: rgb(220 38 38 / 0.4); }
+          .eyebrow { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 18px; color: #64748b; }
+          .eyebrow .title { color: #475569; font-weight: 500; }
+          .eyebrow .right { margin-left: auto; }
+          .ctx { margin-top: 6px; font-size: 14px; line-height: 20px; color: #64748b; }
+          .q { margin-top: 8px; font-size: 17px; line-height: 22px; font-weight: 600; color: #0f172a; }
+          .strip { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+          .why { font-size: 13px; line-height: 18px; color: #64748b; white-space: nowrap; }
+          .field { flex: 1; min-width: 0; display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 6px; background: #ffffff; font-size: 14px; color: #64748b; white-space: nowrap; overflow: hidden; }
+          .field span { overflow: hidden; text-overflow: ellipsis; }
+          .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #ffffff; font-size: 14px; font-weight: 500; color: #0f172a; white-space: nowrap; }
+          .btn.primary { background: #4f46e5; border-color: #4f46e5; color: #ffffff; font-weight: 600; }
+          /* inbox sections */
+          .running p, .fyi .text { font-size: 14px; line-height: 20px; color: #475569; }
+          .running li, .running .meta, .fyi .meta { font-size: 13px; line-height: 18px; color: #64748b; }
+          .fyi .meta { display: flex; }
+          .fyi .meta .age { margin-left: auto; }
+        </style>
+      </helmet>
+      <div style="width: 1440px; height: 900px; background: #f8fafc; overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;">
+        <div class="board-h">
+          <h1>Inbox — desktop</h1>
+          <span class="draft">draft</span>
+          <span class="cap">The screen Burak lives on, inside the 232px shell: three decisions ranked by their question, then what is running, then FYIs.</span>
+        </div>
+
+        <div style="display: flex; flex: 1; min-height: 0;">
+          <!-- Sidebar: 232px, surface, "Altitude", quota line, four nav items, theme toggle at the foot -->
+          <aside style="width: 232px; flex: none; display: flex; flex-direction: column; gap: 4px; padding: 16px; background: #ffffff; border-right: 1px solid #e2e8f0;">
+            <div style="padding: 0 12px; margin-bottom: 4px; font-size: 17px; font-weight: 600; line-height: 22px;">Altitude</div>
+            <div style="padding: 0 12px; margin-bottom: 16px; font-size: 13px; line-height: 18px; color: #64748b;">5h 12% · 7d 40%</div>
+            <div class="nav active">Inbox <span class="pill">3</span></div>
+            <div class="nav">Projects</div>
+            <div class="nav">Chat</div>
+            <div class="nav">Monitor</div>
+            <div style="margin-top: auto; padding: 16px 4px 0;">
+              <div class="toggle"><span>Light</span><span class="on">System</span><span>Dark</span></div>
+            </div>
+          </aside>
+
+          <main style="flex: 1; min-width: 0; padding: 24px 32px;">
+            <div style="max-width: 768px; margin: 0 auto;">
+              <div style="display: flex; align-items: baseline; gap: 12px;">
+                <h2 style="font-size: 24px; font-weight: 600; line-height: 28px;">Inbox</h2>
+                <span style="font-size: 13px; color: #64748b;">5h 12% · 7d 40%</span>
+              </div>
+
+              <div class="label" style="margin-top: 16px;">Decisions (3)</div>
+              <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
+
+                <!-- 1. an ordinary proposal -->
+                <article class="card">
+                  <div class="eyebrow">
+                    <span class="pill">M</span>
+                    <span class="title">Codex quota reader</span>
+                    <span>· altitude · 2h</span>
+                    <a class="right" href="#">Details</a>
+                  </div>
+                  <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+                  <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                  <div class="strip">
+                    <span class="why">Why ▸</span>
+                    <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                    <span class="btn primary">Approve</span>
+                    <span class="btn">Revise</span>
+                    <span class="btn">Reject</span>
+                  </div>
+                </article>
+
+                <!-- 2. blocked: danger-tinted border, "Stopped mid-task:" context, Resume / Park / Reject -->
+                <article class="card blocked">
+                  <div class="eyebrow">
+                    <span class="pill">M</span>
+                    <span class="title">Lesson replay</span>
+                    <span>· tutor · 45m</span>
+                    <a class="right" href="#">Details</a>
+                  </div>
+                  <p class="ctx">Stopped mid-task: the replay test needs a microphone and the build machine has none.</p>
+                  <p class="q">Resume with a fake audio device, park it until you are back, or drop it?</p>
+                  <div class="strip">
+                    <span class="why">Why ▸</span>
+                    <div class="field"><span>Note (optional)</span></div>
+                    <span class="btn primary">Resume</span>
+                    <span class="btn">Park</span>
+                    <span class="btn">Reject</span>
+                  </div>
+                </article>
+
+                <!-- 3. a different project, with named options -->
+                <article class="card">
+                  <div class="eyebrow">
+                    <span class="pill">L</span>
+                    <span class="title">Observability</span>
+                    <span>· career-platform · 1d</span>
+                    <a class="right" href="#">Details</a>
+                  </div>
+                  <p class="ctx">Production has no traces, so slow requests and model spend are found by hand. The proposal ships traces and four metrics to CloudWatch for about $40 a month; Datadog would be about $190.</p>
+                  <p class="q">Go with CloudWatch, or pay for Datadog and get its dashboards?</p>
+                  <div class="strip">
+                    <span class="why">Why ▸</span>
+                    <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                    <span class="btn primary">Go with CloudWatch</span>
+                    <span class="btn">Use Datadog</span>
+                    <span class="btn">Revise</span>
+                    <span class="btn">Park</span>
+                  </div>
+                </article>
+              </div>
+
+              <div style="display: flex; gap: 24px; margin-top: 24px;">
+                <section class="running" style="width: 260px; flex: none;">
+                  <div class="label">Running</div>
+                  <p style="margin-top: 8px;">2 tasks on the machine (limit 3)</p>
+                  <ul style="margin-top: 4px;">
+                    <li>altitude: 1</li>
+                    <li>career-platform: 1</li>
+                  </ul>
+                  <p class="meta" style="margin-top: 4px;">Waiting: tutor/pronunciation-scores (resume)</p>
+                </section>
+
+                <section class="fyi" style="flex: 1; min-width: 0;">
+                  <div class="label">FYI</div>
+                  <ul style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+                    <li>
+                      <div class="meta"><span>[career-platform · study-index-tiers]</span><span class="age">3h</span></div>
+                      <div class="text">Tier labels and chips match the wireframe; PR #119 merged, main green.</div>
+                    </li>
+                    <li>
+                      <div class="meta"><span>[tutor]</span><span class="age">5h</span></div>
+                      <div class="text">Coordinator rotated to a fresh session in time; nothing lost.</div>
+                    </li>
+                    <li>
+                      <div class="meta"><span>[tutor · pronunciation-scores]</span><span class="age">1d</span></div>
+                      <div class="text">Scores now round to whole numbers; PR #27 merged, main green.</div>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </x-dc>
+  </body>
+</html>
