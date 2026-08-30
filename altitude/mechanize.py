@@ -23,7 +23,18 @@ _VALUE_FLAGS = {
     "gh": {"-R", "--repo"},
 }
 _EXCLUDED_INCIDENT_SHAPES = {"Read", "Edit", "Write"}
+# Decision 47 / mechanize-histogram-exclude-alt-by-basen: R-003 wrapper scripts make
+# cd/echo navigation and output an artifact of the harness, not a mechanizable action.
+_EXCLUDED_SHELL_SHAPES = {"cd", "echo", "pwd", "ls", "true"}
 _SHELL_BREAKS = {"|", "||", "&&", ";", "&"}
+
+
+def _is_excluded_shape(shape: str) -> bool:
+    words = shape.split()
+    first = words[0] if words else ""
+    return (shape in _EXCLUDED_INCIDENT_SHAPES
+            or Path(first).name == "alt"
+            or shape in _EXCLUDED_SHELL_SHAPES)
 
 
 def _transcript_root() -> Path:
@@ -73,7 +84,7 @@ def _bash_shape(command: str) -> str | None:
     words = _command_words(command)
     if not words:
         return None
-    first, rest = words[0], words[1:]
+    first, rest = Path(words[0]).name or words[0], words[1:]
     args = _arguments(rest, _VALUE_FLAGS.get(first))
     if first in _SUBCOMMANDS and args:
         return f"{first} {args[0]}"
@@ -215,7 +226,7 @@ def _file_incidents(project: str, rows: list[dict], now: float) -> None:
     changed = False
     for row in rows:
         shape = row["shape"]
-        if row["turns"] < INCIDENT_TURNS or shape in _EXCLUDED_INCIDENT_SHAPES or shape.split()[0] == "alt":
+        if row["turns"] < INCIDENT_TURNS or _is_excluded_shape(shape):
             continue
         previous = project_stamps.get(shape) or {}
         if previous.get("incident") and _recent(previous.get("last"), now):
