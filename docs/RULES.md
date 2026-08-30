@@ -49,7 +49,7 @@
 
 ## R-007 — Chat is a conversation with Burak, never the turn log
 - scope: project
-- where: personas/l3.md section Style, and the server turn prompts that ask the L3 to report in N sentences (altitude/l3.py or wherever they are built)
+- where: personas/l3.md section Style, altitude/intake.py, altitude/server.py
 - origin: I-021 (altitude)
 - prevents: chat-doubles-as-turn-log
 - effect: the chat is usable as the entry point again (his words, 2026-08-30 05:24Z)
