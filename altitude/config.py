@@ -2,10 +2,22 @@
 from __future__ import annotations
 import json
 import os
+import sys
 from pathlib import Path
 
 HOME = Path.home()
 ROOT = Path(os.environ.get("ALTITUDE_HOME", HOME / ".altitude"))
+
+# A test module can set ALTITUDE_HOME before its own Altitude import and still be too late: unittest discovery
+# imports every test into one interpreter, so another module may already have frozen this module's paths against
+# the live default.  Never let that ordering mistake reach the first filesystem write.  The normal full-suite
+# bootstrap supplies a throwaway root (tests/test_000_state_isolation.py); this guard is the fail-closed backstop
+# for a shuffled suite, a single test module, or any future runner that imports config first.
+if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitude").resolve():
+    raise RuntimeError(
+        "refusing to use the live ~/.altitude state from a unittest process; "
+        "set ALTITUDE_HOME to a throwaway directory before importing altitude"
+    )
 REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, rules/, schemas/, templates/, web/
 PERSONAS = REPO / "personas"
 RULES = REPO / "rules"
