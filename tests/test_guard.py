@@ -38,6 +38,15 @@ class TestGuardExecutedText(unittest.TestCase):
             "EOF\n"
         )
 
+    def test_blocks_shell_heredoc_body(self):
+        for command in (
+            "bash <<'EOF'\nsystemctl --user restart altitude\nEOF\n",
+            "bash -s <<EOF\nsystemctl --user restart altitude\nEOF\n",
+            "sh <<EOF\nsystemctl --user restart altitude\nEOF\n",
+            'bash -c "bash <<EOF\nsystemctl --user restart altitude\nEOF\n"',
+        ):
+            self.assert_blocked(command)
+
     def test_handles_multiple_and_tab_stripped_heredocs(self):
         self.assert_allowed(
             'cat <<ONE <<-"TWO"\n'
@@ -74,12 +83,46 @@ class TestGuardExecutedText(unittest.TestCase):
         self.assert_allowed('alt fyi "after merge this needs systemctl --user restart altitude"')
         self.assert_allowed('git commit -m "note: systemctl --user restart altitude after merge"')
 
+    def test_blocks_quoted_command_words(self):
+        for command in (
+            '"systemctl" --user restart altitude',
+            "'ufw' allow 8890",
+            '"rm" -rf ~/.altitude',
+            '"kill" -9 altd',
+            'X=1 "systemctl" --user restart altitude',
+        ):
+            self.assert_blocked(command)
+
+    def test_blocks_double_quoted_command_substitutions(self):
+        for command in (
+            'echo "$(systemctl --user restart altitude)"',
+            'echo "`systemctl --user restart altitude`"',
+            'echo "$(sudo ufw allow 1234)"',
+        ):
+            self.assert_blocked(command)
+        self.assert_allowed("echo '$(systemctl --user restart altitude)'")
+
     def test_blocks_quoted_shell_code_recursively(self):
         for command in (
             'bash -c "systemctl --user restart altitude"',
             'bash -lc "systemctl --user restart altitude"',
             'bash -c "bash -c \'systemctl --user restart altitude\'"',
             'eval "systemctl --user restart altitude"',
+        ):
+            self.assert_blocked(command)
+
+    def test_blocks_shell_code_behind_wrappers(self):
+        for command in (
+            'timeout 5 bash -c "systemctl --user restart altitude"',
+            'time bash -c "systemctl --user restart altitude"',
+            'xargs bash -c "systemctl --user restart altitude"',
+            'nice bash -c "systemctl --user restart altitude"',
+            'ionice bash -c "systemctl --user restart altitude"',
+            'stdbuf -oL bash -c "systemctl --user restart altitude"',
+            'setsid bash -c "systemctl --user restart altitude"',
+            'script -q -c "systemctl --user restart altitude" /dev/null',
+            'sudo -u burak bash -c "systemctl --user restart altitude"',
+            'bash <<< "systemctl --user restart altitude"',
         ):
             self.assert_blocked(command)
 
