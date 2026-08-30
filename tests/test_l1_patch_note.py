@@ -45,21 +45,24 @@ class TestL1PatchNote(unittest.TestCase):
                 self.assertEqual(picked, [route_role])
                 if engine == "codex":
                     self.assertEqual(prompt.count(l1.CODEX_PATCH_NOTE), 1)
+                    self.assertTrue(prompt.endswith(l1.FOOTER))
+                    self.assertLess(prompt.index(l1.CODEX_PATCH_NOTE), prompt.index(l1.FOOTER))
                 else:
                     persona = l1.config.PERSONAS / ("reviewer.md" if role == "reviewer" else "l1.md")
                     expected = persona.read_text() + "\n\n# Sub-brief\n\n" + brief.read_text() + l1.FOOTER
                     self.assertEqual(prompt, expected)
                     self.assertNotIn(l1.CODEX_PATCH_NOTE, prompt)
         self.assertIsNone(l1._codex_sandbox_denial(l1.CODEX_PATCH_NOTE))
+        self.assertIsNone(l1._codex_sandbox_stop(l1.CODEX_PATCH_NOTE))
 
-    def _run_codex_result(self, root: Path, response: dict):
+    def _run_codex_result(self, root: Path, response: dict, engine: str = "codex"):
         run_dir = root / "runs"
         run_dir.mkdir()
         (run_dir / "implementer-1.prompt.md").write_text("test prompt")
         rec = {
             "name": "implementer-1",
             "role": "implementer",
-            "engine": "codex",
+            "engine": engine,
             "model": "test-model",
             "worktree": str(root),
         }
@@ -72,6 +75,7 @@ class TestL1PatchNote(unittest.TestCase):
             stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="")))
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", return_value=response))
+            stack.enter_context(mock.patch.object(engines, "claude_print", return_value=response))
             stack.enter_context(mock.patch.object(improve, "system_fault", side_effect=lambda **kw: faults.append(kw)))
             result = l1.exec_run("project", "task", "implementer-1")
         return result, faults
@@ -95,6 +99,41 @@ class TestL1PatchNote(unittest.TestCase):
             "project": "project",
             "task": "task",
         }])
+
+    # The record I-055 left behind (tasks/apply-r-011-i-031/l1/implementer-2.json) carried no raw bwrap
+    # line at all: error None, returncode 0, and the denial only in the worker's own final sentence.
+    STOPPED = ("RESULT: no PR — Stopped because bubblewrap sandbox setup denied both mandated file writes "
+               "and Git/Altitude commands before any change could be made.")
+
+    def test_sandbox_stop_without_a_raw_bwrap_line_is_an_engine_fault(self):
+        response = {"text": self.STOPPED, "error": None, "usage": {}, "structured": None, "returncode": 0}
+        with tempfile.TemporaryDirectory() as td:
+            rec, faults = self._run_codex_result(Path(td), response)
+
+        self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
+        self.assertIsNone(rec["result"]["pr"])
+        self.assertEqual(len(faults), 1)
+        self.assertEqual(faults[0]["kind"], "codex-sandbox")
+        self.assertIn("bubblewrap sandbox setup denied", faults[0]["detail"])
+
+    def test_same_stop_on_claude_is_not_a_codex_fault(self):
+        response = {"text": self.STOPPED, "error": None, "usage": {}, "structured": None, "returncode": 0}
+        with tempfile.TemporaryDirectory() as td:
+            rec, faults = self._run_codex_result(Path(td), response, engine="claude")
+
+        self.assertEqual(faults, [])
+        self.assertNotEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
+
+    def test_a_landed_pr_that_merely_discusses_the_sandbox_is_not_reclassified(self):
+        response = {
+            "text": "RESULT: #61 — documented why bwrap namespace setup is denied under AppArmor",
+            "error": None, "usage": {}, "structured": None, "returncode": 0,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            rec, faults = self._run_codex_result(Path(td), response)
+
+        self.assertEqual(rec["result"]["pr"], 61)
+        self.assertEqual(faults, [])
 
     def test_normal_codex_result_is_unchanged(self):
         response = {
