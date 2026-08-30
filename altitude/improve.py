@@ -78,13 +78,12 @@ def propose_rule(project: str, *, incident: str, title: str, text: str, mechanis
     ledger = {"project": config.project_path(project) / "docs" / "RULES.md",
               "stack": config.RULES / "stacks" / (stack or "unknown") / "RULES.md",
               "global": config.RULES / "global" / "RULES.md"}[scope]
-    rid = rules.next_id(ledger, "S" if mechanism == "skill" else "R")
+    d = config.project_dir(project) / "rules-pending"
+    rid = rules.next_id(ledger, "S" if mechanism == "skill" else "R", pending=d)
     entry = rules.render_entry(rid, title, scope=scope if scope == "project" else f"{scope}:{stack or ''}".rstrip(":"),
                                where=where or ("CLAUDE.md" if mechanism == "rule" else ".claude/skills/" if mechanism == "skill" else "the owning section"),
                                origin=f"{incident} ({project})", prevents=prevents, effect=effect, status="probation", text=text.strip())
-    d = config.project_dir(project) / "rules-pending"
-    d.mkdir(parents=True, exist_ok=True)
-    S.atomic_write(d / f"{rid}.md", entry)
+    rules.write_pending(d, rid, entry)
     inc_path = config.project_dir(project) / "incidents" / f"{incident}.md"
     request = (f"Apply rule {rid} from incident {incident} (scope: {scope}, mechanism: {mechanism}).\n\n"
                f"1. Add the incident file `docs/incidents/{incident}.md` with this content:\n\n```\n{inc_path.read_text() if inc_path.exists() else '(missing)'}\n```\n\n"

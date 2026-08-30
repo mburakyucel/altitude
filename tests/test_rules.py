@@ -121,6 +121,53 @@ class TestNextId(unittest.TestCase):
             self.assertEqual(rules.next_id(path, prefix="S"), "S-006")
 
 
+class TestNextIdPending(unittest.TestCase):
+    """next_id + write_pending: reserve ids for un-merged pending drafts (I-003)."""
+
+    def test_missing_ledger_two_consecutive_allocations_get_distinct_ids(self):
+        with tempfile.TemporaryDirectory() as d:
+            ledger = Path(d) / "RULES.md"
+            pending = Path(d) / "rules-pending"
+
+            rid1 = rules.next_id(ledger, pending=pending)
+            self.assertEqual(rid1, "R-001")
+            rules.write_pending(pending, rid1, "draft one")
+
+            rid2 = rules.next_id(ledger, pending=pending)
+            self.assertEqual(rid2, "R-002")
+
+    def test_write_pending_does_not_clobber_reserved_draft(self):
+        with tempfile.TemporaryDirectory() as d:
+            pending = Path(d) / "rules-pending"
+            rules.write_pending(pending, "R-001", "original")
+
+            with self.assertRaises(FileExistsError):
+                rules.write_pending(pending, "R-001", "clobber attempt")
+
+            self.assertEqual((pending / "R-001.md").read_text(), "original")
+
+    def test_ledger_and_pending_both_respected_prefixes_do_not_cross_contaminate(self):
+        content = "## R-002 — Some Rule\n- text: hi\n"
+        with tempfile.TemporaryDirectory() as d:
+            ledger = Path(d) / "RULES.md"
+            ledger.write_text(content)
+            pending = Path(d) / "rules-pending"
+            pending.mkdir()
+            (pending / "R-005.md").write_text("draft")
+            (pending / "S-009.md").write_text("draft")
+
+            self.assertEqual(rules.next_id(ledger, prefix="R", pending=pending), "R-006")
+            self.assertEqual(rules.next_id(ledger, prefix="S", pending=pending), "S-010")
+
+    def test_no_pending_arg_behaves_as_before(self):
+        content = "## R-002 — Some Rule\n- text: hi\n"
+        with tempfile.TemporaryDirectory() as d:
+            ledger = Path(d) / "RULES.md"
+            ledger.write_text(content)
+            self.assertEqual(rules.next_id(ledger), "R-003")
+            self.assertEqual(rules.next_id(ledger, pending=None), "R-003")
+
+
 class TestRenderEntryRoundTrip(unittest.TestCase):
     def test_round_trip(self):
         fields = dict(
