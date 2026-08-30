@@ -64,8 +64,12 @@ def _header(project: str, trigger: str, fresh: bool) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, model: str | None = None) -> dict:
-    """Run one L3 turn. Serialized per project. Handles start, resume, and rotation."""
+def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_start=None,
+         model: str | None = None) -> dict:
+    """Run one L3 turn. Serialized per project. Handles start, resume, and rotation.
+
+    `on_start(pid)` receives the turn subprocess's pid: it outlives an altd restart, so the caller can record
+    it and tell an in-flight turn from a dead one afterwards (incident I-011)."""
     proj = config.project(project)
     with lock(project):
         S.regen_state_md(project)
@@ -77,12 +81,19 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, mode
         fresh = not sid or inf.get("rotate_next", False) or over
         if fresh and sid:
             S.project_log(project, "l3-rotate", old=sid, reason=inf.get("rotate_reason", "requested"))
+            # the rotation is a decision, so it is persisted *before* the turn runs: it used to be saved only
+            # when the turn returned, so an altd that restarted mid-turn read the old session id back and
+            # rotated the very same session again, once per restart (I-011: three `l3-rotate old=e9aa9612`)
+            inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None, "context_percent": 0,
+                        "rotated_from": sid, "rotated_at": S.now()})
+            save_info(project, inf)
         persona = rules.compiled_persona("l3", project)
         chat_log(project, "user", prompt, trigger=trigger)
         res = engines.claude_print(
             _header(project, trigger, fresh) + prompt, cwd=config.project_path(project),
             resume=None if fresh else sid, persona=persona, allowed_tools=ALLOWED_TOOLS,
             permission_mode="auto", model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text,
+            on_start=on_start,
             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
         if res.get("limited") or (res["error"] and not res["session_id"]):
             chat_log(project, "error", res["error"], trigger=trigger)  # a held/limited turn is not a turn: nothing saved
