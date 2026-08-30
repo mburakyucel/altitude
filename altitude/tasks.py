@@ -96,7 +96,8 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         d.mkdir(parents=True)
         S.atomic_write(d / "request.md", request.rstrip() + "\n")
         task = {"slug": slug, "title": title, "class": cls, "state": "requested", "created": S.now(),
-                "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None, "worktree": None,
+                "attempt": 0, "proposal_attempts": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
+                "worktree": None,
                 "branch": None, "prs": [], "envelope": dict(ENVELOPE[cls]) if cls else {}, "estimate": {}, "spend": {},
                 "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "engine": engine,  # decision 45: a forced engine for every L1 of this task (None = by quota)
@@ -132,6 +133,7 @@ def propose(project: str, slug: str, proposal_md: str, proposal: dict | None = N
                                 "asked": S.now(), "chosen": None, "detail": detail, "context": context}
         else:
             task["decision"] = None
+        _clear_proposal_failure(task)
         return _move(project, task, "proposed", actor, needs_decision=bool(question))
 
 
@@ -210,6 +212,7 @@ def park(project: str, slug: str, reason: str, actor: str = "l3") -> dict:
 def unpark(project: str, slug: str, actor: str = "l3") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _clear_proposal_failure(task)
         return _move(project, task, "requested", actor)
 
 
@@ -375,6 +378,39 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
+def _clear_proposal_failure(task: dict) -> None:
+    task.pop("proposal_error", None)
+    task["proposal_attempts"] = 0
+
+
+def clear_proposal_failure(project: str, slug: str) -> dict:
+    """A completed proposal makes validation failures from earlier attempts obsolete."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        _clear_proposal_failure(task)
+        S.save_task(project, task)
+        return task
+
+
+def park_failed_proposal(project: str, slug: str, max_attempts: int, actor: str = "altd") -> dict | None:
+    """Atomically park a requested task whose recorded proposal failures exhausted their cap."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        failure = task.get("proposal_error") or {}
+        message = str(failure.get("message") or "").strip()
+        attempts = int(task.get("proposal_attempts", 0))
+        if task["state"] != "requested" or attempts < max_attempts or not message:
+            return None
+        reason = f"proposal failed after {attempts} attempts; recorded failure: {message!r}"
+        task["proposal_started"] = None
+        task["proposal_turn"] = None
+        task = _move(project, task, "parked", actor, reason=reason)
+        S.append_event(project, slug, "proposal-failed", by=actor, attempts=attempts, message=message)
+    fyi(project, slug, f"{slug}: parked after {attempts} proposal attempts; recorded failure: {message!r}. "
+                       "Read the message, fix the request or the docs it cites, then unpark the task.", actor=actor)
+    return task
+
+
 def archive_proposal(task_dir) -> int:
     """Move proposal.md / proposal.json / critique.json aside as -vN (N = next free number) so the next proposal run
     starts fresh and the reviser can still read the previous round. Returns N, or 0 when there was nothing to move."""
@@ -395,6 +431,7 @@ def _revise_locked(project: str, task: dict, feedback: str, actor: str, **ev) ->
         f.write(f"\n\n## Burak's feedback on proposal v{n} ({S.now()[:16]})\n{feedback}\n")
     task["proposal_started"] = None
     task["feedback_rounds"] = int(task.get("feedback_rounds", 0)) + 1
+    _clear_proposal_failure(task)
     return _move(project, task, "requested", actor, answer=ev.pop("answer", "Revise"), note=feedback, **ev)
 
 
