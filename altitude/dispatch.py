@@ -245,32 +245,53 @@ def _seconds_since(iso: str) -> float:
 
 
 def cleanup_after_done(project: str, task: dict) -> list[str]:
-    """After `done`: drop the L2 background session and any worktree whose branch is fully merged into origin/main."""
+    """After `done`: drop the L2 background session and the merged worktrees nobody owns any more.
+
+    A worktree is never removed while a not-done task lists it, a live `claude agents` row runs in it, or git has it
+    locked — "fully merged into origin/main" is also true of a branch with no commits yet, and on 2026-08-30 the old rule
+    removed two running L2s' worktrees out from under them. If the live-session list cannot be read, nothing is removed."""
     import subprocess
+    from . import improve
     repo = config.project_path(project)
     notes = []
     if task.get("agent_id"):
         notes.append("claude rm: " + engines.claude_rm(task["agent_id"])[:120])
+    protected = {str(Path(t["worktree"])) for t in S.list_tasks(project)
+                 if t.get("worktree") and t.get("slug") != task.get("slug") and t.get("state") not in ("done", "rejected")}
+    try:
+        protected |= {str(Path(a["cwd"])) for a in engines.claude_agents()
+                      if a.get("cwd") and a.get("state") not in ("failed", "done", "stopped")}
+    except RuntimeError as e:
+        improve.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=task.get("slug"))
+        return notes + [f"skipped worktree cleanup: {e}"]
     try:
         subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
         subprocess.run(["git", "worktree", "prune"], cwd=str(repo), capture_output=True, text=True, timeout=30)
         out = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout
     except (subprocess.SubprocessError, OSError) as e:
-        from . import improve
         improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=task.get("slug"))
         return notes + [f"git: {e}"]
-    wt, branch = None, None
+
+    def owned(wt: str) -> bool:
+        return any(wt == q or wt.startswith(q + "/") or q.startswith(wt + "/") for q in protected)
+
+    wt, branch, locked = None, None, False
     for line in out.splitlines() + [""]:
         if line.startswith("worktree "):
             wt = line.split(" ", 1)[1]
         elif line.startswith("branch "):
             branch = line.split(" ", 1)[1].replace("refs/heads/", "")
+        elif line == "locked" or line.startswith("locked "):
+            locked = True
         elif line == "":
-            if wt and branch and "/.claude/worktrees/" in wt:
+            if wt and branch and "/.claude/worktrees/" in wt and not locked and not owned(wt):
                 merged = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo), capture_output=True).returncode == 0
                 if merged:
-                    subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
-                    subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
-                    notes.append(f"removed merged worktree {Path(wt).name}")
-            wt, branch = None, None
+                    rm = subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True, text=True, timeout=60)
+                    if rm.returncode == 0:
+                        subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True, timeout=30)
+                        notes.append(f"removed merged worktree {Path(wt).name}")
+                    else:
+                        notes.append(f"could not remove {Path(wt).name}: {(rm.stderr or rm.stdout).strip()[:120]}")
+            wt, branch, locked = None, None, False
     return notes
