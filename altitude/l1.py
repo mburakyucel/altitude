@@ -9,13 +9,45 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, engines, route, state as S, tasks as T
+from . import config, engines, improve, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
+# Single source of truth for the host patch constraint; the Codex L2 path must import this rather than define a copy.
+CODEX_PATCH_NOTE = (
+    "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
+    "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
+    "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
+    "sandbox and its configured writable roots."
+)
 FOOTER = ("\n\n---\nWhen you are finished, print exactly one final line `RESULT: <PR number or URL, or 'no PR'> — <one sentence on what "
           "landed or why you stopped>`. Do not merge. Do not spawn agents or subagents.")
 POLL = 5
+_CODEX_SANDBOX_MARKERS = ("uid map", "loopback", "RTM_NEWADDR", "Operation not permitted")
+_SANDBOX_WORDS = ("bwrap", "bubblewrap", "sandbox", "landlock", "seccomp")
+_DENIAL_WORDS = ("denied", "not permitted", "permission", "blocked", "refused", "could not create", "cannot create")
+
+
+def _codex_sandbox_denial(output: str | None) -> str | None:
+    """The raw kernel line, on the paths where the engine surfaces one."""
+    for line in (output or "").splitlines():
+        if "bwrap:" in line and any(marker in line for marker in _CODEX_SANDBOX_MARKERS):
+            return line.strip()[:300]
+    return None
+
+
+def _codex_sandbox_stop(text: str | None) -> str | None:
+    """The shape I-055 actually left behind. Codex does not surface the bwrap line to Altitude: on the real
+    incident `error` was None and the returncode 0, and the only evidence was the worker's own account of why
+    it stopped. Only consulted for a run that produced no PR, and a verbatim echo of CODEX_PATCH_NOTE is
+    stripped first, so neither a landed run that merely discusses the sandbox nor the note itself can trigger it."""
+    hay = (text or "").replace(CODEX_PATCH_NOTE, " ")
+    low = hay.lower()
+    if not any(w in low for w in _SANDBOX_WORDS):
+        return None
+    if not any(w in low for w in _DENIAL_WORDS):
+        return None
+    return hay.strip()[:300]
 
 
 def runs_dir(project: str, slug: str) -> Path:
@@ -86,7 +118,10 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     else:
         workdir, branch = base, _git(base, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     persona = config.PERSONAS / ("reviewer.md" if role == "reviewer" else "l1.md")
-    prompt = persona.read_text() + "\n\n# Sub-brief\n\n" + Path(brief).read_text() + FOOTER
+    prompt = persona.read_text() + "\n\n# Sub-brief\n\n" + Path(brief).read_text()
+    if choice["engine"] == "codex":
+        prompt += "\n\n" + CODEX_PATCH_NOTE
+    prompt += FOOTER
     (runs_dir(project, slug) / f"{name}.prompt.md").write_text(prompt)
     key = ("reviewer" if role == "reviewer" else "l1") + ("_codex" if choice["engine"] == "codex" else "")
     model = model or config.MODELS.get(key)
@@ -131,6 +166,17 @@ def exec_run(project: str, slug: str, name: str) -> dict:
         text, err = "", f"{type(e).__name__}: {e}"
     m = RESULT_RE.search(text)
     summary = m.group(1).strip() if m else None
+    denial = None
+    if rec["engine"] == "codex":
+        denial = _codex_sandbox_denial(err) or _codex_sandbox_denial(text)
+        if not denial and (summary is None or "no pr" in summary.lower()):
+            denial = _codex_sandbox_stop(summary or text[-1500:])
+    if denial:
+        try:
+            improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
+        except Exception as e:  # noqa: BLE001 — a fault raised about a broken run must not break the record too
+            err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
+        summary = "engine fault: codex-sandbox"
     pr = None
     if summary and "no pr" not in summary.lower():
         pm = PR_RE.search(summary)
