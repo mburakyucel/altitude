@@ -16,6 +16,15 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         ev = [e for e in S.read_events(project, slug) if e.get("answer", "").lower().startswith("revise")]
         if ev and ev[-1].get("note"):
             prior += f"\n\nBurak's revision note: {ev[-1]['note']}"
+        if (d / "critique.json").exists():  # the other engine's issues with the previous proposal — address each explicitly
+            c = S.read_json(d / "critique.json", {}) or {}
+            if c.get("issues"):
+                prior += "\n\n## Critic's issues with the previous proposal (verdict: %s) — address every one, say how\n" % c.get("verdict") + "\n".join(
+                    f"- [{i.get('severity')}] {i.get('claim')}" + (f" — fix: {i.get('fix')}" if i.get("fix") else "") for i in c["issues"])
+        parks = [e for e in S.read_events(project, slug) if e.get("kind") == "state" and e.get("to") == "parked" and e.get("reason")]
+        if parks:
+            prior += f"\n\n## Why the L3 parked the previous proposal (this is the revision brief)\n{parks[-1]['reason']}"
+        prior += "\n\nThis is revision %d. Produce a corrected proposal, not a defence of the previous one." % (task.get("revisions", 0) + 1)
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
     res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",

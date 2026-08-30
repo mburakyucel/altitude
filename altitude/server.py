@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import mimetypes
+import os
 import ssl
 import subprocess
 import threading
@@ -92,8 +93,25 @@ def run_proposal_flow(project: str, slug: str) -> None:
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
     res = l3.turn(project, header, trigger="proposal-ready")
-    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     t2 = S.load_task(project, slug)
+    # critic said revise and the L3 parked with a revision brief: re-propose, at most twice, then it waits for Burak
+    if t2["state"] == "parked" and crit and crit.get("verdict") == "revise":
+        n = int(t2.get("revisions", 0))
+        if n < 2:
+            with S.project_lock(project):
+                t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
+            for old in ("proposal.md", "proposal.json", "critique.json"):
+                src = S.task_dir(project, slug) / old
+                if src.exists():
+                    src.rename(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}"))
+                    if old == "critique.json":
+                        S.write_json(src, S.read_json(src.with_name(f"{src.stem}-v{n + 1}{src.suffix}")))  # keep the latest critique for the reviser
+            T.unpark(project, slug, actor="altd")
+            log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
+            return
+        T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
+        return
+    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
         T.fyi(project, slug, f"{slug} ({t2['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
@@ -504,7 +522,10 @@ def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     host = host or config.HOST
     port = port or config.PORT
-    threading.Thread(target=timer_loop, name="timers", daemon=True).start()
+    if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
+    else:
+        log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
