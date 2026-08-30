@@ -80,7 +80,7 @@ export function ThemeToggle() {
           type="button"
           aria-pressed={theme === option}
           onClick={() => set(option)}
-          className="min-h-8 rounded-[6px] px-3 font-medium text-ink-2 aria-pressed:bg-accent-tint aria-pressed:text-accent-ink"
+          className="min-h-[var(--target-min)] rounded-[6px] px-3 font-medium text-ink-2 aria-pressed:bg-accent-tint aria-pressed:text-accent-ink"
         >
           {LABELS[option]}
         </button>

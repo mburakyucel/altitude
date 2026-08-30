@@ -54,7 +54,7 @@ export default function AppShell() {
             <span className="font-semibold text-ink-2">Altitude</span>
             <span>{quota}</span>
           </div>
-          <div className="mt-2 w-full">
+          <div className="mt-2">
             <ThemeToggle />
           </div>
         </div>
