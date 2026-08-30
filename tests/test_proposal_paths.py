@@ -184,6 +184,20 @@ class TestProposalPaths(unittest.TestCase):
 
         self.assertEqual(expand.call_count, 2)
 
+    def test_empty_entry_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "expands to no repo-relative paths"):
+            self.run_proposal([""])
+
+        self.assertFalse(self.proposal_path().exists())
+
+    def test_trailing_comma_entry_is_rejected_naming_the_entry(self):
+        self.create("web/app.js")
+
+        with self.assertRaisesRegex(RuntimeError, re.escape("web/app.js,")):
+            self.run_proposal(["web/app.js, "])
+
+        self.assertFalse(self.proposal_path().exists())
+
 
 if __name__ == "__main__":
     unittest.main()
