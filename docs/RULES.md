@@ -25,9 +25,10 @@
 - where: L2 persona: the stage plan and merge-policy step for L tasks
 - origin: I-018 (altitude)
 - prevents: long-lived L branches that chase main and double-port files the branch retires (I-018)
-- effect: one merge by Burak per stage PR instead of one at the end - the L2 exits at each stage PR and is resumed after the merge
+- effect: one short-lived branch per stage instead of one branch chasing main (I-018: 2 of 10 launches and about 40 of 220 turns spent on chases).
+- revised: 2026-08-30, I-025 (the original text assumed the L merge policy that decision 48 retired)
 - status: probation
-- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, checkpoint progress.md, report Blocked: stage 1 PR awaits merge, and exit - the L merge policy stands, Burak merges, and you are resumed on merged main. Later stages open their own PRs from merged main, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice.
+- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, get it reviewed, and merge it under decision 48 before any fan-out, then start every later stage from merged main in its own PR, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice. Only when the brief marks the task held do you stop at the open stage-1 PR, as the hold mechanism says, and continue after Burak merges it.
 
 ## R-005 — A mechanism named in a request or brief is a suggestion the implementer verifies at the call sites
 - scope: project
