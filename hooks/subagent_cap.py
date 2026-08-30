@@ -7,18 +7,51 @@ from pathlib import Path
 # arguments are data, not launches — and every tool call is billed at most once via a dedupe key.
 LAUNCH = r"(?:codex\s+exec\b|claude\s+(?:-p|--print|--bg)\b)"
 PREFIX = r"(?:(?:[A-Za-z_]\w*=(?:\"[^\"]*\"|'[^']*'|\S*)|env|nohup|time|exec|sudo)\s+)*"
-CMDPOS = re.compile(r"(?:^|[;&|(){}\n])[ \t]*" + PREFIX + r"(" + LAUNCH + r")")
-HEREDOC = re.compile(r"<<-?[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_]\w*))")
+CMDPOS = re.compile(r"(?:^|[;&|(){}`\n])[ \t]*" + PREFIX + r"(" + LAUNCH + r")")
+HEREDOC = re.compile(r"(?<!<)<<-?(?!<)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_]\w*))")
 PROBE = re.compile(r"(^|\s)(--help|-h|--version|-V)(\s|$)")
 
 
-def strip_heredocs(cmd):  # a heredoc body is data: drop it before looking for launches
-    lines, out, i = cmd.split("\n"), [], 0
+def blank_quoted(s, stack=None):
+    """Blank what a shell reads as data, keeping length and line structure; return the open-context stack.
+
+    Single quotes hide everything. Double quotes hide everything *except* command substitution —
+    `$(...)` and backticks still execute inside them — so those stay visible as code.
+    """
+    stack, out, i = list(stack or []), [], 0
+    while i < len(s):
+        c, top = s[i], stack[-1] if stack else None
+        if top in ("'", '"'):  # data, unless a substitution opens
+            if c == top: stack.pop(); out.append(c)
+            elif top == '"' and c == "$" and s[i:i + 2] == "$(": stack.append("("); out.append("$("); i += 1
+            elif top == '"' and c == "`": stack.append("`"); out.append(c)
+            elif top == '"' and c == "\\" and i + 1 < len(s): out.append("  "); i += 1
+            else: out.append(c if c == "\n" else " ")
+        else:  # code: top level, or inside a substitution
+            if c in "'\"": stack.append(c); out.append(c)
+            elif s[i:i + 2] == "$(": stack.append("("); out.append("$("); i += 1
+            elif c == "`": stack.pop() if top == "`" else stack.append(c); out.append(c)
+            elif c == ")" and top == "(": stack.pop(); out.append(c)
+            elif c == "\\" and i + 1 < len(s): out.append(" "); i += 1; out.append(s[i])
+            else: out.append(c)
+        i += 1
+    return "".join(out), stack
+
+
+def shell_code(cmd):
+    """The executable part of a command: quoted text blanked, heredoc bodies dropped.
+
+    Line by line, carrying quote state, because the two depend on each other: a `<<EOF` inside a
+    quoted string is not a redirection, and a heredoc body may hold stray quotes that are not.
+    """
+    lines, out, i, stack = cmd.split("\n"), [], 0, []
     while i < len(lines):
         line = lines[i]; i += 1
-        out.append(line)
-        for m in HEREDOC.finditer(line):
-            delim = m.group(1) or m.group(2) or m.group(3)
+        blanked, stack = blank_quoted(line, stack)
+        out.append(blanked)
+        for m in HEREDOC.finditer(blanked):
+            d = HEREDOC.match(line, m.start())  # blanking keeps length: read the delimiter unblanked
+            delim = (d.group(1) or d.group(2) or d.group(3)) if d else None
             while i < len(lines):  # absent terminator: strip to end of input
                 term, i = lines[i], i + 1
                 if term.strip() == delim:
@@ -26,26 +59,10 @@ def strip_heredocs(cmd):  # a heredoc body is data: drop it before looking for l
     return "\n".join(out)
 
 
-def blank_quoted(s):  # blank the inside of quoted strings, keeping length and line structure
-    out, q, i = [], None, 0
-    while i < len(s):
-        c = s[i]
-        if q is None:
-            if c in "'\"": q = c
-            elif c == "\\" and i + 1 < len(s): out.append(c); c = s[i + 1]; i += 1
-            out.append(c)
-        else:
-            if c == q: q = None; out.append(c)
-            elif c == "\\" and q == '"' and i + 1 < len(s): out.append("  "); i += 1
-            else: out.append(c if c == "\n" else " ")
-        i += 1
-    return "".join(out)
-
-
 def is_launch(cmd):
-    s = blank_quoted(strip_heredocs(cmd))
+    s = shell_code(cmd)
     for m in CMDPOS.finditer(s):
-        seg = re.split(r"[;&|\n]", s[m.start(1):], 1)[0]
+        seg = re.split(r"[;&|)`\n]", s[m.start(1):], 1)[0]
         if PROBE.search(seg):
             continue  # capability probe, not a launch (I-004: an L2 lost a launch to a `--help` probe)
         return True

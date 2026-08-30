@@ -160,6 +160,41 @@ class CapHook(unittest.TestCase):
         c = json.loads((Path(self.home) / "monitor" / "counts-s1.json").read_text())
         self.assertLessEqual(len(c["seen"]), 200)
 
+    # --- review of the I-005 fix: data-blanking must never hide executable text -----
+    # Each of these executes in bash and was billed before the fix; a parser that reads them
+    # as data under-bills, which is a weaker guardrail than the bug being fixed (R-006).
+    def test_command_substitution_inside_double_quotes_is_billed(self):
+        self.bash('x="$(' + LAUNCH_CLAUDE + " 'go')\"")
+        self.assertEqual(self.counted(), 1)
+
+    def test_backtick_substitution_is_billed(self):
+        self.bash("x=`" + LAUNCH_CLAUDE + ' "go"`')
+        self.assertEqual(self.counted(), 1)
+
+    def test_here_string_does_not_swallow_a_following_launch(self):
+        self.bash('cat <<< "ignore"\n' + LAUNCH_CLAUDE + ' "do something"')
+        self.assertEqual(self.counted(), 1)
+
+    def test_quoted_heredoc_marker_does_not_swallow_a_following_launch(self):
+        self.bash('echo "use <<EOF here"\n' + LAUNCH_CLAUDE + ' "go"')
+        self.assertEqual(self.counted(), 1)
+
+    def test_apostrophe_in_a_heredoc_body_does_not_hide_a_following_launch(self):
+        self.bash("cat <<EOF\nit's fine\nEOF\n" + LAUNCH_CLAUDE + " 'go'")
+        self.assertEqual(self.counted(), 1)
+
+    def test_backslash_escaped_verb_is_billed(self):
+        self.bash("cd /tmp && \\" + LAUNCH_CLAUDE + " 'go'")
+        self.assertEqual(self.counted(), 1)
+
+    def test_substitution_output_used_as_data_is_not_billed(self):
+        self.bash('echo "$(date) ' + LAUNCH_CLAUDE + ' x"')
+        self.assertEqual(self.counted(), 0)
+
+    def test_probe_inside_a_substitution_is_not_billed(self):
+        self.bash("x=$(" + LAUNCH_CODEX + " --help)")
+        self.assertEqual(self.counted(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
