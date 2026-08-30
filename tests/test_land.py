@@ -11,7 +11,7 @@ from altitude import config, land, state as S  # noqa: E402
 # A stand-in `gh`: logs argv, answers from FAKE_GH_DIR state files (pr.json, checks.json,
 # runs.json) with sensible defaults, and mutates pr.json the way GitHub would on create/merge.
 GH = """#!/usr/bin/env python3
-import json, os, sys
+import json, os, subprocess, sys
 d = os.environ["FAKE_GH_DIR"]
 args = sys.argv[1:]
 with open(os.path.join(d, "log.jsonl"), "a") as f:
@@ -28,12 +28,24 @@ if cmd == ("pr", "view"):
         print(read("view_error.txt", ""), file=sys.stderr)
         sys.exit(1)
     if os.path.exists(os.path.join(d, "pr.json")):
-        print(read("pr.json", "{}"))
+        body = json.loads(read("pr.json", "{}") or "{}")
+        def remote_oid(ref):
+            found = subprocess.run(["git", "ls-remote", "--heads", "origin", ref],
+                                   capture_output=True, text=True)
+            return found.stdout.split()[0] if found.returncode == 0 and found.stdout.strip() else None
+        head = body.get("headRefName") or "worktree-fix-x"
+        base = body.get("baseRefName") or "main"
+        body.setdefault("headRefName", head)
+        body.setdefault("baseRefName", base)
+        body.setdefault("headRefOid", remote_oid(head))
+        body.setdefault("baseRefOid", remote_oid(base))
+        print(json.dumps(body))
     else:
         print("no pull requests found for branch " + args[2], file=sys.stderr)
         sys.exit(1)
 elif cmd == ("pr", "create"):
-    body = {"number": 101, "url": "https://example.invalid/pr/101", "state": "OPEN"}
+    body = {"number": 101, "url": "https://example.invalid/pr/101", "state": "OPEN",
+            "baseRefName": args[args.index("--base") + 1], "headRefName": args[args.index("--head") + 1]}
     with open(os.path.join(d, "pr.json"), "w") as f:
         json.dump(body, f)
     print(body["url"])
@@ -347,7 +359,7 @@ class TestLand(unittest.TestCase):
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
         self.assertEqual(res["replaced"], [])
 
-    def test_result_head_comes_from_remote_tracking_branch(self):
+    def test_inconsistent_remote_tracking_head_fails_the_pr_pin(self):
         self.leased_change()
         pushed_head = "a" * 40
         real = land._run
@@ -359,9 +371,8 @@ class TestLand(unittest.TestCase):
 
         land._run = fake
         self.addCleanup(setattr, land, "_run", real)
-        res = land.land("fix: report remote", cwd=self.repo, wait=0)
-        self.assertEqual(res["head"], pushed_head)
-        self.assertNotEqual(res["head"], self.git("rev-parse", "HEAD").strip())
+        with self.assertRaisesRegex(land.LandError, "head moved"):
+            land.land("fix: report remote", cwd=self.repo, wait=0)
 
     def test_wait_zero_reports_pending_without_waiting(self):
         self.leased_change()
@@ -639,7 +650,8 @@ class TestLand(unittest.TestCase):
         self.assertTrue(result["merged"])
         self.assertEqual(result["local_tests"], {
             "command": "make test", "passed": True, "returncode": 0, "tests": 12, "skipped": 0,
-            "error": None, "base": result["local_tests"]["base"], "head": result["local_tests"]["head"],
+            "expected_failures": 0, "error": None,
+            "base": result["local_tests"]["base"], "head": result["local_tests"]["head"],
         })
         self.assertEqual(self.runner_log(), [["make", "test"]])
 
@@ -705,6 +717,132 @@ class TestLand(unittest.TestCase):
         self.assertIn("moved", result["local_tests"]["error"])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
+    def test_ci_added_after_no_checks_classification_is_not_merged(self):
+        """Regression: classification and candidate snapshot used to be separate, adopt-new-tip operations."""
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._checks_value
+
+        def classify_then_add_workflow(root, number, pair):
+            state = real(root, number, pair)
+            self.advance_base(".github/workflows/late.yml", "on: [pull_request]\n")
+            return state
+
+        land._checks_value = classify_then_add_workflow
+        self.addCleanup(setattr, land, "_checks_value", real)
+        result = land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(result["checks"], "none-configured")
+        self.assertFalse(result["merged"])
+        self.assertIn("moved", result["local_tests"]["error"])
+        self.assertEqual(self.runner_log(), [])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_checks_appearing_during_the_local_suite_block_the_merge(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._local_suite
+
+        def suite_then_check(cwd, test_cmd):
+            result = real(cwd, test_cmd)
+            (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}]')
+            return result
+
+        land._local_suite = suite_then_check
+        self.addCleanup(setattr, land, "_local_suite", real)
+        result = land.land("fix: check race", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertIn("checks changed", result["local_tests"]["error"])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_candidate_has_the_single_parent_history_of_a_squash_merge(self):
+        runner = ("import subprocess\n"
+                  "parents = subprocess.check_output(['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], "
+                  "text=True).split()\n"
+                  "single_parent = len(parents) == 2\n"
+                  "sys.stdout.write('Ran 1 test in 0.1s\\n\\n' + ('OK\\n' if single_parent else "
+                  "'FAILED (failures=1)\\n'))\n"
+                  "sys.exit(0 if single_parent else 1)\n")
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", script=runner)
+        result = land.land("fix: squash candidate", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 1)
+
+    def test_zero_tests_is_not_a_green_local_gate(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 0 tests in 0.0s\n\nOK\n")
+        result = land.land("fix: zero tests", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 0)
+        self.assertIn("no passing tests", result["local_tests"]["error"])
+
+    def test_all_skipped_tests_is_not_a_green_local_gate(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.1s\n\nOK (skipped=12)\n")
+        result = land.land("fix: all skipped", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 0)
+        self.assertEqual(result["local_tests"]["skipped"], 12)
+        self.assertIn("no passing tests", result["local_tests"]["error"])
+
+    def test_unittest_expected_failures_are_not_reported_as_passes(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 5 tests in 0.1s\n\nOK (skipped=1, expected failures=2)\n")
+        result = land.land("fix: honest count", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["tests"], 2)
+        self.assertEqual(result["local_tests"]["skipped"], 1)
+        self.assertEqual(result["local_tests"]["expected_failures"], 2)
+
+    def test_candidate_cleanup_continues_when_git_remove_raises(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        real = land._run
+        candidate_paths = []
+
+        def fail_remove(args, cwd, timeout=120):
+            if args[:4] == ["git", "worktree", "remove", "--force"] and "alt-land-candidate-" in args[-1]:
+                candidate_paths.append(Path(args[-1]))
+                raise land.LandError("simulated worktree-remove timeout")
+            return real(args, cwd, timeout=timeout)
+
+        land._run = fail_remove
+        self.addCleanup(setattr, land, "_run", real)
+        result = land.land("fix: cleanup", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertIn("candidate cleanup failed", result["local_tests"]["error"])
+        self.assertTrue(candidate_paths)
+        self.assertTrue(all(not path.exists() for path in candidate_paths))
+        self.assertNotIn("alt-land-candidate-", self.git("worktree", "list"))
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_candidate_cleanup_does_not_mask_the_original_merge_error(self):
+        self.leased_change("src/collision.py")
+        self.advance_base("src/collision.py", "incompatible base\n")
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
+        real = land._run
+
+        def fail_remove(args, cwd, timeout=120):
+            if args[:4] == ["git", "worktree", "remove", "--force"] and "alt-land-candidate-" in args[-1]:
+                raise land.LandError("simulated cleanup failure")
+            return real(args, cwd, timeout=timeout)
+
+        land._run = fail_remove
+        self.addCleanup(setattr, land, "_run", real)
+        result = land.land("fix: conflict cleanup", cwd=self.repo, wait=0, merge=True,
+                           paths="src/collision.py")
+        self.assertFalse(result["merged"])
+        self.assertIn("does not merge cleanly", result["local_tests"]["error"])
+        self.assertNotIn("cleanup failed", result["local_tests"]["error"])
+
     def test_no_ci_red_local_suite_blocks_the_merge(self):
         self.leased_change()
         self.no_checks()
@@ -768,6 +906,22 @@ class TestLand(unittest.TestCase):
         self.assertEqual(result["local_tests"]["command"], "otherrunner -q tests")
         self.assertEqual(result["local_tests"]["tests"], 5)
         self.assertEqual(result["local_tests"]["skipped"], 2)
+        self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
+
+    def test_cli_exposes_the_test_command_override(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
+        cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
+        run = subprocess.run(
+            [sys.executable, str(cli), "land", "--message", "fix: cli override", "--wait", "0", "--merge",
+             "--test-cmd", "otherrunner -q tests"],
+            cwd=self.repo, capture_output=True, text=True, env=dict(os.environ),
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        result = json.loads(run.stdout)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["local_tests"]["command"], "otherrunner -q tests")
         self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
 
     def test_no_checks_but_workflows_configured_never_reaches_the_local_suite(self):
@@ -891,11 +1045,11 @@ class TestLand(unittest.TestCase):
         self.assertEqual([a[:2] for a in self.gh_log()],
                          [["pr", "view"], ["pr", "create"], ["pr", "view"]])
 
-    def test_full_run_views_the_pr_twice(self):
+    def test_full_run_rechecks_the_pr_around_check_classification(self):
         self.leased_change()
         land.land("fix: once", cwd=self.repo, wait=0)
-        # the prefetch that gates committing, then the read-back after create — not a third
-        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 2)
+        # Prefetch + create read-back + snapshot + the before/after check-state bracket.
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 5)
 
     def test_gh_404_stops_the_run_before_any_mutation(self):
         self.leased_change()

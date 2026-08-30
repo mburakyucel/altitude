@@ -191,17 +191,18 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
     return replaced
 
 
-def _pr_view(root: Path, branch: str) -> dict | None:
-    p = _run(["gh", "pr", "view", branch, "--json", "number,url,state"], root)
+def _pr_view(root: Path, target: str) -> dict | None:
+    p = _run(["gh", "pr", "view", target, "--json",
+              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid"], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():
             return None  # legitimately missing, not a tooling failure (decision 36)
-        raise LandError(f"gh pr view {branch}: {err[-200:]}")
+        raise LandError(f"gh pr view {target}: {err[-200:]}")
     try:
         return json.loads(p.stdout)
     except ValueError as e:
-        raise LandError(f"gh pr view {branch}: unparseable output") from e
+        raise LandError(f"gh pr view {target}: unparseable output") from e
 
 
 def _pr_files(root: Path, base: str) -> list[str]:
@@ -292,45 +293,79 @@ def _fetch_rev(root: Path, ref: str) -> str:
     return _need(_git(root, "rev-parse", "FETCH_HEAD"), f"cannot resolve origin/{ref} after fetching it")
 
 
-def _has_ci(root: Path, base: str) -> bool:
-    """Whether either side of the proposed merge configures GitHub Actions workflows.
+def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_head: str) -> dict:
+    """Pin the exact GitHub PR base/head pair that check classification and local testing will judge."""
+    pr = _pr_view(root, str(number)) or {}
+    if pr.get("state") != "OPEN":
+        raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
+    if pr.get("baseRefName") != base or pr.get("headRefName") != branch:
+        raise LandError(f"PR #{number} targets {pr.get('baseRefName')!r} from {pr.get('headRefName')!r}, not "
+                        f"the expected {base!r} from {branch!r}")
+    base_sha, head_sha = pr.get("baseRefOid"), pr.get("headRefOid")
+    if not base_sha or not head_sha:
+        raise LandError(f"PR #{number} did not report both baseRefOid and headRefOid — refusing an unpinned gate")
+    fetched_base, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
+    if head_sha != expected_head:
+        raise LandError(f"PR #{number} head moved from the pushed revision {expected_head} to {head_sha} before checks")
+    if fetched_base != base_sha or fetched_head != head_sha:
+        raise LandError(f"PR #{number} refs moved while the merge candidate was being pinned "
+                        f"(GitHub {base_sha[:12]}/{head_sha[:12]}, origin {fetched_base[:12]}/{fetched_head[:12]})")
+    return {"base": base, "branch": branch, "base_sha": base_sha, "head_sha": head_sha, "number": number}
 
-    Head workflows count first so adding CI does not fall through to the local gate. The freshly fetched base
-    counts too so deleting workflows cannot turn a CI repository into a no-CI merge path.
-    """
-    if (root / ".github" / "workflows").is_dir():
-        return True
-    head = _git(root, "ls-tree", "--name-only", "HEAD", ".github/workflows")
-    if head.returncode == 0 and (head.stdout or "").strip():
-        return True
-    base_sha = _fetch_rev(root, base)
-    base_tree = _git(root, "ls-tree", "--name-only", base_sha, ".github/workflows")
-    if base_tree.returncode != 0:
-        raise LandError(f"cannot inspect .github/workflows on origin/{base}: "
-                        f"{(base_tree.stderr or '').strip()[-200:] or f'exit {base_tree.returncode}'}")
-    return bool((base_tree.stdout or "").strip())
+
+def _assert_pair_current(root: Path, pair: dict) -> None:
+    """Fail unless both origin refs and GitHub's PR still name the pinned pair."""
+    base_sha = _fetch_rev(root, pair["base"])
+    head_sha = _fetch_rev(root, pair["branch"])
+    pr = _pr_view(root, str(pair["number"])) or {}
+    actual = (base_sha, head_sha, pr.get("baseRefOid"), pr.get("headRefOid"), pr.get("state"))
+    expected = (pair["base_sha"], pair["head_sha"], pair["base_sha"], pair["head_sha"], "OPEN")
+    if actual != expected:
+        raise LandError("the PR base or head moved after the merge candidate was pinned — "
+                        "re-run alt land to classify, test and merge one current pair")
 
 
-def _checks_value(root: Path, number: int, base: str) -> str:
-    """Classify no reported checks only after checking whether the repository configures CI."""
+def _has_ci(root: Path, pair: dict) -> bool:
+    """Whether either exact side of the pinned merge pair contains GitHub Actions workflows."""
+    for label, sha in (("base", pair["base_sha"]), ("head", pair["head_sha"])):
+        tree = _git(root, "ls-tree", "--name-only", sha, ".github/workflows")
+        if tree.returncode != 0:
+            raise LandError(f"cannot inspect .github/workflows on the pinned {label} {sha[:12]}: "
+                            f"{(tree.stderr or '').strip()[-200:] or f'exit {tree.returncode}'}")
+        if (tree.stdout or "").strip():
+            return True
+    return False
+
+
+def _checks_value(root: Path, number: int, pair: dict) -> str:
+    """Read checks only while GitHub and origin still name the pinned PR pair."""
+    _assert_pair_current(root, pair)
     state = _checks_state(root, number)
+    _assert_pair_current(root, pair)
     if state != "none":
         return state
-    return "none-configured" if not _has_ci(root, base) else "skipped"
+    value = "none-configured" if not _has_ci(root, pair) else "skipped"
+    _assert_pair_current(root, pair)
+    return value
 
 
-def _test_counts(output: str) -> tuple[int | None, int | None]:
-    """Return (passing, skipped) for unittest or pytest output, or an unreadable pair."""
+def _test_counts(output: str) -> tuple[int | None, int | None, int | None]:
+    """Return (passing, skipped, expected-failure) counts, or an unreadable triple."""
     ran = re.findall(r"^Ran (\d+) tests?\b", output, re.M)
     if ran:
         found = re.findall(r"\bskipped=(\d+)", output)
         skipped = int(found[-1]) if found else 0
-        return max(int(ran[-1]) - skipped, 0), skipped
+        found = re.findall(r"\bexpected failures=(\d+)", output)
+        expected = int(found[-1]) if found else 0
+        return max(int(ran[-1]) - skipped - expected, 0), skipped, expected
     passed = re.findall(r"\b(\d+) passed\b", output)
     if passed:
         found = re.findall(r"\b(\d+) skipped\b", output)
-        return int(passed[-1]), int(found[-1]) if found else 0
-    return None, None
+        skipped = int(found[-1]) if found else 0
+        found = re.findall(r"\b(\d+) xfailed\b", output)
+        expected = int(found[-1]) if found else 0
+        return int(passed[-1]), skipped, expected
+    return None, None, None
 
 
 def _local_suite(cwd: Path, test_cmd: str) -> dict:
@@ -340,29 +375,31 @@ def _local_suite(cwd: Path, test_cmd: str) -> dict:
         raise LandError("the local test command is empty")
     _note(f"no CI configured — the merge candidate's local suite is the gate: {test_cmd}")
     result = {"command": test_cmd, "passed": False, "returncode": None, "tests": None, "skipped": None,
-              "error": None}
+              "expected_failures": None, "error": None}
     try:
         run = _run(argv, cwd, timeout=LOCAL_TEST_TIMEOUT)
     except LandError as exc:
         _note(f"the local suite did not run to completion — not merging: {exc}")
         result["error"] = str(exc)
         return result
-    tests, skipped = _test_counts((run.stdout or "") + "\n" + (run.stderr or ""))
-    result.update(returncode=run.returncode, tests=tests, skipped=skipped,
-                  passed=run.returncode == 0 and tests is not None)
-    if run.returncode == 0 and tests is None:
-        result["error"] = ("the suite exited 0 but no passing-test count could be read from its output — "
-                           "an uncountable suite is not a reported pass (R-006)")
+    tests, skipped, expected = _test_counts((run.stdout or "") + "\n" + (run.stderr or ""))
+    result.update(returncode=run.returncode, tests=tests, skipped=skipped, expected_failures=expected,
+                  passed=run.returncode == 0 and tests is not None and tests > 0)
+    if run.returncode == 0 and (tests is None or tests <= 0):
+        result["error"] = (("the suite exited 0 but no passing-test count could be read from its output"
+                            if tests is None else "the suite exited 0 but reported no passing tests")
+                           + " — the local gate is not satisfied (R-006)")
         _note(f"not merging: {result['error']}")
     else:
         _note(f"local suite exited {run.returncode}"
-              + (f" ({tests} passing, {skipped} skipped)" if tests is not None else " (count unreadable)"))
+              + (f" ({tests} passing, {skipped} skipped, {expected} expected failures)"
+                 if tests is not None else " (count unreadable)"))
     return result
 
 
 @contextlib.contextmanager
 def _candidate(root: Path, base_sha: str, head_sha: str):
-    """Yield a clean temporary worktree containing the base-plus-head merge candidate."""
+    """Yield a clean temporary worktree with the single-parent squash history GitHub will create."""
     tmp = Path(tempfile.mkdtemp(prefix="alt-land-candidate-"))
     path = tmp / "candidate"
     try:
@@ -370,17 +407,48 @@ def _candidate(root: Path, base_sha: str, head_sha: str):
         if worktree.returncode != 0:
             raise LandError(f"cannot build the merge candidate worktree: "
                             f"{((worktree.stderr or '') + (worktree.stdout or '')).strip()[-200:]}")
-        merged = _git(path, "-c", "user.name=alt land", "-c", "user.email=alt-land@localhost",
-                      "-c", "commit.gpgsign=false", "merge", "--no-ff", "--no-edit", head_sha, timeout=300)
+        merged = _git(path, "merge", "--squash", head_sha, timeout=300)
         if merged.returncode != 0:
             raise LandError("the base-plus-head merge candidate does not merge cleanly — GitHub would refuse "
                             f"this merge too: {((merged.stderr or '') + (merged.stdout or '')).strip()[-200:]}")
+        committed = _git(path, "-c", "user.name=alt land", "-c", "user.email=alt-land@localhost",
+                         "-c", "commit.gpgsign=false", "commit", "-m", "alt land synthetic squash candidate",
+                         timeout=300)
+        if committed.returncode != 0:
+            raise LandError("cannot commit the synthetic squash candidate: "
+                            f"{((committed.stderr or '') + (committed.stdout or '')).strip()[-200:]}")
         yield path
     finally:
-        removed = _git(root, "worktree", "remove", "--force", str(path), timeout=300)
-        shutil.rmtree(tmp, ignore_errors=True)
-        if removed.returncode != 0:
-            _git(root, "worktree", "prune")
+        active_error = sys.exc_info()[1]
+        cleanup_errors = []
+        remove_failed = False
+        try:
+            removed = _git(root, "worktree", "remove", "--force", str(path), timeout=300)
+            if removed.returncode != 0:
+                remove_failed = True
+                cleanup_errors.append(((removed.stderr or "") + (removed.stdout or "")).strip())
+        except LandError as exc:
+            remove_failed = True
+            cleanup_errors.append(str(exc))
+        try:
+            shutil.rmtree(tmp)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            cleanup_errors.append(f"remove {tmp}: {exc}")
+        if remove_failed:
+            try:
+                pruned = _git(root, "worktree", "prune")
+                if pruned.returncode != 0:
+                    cleanup_errors.append(((pruned.stderr or "") + (pruned.stdout or "")).strip())
+            except LandError as exc:
+                cleanup_errors.append(str(exc))
+        if cleanup_errors:
+            detail = "; ".join(error for error in cleanup_errors if error) or "unknown cleanup error"
+            if active_error is not None:
+                _note(f"candidate cleanup also failed (preserving the original error): {detail}")
+            else:
+                raise LandError(f"candidate cleanup failed: {detail}")
 
 
 def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) -> tuple[bool, dict | None]:
@@ -410,26 +478,40 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) 
     return True, (rows[0] if rows else None)
 
 
-def _merge_on_local_suite(root: Path, branch: str, number: int, base: str,
-                          test_cmd: str) -> tuple[bool, dict | None, dict]:
+def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str) -> tuple[bool, dict | None, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
-    base_sha, head_sha = _fetch_rev(root, base), _fetch_rev(root, branch)
+    base_sha, head_sha = pair["base_sha"], pair["head_sha"]
     try:
+        _assert_pair_current(root, pair)
         with _candidate(root, base_sha, head_sha) as path:
             tests = _local_suite(path, test_cmd)
     except LandError as exc:
         _note(f"not merging: {exc}")
         return False, None, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
-                             "skipped": None, "error": str(exc), "base": base_sha, "head": head_sha}
+                             "skipped": None, "expected_failures": None, "error": str(exc),
+                             "base": base_sha, "head": head_sha}
     tests.update(base=base_sha, head=head_sha)
     if not tests["passed"]:
         _note(f"not merging: the local suite ({test_cmd}) is not green on the merge candidate")
         return False, None, tests
-    if _fetch_rev(root, base) != base_sha or _fetch_rev(root, branch) != head_sha:
+    try:
+        _assert_pair_current(root, pair)
+    except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
         return False, None, tests
-    merged, main_run = _merge(root, branch, number, base, head_sha)
+    after_checks = _checks_state(root, pair["number"])
+    try:
+        _assert_pair_current(root, pair)
+    except LandError:
+        tests["error"] = "the base or the head moved while final checks were being read"
+        _note(f"not merging: {tests['error']}")
+        return False, None, tests
+    if after_checks != "none":
+        tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
+        _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
+        return False, None, tests
+    merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha)
     return merged, main_run, tests
 
 
@@ -562,16 +644,18 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     _note(f"pushed head {pushed_head}")
     pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
-    checks = _checks_value(root, number, base)
+    pair = _snapshot_pair(root, branch, number, base, pushed_head)
+    checks = _checks_value(root, number, pair)
     deadline = time.monotonic() + max(wait, 0)
     while checks == "pending" and time.monotonic() < deadline:
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
-        checks = _checks_value(root, number, base)
+        checks = _checks_value(root, number, pair)
     merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
     if merge and not merged:
         if checks == "none-configured":
-            merged, main_run, local_tests = _merge_on_local_suite(root, branch, number, base, test_cmd)
+            merged, main_run, local_tests = _merge_on_local_suite(root, pair, test_cmd)
         elif checks == "pass":
+            _assert_pair_current(root, pair)
             merged, main_run = _merge(root, branch, number, base, pushed_head)
         else:
             _note(f"not merging: checks are {checks!r}")
