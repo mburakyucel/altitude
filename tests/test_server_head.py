@@ -31,10 +31,18 @@ class TestHead(unittest.TestCase):
         self.dist = self.tmp / "web" / "dist"
         self.dist.mkdir(parents=True)
         (self.dist / "index.html").write_bytes(b"<!doctype html><title>Altitude</title>")
+        assets = self.dist / "assets"
+        assets.mkdir()
+        (assets / "app.01234567.js").write_bytes(b"console.log('altitude');")
 
         self.old_web_dist = config.WEB_DIST
         config.WEB_DIST = self.dist
         self.addCleanup(setattr, config, "WEB_DIST", self.old_web_dist)
+
+        (self.tmp / "digest.wav").write_bytes(b"RIFF-altitude-test-audio")
+        self.old_root = config.ROOT
+        config.ROOT = self.tmp
+        self.addCleanup(setattr, config, "ROOT", self.old_root)
 
         self.old_overview = server.overview
         server.overview = lambda: {"state": "ready"}
@@ -94,6 +102,12 @@ class TestHead(unittest.TestCase):
 
     def test_static_head_matches_get_without_body(self):
         self._assert_head_matches_get("/", 200)
+
+    def test_file_head_matches_get_without_body(self):
+        self._assert_head_matches_get("/digest.wav", 200)
+
+    def test_hashed_asset_head_matches_get_without_body(self):
+        self._assert_head_matches_get("/assets/app.01234567.js", 200)
 
     def test_overview_head_matches_get_without_body(self):
         self._assert_head_matches_get("/api/overview", 200)
