@@ -61,11 +61,15 @@ def build_brief(project: str, slug: str) -> str:
     if dec.get("chosen") and dec.get("detail"):  # decision 46: the card is short; the conditions behind it travel with the brief
         approval_note += f"\n\nBehind the card (the L3's reasoning and conditions — binding where they say so):\n{dec['detail']}"
     policy = proj.get("approval", "default")
-    merge_policy = {"default": "S/M: merge when review is addressed and CI is green. L and any always-list class (money, infra, IAM, migrations, deploy workflow): open the PR and stop.",
-                    "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when review is addressed and CI is green."}.get(policy, policy)
+    if task.get("hold_merge"):  # decision 48: the hold is the exception, and it says why
+        merge_policy = f"**Held for Burak** — open the PR, get it review-clean and CI-green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
+    else:
+        merge_policy = {"default": "Merge when the review is addressed and CI is green — every class, L included (decision 48). Only a brief marked *held* stops at the open PR.",
+                        "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
+        engine_line=(f"the engine is forced to **{task['engine']}** for this task." if task.get("engine") else "the engine is Altitude's choice."),
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the proposal's file list)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),

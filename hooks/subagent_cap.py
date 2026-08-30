@@ -5,7 +5,7 @@ from pathlib import Path
 
 # I-005: a Bash launch is billed only when it stands in *command position* — heredoc bodies and quoted
 # arguments are data, not launches — and every tool call is billed at most once via a dedupe key.
-LAUNCH = r"(?:codex\s+exec\b|claude\s+(?:-p|--print|--bg)\b)"
+LAUNCH = r"(?:codex\s+exec\b|claude\s+(?:-p|--print|--bg)\b|(?:\S*/)?alt\s+l1\s+run\b)"  # `alt l1 run` is a launch too (decision 45)
 PREFIX = r"(?:(?:[A-Za-z_]\w*=(?:\"[^\"]*\"|'[^']*'|\S*)|env|nohup|time|exec|sudo)\s+)*"
 CMDPOS = re.compile(r"(?:^|[;&|(){}`\n])[ \t]*" + PREFIX + r"(" + LAUNCH + r")")
 HEREDOC = re.compile(r"(?<!<)<<-?(?!<)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_]\w*))")

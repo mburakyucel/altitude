@@ -25,6 +25,7 @@ Status 2026-08-29: **Burak decided to build** (decision 15 settled); settled sin
 ## Run
 
 ```
+make web                      # build the SPA into web/dist (pnpm install --frozen-lockfile + vite build) — once, and after any web/ change
 make run                      # altd on 127.0.0.1:8890 (open http://127.0.0.1:8890)
 # Executive override: `alt task approve <slug>` on a requested task (or the *build now* button) skips the proposal/critic loop and dispatches
 make install-service          # user systemd unit on https://10.88.0.1:8890 — reachable from the phone over WireGuard
@@ -33,5 +34,7 @@ bin/alt project add <name> --path ~/Projects/<name> --stacks python,cdk   # or p
 bin/alt -p <name> chat "…"    # talk to L3 from a terminal; the page does the same with streaming
 bin/alt install-statusline    # optional: wraps ~/.claude/statusline.sh so the seat quota shows on the Monitor tab (edits ~/.claude/settings.json)
 ```
+
+Web app: a Vite 7 / React 19 / TypeScript SPA in `web/` — Tailwind 4 over `web/design/tokens.css`, react-router, TanStack Query 5 polling the JSON API, zod at the edge — built by `make web` into `web/dist`, which altd serves with an SPA fallback (any unknown path returns `index.html`, so deep links and a phone refresh work). Seven routes: Inbox, Projects, Project, Task, Chat, Monitor, Listen. The Python server owns the API; the SPA owns nothing but rendering.
 
 Layout: `altitude/` (stdlib package: state, tasks, engines, l3, propose, dispatch, verify, improve, monitor, digest, intake, server) · `bin/alt` · `personas/` · `rules/{global,stacks}/` · `schemas/` · `templates/` · `hooks/` · `web/` · `systemd/` · `docs/`. Runtime state: `~/.altitude/` (`projects.json`, `<project>/{STATE.md,l3.json,chat.jsonl,inbox.jsonl,tasks/,archive/,incidents/}`, `monitor/`, `incidents.jsonl`).

@@ -78,7 +78,7 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 
 def new(project: str, title: str, cls: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
-        paths: list[str] | None = None) -> dict:
+        paths: list[str] | None = None, engine: str | None = None, hold_merge: str | None = None) -> dict:
     if cls not in S.CLASSES:
         raise TransitionError(f"class must be one of {S.CLASSES}")
     if model and model not in config.MODEL_ALIASES:
@@ -96,7 +96,9 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         task = {"slug": slug, "title": title, "class": cls, "state": "requested", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None, "worktree": None,
                 "branch": None, "prs": [], "envelope": dict(ENVELOPE[cls]), "estimate": {}, "spend": {},
-                "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()]}
+                "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
+                "engine": engine,  # decision 45: a forced engine for every L1 of this task (None = by quota)
+                "hold_merge": (hold_merge or "").strip() or None}  # decision 48: why Burak merges this one himself (None = the L2 merges)
         S.save_task(project, task)
         S.append_event(project, slug, "new", by=actor, cls=cls, title=title, source=source)
         S.regen_state_md(project)
@@ -300,3 +302,14 @@ def decisions(project: str) -> list[dict]:
                         "options": ["Resume", "Park", "Reject"], "asked": t.get("updated"), "kind": "blocked",
                         "detail": t.get("blocked_reason")})
     return out
+
+
+def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") -> dict:
+    """Decision 48: PRs merge by default; a hold is the exception and must say why (critical, costly, always-list)."""
+    why = (why or "").strip() or None
+    with S.project_lock(project):
+        t = S.load_task(project, slug)
+        t["hold_merge"] = why
+        S.save_task(project, t)
+    S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor)
+    return t

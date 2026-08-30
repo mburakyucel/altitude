@@ -207,6 +207,10 @@ def run_proposal_flow(project: str, slug: str) -> None:
                 return
             T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
             return
+    hits = p.get("always_list_hits")
+    if hits and t2["state"] == "proposed" and not t2.get("hold_merge"):  # decision 48: always-list → Burak merges
+        hits = hits if isinstance(hits, list) else [hits]
+        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
     # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
     if t2["state"] == "proposed" and not t2.get("decision") and t2["class"] in ("S", "M") and not (p.get("always_list_hits")):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
@@ -454,6 +458,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _static(self, raw_path: str) -> None:
+        """The built SPA (web/dist): hashed /assets/* immutable, index.html no-store, and any
+        other GET falls back to index.html so client-side routes deep-link. A missing build is
+        an explicit 503 naming `make web` (decision 36), never a silent fallback."""
+        dist = config.WEB_DIST.resolve()
+        index = dist / "index.html"
+        if not index.is_file():
+            return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
+        rel = unquote(raw_path).lstrip("/")
+        try:
+            resolved = (dist / rel).resolve() if rel else index
+        except (OSError, ValueError):  # embedded NUL and friends
+            return self._json({"error": "not found"}, 404)
+        if not resolved.is_relative_to(dist):  # traversal (incl. percent-encoded) and symlink escapes
+            return self._json({"error": "not found"}, 404)
+        if not resolved.is_file():
+            if resolved.relative_to(dist).parts[:1] == ("assets",):
+                # a miss under the hashed build output is a stale index, not a client route:
+                # serving index.html there hands JS/CSS a text/html body (MIME parse error)
+                return self._json({"error": "not found"}, 404)
+            resolved = index  # SPA fallback: /projects/x, /chat/y, ... render client-side
+        data = resolved.read_bytes()
+        immutable = resolved != index and resolved.relative_to(dist).parts[:1] == ("assets",)
+        ctype = "text/html; charset=utf-8" if resolved.suffix == ".html" else (
+            mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if immutable else "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
         try:
@@ -483,16 +519,12 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in u.path.split("/") if p]
         q = parse_qs(u.query)
         try:
-            if not parts:
-                return self._file(config.WEB / "index.html", "text/html; charset=utf-8")
-            if parts[0] in ("app.js", "style.css"):
-                return self._file(config.WEB / parts[0])
-            if parts[0] == "digest.wav":
+            if parts and parts[0] == "digest.wav":
                 return self._file(config.ROOT / "digest.wav", "audio/wav")
-            if parts[0] == "ca.crt":  # the local CA, for installing on a phone once
+            if parts and parts[0] == "ca.crt":  # the local CA, for installing on a phone once
                 return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
-            if parts[0] != "api":
-                return self._json({"error": "not found"}, 404)
+            if not parts or parts[0] != "api":
+                return self._static(u.path)
             api = parts[1] if len(parts) > 1 else ""
             if api == "overview":
                 return self._json(overview())
@@ -690,7 +722,8 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
-    (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)  # this process now runs current main
+    if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance runs "current main"; a smoke/test altd must not clear the flag (I-013)
+        (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     host = host or config.HOST
     port = port or config.PORT
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":

@@ -12,6 +12,7 @@ RULES = REPO / "rules"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"
 WEB = REPO / "web"
+WEB_DIST = REPO / "web" / "dist"
 HOOKS = REPO / "hooks"
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
@@ -36,7 +37,12 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Model tiers (decision 38, Burak 2026-08-30): judgement at the top (L3 = Fable, low volume), coding at least Opus,
 # Fable for the hard coding (L2 per task, L1 per sub-brief — dynamic), research/docs on Sonnet or Opus, never Fable.
 MODELS = {"l3": "fable", "l2": "opus", "l2_hard": "fable", "l1": "opus", "l1_hard": "fable",
-          "reviewer": "opus", "proposal": "opus", "research": "sonnet"}
+          "reviewer": "opus", "proposal": "opus", "research": "sonnet",
+          "l1_codex": None, "reviewer_codex": None}   # None = the Codex CLI's configured default model
+ENGINES = ("claude", "codex")
+L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
+L1_TIMEOUT = 3600                # one L1 run, either engine
+L1_MAX_TURNS = 80                # Claude L1s
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
