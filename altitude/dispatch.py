@@ -219,12 +219,22 @@ def paths_overlap(a: list[str], b: list[str]) -> list[str]:
     return sorted(set(out))
 
 
+BROAD_CLAIMS = ("tests", "docs", "altitude", "web", "hooks", "bin", "personas", "schemas", "templates", "src", "lib", "app")
+
+
+def narrow(paths: list[str]) -> list[str]:
+    """Decision 51 addendum: a claim on a whole top-level directory (`tests/`, `docs/`) is not a lease — it would hold every
+    task in the project behind one (2026-08-30: 23 approved tasks waited on a single `tests/` claim). Files and deeper
+    directories lease; top-level directory claims are dropped here, so briefs still show them but nothing waits on them."""
+    return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
+
+
 def task_paths(project: str, task: dict) -> list[str]:
-    """The paths a task has declared: `--paths` on the task, else the proposal's `files`."""
+    """The paths a task has declared: `--paths` on the task, else the proposal's `files` — minus over-broad claims."""
     if task.get("paths"):
-        return list(task["paths"])
+        return narrow(list(task["paths"]))
     p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
-    return list(p.get("files") or [])
+    return narrow(list(p.get("files") or []))
 
 
 def leases(project: str, exclude: str | None = None) -> list[dict]:
