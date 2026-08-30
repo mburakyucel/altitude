@@ -141,7 +141,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_sta
     S.project_log(project, "l3-codex", reason=reason, trigger=trigger)
     res = engines.codex_exec(text, cwd=config.ROOT, sandbox="workspace-write", timeout=1200, effort=config.CODEX_EFFORT.get("l3"),
                              extra_config=[f'sandbox_workspace_write.writable_roots=["{config.ROOT}"]', "sandbox_workspace_write.network_access=true"],
-                             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+                             extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)},
+                             fault_context={"project": project})
     usage = res.get("usage") or {}
     tokens = int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
     out = {"text": res.get("text") or "", "session_id": inf.get("session_id") or "", "usage": usage, "context_tokens": tokens,

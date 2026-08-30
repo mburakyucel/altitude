@@ -81,11 +81,14 @@ class TestCodexSandboxPreflight(unittest.TestCase):
             with mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"):
                 with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
                     with mock.patch("altitude.improve.system_fault") as fault:
-                        result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
+                        result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write",
+                                                    fault_context={"project": "project", "task": "task"})
 
         self.assertEqual(result["text"], "")
         self.assertIsNone(result["structured"])
         self.assertNotEqual(result["returncode"], 0)
+        self.assertIs(result["engine_started"], False)
+        self.assertEqual(result["fault_recorded"], "codex-sandbox")
         self.assertEqual(result["usage"], {})
         self.assertIn(str(self.cwd), result["error"])
         self.assertIn("read-only root", result["error"])
@@ -94,6 +97,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertEqual(result["raw_stderr"], "")
         fault.assert_called_once()
         self.assertEqual(fault.call_args.args[0], "codex-sandbox")
+        self.assertEqual(fault.call_args.kwargs, {"project": "project", "task": "task"})
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "/usr/bin/bwrap")
 
@@ -237,6 +241,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
 
         self.assertNotEqual(result["returncode"], 0)
         self.assertIn("namespace unavailable", result["error"])
+        self.assertIsNone(result["fault_recorded"])
         self.assertIn("Failed to record Codex sandbox preflight system fault", "\n".join(logs.output))
 
     def test_concurrent_preflights_use_distinct_sentinels(self):

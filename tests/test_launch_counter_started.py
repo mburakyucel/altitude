@@ -610,6 +610,10 @@ class HandshakeTests(unittest.TestCase):
     def test_a_closed_window_is_never_a_launch(self):
         self.assertFalse(self.check("codex", {"limited": "2026-08-30T12:00:00+00:00", "returncode": 0}))
 
+    def test_an_explicit_preflight_failure_is_never_a_launch(self):
+        self.assertFalse(self.check("codex", {"returncode": 1, "engine_started": False,
+                                               "error": "Codex sandbox preflight failed"}))
+
     def test_an_engine_that_ran_and_failed_is_still_a_launch(self):
         self.assertTrue(self.check("codex", {"returncode": 1, "error": "engine said no"}))
         self.assertTrue(self.check("codex", {}, exc=subprocess.TimeoutExpired("codex", 1)))

@@ -463,7 +463,8 @@ done
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
-               effort: str | None = None, extra_env: dict | None = None) -> dict:
+               effort: str | None = None, extra_env: dict | None = None,
+               fault_context: dict[str, str] | None = None) -> dict:
     """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
     `turn.completed` events on stdout."""
@@ -472,8 +473,11 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             codex_sandbox_preflight(cwd, extra_config)
         except CodexSandboxPreflightError as exc:
             from . import improve  # local: improve -> dispatch -> engines during module import
+            fault_recorded = None
             try:
-                improve.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}")
+                improve.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}",
+                                     **(fault_context or {}))
+                fault_recorded = "codex-sandbox"
             except Exception:  # noqa: BLE001 — fault persistence must not replace the deterministic gate failure
                 logger.exception("Failed to record Codex sandbox preflight system fault")
             error = str(exc)
@@ -481,7 +485,9 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                 error = error[:245] + " ... " + error[-250:]
             # Callers already persist and stamp ordinary failures; returning that contract avoids duplicate faults
             # and stranded L3 turns while still guaranteeing Codex was never invoked.
-            return {"text": "", "structured": None, "returncode": 1, "usage": {}, "error": error,
+            return {"text": "", "structured": None, "returncode": 1, "engine_started": False,
+                    "fault_recorded": fault_recorded,
+                    "usage": {}, "error": error,
                     "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
                     "raw_stderr_truncated": False}
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
