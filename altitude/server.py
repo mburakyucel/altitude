@@ -59,6 +59,19 @@ def start_l3(project: str) -> None:
             trigger="start")
 
 
+def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
+    """Did the L3 park this task during the turn that started at `turn_start` (incident I-008)?
+
+    The last `state → parked` event in the task's log decides it: a park by Burak (or any actor
+    other than the L3), or an L3 park that predates the turn, must never queue an auto-revision.
+    """
+    last = None
+    for ev in S.read_events(project, slug):
+        if ev.get("kind") == "state" and ev.get("to") == "parked":
+            last = ev
+    return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
+
+
 def run_proposal_flow(project: str, slug: str) -> None:
     task = S.load_task(project, slug)
     with S.project_lock(project):
@@ -93,10 +106,22 @@ def run_proposal_flow(project: str, slug: str) -> None:
               f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
               f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
               "If the critic says revise and you agree, `alt task park` with the reason and say what should change. Report in ≤5 sentences.")
+    # Burak may have parked, approved or rejected the task while the proposal and the critic ran (incident I-008):
+    # re-read the state and skip the turn rather than talk to the L3 about a task he has already decided. proposal.json
+    # stays on disk; clearing proposal_started lets tick() re-run the flow (requested only) if he unparks it later.
+    t1 = S.load_task(project, slug)
+    if t1["state"] != "requested":
+        with S.project_lock(project):
+            t1b = S.load_task(project, slug); t1b["proposal_started"] = None; S.save_task(project, t1b)
+        log(f"[{project}/{slug}] no longer requested (state={t1['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
+        return
+    turn_start = S.now()
     res = l3.turn(project, header, trigger="proposal-ready")
     t2 = S.load_task(project, slug)
-    # critic said revise and the L3 parked with a revision brief: re-propose, at most twice, then it waits for Burak
-    if t2["state"] == "parked" and crit and crit.get("verdict") == "revise":
+    # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
+    # waits for Burak. A park by Burak (I-008) never queues a revision — his park must stand.
+    if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise"
+            and _l3_parked_during_turn(project, slug, turn_start)):
         n = int(t2.get("revisions", 0))
         if n < 2:
             with S.project_lock(project):
