@@ -232,10 +232,23 @@ def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | Non
         return _move(project, task, "running", actor, dispatch_id=dispatch_id, session_id=session_id)
 
 
-def report(project: str, slug: str, verified: dict, actor: str = "altd") -> dict:
+def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
+           expected_state: str | None = None, expected_attempt: int | None = None,
+           expected_block_from: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if expected_state is not None and task["state"] != expected_state:
+            raise TransitionError(f"{slug}: expected {expected_state}, found {task['state']}")
+        if expected_attempt is not None and task.get("attempt") != expected_attempt:
+            raise TransitionError(f"{slug}: expected attempt {expected_attempt}, found {task.get('attempt')}")
+        if expected_block_from is not None:
+            last_block = next((ev for ev in reversed(S.read_events(project, slug))
+                               if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
+            if not last_block or last_block.get("frm") != expected_block_from:
+                raise TransitionError(f"{slug}: latest block did not come from {expected_block_from}")
+        verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
+        task["blocked_reason"] = None
         if verified.get("prs"):
             task["prs"] = sorted(set(task.get("prs", []) + list(verified["prs"])))
         return _move(project, task, "reported", actor, verdict=verified.get("verdict"))
@@ -281,9 +294,9 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         d = S.task_dir(project, slug)
+        task = _move(project, task, "done", actor)
         if digest:
             S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
-        task = _move(project, task, "done", actor)
         _archive(project, slug)
         S.regen_state_md(project)
         return task
