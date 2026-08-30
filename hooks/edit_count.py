@@ -6,12 +6,13 @@ inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 sid = inp.get("session_id") or "unknown"
 root = Path(os.environ.get("ALTITUDE_HOME", Path.home() / ".altitude"))
 mon = root / "monitor"; mon.mkdir(parents=True, exist_ok=True)
-p = mon / f"counts-{sid}.json"
+key = os.environ.get("ALTITUDE_SESSION_KEY")
+p = mon / f"counts-{key or sid}.json"
 try: c = json.loads(p.read_text()) if p.exists() else {}
 except Exception as e:  # decision 36: leave a line the server raises as a system fault instead of silently resetting
     c = {}
     try:
-        with open(mon / "hook-faults.log", "a") as f: f.write(f"edit_count.py session={sid}: counts file unreadable, reset: {e}\n")
+        with open(mon / "hook-faults.log", "a") as f: f.write(f"edit_count.py session={sid} key={key or sid}: counts file unreadable, reset: {e}\n")
     except OSError: pass
 c["edits"] = int(c.get("edits", 0)) + 1
 files = set(c.get("files") or []); fp = (inp.get("tool_input") or {}).get("file_path")

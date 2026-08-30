@@ -31,8 +31,8 @@ class CapHook(unittest.TestCase):
         p.update(kw)
         return self.run_hook(p)
 
-    def counted(self, sid="s1"):
-        f = Path(self.home) / "monitor" / f"counts-{sid}.json"
+    def counted(self, sid="s1", key=None):
+        f = Path(self.home) / "monitor" / f"counts-{key or sid}.json"
         return json.loads(f.read_text())["subagent_launches"] if f.exists() else 0
 
     # --- dedupe -----------------------------------------------------------------
@@ -131,17 +131,40 @@ class CapHook(unittest.TestCase):
         (mon / "envelope-k1.json").write_text(json.dumps({"subagent_launches": 2}))
         env = {"ALTITUDE_SESSION_KEY": "k1"}
         for i in range(2):
-            r = self.run_hook({"session_id": "s1", "tool_name": "Agent", "tool_input": {"prompt": str(i)},
+            r = self.run_hook({"session_id": f"s{i + 1}", "tool_name": "Agent", "tool_input": {"prompt": str(i)},
                                "tool_use_id": f"ok{i}"}, env=env)
             self.assertEqual(r.returncode, 0, r.stderr)
-        r = self.run_hook({"session_id": "s1", "tool_name": "Agent", "tool_input": {"prompt": "over"},
+        r = self.run_hook({"session_id": "s2", "tool_name": "Agent", "tool_input": {"prompt": "over"},
                            "tool_use_id": "over"}, env=env)
         self.assertEqual(r.returncode, 2)
         self.assertIn("altitude: envelope reached (2/2 subagent launches)", r.stderr)
-        again = self.run_hook({"session_id": "s1", "tool_name": "Agent", "tool_input": {"prompt": "over"},
+        again = self.run_hook({"session_id": "s2", "tool_name": "Agent", "tool_input": {"prompt": "over"},
                                "tool_use_id": "over"}, env=env)  # dedupe never weakens blocking
         self.assertEqual(again.returncode, 2)
         self.assertIn("altitude: envelope reached", again.stderr)
+
+    def test_resume_continues_the_dispatch_keyed_count(self):
+        env = {"ALTITUDE_SESSION_KEY": "demo--task-1"}
+        for sid, tool_use_id in (("old-session", "t1"), ("new-session", "t2")):
+            r = self.run_hook({"session_id": sid, "tool_name": "Agent", "tool_input": {"prompt": sid},
+                               "tool_use_id": tool_use_id}, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.counted(key="demo--task-1"), 2)
+
+    def test_dedupe_survives_a_resume(self):
+        env = {"ALTITUDE_SESSION_KEY": "demo--task-1"}
+        for sid in ("old-session", "new-session"):
+            r = self.run_hook({"session_id": sid, "tool_name": "Agent", "tool_input": {"prompt": "same"},
+                               "tool_use_id": "same-tool-use"}, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.counted(key="demo--task-1"), 1)
+
+    def test_without_dispatch_key_counts_remain_per_session(self):
+        for sid in ("session-a", "session-b"):
+            r = self.run_hook({"session_id": sid, "tool_name": "Agent", "tool_input": {"prompt": sid},
+                               "tool_use_id": f"tool-{sid}"})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.counted(sid=sid), 1)
 
     def test_other_hooks_keys_survive(self):
         mon = Path(self.home) / "monitor"
