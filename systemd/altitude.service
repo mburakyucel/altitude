@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Projects/agent-orchestrator
-ExecStart=%h/Projects/agent-orchestrator/bin/alt serve
+WorkingDirectory=%h/Projects/altitude
+ExecStart=%h/Projects/altitude/bin/alt serve
 Restart=on-failure
 RestartSec=20
 # `claude --bg` workers (and the claude daemon that forks them) are started from altd and therefore live in this
