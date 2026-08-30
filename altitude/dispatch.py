@@ -105,15 +105,34 @@ def l2_env(project: str, task: dict) -> dict:
             "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}"}
 
 
-def resume_session(project: str, slug: str, text: str) -> dict:
-    """Re-attach the task's L2 transcript in a new --bg worker and hand it `text` (a message, an answer, a restart note)."""
+def resume_session(project: str, slug: str, text: str, session_id: str | None = None) -> dict:
+    """Re-attach the task's L2 transcript in a new --bg worker (in the task's worktree) and hand it `text`.
+
+    A resumed session gets a new session id and agent id: the task is rebound to the live row, so `poll()` follows the
+    new worker instead of re-reading the old one's `failed`/`done` row. No fallback to the main checkout: a missing
+    worktree is a dispatch-again situation, not a place to run an L2 that thinks it is on its own branch."""
     task = S.load_task(project, slug)
-    if not task.get("session_id"):
+    sid = session_id or task.get("session_id")
+    if not sid:
         raise T.TransitionError("no session to resume; dispatch again")
+    cwd = Path(task.get("worktree") or "")
+    if not task.get("worktree") or not cwd.is_dir():
+        raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
     name = f"{project}/{task['dispatch_id']}"
-    return engines.claude_resume_bg(name, task["session_id"], text, cwd=config.project_path(project),
-                                    persona=rules.compiled_persona("l2", project), max_turns=task["envelope"]["max_turns"],
-                                    settings=S.task_dir(project, slug) / "settings.json", extra_env=l2_env(project, task))
+    res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
+                                   max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
+                                   extra_env=l2_env(project, task))
+    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done")]
+    if not live:
+        raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
+    new = max(live, key=lambda a: a.get("startedAt") or 0)
+    with S.project_lock(project):
+        t = S.load_task(project, slug)
+        t["agent_id"], t["session_id"] = new.get("id"), new.get("sessionId")
+        S.save_task(project, t)
+    S.append_event(project, slug, "resumed", agent_id=new.get("id"), session_id=new.get("sessionId"), previous=sid)
+    res["agent"] = new
+    return res
 
 
 def resume_blocked(project: str, slug: str, answer: str) -> dict:
