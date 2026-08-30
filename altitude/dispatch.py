@@ -83,8 +83,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     res = engines.claude_bg(name, brief_md, cwd=config.project_path(project), worktree=slug, persona=persona,
                             permission_mode="auto", max_turns=task["envelope"]["max_turns"],
                             model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
-                            extra_env={"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project,
-                                       "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{dispatch_id}"})
+                            extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
     agent = res.get("agent") or {}
     if res["returncode"] != 0 and not agent:
         with S.project_lock(project):
@@ -100,15 +99,25 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     return {"dispatch_id": dispatch_id, "agent": agent, "stdout": res["stdout"]}
 
 
-def resume_blocked(project: str, slug: str, answer: str) -> dict:
+def l2_env(project: str, task: dict) -> dict:
+    """The env every L2 session (fresh or resumed) needs: the hooks read the session key to find their envelope."""
+    return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": task["slug"],
+            "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}"}
+
+
+def resume_session(project: str, slug: str, text: str) -> dict:
+    """Re-attach the task's L2 transcript in a new --bg worker and hand it `text` (a message, an answer, a restart note)."""
     task = S.load_task(project, slug)
     if not task.get("session_id"):
         raise T.TransitionError("no session to resume; dispatch again")
     name = f"{project}/{task['dispatch_id']}"
-    res = engines.claude_resume_bg(name, task["session_id"], f"Burak's answer: {answer}\nContinue from your progress file; finish to *done* and rewrite the report.",
-                                   cwd=config.project_path(project), persona=rules.compiled_persona("l2", project),
-                                   max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
-                                   extra_env={"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2"})
+    return engines.claude_resume_bg(name, task["session_id"], text, cwd=config.project_path(project),
+                                    persona=rules.compiled_persona("l2", project), max_turns=task["envelope"]["max_turns"],
+                                    settings=S.task_dir(project, slug) / "settings.json", extra_env=l2_env(project, task))
+
+
+def resume_blocked(project: str, slug: str, answer: str) -> dict:
+    res = resume_session(project, slug, f"Burak's answer: {answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
     T.resume(project, slug, answer=answer)
     return res
 

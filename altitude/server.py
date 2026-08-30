@@ -445,9 +445,7 @@ class Handler(BaseHTTPRequestHandler):
                 qa = S.task_dir(project, slug) / "qa.md"
                 with open(qa, "a") as f:
                     f.write(f"\n## Burak → L2 ({S.now()})\n{text}\n")
-                res = dispatch.resume_blocked(project, slug, text) if t["state"] == "blocked" else engines.claude_resume_bg(
-                    f"{project}/{t['dispatch_id']}", t["session_id"], text, cwd=config.project_path(project),
-                    persona=rules.compiled_persona("l2", project), settings=S.task_dir(project, slug) / "settings.json")
+                res = dispatch.resume_blocked(project, slug, text) if t["state"] == "blocked" else dispatch.resume_session(project, slug, text)
                 return self._json({"ok": True, "stdout": res.get("stdout"), "stderr": res.get("stderr")})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
