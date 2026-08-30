@@ -321,6 +321,8 @@ def dispatch_waiting(project: str) -> None:
         if t["state"] != "approved":
             continue
         hold = dispatch.wip_hold(project, t)
+        if hold and dispatch.per_task_hold(hold):  # decision 51: a leased task must not block the queue behind it
+            continue
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             return

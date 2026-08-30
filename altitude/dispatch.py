@@ -253,6 +253,13 @@ def rule_application(task: dict) -> bool:
     return str(task.get("slug", "")).startswith("apply-r-") or any(str(p).strip().lstrip("./").startswith(("docs/RULES.md", "docs/incidents")) for p in paths)
 
 
+PER_TASK_HOLDS = ("file lease", "one rule-application")  # holds that belong to one task; the rest of the queue is still dispatchable
+
+
+def per_task_hold(hold: str | None) -> bool:
+    return bool(hold) and str(hold).startswith(PER_TASK_HOLDS)
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     held = engines.usage_hold()
     if held:

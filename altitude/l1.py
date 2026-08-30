@@ -120,7 +120,8 @@ def exec_run(project: str, slug: str, name: str) -> dict:
             if common:
                 extra.append(f'sandbox_workspace_write.writable_roots=["{(wt / common).resolve()}"]')
             res = engines.codex_exec(prompt, cwd=wt, sandbox="read-only" if rec["role"] == "reviewer" else "workspace-write",
-                                     model=rec["model"], timeout=config.L1_TIMEOUT, extra_config=extra, schema=schema)
+                                     model=rec["model"], timeout=config.L1_TIMEOUT, extra_config=extra, schema=schema,
+                                     effort=config.CODEX_EFFORT.get(rec["role"]))
         else:
             res = engines.claude_print(prompt, cwd=wt, model=rec["model"], permission_mode="plan" if rec["role"] == "reviewer" else "auto",
                                        max_turns=config.L1_MAX_TURNS, timeout=config.L1_TIMEOUT, schema=schema,
