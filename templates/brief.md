@@ -6,6 +6,8 @@
 
 **Review/fix:** [R-016] For a fix round on an open PR, run `alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>` with the PR number and findings named in the fix brief, then check the amended PR with `git diff --stat origin/main <head>` before merging.
 
+[R-017] A post-fix review checks the dispositions of the previous round's findings and the fix diff for regressions. Only a new finding that defeats the definition of done or breaches R-006 blocks; every other new finding is recorded under **Follow-ups** with its file and line, and the L2 names or files the follow-up task in the report. One fix round per S task; a second round needs the L3's envelope answer, never a silent further reviewer.
+
 **Change class / merge policy:** {merge_policy}
 
 When the task carries a merge hold, open the PR, report ok with the PR number and stop; never merge around the hold, by `gh pr merge` or any other route, even if its reason looks false for your PR — say so in the report instead.
