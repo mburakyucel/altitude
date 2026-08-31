@@ -1,9 +1,12 @@
 # CLAUDE.md — altitude
 
-Instructions for agents working in this repo. Orientation: `README.md`; design and binding
-contracts: `docs/` (start with `docs/VISION.md`, then `docs/ROLES.md` and `docs/ARCHITECTURE.md`).
-The rules below are applied entries from the project ledger `docs/RULES.md`; each carries its
-rule id so it stays auditable back to the incident that produced it.
+Instructions for agents working in this repo. **Start with `docs/ARCHITECTURE.md`**: the runtime is
+deliberately stopped, the old task queue is being archived, and the repository is in an architecture
+reset. Do not restart the service, replay archived tasks, or extend the orchestration/self-healing
+system unless the human explicitly approves the next bounded change. Product intent remains in
+`docs/VISION.md`; `docs/ROLES.md` describes the older role model and is not authority to revive it.
+The rules below are preserved entries from the project ledger `docs/RULES.md`; each carries its
+rule id for provenance. During the reset they do not authorize dispatch or automatic follow-up.
 
 ## Dispatch and envelopes
 
