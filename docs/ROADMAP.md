@@ -35,6 +35,8 @@ The remaining stabilization work is intentionally reductive:
 - classify and remove obsolete incidents, rules, personas, schemas, hooks, and other
   mechanisms while preserving relevant evidence in the stabilization archive and Git
   history;
+- keep remote CI to one base-owned exact-candidate Python check rather than restoring
+  the removed cgroup, manifest, and artifact gate;
 - make documentation describe implemented behavior and clearly distinguish it from
   target behavior;
 - finish with a clean live working set and explicit keep, defer, or remove decisions
@@ -55,7 +57,7 @@ pipeline.
 | #106 | One unambiguous mutation authority, current task ownership/generation, a clean active working set, and no autonomous backlog draining. |
 | #107 | Flexible L3 coordination, one directly reachable end-to-end L2 per delegated task, and optional L1 use at L2's discretion. |
 | #108 | L3-controlled operational recovery, one direct recovery L2 when code is needed, and no recursive incident/rule/healing-task creation. |
-| #109 | A simple PR-only landing boundary with isolated ownership, exact-change evidence, appropriate checks/review, no unchecked local fallback, stale-publisher protection, and an explicit keep/simplify/replace/revert disposition for the current remote gate. |
+| #109 | A simple PR-only landing boundary with isolated ownership, exact-change evidence, appropriate checks/review, no unchecked local fallback, and stale-publisher protection. The remote check has been reduced to a base-owned exact-candidate Python run; the remaining landing controls stay in scope. |
 
 Implementing and verifying the required outcomes of #106 through #109 is necessary but
 not sufficient. Before Altitude is unmasked for normal operation, controlled

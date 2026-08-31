@@ -17,6 +17,10 @@ Status 2026-08-31: **stabilization reset**. The service is stopped and masked. E
 sessions, rules, incidents, and worktrees are being archived instead of resumed. Future work is
 consolidated in issues #104–#109; no old task should be replayed automatically.
 
+GitHub CI has one base-owned `Remote tests / Python` check for pull requests and main pushes. It
+checks out the exact event commit and runs the repository's Python tests with throwaway runtime
+state; the former cgroup, manifest, and evidence-artifact gate is no longer part of the system.
+
 ## Context this builds on
 
 - `~/Projects/career-platform/docs/ENGINEERING.md` — the existing orchestrator → worktree-subagent pattern, progress files, "Report for Burak", never-list.

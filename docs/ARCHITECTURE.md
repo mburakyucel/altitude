@@ -35,7 +35,7 @@ flowchart TD
     L2 -->|alt l1 run| R[detached L1 launcher]
     R --> W[Claude or Codex worker / reviewer]
     W --> G[worktrees → PR → landing]
-    G --> CI[GitHub checks and trusted-gate workflow]
+    G --> CI[base-owned remote Python check]
     L2 -->|report files| S
     A --> V[verify and close / L3 report turn]
     V --> H[incidents / rules / mechanize]
@@ -52,7 +52,7 @@ Chat, and Monitor routes over a Python HTTP API. Most complexity accumulated beh
 - Small work can enter proposal, critic, L3, L2, nested L1, review, and report stages.
 - Process, session, worktree, task, and report ownership are not bound to one durable generation.
 - Policy is partly inferred by parsing shell commands, environment, and several ledgers.
-- Landing is split between local logic, generic GitHub checks, and a separate remote-gate design.
+- Landing is split between local policy and a small base-owned GitHub Actions check.
 - Recovery uses the same task-producing machinery it is trying to repair.
 
 ### The unhealthy feedback loop
@@ -77,11 +77,10 @@ remove this positive-feedback design.
 
 ### Scale snapshot
 
-- About 16,500 lines of executable, frontend, and workflow code.
-- About 9,750 lines of tests across 517 test methods.
+- About 13,100 lines of executable, frontend, and workflow code.
+- About 9,800 lines of tests across 508 test methods.
 - About 35,500 words of documentation plus 4,200 words of personas.
 - Seven personas, five schemas, 47 CLI parser entries, and 56 recorded decisions.
-- The trusted-gate change alone added about 3,500 lines across C, shell, Python, and workflow code.
 - Roughly 2,000 lines implement policy indirectly through shell parsing, Git policy, and
   launch/edit hooks.
 
@@ -221,8 +220,10 @@ pipeline solely to satisfy a class schema. Burak and L3 can require review for a
 any time.
 
 Security and validation support these boundaries, but collision prevention and reviewable
-integration are the primary architectural goals. The exact trusted-compute and landing mechanism
-must be reviewed separately rather than assumed from the current gate implementation.
+integration are the primary architectural goals. Remote CI is intentionally small: a base-owned
+workflow checks out the exact event candidate and invokes the fixed Python suite with throwaway
+state and a sanitized process environment. It is a normal hosted test check, not a separate
+attestation system or a substitute for the rest of the landing policy.
 
 ## Recovery and incident learning
 
@@ -297,7 +298,6 @@ This document does not yet choose:
 - the final UI layout or wireframe design;
 - a fixed request taxonomy or programmatic size classifier;
 - a required proposal, critic, reviewer, or subagent count;
-- the final trusted-gate/landing implementation;
 - which existing files or components are deleted.
 
 Those decisions should follow focused analysis against this operating model. Existing work is
@@ -311,16 +311,16 @@ or automatically resumed.
 - No general Git/GitHub/worker reconcile matches the old architecture description.
 - The previously described deterministic Small lane and runtime Settings surface are absent on main.
 - The React router has no Listen route, although older documentation and server plumbing mention it.
-- The trusted remote workflow is active on PRs and main pushes, but its hosted runs currently fail
-  before candidate execution and it is not a landing authority. Further expansion is frozen pending
-  the keep/simplify/replace/revert review.
+- The earlier cgroup, manifest, and artifact gate has been replaced by the small remote Python
+  check described above. That check supplies test evidence; it is not by itself the complete
+  landing authority.
 
 ## Restart boundary
 
-This PR changes policy and documentation only. Keep Altitude stopped and masked while the old task,
-session, rule, incident, and worktree state is archived and removed from live scheduling. Human
-approval and archive completion are necessary but are not sufficient to restart the unchanged
-runtime.
+The architecture reset and CI simplification do not authorize a runtime restart. Keep Altitude
+stopped and masked while the old task, session, rule, incident, and worktree state is archived and
+removed from live scheduling. Human approval and archive completion are necessary but are not
+sufficient to restart the runtime.
 
 Before a healthy restart, the minimum implemented and verified subset is:
 

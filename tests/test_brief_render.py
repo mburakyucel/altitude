@@ -92,8 +92,7 @@ class TestBriefRender(unittest.TestCase):
         self.assert_no_unformatted_field(self.default_rendered)
         self.assert_no_unformatted_field(self.held_rendered)
 
-    def test_ledger_guarantees_survive_rendering(self):
-        # R-014's test-command sentence is not in the template yet; assert it here when it lands.
+    def test_merge_guarantees_survive_rendering(self):
         for rendered in (self.default_rendered, self.held_rendered):
             with self.subTest(held="Held for Burak" in rendered):
                 self.assertIn("never merge around the hold", rendered)
