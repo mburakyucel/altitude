@@ -24,6 +24,8 @@ class RemoteCIWorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha || github.sha", self.workflow)
         self.assertIn("github.event.pull_request.head.repo.full_name || github.repository", self.workflow)
         self.assertIn('test "$WORKFLOW_SHA" = "$BASE_SHA"', self.workflow)
+        self.assertIn('test "$CANDIDATE_REPOSITORY" = "$BASE_REPOSITORY"', self.workflow)
+        self.assertIn("repository: ${{ env.BASE_REPOSITORY }}", self.workflow)
         self.assertIn('test "$CHECKOUT_SHA" = "$EXPECTED_SHA"', self.workflow)
         self.assertIn("-C candidate rev-parse HEAD", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)

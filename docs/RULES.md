@@ -84,15 +84,6 @@
 - status: probation
 - text: When the task carries a merge hold (hold_merge set), the L2 opens the PR, reports ok with the PR number and stops. It never merges around the hold - not with gh pr merge, not by any other route - even when the hold's stated reason looks false for its PR; it says so in the report and the L3 releases the hold. Merging under a hold is a breach, not a deviation.
 
-## R-014 — Authoritative test evidence binds an exact base/candidate pair remotely
-- scope: project
-- where: the owning section
-- origin: I-063 (altitude)
-- prevents:
-- effect:
-- status: probation
-- text: Authoritative test evidence is a successful, base-attached `trusted-remote / evidence` run whose immutable artifact binds the exact base/candidate pair, current PR identity, run and attempt, check-run id, workflow SHA, and request nonce. A candidate-head check alone is never evidence. Local `make test` is developer-only and never authorizes a merge or appears in an automated landing fallback. Until the base-trusted remote harness is bootstrapped and landing integration is merged, agents stop before landing rather than substituting a local or absent gate.
-
 ## R-016 — A fix round on an open PR runs the L1 in the task worktree with --cwd
 - scope: project
 - where: personas/l2.md (the L1 launch paragraph and the fix-round step) and templates/brief.md (the review and fix sentence)

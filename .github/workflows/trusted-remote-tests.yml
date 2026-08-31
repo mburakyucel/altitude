@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 20
     env:
       EXPECTED_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      BASE_REPOSITORY: ${{ github.repository }}
       CANDIDATE_REPOSITORY: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name || github.repository }}
       BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
       WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -44,6 +45,9 @@ jobs:
 
           if test "$GITHUB_EVENT_NAME" = pull_request_target; then
             test "$WORKFLOW_SHA" = "$BASE_SHA"
+            # Altitude work is pushed to isolated branches in this repository.
+            # Fail closed instead of trying to authenticate to a private fork.
+            test "$CANDIDATE_REPOSITORY" = "$BASE_REPOSITORY"
           else
             test "$GITHUB_EVENT_NAME" = push
             test "$GITHUB_REF" = refs/heads/main
@@ -54,7 +58,7 @@ jobs:
         id: candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # releases/v4, resolved 2026-08-30
         with:
-          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          repository: ${{ env.BASE_REPOSITORY }}
           ref: ${{ env.EXPECTED_SHA }}
           path: candidate
           fetch-depth: 1
