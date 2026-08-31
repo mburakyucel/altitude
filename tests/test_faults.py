@@ -1,4 +1,4 @@
-"""Decision 36: Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
+"""Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
 import json
 import os
 import sys
@@ -9,28 +9,31 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-faults-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, improve, verify, engines, dispatch  # noqa: E402
+from altitude import config, state as S, incidents, recovery, verify, engines, dispatch  # noqa: E402
 
 
 class TestSystemFault(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
         os.makedirs(os.path.join(_TMP, "docs"), exist_ok=True)
 
+    def tearDown(self):
+        recovery.hold_path().unlink(missing_ok=True)
+
     def test_fault_files_incident_and_inbox_once_per_kind(self):
-        first = improve.system_fault("test-kind", "something broke", project="altitude", task="t1")
+        first = incidents.system_fault("test-kind", "something broke", project="altitude", task="t1")
         self.assertIsNotNone(first)
         self.assertTrue(first["incident"].startswith("I-"))
-        again = improve.system_fault("test-kind", "something broke again", project="altitude")
+        again = incidents.system_fault("test-kind", "something broke again", project="altitude")
         self.assertIsNone(again, "same kind within 24h must not file a second incident")
-        faults = S.read_json(improve.FAULTS)
+        faults = S.read_json(incidents.FAULTS)
         self.assertEqual(faults["test-kind"]["count"], 2)
         self.assertEqual(faults["test-kind"]["incident"], first["incident"])
         inbox = [json.loads(l) for l in (config.project_dir("altitude") / "inbox.jsonl").read_text().splitlines()]
         self.assertEqual(sum("SYSTEM FAULT [test-kind]" in i["text"] for i in inbox), 1)
-        other = improve.system_fault("other-kind", "different mechanism")
+        other = incidents.system_fault("other-kind", "different mechanism")
         self.assertIsNotNone(other)
         self.assertNotEqual(other["incident"], first["incident"])
 
@@ -57,7 +60,7 @@ class TestSystemFault(unittest.TestCase):
         verify.gh = lambda *a, **k: (_ for _ in ()).throw(verify.VerifierFault("gh: network down"))
         try:
             from altitude import tasks as T
-            task = T.new("altitude", "verifier fault test", "S", "request", actor="burak")
+            task = T.new("altitude", "verifier fault test", "request", actor="burak")
             task["state"] = "running"; S.save_task("altitude", task)
             d = S.task_dir("altitude", task["slug"])
             S.write_json(d / "report.json", {"landed": {"prs": [{"number": 1, "merged": True}], "main_runs": [], "deploy": "not-applicable"},
@@ -66,7 +69,7 @@ class TestSystemFault(unittest.TestCase):
             v = verify.verify("altitude", task["slug"])
             self.assertEqual(v["verdict"], "fault")
             self.assertIn("verifier fault", v["problems"][0])
-            self.assertIn("verifier", S.read_json(improve.FAULTS))
+            self.assertIn("verifier", S.read_json(incidents.FAULTS))
         finally:
             verify.gh = old
 

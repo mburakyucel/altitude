@@ -151,7 +151,7 @@ export default function Chat() {
   const ctx = num(l3["context_percent"]);
   const session = str(l3["session_id"]);
   const disabled = streaming || busy;
-  // The 0.1 project strip: one link per managed project, straight to that project's chat.
+  // One link per managed project, straight to that project's chat.
   const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
   return (
@@ -213,7 +213,7 @@ export default function Chat() {
         <textarea
           className="field w-full"
           aria-label="Message L3"
-          placeholder="Talk to L3 — or /idea … , /backlog"
+          placeholder="Talk to L3 about roadmap, architecture, or what to build"
           rows={3}
           value={draft}
           disabled={disabled}

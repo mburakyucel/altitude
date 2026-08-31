@@ -9,7 +9,6 @@ import {
   useTaskAction,
 } from "../data/api";
 import type { ProjectDecision, TaskRow } from "../data/api";
-import { launchLabel } from "../data/launches";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
 function age(value: unknown): string {
@@ -24,7 +23,7 @@ function age(value: unknown): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-/** The payload's loose corners (live, envelope, l3, config, log rows) arrive as `unknown`. */
+/** The payload's loose corners (live, l3, config, log rows) arrive as `unknown`. */
 function dict(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -43,19 +42,15 @@ function arr(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** Actions offered for a task in this state, in the 0.1 app's order. */
+/** Actions offered directly on the compact task card. */
 function actionsFor(state: string): { action: string; label: string; primary?: boolean }[] {
   const out: { action: string; label: string; primary?: boolean }[] = [];
-  if (state === "requested") out.push({ action: "propose", label: "Propose" });
-  if (["requested", "parked", "proposed"].includes(state))
-    out.push({ action: "build", label: "Build now", primary: true });
-  if (state === "approved") out.push({ action: "dispatch", label: "Dispatch" });
-  if (state === "parked") out.push({ action: "unpark", label: "Unpark" });
+  if (state === "queued") out.push({ action: "dispatch", label: "Dispatch" });
   return out;
 }
 
 function TaskCard({ project, task }: { project: string; task: TaskRow }) {
-  const [panel, setPanel] = useState<"" | "park" | "message">("");
+  const [panel, setPanel] = useState<"" | "message">("");
   const [text, setText] = useState("");
   const act = useTaskAction(project);
   const message = useL2Message(project);
@@ -64,7 +59,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   const raw = dict(task);
   const live = dict(task.live);
   const agent = dict(live.agent);
-  const envelope = dict(raw.envelope);
 
   const meta: string[] = [];
   if (state === "running") {
@@ -72,8 +66,7 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
     const agentState = str(agent.state);
     meta.push(`L2 ${status}${agentState ? `/${agentState}` : ""}`);
     meta.push(`ctx ${num(live.context_percent) ?? "?"}%`);
-    const cap = num(live.cap) ?? num(envelope.subagent_launches);
-    meta.push(launchLabel(live.subagent_launches, cap));
+    meta.push(`L1 runs ${num(live.l1_runs) ?? 0}`);
     meta.push(`edits ${num(live.edits) ?? 0}`);
   }
   const prs = arr(raw.prs);
@@ -84,7 +77,7 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   const held = state === "blocked" && Boolean(task.resume_after);
   if (held) {
     meta.push(
-      `queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold clears (${blockedReason})`,
+      `queued: Altitude resumes this L2 itself when the operational hold clears (${blockedReason})`,
     );
   } else if (blockedReason) {
     meta.push(`blocked: ${blockedReason}`);
@@ -92,12 +85,10 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
 
   const progress = str(task.progress_tail);
   const canMessage = ["running", "blocked"].includes(state);
-  const canPark = ["requested", "proposed", "approved", "blocked", "reported"].includes(state);
 
   return (
     <article className={`card space-y-3 ${state === "blocked" && !held ? "border-danger/40" : ""}`}>
       <div className="flex flex-wrap items-center gap-2">
-        {task.class ? <span className="pill">{task.class}</span> : null}
         <span className="pill">{state}</span>
         <Link
           className="text-card-title font-semibold"
@@ -135,15 +126,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
             Message L2
           </button>
         ) : null}
-        {canPark ? (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setPanel(panel === "park" ? "" : "park")}
-          >
-            Park
-          </button>
-        ) : null}
         <Link className="ml-auto text-meta" to={`/projects/${project}/tasks/${task.slug}`}>
           Open
         </Link>
@@ -153,10 +135,8 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
           <input
             className="field flex-1"
             value={text}
-            placeholder={panel === "park" ? "Why park it?" : "Message for the L2"}
-            aria-label={
-              panel === "park" ? `Reason for parking ${task.slug}` : `Message the L2 on ${task.slug}`
-            }
+            placeholder="Message for the L2"
+            aria-label={`Message the L2 on ${task.slug}`}
             onChange={(event) => setText(event.target.value)}
           />
           <button
@@ -164,16 +144,12 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
             className="btn btn-primary"
             disabled={!text.trim() || act.isPending || message.isPending}
             onClick={() => {
-              if (panel === "park") {
-                act.mutate({ project, slug: task.slug, action: "park", reason: text.trim() });
-              } else {
-                message.mutate({ project, slug: task.slug, text: text.trim() });
-              }
+              message.mutate({ project, slug: task.slug, text: text.trim() });
               setText("");
               setPanel("");
             }}
           >
-            {panel === "park" ? "Confirm park" : "Send"}
+            Send
           </button>
         </div>
       ) : null}
@@ -182,13 +158,8 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
 }
 
 /**
- * The project page's own copy of a Decision card — same POST as the Inbox, scoped to this project,
- * and the same executive shape (decision 46): context above the question, the reasoning behind it
- * in a closed "Why" disclosure. A card without context/detail renders exactly as it did before.
+ * A task blocked on user input. Task-specific discussion stays in the L2 conversation.
  */
-/** Decision 50: any option that starts with "revise" is the feedback path and needs the note. */
-const isRevise = (label: string) => /^revise/i.test(label);
-
 function DecisionCard({ project, row }: { project: string; row: ProjectDecision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
@@ -196,14 +167,12 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
   const slug = str(row.slug);
   const title = str(row.title) || slug;
   const options = arr(row.options).map(String);
-  const fallback = row.kind === "blocked" ? ["Resume", "Park", "Reject"] : ["Approve", "Revise", "Reject"];
+  const fallback = ["Resume", "Reject"];
   const labels = options.length > 0 ? options : fallback;
-  const blocked = row.kind === "blocked";
   const onSettled = () => queryClient.invalidateQueries({ queryKey: ["project", project] });
   return (
     <article className="card space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {str(row.class) ? <span className="pill">{str(row.class)}</span> : null}
         <h3 className="text-card-title font-semibold">{title}</h3>
         <span className="ml-auto text-meta text-muted">{age(row.asked)}</span>
       </div>
@@ -214,7 +183,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
       <textarea
         className="field w-full"
         rows={2}
-        placeholder={blocked ? "Note (optional)" : "Feedback — required for Revise, optional otherwise"}
+        placeholder="Answer or steering note (optional)"
         aria-label={`Note for ${title}`}
         value={note}
         onChange={(event) => setNote(event.target.value)}
@@ -225,9 +194,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
             key={label}
             type="button"
             className={index === 0 ? "btn btn-primary" : "btn"}
-            // Decision 50: a revision carries feedback — the button waits for it.
-            disabled={decide.isPending || (isRevise(label) && note.trim().length === 0)}
-            title={isRevise(label) && note.trim().length === 0 ? "Type what should change first" : undefined}
+            disabled={decide.isPending}
             onClick={() =>
               decide.mutate({ project, slug, option: index, note: note || undefined }, { onSettled })
             }
@@ -235,17 +202,6 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
             {label}
           </button>
         ))}
-        {!blocked && !labels.some(isRevise) ? (
-          <button
-            type="button"
-            className="btn"
-            disabled={decide.isPending || note.trim().length === 0}
-            title={note.trim().length === 0 ? "Type what should change first" : undefined}
-            onClick={() => decide.mutate({ project, slug, revise: true, note }, { onSettled })}
-          >
-            Revise
-          </button>
-        ) : null}
       </div>
       {row.detail ? (
         <details>
@@ -259,7 +215,6 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
 
 function NewTask({ project }: { project: string }) {
   const [title, setTitle] = useState("");
-  const [taskClass, setTaskClass] = useState("auto");
   const act = useTaskAction(project);
   return (
     <form
@@ -273,7 +228,6 @@ function NewTask({ project }: { project: string }) {
           slug: "",
           action: "new",
           title: request,
-          class: taskClass,
           request,
         });
         setTitle("");
@@ -286,17 +240,6 @@ function NewTask({ project }: { project: string }) {
         value={title}
         onChange={(event) => setTitle(event.target.value)}
       />
-      <select
-        className="field w-auto"
-        aria-label="Task class"
-        value={taskClass}
-        onChange={(event) => setTaskClass(event.target.value)}
-      >
-        <option value="auto">Auto</option>
-        <option value="S">S</option>
-        <option value="M">M</option>
-        <option value="L">L</option>
-      </select>
       <button type="submit" className="btn btn-primary" disabled={act.isPending || !title.trim()}>
         Add
       </button>
@@ -319,7 +262,6 @@ function L3Card({ project, data }: { project: string; data: Record<string, unkno
         ...(l3.rotate_next ? ["rotates next turn"] : []),
       ].join(" · ")
     : "not started yet — send a chat message";
-  const stacks = arr(config.stacks).map(String).join(", ") || "—";
   return (
     <section className="card space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -339,7 +281,7 @@ function L3Card({ project, data }: { project: string; data: Record<string, unkno
         </button>
       </div>
       <p className="text-meta text-muted">
-        stacks: {stacks} · approval: {str(config.approval) || "default"} · WIP{" "}
+        approval: {str(config.approval) || "default"} · WIP{" "}
         {num(config.wip) ?? "—"}
       </p>
       {data.hold ? (
@@ -422,7 +364,7 @@ export default function Project() {
               <li key={str(incident.id) || index} className="text-body">
                 <span className="font-semibold">{str(incident.id)}</span> {str(incident.title)}{" "}
                 <span className="text-meta text-muted">
-                  {arr(incident.tags).map(String).join(", ")} → {str(incident.rule) || "incident-only"}
+                  {arr(incident.tags).map(String).join(", ") || "evidence"}
                 </span>
               </li>
             ))}
@@ -435,7 +377,7 @@ export default function Project() {
         <ul className="mt-2 space-y-1 text-meta text-muted">
           {[...archive].reverse().map((task) => (
             <li key={task.slug}>
-              {task.slug} [{task.class}] {task.state} — {task.title}
+              {task.slug} {task.state} — {task.title}
             </li>
           ))}
         </ul>

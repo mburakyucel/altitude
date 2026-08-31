@@ -1,11 +1,9 @@
-"""alt land — the whole land-a-PR sequence as one plain command (decision 47, tier 0).
+"""The guarded land-a-PR sequence as one deterministic command.
 
-The measured why: status → add → commit → push → `gh pr create` → `gh pr view` → merge → fetch → run list cost
-~100 turns across L2/L1 sessions, and every compound form of it trips the Safety Net (R-003). Here it is one
-command: stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
+Stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
 push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
 reuse the PR, wait for checks, merge only on green — or, where the repository configures no CI at all, on a
-full local suite that passed on the base-plus-head merge candidate (R-006, I-020) — and only when asked. No
+full local suite that passed on the base-plus-head merge candidate — and only when asked. No
 model call anywhere — the commit message arrives as an argument. Idempotent: nothing to commit is a skip, an
 up-to-date push is a no-op, an open PR is reused.
 
@@ -84,6 +82,29 @@ def _resolve(branch: str, project: str | None) -> tuple[str | None, str | None, 
     return project, slug, task
 
 
+def _require_current_publisher(project: str, slug: str, task: dict) -> None:
+    """Fence automated landing to the exact currently-running L2 generation.
+
+    A hand-run command has no actor (or explicitly names Burak). Every automated
+    caller must be the L2 that owns the task now: L1s and control-plane actors do
+    not publish, and a replaced L2's inherited environment cannot publish after
+    its generation token rotates.
+    """
+    actor = os.environ.get("ALTITUDE_ACTOR")
+    if actor is None or actor == "burak":
+        return
+    if actor != "l2":
+        raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or Burak may land")
+    if task.get("state") != "running":
+        raise LandError(f"current L2 cannot land {project}/{slug}: task is not running")
+    dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+    if not dispatch_id or task.get("dispatch_id") != dispatch_id:
+        raise LandError(f"current L2 cannot land {project}/{slug}: dispatch ownership changed")
+    l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+    if not l2_token or task.get("l2_token") != l2_token:
+        raise LandError(f"current L2 cannot land {project}/{slug}: session generation changed")
+
+
 def _changes(root: Path) -> list[tuple[str, list[str]]]:
     """Working-tree changes as (XY, paths) groups — a rename is one group carrying both ends. `-z` so
     spaced and quoted paths never bite; untracked files listed one by one, never as a directory."""
@@ -106,7 +127,7 @@ def _changes(root: Path) -> list[tuple[str, list[str]]]:
 
 
 def _inside(path: str, lease: list[str]) -> bool:
-    """A lease entry that is a directory covers everything beneath it (decision 39 semantics). Entries are
+    """A directory lease covers everything beneath it. Entries are
     repo-root-relative; a malformed absolute entry like `/src` is read as `src` rather than matching nothing."""
     def norm(x: str) -> str:
         return dispatch._norm(x).lstrip("/")
@@ -197,7 +218,7 @@ def _pr_view(root: Path, target: str) -> dict | None:
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():
-            return None  # legitimately missing, not a tooling failure (decision 36)
+            return None  # legitimately missing, not a tooling failure
         raise LandError(f"gh pr view {target}: {err[-200:]}")
     try:
         return json.loads(p.stdout)
@@ -257,7 +278,7 @@ def _checks_state(root: Path, number: int) -> str:
     """One reading of the PR's checks: pass / fail / pending / skipped / none. `gh pr checks` exits non-zero
     for pending or failing checks, so the JSON body is the verdict, not the exit code. `none` is GitHub
     reporting no checks at all, which is a different fact from checks that ran and were skipped: only the
-    caller, which knows whether the repository configures CI, can say what it means (R-006)."""
+    caller, which knows whether the repository configures CI, can say what it means."""
     p = _run(["gh", "pr", "checks", str(number), "--json", "bucket"], root)
     body = (p.stdout or "").strip()
     if not body:
@@ -271,7 +292,7 @@ def _checks_state(root: Path, number: int) -> str:
     unknown = buckets - {"pass", "fail", "pending", "skipping", "cancel"}
     if unknown:
         raise LandError(f"gh pr checks #{number}: unrecognised bucket(s) {', '.join(sorted(map(str, unknown)))} — "
-                        f"refusing to read them as a pass (decision 36); this gates --merge")
+                        "refusing to read them as a pass; this gates --merge")
     if not buckets:
         return "none"
     if buckets & {"fail", "cancel"}:
@@ -279,7 +300,7 @@ def _checks_state(root: Path, number: int) -> str:
     if "pending" in buckets:
         return "pending"
     # A rollup that mixes passes with skips is not a pass: the skipped check is a configured gate that did
-    # not run, and R-006 never lets a gate be satisfied by its absence.
+    # not run; a configured gate is never satisfied by its absence.
     return "skipped" if "skipping" in buckets else "pass"
 
 
@@ -388,7 +409,7 @@ def _local_suite(cwd: Path, test_cmd: str) -> dict:
     if run.returncode == 0 and (tests is None or tests <= 0):
         result["error"] = (("the suite exited 0 but no passing-test count could be read from its output"
                             if tests is None else "the suite exited 0 but reported no passing tests")
-                           + " — the local gate is not satisfied (R-006)")
+                           + " — the local gate is not satisfied")
         _note(f"not merging: {result['error']}")
     else:
         _note(f"local suite exited {run.returncode}"
@@ -544,7 +565,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if merge and task is None:
         raise LandError(f"cannot verify a merge hold for branch {branch!r}: no task record resolved; "
                         "pass `--project` or run from the dispatch environment")
-    if hold_merge:  # decision 48 / I-060: a merge hold is the one exception to merge-by-default.
+    if hold_merge:  # an explicit merge hold is the exception to merge-by-default
         if merge:
             raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
                             f"the L3 releases it with `alt task hold-merge {slug} --off`; "
@@ -556,6 +577,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
             "pass `--project` or run from the dispatch environment"
         )
+    # This is deliberately before fetch, staging, or any GitHub call.  Put the
+    # fence in the library rather than only in bin/alt so direct callers cannot
+    # bypass current-publisher ownership.
+    _require_current_publisher(project, slug, task)
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
@@ -615,7 +640,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                   f"pushed onto a merged branch — cherry-pick them onto a new task branch")
         # Nothing was pushed and nothing can be: the PR's checks are history, and asking for them costs a
         # `gh pr checks` round trip whose answer cannot change this run. `merged` is its own checks value,
-        # never reported as a pass (decision 36).
+        # never reported as a pass.
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
                 "lease": lease_repr, "staged": [], "hold": hold_merge, "replaced": [], "local_tests": None}

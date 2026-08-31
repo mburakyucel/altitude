@@ -29,12 +29,12 @@ class TestCleanupScope(unittest.TestCase):
         git("add", "-A", cwd=cls.repo); git("commit", "-qm", "init", cwd=cls.repo)
         bare = Path(_TMP) / "origin.git"; git("init", "-q", "--bare", str(bare), cwd=cls.repo)
         git("remote", "add", "origin", str(bare), cwd=cls.repo); git("push", "-q", "origin", "main", cwd=cls.repo)
-        config.save_projects({"altitude": {"name": "altitude", "path": str(cls.repo), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(cls.repo)}})
         for name in ("running-one", "locked-one", "finished-one"):
             git("worktree", "add", "-q", "-b", f"worktree-{name}", f".claude/worktrees/{name}", "origin/main", cwd=cls.repo)
         git("worktree", "lock", ".claude/worktrees/locked-one", cwd=cls.repo)
         S.task_dir("altitude", "running-one").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "running-one", "title": "running-one", "created": S.now(), "updated": S.now(), "state": "running", "worktree": str(cls.repo / ".claude/worktrees/running-one"), "class": "S"})
+        S.save_task("altitude", {"slug": "running-one", "title": "running-one", "created": S.now(), "updated": S.now(), "state": "running", "worktree": str(cls.repo / ".claude/worktrees/running-one")})
 
     def test_only_unowned_merged_worktrees_go(self):
         engines.claude_rm, engines.claude_agents = (lambda aid: "removed"), (lambda: [])
@@ -50,21 +50,26 @@ class TestCleanupScope(unittest.TestCase):
         git("worktree", "add", "-q", "-b", "worktree-orphan", ".claude/worktrees/orphan", "origin/main", cwd=self.repo)
         def boom(): raise RuntimeError("claude agents down")
         engines.claude_rm, engines.claude_agents = (lambda aid: "removed"), boom
-        notes = dispatch.cleanup_after_done("altitude", {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "class": "S", "updated": S.now()})
+        with mock.patch("altitude.incidents.system_fault") as fault:
+            notes = dispatch.cleanup_after_done(
+                "altitude",
+                {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "updated": S.now()},
+            )
         self.assertIn("orphan", git("worktree", "list", "--porcelain", cwd=self.repo))
         self.assertTrue(any("skipped worktree cleanup" in n for n in notes), notes)
+        fault.assert_called_once()
 
 
 class TestSelfDeploy(unittest.TestCase):
     def test_pull_after_done_fast_forwards_and_flags_code_changes(self):
         repo = TestCleanupScope.repo
-        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "stacks": ["python"], "self_deploy": True}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "self_deploy": True}})
         other = Path(_TMP) / "other"; git("clone", "-q", "-b", "main", str(Path(_TMP) / "origin.git"), str(other), cwd=_TMP)
         (other / "altitude").mkdir(exist_ok=True); (other / "altitude" / "x.py").write_text("# new\n")
         (other / "hooks").mkdir(exist_ok=True); (other / "hooks" / "h.py").write_text("# hook\n")
         git("add", "-A", cwd=other); git("commit", "-qm", "code + hook", cwd=other); git("push", "-q", "origin", "main", cwd=other)
         S.task_dir("altitude", "landed").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "landed", "title": "landed", "class": "S", "state": "done", "created": S.now(), "updated": S.now()})
+        S.save_task("altitude", {"slug": "landed", "title": "landed", "state": "done", "created": S.now(), "updated": S.now()})
         notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
         self.assertTrue((repo / "hooks" / "h.py").exists(), notes)          # hooks deploy by the pull itself
         pend = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {})
@@ -73,18 +78,18 @@ class TestSelfDeploy(unittest.TestCase):
         self.assertEqual(dispatch.pull_after_done("altitude", {"slug": "landed"}), [])  # nothing new → silent
 
     def test_not_self_deploy_projects_are_untouched(self):
-        config.save_projects({"other": {"name": "other", "path": str(Path(_TMP) / "nowhere"), "stacks": []}})
+        config.save_projects({"other": {"name": "other", "path": str(Path(_TMP) / "nowhere")}})
         self.assertEqual(dispatch.pull_after_done("other", {"slug": "x"}), [])
 
     def test_self_deploy_refuses_an_ahead_main(self):
         repo = TestCleanupScope.repo
-        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "stacks": ["python"], "self_deploy": True}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(repo), "self_deploy": True}})
         (repo / "direct.txt").write_text("must not deploy\n")
         git("add", "direct.txt", cwd=repo)
         git("commit", "-qm", "direct main commit", cwd=repo)
         head = git("rev-parse", "HEAD", cwd=repo).strip()
 
-        with mock.patch("altitude.improve.system_fault") as fault:
+        with mock.patch("altitude.incidents.system_fault") as fault:
             notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
 
         self.assertEqual(git("rev-parse", "HEAD", cwd=repo).strip(), head)

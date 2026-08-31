@@ -1,8 +1,7 @@
-/* Design tokens — canonical values from docs/DECISIONS.md decision 37 (settled 2026-08-23/24; dark palette + sizes revised 2026-08-25 for WCAG AA).
- * The build consumes THESE variables; this file is the code spec.
+/* Design tokens used directly by the build.
  * Dashboard world: light by default, [data-theme="dark"] flips it.
  * Every token has a value in BOTH blocks below (or is theme-independent): a token missing from the
- * dark block leaks its light value into dark subtrees — that is the bug the 2026-08-25 revision fixed.
+ * dark block leaks its light value into dark subtrees.
  * Contrast floor: every text token ≥ 4.5:1 on both --page and --surface of its theme (WCAG AA).
  */
 

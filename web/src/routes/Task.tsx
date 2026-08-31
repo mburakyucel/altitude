@@ -2,11 +2,10 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
-import type { TaskView } from "../data/api";
-import { launchLabel } from "../data/launches";
+import type { TaskMessage, TaskView } from "../data/api";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
-// fields (dispatch_id, session_id, worktree, envelope, spend, live, ...) arrives typed
+// fields (dispatch_id, session_id, worktree, spend, live, ...) arrives typed
 // `unknown`, so narrow it here rather than widening the schema in api.ts.
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -28,28 +27,12 @@ interface ActionSpec {
 }
 
 const ACTIONS: ActionSpec[] = [
-  { action: "propose", label: "Propose", states: ["requested"] },
-  {
-    action: "build",
-    label: "Build now",
-    states: ["requested", "parked", "proposed"],
-    primary: true,
-    title:
-      "Executive override: approve as requested and dispatch now, skipping the proposal/critic loop",
-  },
-  { action: "dispatch", label: "Dispatch", states: ["approved"] },
-  { action: "unpark", label: "Unpark", states: ["parked"] },
+  { action: "dispatch", label: "Dispatch", states: ["queued"] },
   { action: "done", label: "Mark done", states: ["reported"] },
-  {
-    action: "park",
-    label: "Park",
-    states: ["requested", "proposed", "approved", "blocked", "reported"],
-    reason: true,
-  },
   {
     action: "reject",
     label: "Reject",
-    states: ["requested", "proposed", "approved", "blocked", "reported", "parked"],
+    states: ["queued", "running", "blocked", "reported"],
     reason: true,
   },
 ];
@@ -78,6 +61,29 @@ function Events({ events }: { events: Array<Record<string, unknown>> }) {
   );
 }
 
+function messageTime(at: string | null | undefined): string {
+  if (!at) return "";
+  const date = new Date(at);
+  return Number.isNaN(date.valueOf()) ? "" : date.toLocaleString();
+}
+
+function ConversationMessage({ message }: { message: TaskMessage }) {
+  const mine = message.role === "burak";
+  const when = messageTime(message.at);
+  return (
+    <article
+      className={`card max-w-[85%] space-y-1 ${mine ? "ml-auto" : "mr-auto"}`}
+      data-role={message.role}
+    >
+      <p className="text-meta text-muted">
+        {mine ? "You" : "L2"}
+        {when ? ` · ${when}` : ""}
+      </p>
+      <p className="whitespace-pre-wrap text-body text-ink-2">{message.text}</p>
+    </article>
+  );
+}
+
 function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState("");
@@ -87,10 +93,10 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
 
   const slug = task.slug;
   const state = task.state ?? "";
-  const envelope = rec(task["envelope"]);
   const spend = rec(task["spend"]);
   const live = rec(task["live"]);
   const files = Object.entries(task.files ?? {});
+  const messages = task.messages ?? [];
   const events = task.events ?? [];
   const dispatchId = str(task["dispatch_id"]);
   const sessionId = str(task["session_id"]);
@@ -102,9 +108,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   // it gets the sentence and the neutral colour, never the danger line.
   const held = state === "blocked" && Boolean(task.resume_after);
   const model = str(task["model"]);
-  const spendUsed = spend["subagent_launches_hook"] ?? spend["subagent_launches_reported"];
-  const cap = envelope["subagent_launches"] ?? spend["cap"];
-  const hasEnvelope = Object.keys(envelope).length > 0 || Object.keys(spend).length > 0;
+  const hasActivity = Object.keys(spend).length > 0;
   const liveState = rec(live["agent"]);
 
   const refreshTask = () => {
@@ -131,7 +135,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          {task.class ? <span className="pill">{task.class}</span> : null}
           {state ? <span className="pill">{state}</span> : null}
           <h1 className="text-page-title font-semibold">{task.title || slug}</h1>
         </div>
@@ -144,7 +147,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         {agentId ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
         {held ? (
           <p className="text-body text-ink-2">
-            Queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold
+            Queued: Altitude resumes this L2 itself when the operational hold
             clears ({blockedReason})
           </p>
         ) : blockedReason ? (
@@ -152,15 +155,12 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         ) : null}
       </header>
 
-      {hasEnvelope ? (
+      {hasActivity ? (
         <section className="card space-y-1">
-          <h2 className="label">Envelope</h2>
-          <p className="text-body text-ink-2">{launchLabel(spendUsed, cap)}</p>
+          <h2 className="label">Activity</h2>
           <p className="text-meta text-muted">
-            turns {num(spend["turns"]) ?? 0} · max turns {num(envelope["max_turns"]) ?? "?"} · L1 in
-            flight {num(envelope["l1_in_flight"]) ?? "?"} · edits {num(spend["edits_hook"]) ?? 0} ·
-            retries {num(spend["retries"]) ?? 0}
-            {str(envelope["verification"]) ? ` · verification ${str(envelope["verification"])}` : ""}
+            turns {num(spend["turns"]) ?? 0} · L1 runs {num(spend["subagent_launches_reported"]) ?? 0}
+            {" · "}edits {num(spend["edits_hook"]) ?? 0} · retries {num(spend["retries"]) ?? 0}
           </p>
         </section>
       ) : null}
@@ -169,8 +169,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <section className="card space-y-1">
           <h2 className="label">Live</h2>
           <p className="text-body text-ink-2">
-            {str(liveState["status"]) || str(live["state"]) || "running"} ·{" "}
-            {launchLabel(live["subagent_launches"], live["cap"])}
+            {str(liveState["status"]) || str(live["state"]) || "running"} · L1 runs {num(live["l1_runs"]) ?? 0}
           </p>
           <p className="text-meta text-muted">
             edits {num(live["edits"]) ?? 0}
@@ -180,12 +179,56 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         </section>
       ) : null}
 
+      <section className="space-y-3" aria-label="Task conversation">
+        <h2 className="label">Task conversation</h2>
+        {messages.length === 0 ? <p className="text-muted">No messages yet.</p> : null}
+        <div className="flex flex-col gap-3">
+          {messages.map((item, index) => (
+            <ConversationMessage key={item.id || `${item.at ?? "message"}-${index}`} message={item} />
+          ))}
+        </div>
+        {state === "running" || state === "blocked" ? (
+          <div className="space-y-2">
+            <textarea
+              className="field w-full"
+              aria-label="Message the L2"
+              placeholder="Ask a question or steer this task"
+              rows={3}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && message.trim()) {
+                  e.preventDefault();
+                  sendL2.mutate(
+                    { project, slug, text: message.trim() },
+                    { onSuccess: () => setMessage("") },
+                  );
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={sendL2.isPending || message.trim().length === 0}
+              onClick={() => {
+                sendL2.mutate(
+                  { project, slug, text: message.trim() },
+                  { onSuccess: () => setMessage("") },
+                );
+              }}
+            >
+              Send
+            </button>
+          </div>
+        ) : null}
+      </section>
+
       <section className="space-y-2">
         <h2 className="label">Actions</h2>
         <input
           className="field w-full"
           aria-label="Reason"
-          placeholder="Reason (required to park / reject)"
+          placeholder="Reason (required to reject)"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
@@ -196,9 +239,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
               type="button"
               className={a.primary ? "btn btn-primary" : "btn"}
               title={a.title}
-              // Park and Reject are destructive and irreversible from here; the 0.1 app refused
-              // them without a reason and Project.tsx still does, so they stay disabled until one
-              // is typed rather than firing on a single unconfirmed click.
+              // Reject archives the task immediately, so require an explicit reason.
               disabled={act.isPending || (a.reason === true && reason.trim().length === 0)}
               onClick={() => run(a)}
             >
@@ -208,41 +249,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         </div>
       </section>
 
-      {state === "running" || state === "blocked" ? (
-        <section className="space-y-2">
-          <h2 className="label">Message the L2</h2>
-          <textarea
-            className="field w-full"
-            aria-label="Message the L2"
-            rows={2}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={sendL2.isPending || message.trim().length === 0}
-            onClick={() => {
-              sendL2.mutate(
-                { project, slug, text: message.trim() },
-                { onSuccess: () => setMessage("") },
-              );
-            }}
-          >
-            Send
-          </button>
-        </section>
-      ) : null}
-
-      {task.critique != null ? (
-        <details className="card">
-          <summary className="cursor-pointer text-card-title">
-            critique{str(rec(task.critique)["verdict"]) ? ` (${str(rec(task.critique)["verdict"])})` : ""}
-          </summary>
-          <Json value={task.critique} />
-        </details>
-      ) : null}
-
       {task.report_json != null ? (
         <details className="card">
           <summary className="cursor-pointer text-card-title">report.json</summary>
@@ -251,7 +257,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
       ) : null}
 
       {files.map(([name, body]) => (
-        <details key={name} className="card" open={name === "report" || name === "proposal"}>
+        <details key={name} className="card" open={name === "report"}>
           <summary className="cursor-pointer text-card-title">{name}</summary>
           <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-meta text-ink-2">{body}</pre>
         </details>

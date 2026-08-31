@@ -1,4 +1,4 @@
-"""Decision 45: `alt l1 run` — detached run on either engine, own worktree, cap enforced, record closed with the result."""
+"""Optional `alt l1 run` workers are isolated, detached, and leave durable results."""
 import json
 import os
 import stat
@@ -31,7 +31,7 @@ for f in ("codex", "claude"):
 os.environ["CODEX_BIN"] = str(FAKE / "codex")
 os.environ["CLAUDE_BIN"] = str(FAKE / "claude")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, l1, route, monitor  # noqa: E402
+from altitude import config, state as S, tasks as T, l1, route, monitor, recovery  # noqa: E402
 
 REPO = _TMP / "repo"
 
@@ -58,12 +58,27 @@ class TestL1Runs(unittest.TestCase):
         subprocess.run(["git", "init", "-q", "--bare", str(remote)], cwd=REPO, check=True)
         subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=REPO, check=True)
         subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=REPO, check=True)
-        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO)}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
 
-    def _task(self, slug, cls="S", engine=None):
-        T.new("altitude", slug, cls, "req", actor="l3", engine=engine)
+    def setUp(self):
+        keys = ("ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK",
+                "ALTITUDE_DISPATCH_ID", "ALTITUDE_L2_TOKEN")
+        self._owner_env = {key: os.environ.get(key) for key in keys}
+
+    def tearDown(self):
+        # A sandbox-denial case intentionally trips the production recovery fuse. Keep that
+        # evidence from leaking into unrelated resume tests in the same discovery process.
+        recovery.hold_path().unlink(missing_ok=True)
+        for key, value in self._owner_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def _task(self, slug):
+        T.new("altitude", slug, "req", actor="l3")
         worktree = REPO / ".claude" / "worktrees" / slug
         subprocess.run(
             ["git", "worktree", "add", "-q", "-b", f"worktree-{slug}", str(worktree), "origin/main"],
@@ -71,8 +86,13 @@ class TestL1Runs(unittest.TestCase):
         )
         with S.project_lock("altitude"):
             t = S.load_task("altitude", slug)
-            t["worktree"], t["branch"] = str(worktree), f"worktree-{slug}"
+            t.update({"worktree": str(worktree), "branch": f"worktree-{slug}", "state": "running",
+                      "dispatch_id": f"{slug}-1", "session_id": f"session-{slug}",
+                      "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}"})
             S.save_task("altitude", t)
+        os.environ.update({"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": "altitude",
+                           "ALTITUDE_TASK": slug, "ALTITUDE_DISPATCH_ID": f"{slug}-1",
+                           "ALTITUDE_L2_TOKEN": f"token-{slug}"})
         brief = S.task_dir("altitude", slug) / "sub-1.md"; brief.write_text("# sub-brief\nchange one thing\n")
         return slug, brief
 
@@ -91,24 +111,26 @@ class TestL1Runs(unittest.TestCase):
         kinds = [e["kind"] for e in S.read_events("altitude", slug)] if hasattr(S, "read_events") else ["l1-started", "l1-finished"]
         self.assertIn("l1-started", kinds); self.assertIn("l1-finished", kinds)
 
-    def test_task_engine_forces_claude_and_pr_is_parsed(self):
-        slug, brief = self._task("l1-claude", engine="claude")
-        rec = l1.start("altitude", slug, brief)
-        self.assertEqual(rec["engine"], "claude"); self.assertIn("forced on the task", rec["why"])
+    def test_run_engine_override_selects_claude_and_pr_is_parsed(self):
+        slug, brief = self._task("l1-claude")
+        rec = l1.start("altitude", slug, brief, engine="claude")
+        self.assertEqual(rec["engine"], "claude"); self.assertIn("command line", rec["why"])
         done = _wait_done("altitude", slug, rec["name"])
         self.assertEqual(done["result"]["pr"], 42)
 
-    def test_in_flight_cap_and_reviewer_on_the_other_engine(self):
-        slug, brief = self._task("l1-cap")  # S: one implementer in flight
-        first = l1.start("altitude", slug, brief)
-        # a second implementer while the first is (possibly) still running must be refused by the cap
-        with S.project_lock("altitude"):
-            pass
-        rec = l1.load("altitude", slug, first["name"])
-        if not rec.get("done"):
-            with self.assertRaises(T.TransitionError):
-                l1.start("altitude", slug, brief)
-        _wait_done("altitude", slug, first["name"])
+    def test_reviewer_can_run_on_the_other_engine(self):
+        slug, brief = self._task("l1-review")
+        # This is a routing/launch test, not a Codex sandbox integration test. Record the
+        # completed author generation directly so a host-level Codex preflight denial cannot
+        # trip the recovery fuse and make the independent Claude reviewer look broken.
+        l1.save("altitude", slug, {
+            "n": 1, "name": "implementer-1", "role": "implementer", "engine": "codex",
+            "why": "default policy", "model": None,
+            "worktree": str(REPO / ".claude" / "worktrees" / slug),
+            "branch": f"worktree-{slug}", "brief": str(brief), "started": S.now(),
+            "pid": None, "done": S.now(),
+            "result": {"error": None, "pr": None, "summary": "synthetic completed author"},
+        })
         rev = l1.start("altitude", slug, brief, role="reviewer")
         self.assertEqual(rev["engine"], "claude", "author was codex → reviewer takes claude")
         self.assertEqual(
@@ -119,18 +141,6 @@ class TestL1Runs(unittest.TestCase):
         self.assertIsNone(done["result"]["error"])
         st = l1.status("altitude", slug)
         self.assertEqual([r["role"] for r in st], ["implementer", "reviewer"])
-
-    def test_cli_counts_as_a_launch_for_the_cap_hook(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("cap", Path(__file__).resolve().parent.parent / "hooks" / "subagent_cap.py")
-        src = (Path(__file__).resolve().parent.parent / "hooks" / "subagent_cap.py").read_text()
-        ns = {}
-        exec(src.split("\ninp = json.load")[0], ns)  # the regex + is_launch, without the hook's stdin main
-        self.assertTrue(ns["is_launch"]("bin/alt l1 run --brief x.md"))
-        self.assertTrue(ns["is_launch"]("alt l1 run --role reviewer --brief r.md"))
-        self.assertFalse(ns["is_launch"]("alt l1 wait implementer-1"))
-        self.assertFalse(ns["is_launch"]("alt l1 status"))
 
     def test_immutable_parent_sha_is_used_if_l2_head_moves_after_validation(self):
         slug, brief = self._task("l1-parent-race")
@@ -188,6 +198,28 @@ class TestL1Runs(unittest.TestCase):
         self.assertEqual(Path(rec["worktree"]).resolve(), parent.resolve())
         self.assertEqual(rec["branch"], f"worktree-{slug}")
         _wait_done("altitude", slug, rec["name"])
+
+    def test_stale_blocked_and_recovery_held_l2s_cannot_launch_l1(self):
+        slug, brief = self._task("l1-owner-fence")
+        with self.assertRaisesRegex(T.TransitionError, "ownership changed"):
+            l1.start("altitude", slug, brief, expected_dispatch_id=f"{slug}-1",
+                     expected_l2_token="stale-token")
+
+        with S.project_lock("altitude"):
+            task = S.load_task("altitude", slug)
+            task["state"] = "blocked"
+            S.save_task("altitude", task)
+        with self.assertRaisesRegex(T.TransitionError, "current running L2"):
+            l1.start("altitude", slug, brief)
+
+        with S.project_lock("altitude"):
+            task = S.load_task("altitude", slug)
+            task["state"] = "running"
+            S.save_task("altitude", task)
+        recovery.hold("test recovery episode", kind="test", actor="l3")
+        with self.assertRaisesRegex(T.TransitionError, "recovery hold"):
+            l1.start("altitude", slug, brief)
+        self.assertEqual(l1.list_runs("altitude", slug), [])
 
 
 if __name__ == "__main__":

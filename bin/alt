@@ -36,7 +36,7 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    l1p = sub.add_parser("l1", help="L1 runs on either engine (decision 45): run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
+    l1p = sub.add_parser("l1", help="optional L1 runs on either engine: run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
     lr = l1s.add_parser("run"); lr.add_argument("--brief", required=True); lr.add_argument("--role", default="implementer", choices=("implementer", "reviewer"))
     lr.add_argument("--engine", choices=("claude", "codex")); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
     lw = l1s.add_parser("wait"); lw.add_argument("name", nargs="?"); lw.add_argument("--timeout", type=int, default=540)
@@ -44,36 +44,33 @@ def main(argv=None) -> None:
     lx = l1s.add_parser("_exec"); lx.add_argument("slug"); lx.add_argument("name")
 
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
-    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--stacks", default=""); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
+    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
     ps.add_parser("list"); ps.add_parser("discover")
     r = ps.add_parser("remove"); r.add_argument("name")
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--class", dest="cls", default="auto", choices=list(S.CLASSES) + ["auto"], help="S|M|L, or auto (default): the intake sizer picks (decision 53)"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
-    pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--context"); pr.add_argument("--detail"); pr.add_argument("--option", action="append")
-    ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
-    aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
-    for name in ("reject", "park", "block"):
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
+    for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("unpark", "show", "events"):
+    for name in ("show", "events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
-    rs = ts.add_parser("resume", help="decision 52: re-attach a blocked L2 (its transcript, its worktree); raise the envelope first when the block was the cap")
-    rs.add_argument("slug"); rs.add_argument("--launches", type=int); rs.add_argument("--turns", type=int)
-    rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or the granted cap")
-    sz = ts.add_parser("size", help="decision 53: set (or override) a requested task's class"); sz.add_argument("slug"); sz.add_argument("cls", choices=list(S.CLASSES)); sz.add_argument("--why", required=True); sz.add_argument("--paths")
+    rs = ts.add_parser("resume", help="re-attach a blocked L2 with its transcript and worktree")
+    rs.add_argument("slug")
+    rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or answer")
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
-    hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
+    hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
+    rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
+    rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
     ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
 
     f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
     sub.add_parser("decisions"); sub.add_parser("agents"); sub.add_parser("digest"); sub.add_parser("monitor")
-    pp = sub.add_parser("propose"); pp.add_argument("slug"); pp.add_argument("--critic", action="store_true"); pp.add_argument("--model")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -81,14 +78,13 @@ def main(argv=None) -> None:
     ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat")
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
-    inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[]); inew.add_argument("--generalizable", default="unknown"); inew.add_argument("--mechanism", default="incident-only"); inew.add_argument("--scope", default="project")
+    inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[])
     iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--reason", required=True)
     ics.add_parser("list")
-    ru = sub.add_parser("rule"); rus = ru.add_subparsers(dest="rcmd", required=True)
-    rp = rus.add_parser("propose"); rp.add_argument("--incident", required=True); rp.add_argument("--title", required=True); rp.add_argument("--text", required=True); rp.add_argument("--mechanism", default="rule", choices=["rule", "instruction", "skill", "incident-only"]); rp.add_argument("--scope", default="project", choices=["project", "stack", "global"]); rp.add_argument("--stack"); rp.add_argument("--where", default=""); rp.add_argument("--prevents", default=""); rp.add_argument("--effect", default="")
-    rus.add_parser("list"); rus.add_parser("audit-input")
-    ideas = sub.add_parser("idea"); ideas.add_argument("text")
-    sub.add_parser("backlog")
+    rc = sub.add_parser("recovery"); rcs = rc.add_subparsers(dest="recovery_cmd", required=True)
+    rcs.add_parser("status")
+    rh = rcs.add_parser("hold"); rh.add_argument("--reason", required=True)
+    rr = rcs.add_parser("clear"); rr.add_argument("--reason", required=True)
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
     sub.add_parser("install-git-guards")
@@ -104,7 +100,15 @@ def main(argv=None) -> None:
         if not slug:
             sys.exit("alt l1: ALTITUDE_TASK required (every L2 session has it)")
         if args.lcmd == "run":
-            out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model, name=args.name, cwd=args.cwd))
+            if ACTOR != "l2":
+                sys.exit("alt l1 run: only the current L2 may launch task helpers")
+            dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            if not dispatch_id or not l2_token:
+                sys.exit("alt l1 run: ALTITUDE_DISPATCH_ID and ALTITUDE_L2_TOKEN are required")
+            out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model,
+                         name=args.name, cwd=args.cwd, expected_dispatch_id=dispatch_id,
+                         expected_l2_token=l2_token))
         elif args.lcmd == "wait":
             out(L1.wait(p, slug, args.name, timeout=args.timeout))
         elif args.lcmd == "status":
@@ -118,7 +122,7 @@ def main(argv=None) -> None:
             path = Path(args.path or (config.PROJECT_ROOTS[0] / args.name)).expanduser()
             if not path.is_dir():
                 sys.exit(f"alt: {path} is not a directory")
-            P[args.name] = {"path": str(path), "stacks": [s for s in args.stacks.split(",") if s], "approval": args.approval, "wip": args.wip}
+            P[args.name] = {"path": str(path), "approval": args.approval, "wip": args.wip}
             config.save_projects(P); config.project_dir(args.name).mkdir(parents=True, exist_ok=True); S.regen_state_md(args.name); out(P[args.name])
         elif args.pcmd == "remove":
             P.pop(args.name, None); config.save_projects(P); out("removed")
@@ -132,42 +136,26 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine, hold_merge=args.hold_merge))
-        elif tc == "propose":
-            out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR, detail=args.detail, context=args.context))
-        elif tc == "approve":
-            out(T.approve(p, args.slug, args.option, actor=ACTOR, note=args.note))
-        elif tc == "auto-approve":
-            out(T.auto_approve(p, args.slug, args.reason))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
-        elif tc == "park":
-            out(T.park(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "block":
             out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
-            if args.launches or args.turns:
-                T.raise_envelope(p, args.slug, launches=args.launches, turns=args.turns, actor=ACTOR)
             t = S.load_task(p, args.slug)
             if t["state"] == "blocked" and t.get("session_id"):
                 answer = args.answer or "Continue from your progress file; finish to *done* and rewrite the report."
-                if args.launches:
-                    answer = f"Envelope raised to {args.launches} subagent launches. " + answer
                 from altitude import dispatch
                 res = dispatch.resume_blocked(p, args.slug, answer, prefix="Altitude: ")
                 resumed = S.load_task(p, args.slug)
                 if res.get("deferred"):
                     out({"slug": args.slug, "state": "blocked", "deferred": True,
-                         "waiting": resumed.get("blocked_reason"), "envelope": resumed["envelope"]})
+                         "waiting": resumed.get("blocked_reason")})
                 else:
                     out({"slug": args.slug, "state": "running", "deferred": False,
-                         "agent": (res.get("agent") or {}).get("id"), "envelope": resumed["envelope"]})
+                         "agent": (res.get("agent") or {}).get("id")})
             else:
                 out(T.resume(p, args.slug, actor=ACTOR))
-        elif tc == "unpark":
-            out(T.unpark(p, args.slug, actor=ACTOR))
-        elif tc == "size":
-            out(T.set_class(p, args.slug, args.cls, args.why, paths=[x for x in (args.paths or "").split(",") if x.strip()], actor=ACTOR))
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
             if not declared:
@@ -188,6 +176,16 @@ def main(argv=None) -> None:
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
+        elif tc == "reply":
+            if ACTOR != "l2":
+                sys.exit("alt task reply: only the current L2 may use this command")
+            slug = args.slug or os.environ.get("ALTITUDE_TASK")
+            dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            if not slug or not dispatch_id or not l2_token:
+                sys.exit("alt task reply: ALTITUDE_TASK, ALTITUDE_DISPATCH_ID, and ALTITUDE_L2_TOKEN are required")
+            out(T.append_task_message(p, slug, "l2", _stdin_or_file(args),
+                                      expected_dispatch_id=dispatch_id, expected_l2_token=l2_token, actor="l2"))
         elif tc == "show":
             out(S.load_task(p, args.slug))
         elif tc == "status":
@@ -198,8 +196,10 @@ def main(argv=None) -> None:
             out(status.status(p, slug))
         elif tc == "events":
             out(S.read_events(p, args.slug))
+        elif tc == "messages":
+            out(T.task_messages(p, args.slug))
         elif tc == "list":
-            out([{k: t.get(k) for k in ("slug", "class", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
+            out([{k: t.get(k) for k in ("slug", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
         return
     if c == "fyi":
         out(T.fyi(_project(args), args.slug, args.text, actor=ACTOR)); return
@@ -211,12 +211,6 @@ def main(argv=None) -> None:
         from altitude import engines; out(engines.claude_agents()); return
     if c == "monitor":
         from altitude import monitor; out({"quota": monitor.quota(), "sessions": monitor.sessions()}); return
-    if c == "propose":
-        from altitude import propose; p = _project(args)
-        res = propose.run_proposal(p, args.slug, model=args.model)
-        if args.critic or S.load_task(p, args.slug)["class"] == "L":
-            res["critique"] = propose.run_critic(p, args.slug)
-        out(res); return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return
     if c == "verify":
@@ -241,34 +235,31 @@ def main(argv=None) -> None:
     if c == "l3-reset":
         from altitude import l3; l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
     if c == "incident":
-        from altitude import improve; p = _project(args)
+        from altitude import incidents; p = _project(args)
         if args.icmd == "new":
-            out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause, tags=args.tag,
-                                     generalizable=args.generalizable, mechanism=args.mechanism, scope=args.scope, actor=ACTOR))
+            out(incidents.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
+                                     tags=args.tag, actor=ACTOR))
         elif args.icmd == "amend":
             fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status)) if v is not None}
             try:
-                out(improve.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
+                out(incidents.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:
-            out([r for r in improve.index() if r["project"] == p])
+            out([r for r in incidents.index() if r["project"] == p])
         return
-    if c == "rule":
-        from altitude import improve, rules; p = _project(args)
-        if args.rcmd == "propose":
-            out(improve.propose_rule(p, incident=args.incident, title=args.title, text=args.text, mechanism=args.mechanism, scope=args.scope,
-                                     stack=args.stack, where=args.where, prevents=args.prevents, effect=args.effect, actor=ACTOR))
-        elif args.rcmd == "audit-input":
-            out(improve.audit_input(p))
+    if c == "recovery":
+        from altitude import recovery
+        if args.recovery_cmd == "hold":
+            out(recovery.hold(args.reason, actor=ACTOR))
+        elif args.recovery_cmd == "clear":
+            try:
+                out(recovery.clear(args.reason, actor=ACTOR))
+            except ValueError as e:
+                sys.exit(f"alt: {e}")
         else:
-            proj = config.project(p)
-            out(rules.global_rules() + rules.stack_rules(proj.get("stacks", [])) + rules.project_rules(config.project_path(p)))
+            out(recovery.status() or {"active": False})
         return
-    if c == "idea":
-        from altitude import intake; res = intake.idea(_project(args), args.text, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
-    if c == "backlog":
-        from altitude import intake; res = intake.backlog(_project(args), on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
     if c == "serve":
         from altitude import server; server.main(host=args.host, port=args.port); return
     if c == "install-statusline":

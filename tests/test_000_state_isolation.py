@@ -21,7 +21,7 @@ SUITE_OS_HOME = SUITE_HOME / "home"
 SUITE_OS_HOME.mkdir()
 
 # ALTITUDE_HOME protects Altitude's own state.  HOME must also be isolated before the first Altitude import:
-# dispatch, monitor, mechanize and server intentionally use ~/.claude in production, and a test that exercises one
+# dispatch, monitor and server intentionally use ~/.claude in production, and a test that exercises one
 # of those boundaries must never read or write the operator's live Claude jobs, projects or settings.
 os.environ["HOME"] = str(SUITE_OS_HOME)
 os.environ["ALTITUDE_HOME"] = str(SUITE_HOME)

@@ -11,14 +11,14 @@ const NAV = [
   { to: "/monitor", label: "Monitor", end: false, badge: false },
 ];
 
-/** The persistent readout from the 0.1 header: "5h 12% · 7d 40%", or "quota unknown". */
+/** The persistent readout: "5h 12% · 7d 40%", or "quota unknown". */
 function quotaText(quota: Quota | undefined): string {
   return quota && quota.known && quota.five_hour != null && quota.seven_day != null
     ? `5h ${Math.round(quota.five_hour)}% · 7d ${Math.round(quota.seven_day)}%`
     : "quota unknown";
 }
 
-/** Layout route: sidebar at md and up, five-tab bottom bar below md. */
+/** Layout route: sidebar at md and up, four-tab bottom bar below md. */
 export default function AppShell() {
   // Shared with every page through the ["overview"] query cache — no extra request.
   const overview = useOverview();
@@ -62,7 +62,7 @@ export default function AppShell() {
       </main>
       <nav
         aria-label="Primary, bottom bar"
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-border bg-surface md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-border bg-surface md:hidden"
       >
         {NAV.map((item) => (
           <NavLink

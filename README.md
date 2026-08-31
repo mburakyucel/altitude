@@ -1,47 +1,48 @@
 # Altitude
 
-*Keep Burak at altitude.* Altitude is an experimental control surface for turning high-level work
-into bounded agent execution while keeping the human at the decision points. The first implementation
-overbuilt its orchestration and self-healing control plane; the runtime is now deliberately stopped
-for an architecture reset. Start with the as-built map and agreed operating model below.
+Altitude turns a project-level conversation into isolated, reviewable work without making Burak
+manage agent plumbing. L3 is the project coordinator. Each active task has one directly reachable
+L2 owner, and that L2 may work alone or use optional L1 implementers and reviewers.
 
-## Docs
+Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
+[`design/wireframes/README.md`](design/wireframes/README.md).
 
-1. `docs/ARCHITECTURE.md` — **start here**: current as-built system, failure loop, agreed L3/L2/L1 responsibilities, flexible delegation model, collision boundaries, recovery behavior, and restart boundary.
-2. `docs/VISION.md` — the original problem, product intent, principles, and success criteria.
-3. `docs/ROLES.md` — the older L1/L2/L3 contract; historical input to the reset, not authority to restart it.
-4. `docs/DECISIONS.md` and `docs/RULES.md` — historical decision and rule ledgers; they contain drift and must be reconciled before becoming binding again.
-5. `docs/BEFORE-BUILDING.md`, `docs/BUILDING-BLOCKS.md`, and `docs/LANDSCAPE.md` — original research and constraints.
+## Current operating model
 
-Status 2026-08-31: **stabilization reset**. The service is stopped and masked. Existing tasks,
-sessions, rules, incidents, and worktrees are being archived instead of resumed. Future work is
-consolidated in issues #104–#109; no old task should be replayed automatically.
+- A request becomes a queued task owned end-to-end by one L2.
+- Burak discusses roadmap and project direction with L3, and task-specific choices directly with
+  the task's L2.
+- Every code change uses an isolated worktree and branch, then a PR. The L2 may merge after the
+  applicable checks and review unless an explicit merge hold says otherwise.
+- Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
+  rejected tasks are archived immediately.
+- A system fault records private evidence and activates the recovery fuse. L3 coordinates
+  operational recovery and may delegate one explicit recovery L2; incidents never create work or
+  sessions recursively.
 
-GitHub CI has one base-owned `Remote tests / Python` check for pull requests and main pushes. It
-checks out the exact event commit and runs the repository's Python tests with throwaway runtime
-state; the former cgroup, manifest, and evidence-artifact gate is no longer part of the system.
+## Repository and runtime
 
-## Context this builds on
+`altitude/` is a standard-library Python package. `bin/alt` is the CLI, `personas/` contains the
+three execution roles plus the optional reviewer, `schemas/` defines L2/reviewer reports,
+`hooks/` enforces repository boundaries and records counters, and `web/` is the React UI built
+into `web/dist/` for the Python server to serve.
 
-- `~/Projects/career-platform/docs/ENGINEERING.md` — the existing orchestrator → worktree-subagent pattern, progress files, "Report for Burak", never-list.
-- `~/Projects/system-design/selfhost/README.md` — WireGuard + always-on PC + phone-facing server that already runs `claude -p` on the subscription seat.
-- `~/Projects/voice-tutor` — local Kokoro TTS and the Stop-hook speaker (audio channel).
+Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
+tasks, archived tasks, L3 and L2 conversations, monitor snapshots, recovery state, and private
+incident evidence. Runtime state is not source-controlled.
 
-- `docs/KICKOFF.md` is the historical build kickoff. It is retained for provenance and is not the
-  current starting point.
+Useful commands:
 
-## Runtime hold
-
-Do not start or install the service during the reset. The commands below are retained only as
-developer reference; using them requires an explicit human decision after the archive and
-architecture review.
-
+```sh
+make test
+make web
+bin/alt --project <name> state
+bin/alt --project <name> task status <slug>
 ```
-make web                      # build the SPA into web/dist (pnpm install --frozen-lockfile + vite build) — once, and after any web/ change
-make run                      # local development server only; held during stabilization
-make install-service          # held during stabilization
-```
 
-Web app: a Vite 7 / React 19 / TypeScript SPA in `web/` — Tailwind 4 over `web/design/tokens.css`, react-router, TanStack Query 5 polling the JSON API, zod at the edge — built by `make web` into `web/dist`, which altd serves with an SPA fallback (any unknown path returns `index.html`, so deep links and a phone refresh work). Six current routes: Inbox, Projects, Project, Task, Chat, and Monitor. The Python server owns the API; the SPA owns nothing but rendering.
+## Service hold
 
-Layout: `altitude/` (stdlib package: state, tasks, engines, l3, propose, dispatch, verify, improve, monitor, digest, intake, server) · `bin/alt` · `personas/` · `rules/{global,stacks}/` · `schemas/` · `templates/` · `hooks/` · `web/` · `systemd/` · `docs/`. Runtime state: `~/.altitude/` (`projects.json`, `<project>/{STATE.md,l3.json,chat.jsonl,inbox.jsonl,tasks/,archive/,incidents/}`, `monitor/`, `incidents.jsonl`).
+The Altitude service is intentionally stopped and runtime-masked during the architecture cutover.
+Do not start or unmask it as part of ordinary development. Restart requires a separate explicit
+authorization after the cutover PR and its main-branch CI run are verified.

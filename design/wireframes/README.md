@@ -5,9 +5,9 @@ career-platform convention without `support.js`). They are **drafts for review, 
 reference** — every board says so with its `draft` pill. The spec the build consumes stays
 `web/design/tokens.css` and the code under `web/`.
 
-This preserved checkpoint contains **3 of the 12 planned boards**. The originating task is paused;
-these files are not approval to implement the design. The remaining nine boards and the findings
-from the first visual review are deferred rather than kept alive as agent tasks.
+This first-draft checkpoint contains three boards. These files are not approval to implement the
+design. Further boards and visual review belong in future, explicitly selected work rather than an
+active agent task.
 
 The boards derive their colours, type scale, radii, target size, sidebar width, drawer width, and
 spacing scale from `web/design/tokens.css`. Layout and annotation dimensions are board-local, and
@@ -42,25 +42,19 @@ font loading, a clean browser console, token fidelity, accessibility, or absence
 
 - **Brand.dc.html** — the token sheet: both palettes as labelled swatches with name and hex, the type
   scale at size with token, px and role, radii, the 44px target, the sidebar and drawer widths, the
-  spacing scale, the atoms (card, pill, buttons, field, label) and the data colours with the rule
+  spacing scale, the atoms (card, pill, buttons, field, label) and the data colours with the principle
   that text never wears one. The legend for the set.
-- **Inbox.dc.html** — the Inbox at desktop width inside the shell: three decisions (an ordinary
-  proposal, a blocked task with the danger-tinted border, one from another project), then Running,
-  then FYI. The one risk: the question wears the card-title role (17px semibold) and the task title
-  recedes into a 13px eyebrow, so the three questions are the three heaviest lines on the screen;
-  and the answer strip is one 44px row — Why, a single-line feedback field, the options — so the
-  whole queue plus Running and FYI fit one screen. Why: the console's one job is answering, and the
-  build's textarea-then-buttons stack spends 60px per card on a note that is usually not written.
-- **DecisionCard.dc.html** — the card at 700px: at rest with each part called out on a rail beside
-  it, with Why open (ids and file names live there, as links to the ledger), and the Revise pair —
-  disabled with its tooltip until feedback is typed, live once it is. The one risk: the callouts sit
-  off the card so the card on the board is exactly what ships, and the feedback rule is shown as a
-  before/after pair instead of prose.
+- **Inbox.dc.html** — L3's high-level desktop overview: work that needs Burak, running tasks with one
+  named L2 owner each, optional help/review, PR and check state, and concise FYIs. The answer strip
+  keeps a human decision to one row while Open task chat opens the readable conversation for direct
+  steering.
+- **DecisionCard.dc.html** — a 700px task card shown at rest, with its readable task chat open, and in
+  blocked and running states. It keeps ownership and the current question visible while technical
+  detail remains subordinate. A task may show optional L1 help or independent review when the L2
+  chose it; neither is a required stage.
 
 ## Checkpoint limitations
 
-The first visual review recorded 7 major and 5 minor findings. They include unproven worst-case card
-copy, atom and token drift, deliberate layout differences that need clearer annotation, render-
-harness blind spots, and several density/readability concerns. Those findings and the missing nine
-boards should be reconsidered together after the system simplification review. This checkpoint does
-not include `canvas.json`, the mobile boards, or a complete route set.
+The first visual review found unproven worst-case copy, atom and token drift, render-harness blind
+spots, and density/readability concerns. Reassess those concerns if this draft is selected for more
+work. This checkpoint does not include `canvas.json`, mobile boards, or a complete route set.

@@ -1,4 +1,4 @@
-"""The Codex app-server quota reader persists real account-wide limits for decision 45."""
+"""The Codex app-server quota reader persists real account-wide limits."""
 import json
 import tempfile
 import unittest

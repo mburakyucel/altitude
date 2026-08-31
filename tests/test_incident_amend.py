@@ -1,5 +1,5 @@
 """`alt incident amend`: a filed incident can be corrected, but never quietly — the replaced text stays
-beneath a dated `amended:` line, the index row is corrected so the audit reads the new cause, and the
+beneath a dated `amended:` line, the evidence index receives the new cause, and the
 originating task gets an event. Runs against a throwaway ALTITUDE_HOME; every test builds its own fixture
 incident in a temp dir, never the live ledger."""
 import contextlib
@@ -14,19 +14,18 @@ from pathlib import Path
 
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-amend-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, improve  # noqa: E402
+from altitude import config, state as S, incidents  # noqa: E402
 
 ALT = Path(__file__).resolve().parent.parent / "bin" / "alt"
 
 
 def fixture_incident(root: Path, project: str = "demo", iid: str = "I-001", task: str = "fix-the-thing",
-                     what: str = "the reviewer pass never ran") -> Path:
+                     what: str = "the worker used stale repository state") -> Path:
     """An incident file written from the real template, so a template change breaks these tests loudly."""
     body = (config.TEMPLATES / "incident.md").read_text().format(
-        id=iid, title="the L2 skipped the reviewer", date=S.now()[:10], task=task, project=project,
+        id=iid, title="the task used stale repository state", date=S.now()[:10], task=task, project=project,
         what=what, evidence="events.log 00:15:07 running->blocked",
-        cause="the envelope had no slack", generalizable="unknown", mechanism="rule", scope="project",
-        rule="-", status="watch")
+        cause="the worktree base was not refreshed", status="watch")
     p = root / project / "incidents" / f"{iid}.md"
     S.atomic_write(p, body)
     return p
@@ -69,17 +68,17 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         self.original = self.path.read_text()
 
     def test_round_trip_rewrites_named_fields_and_keeps_the_original(self):
-        res = improve.amend_incident("demo", "I-001", cause="the reviewer was never briefed", status="closed",
+        res = incidents.amend_incident("demo", "I-001", cause="the remote base was fetched too late", status="closed",
                                      reason="root cause was wrong; Burak corrected it in chat", actor="burak")
         self.assertEqual(res["amended"], ["cause", "status"])
         body = self.path.read_text()
-        self.assertIn("- root cause: the reviewer was never briefed\n", body)
+        self.assertIn("- root cause: the remote base was fetched too late\n", body)
         self.assertIn("- status: closed\n", body)
-        self.assertIn("- what happened: the reviewer pass never ran\n", body)   # untouched
+        self.assertIn("- what happened: the worker used stale repository state\n", body)   # untouched
         self.assertIn("- evidence: events.log 00:15:07 running->blocked\n", body)
         audit = f"amended: {S.now()[:10]} by burak: root cause was wrong; Burak corrected it in chat"
         self.assertIn(audit, body)
-        self.assertLess(body.index(audit), body.index("- was root cause: the envelope had no slack"))
+        self.assertLess(body.index(audit), body.index("- was root cause: the worktree base was not refreshed"))
         self.assertLess(body.index(audit), body.index("- was status: watch"))
 
     def test_multi_line_value_is_replaced_whole_and_recoverable_verbatim(self):
@@ -87,7 +86,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         whole thing is replaced and the whole thing is what the history keeps."""
         old = "the run failed in three steps:\n- step one\n\n- step two"
         path = fixture_incident(self.root, iid="I-003", what=old)
-        improve.amend_incident("demo", "I-003", what="the run failed once", reason="misread the log", actor="burak")
+        incidents.amend_incident("demo", "I-003", what="the run failed once", reason="misread the log", actor="burak")
         body = path.read_text()
         head, _, history = body.partition("\namended: ")
         self.assertIn("- what happened: the run failed once\n", head)
@@ -95,7 +94,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         self.assertNotIn("step two", head)
         self.assertIn(f"- was what happened: {old}", history)
         # and the file still parses: a second amend finds the real fields, not a line from the history
-        improve.amend_incident("demo", "I-003", what="the run failed once, at dispatch", reason="more precise")
+        incidents.amend_incident("demo", "I-003", what="the run failed once, at dispatch", reason="more precise")
         body = path.read_text()
         self.assertIn("- what happened: the run failed once, at dispatch\n", body)
         self.assertIn(f"- was what happened: {old}", body)
@@ -103,8 +102,8 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         self.assertIn("- evidence: events.log 00:15:07 running->blocked\n", body)
 
     def test_second_amendment_appends_and_keeps_both_histories(self):
-        improve.amend_incident("demo", "I-001", status="open", reason="first pass", actor="burak")
-        improve.amend_incident("demo", "I-001", status="closed", reason="second pass", actor="l3")
+        incidents.amend_incident("demo", "I-001", status="open", reason="first pass", actor="burak")
+        incidents.amend_incident("demo", "I-001", status="closed", reason="second pass", actor="l3")
         body = self.path.read_text()
         self.assertIn("- status: closed\n", body)
         self.assertIn("- was status: watch", body)
@@ -113,46 +112,46 @@ class TestAmendIncident(TempHome, unittest.TestCase):
 
     def test_unknown_incident_id_refuses(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-404", cause="x", reason="y")
+            incidents.amend_incident("demo", "I-404", cause="x", reason="y")
         self.assertIn("unknown incident", str(e.exception))
         self.assertFalse((self.root / "demo" / "incidents" / "I-404.md").exists())
 
     def test_empty_change_set_refuses_and_writes_nothing(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-001", reason="nothing to say")
+            incidents.amend_incident("demo", "I-001", reason="nothing to say")
         self.assertIn("nothing to amend", str(e.exception))
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_empty_field_value_refuses_instead_of_blanking_the_field(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-001", what="   ", reason="oops")
+            incidents.amend_incident("demo", "I-001", what="   ", reason="oops")
         self.assertIn("--what is empty", str(e.exception))
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_a_value_that_would_read_as_another_field_refuses(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-001", what="it ran\n- status: closed", reason="smuggled a field")
+            incidents.amend_incident("demo", "I-001", what="it ran\n- status: closed", reason="smuggled a field")
         self.assertIn("would read as another field", str(e.exception))
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_unsupported_status_refuses_and_writes_nothing(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-001", status="reopened", reason="wrong status word")
+            incidents.amend_incident("demo", "I-001", status="reopened", reason="wrong status word")
         self.assertIn("status in", str(e.exception))
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_unknown_field_refuses_and_writes_nothing(self):
         with self.assertRaises(ValueError) as e:
-            improve.amend_incident("demo", "I-001", title="a new title", reason="wrong field")
+            incidents.amend_incident("demo", "I-001", title="a new title", reason="wrong field")
         self.assertIn("unknown field", str(e.exception))
         self.assertEqual(self.path.read_text(), self.original)
 
     def test_missing_reason_refuses(self):
         with self.assertRaises(ValueError):
-            improve.amend_incident("demo", "I-001", cause="x", reason="  ")
+            incidents.amend_incident("demo", "I-001", cause="x", reason="  ")
 
     def test_event_lands_on_the_originating_task(self):
-        improve.amend_incident("demo", "I-001", what="the reviewer ran but found nothing",
+        incidents.amend_incident("demo", "I-001", what="the worker detected the stale base before editing",
                                reason="misread the log", actor="burak")
         events = S.read_events("demo", "fix-the-thing")
         self.assertEqual([e["kind"] for e in events], ["incident-amended"])
@@ -164,7 +163,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
 
     def test_no_event_when_the_incident_names_no_task(self):
         fixture_incident(self.root, iid="I-002", task="-")
-        res = improve.amend_incident("demo", "I-002", cause="a different cause", reason="corrected", actor="burak")
+        res = incidents.amend_incident("demo", "I-002", cause="a different cause", reason="corrected", actor="burak")
         self.assertIsNone(res["task"])
         self.assertIsNone(res["names_task"])
         self.assertEqual(S.read_events("demo", "fix-the-thing"), [])
@@ -173,14 +172,14 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         fixture_incident(self.root, iid="I-002", task="ghost-task")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            res = improve.amend_incident("demo", "I-002", cause="a different cause", reason="corrected")
+            res = incidents.amend_incident("demo", "I-002", cause="a different cause", reason="corrected")
         self.assertIsNone(res["task"])
         self.assertEqual(res["names_task"], "ghost-task")
         self.assertIn("ghost-task", err.getvalue())
         self.assertFalse((self.root / "demo" / "tasks" / "ghost-task").exists())
 
     def test_the_correction_reaches_the_project_log_and_state_md(self):
-        improve.amend_incident("demo", "I-001", cause="the reviewer was never briefed", reason="corrected",
+        incidents.amend_incident("demo", "I-001", cause="the remote base was fetched too late", reason="corrected",
                                actor="burak")
         kinds = [e["kind"] for e in S.read_project_log("demo")]
         self.assertIn("incident-amended", kinds)
@@ -188,35 +187,33 @@ class TestAmendIncident(TempHome, unittest.TestCase):
 
 
 class TestAmendIndex(TempHome, unittest.TestCase):
-    """A correction the index never sees is invisible to `alt incident list` and to the weekly audit."""
+    """A correction must reach both the project and global evidence indexes."""
 
     def setUp(self):
         self.root = self.use_temp_home()
         self.repo = self.root / "repo"
         (self.repo / "docs").mkdir(parents=True)
-        config.save_projects({"demo": {"path": str(self.repo), "stacks": []}})
-        self.inc = improve.new_incident("demo", title="the L2 skipped the reviewer", task=None,
-                                        what="the reviewer pass never ran", evidence="events.log 00:15:07",
-                                        cause="the envelope had no slack", tags=["reviewer"])
+        config.save_projects({"demo": {"path": str(self.repo)}})
+        self.inc = incidents.new_incident("demo", title="the task used stale repository state", task=None,
+                                        what="the worker used stale repository state", evidence="events.log 00:15:07",
+                                        cause="the worktree base was not refreshed", tags=["git"])
 
     def test_amended_cause_replaces_the_indexed_cause_without_adding_a_row(self):
-        before = improve.next_incident_id("demo")
-        improve.amend_incident("demo", self.inc["id"], cause="the reviewer was never briefed",
+        before = incidents.next_incident_id("demo")
+        incidents.amend_incident("demo", self.inc["id"], cause="the remote base was fetched too late",
                                reason="root cause was wrong", actor="burak")
-        rows = [r for r in improve.index() if r["id"] == self.inc["id"]]
+        rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["cause"], "the reviewer was never briefed")
-        self.assertEqual(improve.next_incident_id("demo"), before)      # no row appended, no id burned
+        self.assertEqual(rows[0]["cause"], "the remote base was fetched too late")
+        self.assertEqual(incidents.next_incident_id("demo"), before)      # no row appended, no id burned
         per_project = (self.root / "demo" / "incidents.jsonl").read_text().splitlines()
-        self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the reviewer was never briefed"])
-        audited = [r for r in improve.audit_input("demo")["incidents"] if r["id"] == self.inc["id"]]
-        self.assertEqual(audited[0]["cause"], "the reviewer was never briefed")
+        self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the remote base was fetched too late"])
 
     def test_amending_an_unindexed_field_leaves_the_row_alone(self):
-        improve.amend_incident("demo", self.inc["id"], status="closed", reason="fixed")
-        rows = [r for r in improve.index() if r["id"] == self.inc["id"]]
+        incidents.amend_incident("demo", self.inc["id"], status="closed", reason="fixed")
+        rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["cause"], "the envelope had no slack")
+        self.assertEqual(rows[0]["cause"], "the worktree base was not refreshed")
 
 
 class TestAmendCLI(TempHome, unittest.TestCase):
@@ -269,8 +266,7 @@ class TestAmendCLI(TempHome, unittest.TestCase):
 class TestTemplateStaysClean(unittest.TestCase):
 
     def test_the_template_carries_no_amendment_note(self):
-        """`propose_rule` pastes a whole incident file into the apply-rule request, and every new incident is
-        a copy of this template — a maintenance comment here would ship into PR bodies and docs/incidents/."""
+        """Every new incident is a copy of this template, so maintenance notes do not belong in it."""
         self.assertNotIn("amended", (config.TEMPLATES / "incident.md").read_text())
 
 

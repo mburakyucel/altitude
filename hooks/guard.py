@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse guard for task-owned Bash sessions (decision 39).
+"""PreToolUse guard for task-owned Bash sessions.
 
 Shared services, ports, and live Altitude state belong to altd, not a task.
 Judge shell text that will be executed, without treating quoted report text or
@@ -970,24 +970,24 @@ if git_violation:
     if len(fragment) > 157:
         fragment = fragment[:157] + "..."
     print(
-        f"altitude guard (decision 39): blocked — {git_violation}. Matched: {fragment}",
+        f"altitude guard: blocked — {git_violation}. Matched: {fragment}",
         file=sys.stderr,
     )
     sys.exit(2)
 
-RULES = [
+RESTRICTIONS = [
     (r"\bsystemctl\b", r"\bsystemctl\b.*\b(restart|stop|kill|disable|mask)\b.*\b(altitude|tutor|wg-quick)", "service units belong to altd/Burak — report 'needs restart' instead"),
     (r"\b(ufw|wg-quick|iptables|nft)\b", r"\b(ufw|wg-quick|iptables|nft)\b", "firewall / tunnel changes are never a task's"),
     (r"(:|--port[= ]|PORT=|port\s+)", r"(:|--port[= ]|PORT=|port\s+)(%s)\b" % ports, "service ports are taken — use ALTITUDE_TIMERS=0 on an ephemeral port for smoke tests"),
     (r"\brm\b", r"\brm\b.*(\.altitude|ALTITUDE_HOME)", "the Altitude home is live state"),
     (r"\bkill(all)?\b", r"\bkill(all)?\b.*\b(altd|altitude)\b", "altd is not yours to kill"),
 ]
-for anchor, pattern, why in RULES:
+for anchor, pattern, why in RESTRICTIONS:
     if not re.search(anchor, bare):
         continue
     for match in re.finditer(pattern, full):
         if re.search(anchor, bare[match.start():match.end()]):
             fragment = _matched_fragment(match)
-            print(f"altitude guard (decision 39): blocked — {why}. Matched: {fragment}", file=sys.stderr)
+            print(f"altitude guard: blocked — {why}. Matched: {fragment}", file=sys.stderr)
             sys.exit(2)
 sys.exit(0)

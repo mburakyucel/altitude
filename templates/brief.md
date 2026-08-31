@@ -1,31 +1,38 @@
-# Brief — {slug} ({class}) — {project}
+# Brief — {slug} — {project}
 
 **Goal:** {title}
 
-**Definition of done:** every PR merged on `origin/main` (under a merge hold, done is: PR open, review-clean, the gates this repository has green on the PR, reported with its number, and those PR gates replace the R-006 post-merge/main gates below); [R-006] the gates this repository has are green (where it has CI — a `.github/workflows` directory — the `main` run after merge, and where it has none, the full local test suite on merged `main` with the count stated in the report; a `skipped` or no-checks-reported value is never read as passed, and a gate is never satisfied by its absence); deployment healthy where applicable; review findings addressed or dismissed with reason; `report.md` + `report.json` (schema: `{report_schema}`) written to `{task_dir}`; roadmap in `{task_dir}/progress.md` complete.
+**Owner:** one L2 ({model}) owns this task end-to-end in `{branch}`. You may implement directly or use
+zero, one, or several L1s when that materially helps. Any L1 result is input that you own
+and integrate; it is not a transfer of responsibility.
 
-**Review/fix:** [R-016] For a fix round on an open PR, run `alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>` with the PR number and findings named in the fix brief, then check the amended PR with `git diff --stat origin/main <head>` before merging.
+**Definition of done:** every code change goes through a PR; {merge_policy} The applicable repository
+checks pass, the merged result and deployment are verified where relevant, material findings are
+addressed or dismissed with a reason, and `progress.md`, `report.md`, and schema-valid `report.json`
+(`{report_schema}`) are complete in `{task_dir}`. Where the repository has no CI, run the full local test suite on merged `main`
+and state the result. Skipped or absent required checks are not success.
 
-[R-017] A post-fix review checks the dispositions of the previous round's findings and the fix diff for regressions. Only a new finding that defeats the definition of done or breaches R-006 blocks; every other new finding is recorded under **Follow-ups** with its file and line, and the L2 names or files the follow-up task in the report. One fix round per S task; a second round needs the L3's envelope answer, never a silent further reviewer.
+**Judgment-based execution:** use the lightest sound approach. Direct implementation is normal. Use
+L1s for bounded parallel work, focused research, or an independent perspective only when useful.
+Review is optional unless risk, uncertainty, or this brief requires it; appropriate testing is always
+required.
 
-**Change class / merge policy:** {merge_policy}
+**Direct task conversation:** Burak's task-specific steering arrives in this session. Reply in plain
+language with `alt task reply "<message>"`. Ask him directly only when the choice cannot safely be made
+from this brief and the repository. Before stopping for an answer, checkpoint `progress.md`, record the
+exact block, and send the question through `alt task reply`.
 
-When the task carries a merge hold, open the PR, report ok with the PR number and stop; never merge around the hold, by `gh pr merge` or any other route, even if its reason looks false for your PR — say so in the report instead.
+**Hard boundaries:** {never_list}
 
-**Never (project never-list, from CLAUDE.md):** {never_list}
+**Ownership and isolation:** repository `{repo}`; task folder `{task_dir}`; worktree branch `{branch}`;
+lease `{paths}`. Other current task leases: {leases}. Stay within your lease. If an active task owns an
+overlapping narrowed path, stop with `Blocked: lease` rather than racing it. Never restart or stop the
+`altitude` or `tutor` services and never bind their reserved ports. Every code change uses the isolated
+branch and a PR. Land with `alt land --message "<message>"`; use `--merge` only when allowed. Always
+read the live `hold_merge` value before merging and never merge around the hold.
 
-**Envelope (decision 31):** L1s in flight ≤ {l1_in_flight}; subagent launches ≤ {subagent_launches}; turns ≤ {max_turns}; verification: {verification}. Hitting a cap = checkpoint, write the report with `Blocked: envelope (needed N)`, stop. Caps are ceilings, not plans: start with **one** L1 and fan out only after it lands (decision 40).
-
-**Questions:** none after this point. Take the documented default, record it under Deviations, continue if reversible; stop with `Blocked:` only for always-list items.
-
-**Engines and tiers (decisions 38, 45):** L2 = you ({model}). L1 implementers and the reviewer run through `alt l1 run` — one plain command that makes the worktree, picks the engine (Claude or Codex) by remaining quota and returns JSON with the PR; {engine_line} Tier per sub-brief: coding at Opus/Codex by default; Fable only for novel, design-heavy or wide-blast-radius coding (`--engine claude --model fable`). Never spawn L1s with the Agent tool.
-
-**Parallel work (decision 39):** your lease: {paths}. Other L2s running in this project right now: {leases}. The lease shown here is the raw staging lease that `alt land` enforces (decision 39). A bare top-level directory such as `tests/` or `docs/` in another task's lease list is not a hold; only narrowed file and deeper-directory claims hold under the decision 51 addendum, and `alt task status`'s `hold_paths` is the authoritative hold lease. Stay inside your lease; if you must touch a path another running task holds, stop with `Blocked: lease` rather than racing it. Never restart/stop the `altitude` or `tutor` units, never bind ports 8890/8080/8443 (a hook blocks these) — for a smoke test run `ALTITUDE_TIMERS=0 ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=<ephemeral> bin/alt serve` and report "needs `systemctl --user restart altitude`" after merge. Land with `alt land --message "<msg>"`; merging your own branch is `alt land --message "<msg>" --merge`, which refuses under a merge hold — and since no alt command merges an L1's PR for you, read `hold_merge` in `alt task status {slug}` before any `gh pr merge` and never merge around a hold. `alt land` stages only your lease (refusing if anything outside it changed), commits with the Altitude trailer, pushes, opens or reuses the PR and waits for checks: one plain command, nothing for the Safety Net (R-003) to refuse.
-
-**Context:** the proposal below is approved{approval_note}. Repo: `{repo}`. Task folder: `{task_dir}` (write `progress.md`, `report.md`, `report.json` there). Worktree: this session runs in its own worktree/branch `{branch}`.
-
-**Orientation:** use `alt task status {slug}` — one JSON with task state, worktree and branch, PRs and their checks, the `main` run, live envelope counts, leases and holds. Never read transcripts, hook counters (`~/.altitude/monitor/*.json`) or `claude agents` yourself.
+**Request:**
 
 ---
 
-{proposal}
+{request}

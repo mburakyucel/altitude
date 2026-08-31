@@ -16,7 +16,7 @@ const overview = {
       path: "/home/b/altitude",
       managed: true,
       git: true,
-      counts: { running: 2, requested: 1 },
+      counts: { running: 2, queued: 1 },
       l3: { session_id: "abcdef123456", context_percent: 41, last_turn: new Date(Date.now() - 3 * 60_000).toISOString() },
     },
     { name: "quiet", path: "/home/b/quiet", managed: true, git: true, counts: {} },
@@ -50,7 +50,7 @@ describe("Projects", () => {
     expect(screen.getByText("Managed (2)")).toBeInTheDocument();
     expect(screen.getByText("L3 41% · 3m")).toBeInTheDocument();
     expect(screen.getByText("running 2")).toBeInTheDocument();
-    expect(screen.getByText("requested 1")).toBeInTheDocument();
+    expect(screen.getByText("queued 1")).toBeInTheDocument();
     expect(screen.getByText("no tasks")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "altitude" })).toHaveAttribute(
       "href",
@@ -58,7 +58,7 @@ describe("Projects", () => {
     );
   });
 
-  it("shows unmanaged projects and starts L3 on one with the typed stacks", async () => {
+  it("shows unmanaged projects and starts L3", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects" });
 
@@ -66,7 +66,6 @@ describe("Projects", () => {
     expect(screen.getByText("sidecar")).toBeInTheDocument();
     expect(screen.getByText("no git")).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Stacks for sidecar"), "python, web");
     await user.click(screen.getByRole("button", { name: "Start L3" }));
 
     await waitFor(() => {
@@ -77,7 +76,6 @@ describe("Projects", () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({
       name: "sidecar",
       path: "/home/b/sidecar",
-      stacks: "python, web",
     });
   });
 

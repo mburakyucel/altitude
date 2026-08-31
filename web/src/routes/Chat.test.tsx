@@ -133,9 +133,7 @@ describe("Chat", () => {
     expect(postsToChat(fetchMock)).toHaveLength(1);
   });
 
-  // Regression: the optimistic turn used to be dropped as soon as its text appeared anywhere in
-  // the refetched history, so re-asking a question you had already asked swallowed both the new
-  // user bubble and the streamed reply.
+  // Matching is by turn identity, so repeating an earlier question keeps the new user bubble and reply.
   it("keeps the new turn when the same words are already in the history", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

@@ -1,4 +1,4 @@
-"""Compact, fault-tolerant, read-only task orientation (decision 47, tier 0).
+"""Compact, fault-tolerant, read-only task orientation.
 
 ``wip_hold`` reports only the file-lease reason: it is a read-only subset of
 ``dispatch.wip_hold``, which is the dispatcher's state-advancing check.
@@ -9,7 +9,7 @@ from . import config, dispatch, git_policy, l1, state as S, verify
 
 
 _TASK_FIELDS = (
-    "state", "class", "title", "attempt", "dispatch_id", "session_id", "agent_id", "source",
+    "state", "title", "attempt", "dispatch_id", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup"
@@ -70,7 +70,7 @@ def status(project: str, slug: str) -> dict:
     out = {
         "project": project, "slug": slug,
         **{field: None for field in _TASK_FIELDS},
-        "envelope": None, "counts": None, "envelope_file": None, "l1_runs": None,
+        "counts": None, "l1_runs": None,
         "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
         "repository": None, "report_json": None, "prs": [], "main_run": None, "errors": errors,
     }
@@ -92,36 +92,17 @@ def status(project: str, slug: str) -> dict:
         out["slug"] = task.get("slug") or slug
         for field in _TASK_FIELDS:
             out[field] = task.get(field)
-        out["envelope"] = task.get("envelope")
 
     dispatch_id = task.get("dispatch_id")
-    session_id = task.get("session_id")
     counts_path = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
-    if (counts_path is None or not counts_path.exists()) and session_id:
-        counts_path = config.MONITOR_DIR / f"counts-{session_id}.json"  # legacy session-keyed counter
-    if counts_path is not None:
+    if counts_path is not None and counts_path.exists():
         try:
-            if not counts_path.exists():
-                raise FileNotFoundError(counts_path)
             counts = S.read_json(counts_path, {})
             if not isinstance(counts, dict):
                 raise TypeError("counter file is not an object")
-            out["counts"] = {"subagent_launches": counts.get("subagent_launches", 0),
-                             "edits": counts.get("edits", 0)}
+            out["counts"] = {"edits": counts.get("edits", 0)}
         except Exception as e:
             _error(errors, "counts", e)
-
-    if dispatch_id:
-        envelope_path = config.MONITOR_DIR / f"envelope-{project}--{dispatch_id}.json"
-        try:
-            if not envelope_path.exists():
-                raise FileNotFoundError(envelope_path)
-            envelope_file = S.read_json(envelope_path, None)
-            if not isinstance(envelope_file, dict):
-                raise TypeError("envelope file is not an object")
-            out["envelope_file"] = envelope_file
-        except Exception as e:
-            _error(errors, "envelope_file", e)
 
     runs: list[dict] = []
     if task:

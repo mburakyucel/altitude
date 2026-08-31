@@ -74,8 +74,7 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
 class TestDispatchBoundaryOrdering(unittest.TestCase):
     def test_unsafe_main_refuses_before_task_or_agent_mutation(self):
         task = {
-            "slug": "blocked", "state": "approved", "dispatching": None,
-            "envelope": {"max_turns": 5},
+            "slug": "blocked", "state": "queued", "dispatching": None,
         }
         with mock.patch.object(dispatch.S, "project_lock", side_effect=lambda _project: contextlib.nullcontext()), \
              mock.patch.object(dispatch.S, "load_task", return_value=task), \
@@ -85,7 +84,7 @@ class TestDispatchBoundaryOrdering(unittest.TestCase):
                  dispatch.git_policy, "fetch_and_require_exact_base",
                  side_effect=git_policy.GitPolicyError("main is ahead"),
              ), \
-             mock.patch("altitude.improve.system_fault") as fault, \
+             mock.patch("altitude.incidents.system_fault") as fault, \
              mock.patch.object(dispatch.S, "save_task") as save, \
              mock.patch.object(dispatch.S, "write_json") as write_json, \
              mock.patch.object(dispatch.T, "brief") as brief, \

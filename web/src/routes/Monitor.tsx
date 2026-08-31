@@ -1,12 +1,11 @@
 import type { CSSProperties } from "react";
 import { useMonitor } from "../data/api";
 import type { Quota, Session } from "../data/api";
-import { launchLabel } from "../data/launches";
 
 /**
- * The 0.1 monitor view: seat quota, one card per live session, and the raw list of
+ * Seat quota, one card per live session, and the raw list of
  * Claude worker processes. `/api/monitor` rows are passthrough, so the columns that
- * only some kinds carry (cwd, subagent_launches, cap, edits, agent, rotate_next)
+ * only some kinds carry (cwd, l1_runs, edits, agent, rotate_next)
  * arrive typed `unknown` and are narrowed here rather than in api.ts.
  */
 function str(value: unknown): string {
@@ -39,7 +38,7 @@ function age(value: unknown): string {
   return `${Math.floor(seconds / 86_400)}d`;
 }
 
-/** Context/quota meter. Past 70% it turns danger-red — the 0.1 "bad" threshold. */
+/** Context/quota meter. Past the reserve line it turns danger-red. */
 function Bar({ percent }: { percent: number }) {
   const p = Math.max(0, Math.min(100, percent));
   const style: CSSProperties = { width: `${p}%` };
@@ -85,9 +84,8 @@ function SessionCard({ session }: { session: Session }) {
   const when = age(session.at);
 
   const meta: string[] = [`context ${context ?? "?"}%`];
-  // The counter is spelled "launches N · cap M" everywhere. "N/M" read as a plan to launch M.
-  if (session["subagent_launches"] != null) {
-    meta.push(launchLabel(session["subagent_launches"], session["cap"]));
+  if (session["l1_runs"] != null) {
+    meta.push(`L1 runs ${num(session["l1_runs"]) ?? 0}`);
     meta.push(`edits ${num(session["edits"]) ?? 0}`);
   }
   const status = [str(agent["status"]), str(agent["state"])].filter(Boolean).join(" ");
@@ -123,10 +121,6 @@ export default function Monitor() {
     .map((a) =>
       `${str(a["id"]).slice(0, 8)} ${str(a["name"])} ${str(a["status"])} ${str(a["state"])} ${str(a["cwd"])}`.trimEnd(),
     );
-  const toolShapes = Object.entries(monitor.data.tool_shapes ?? {}).map(([project, value]) => ({
-    project,
-    rows: arr(value).map(dict),
-  }));
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -146,50 +140,12 @@ export default function Monitor() {
       </section>
 
       <section className="space-y-2">
-        {/* The 0.1 app called this "claude agents"; the word is reserved for the launch
-            counter, so the raw process list is titled by what it lists. */}
         <h2 className="label">Claude workers</h2>
         <pre className="card overflow-x-auto whitespace-pre-wrap text-meta text-ink-2">
           {workers.length > 0 ? workers.join("\n") : "none"}
         </pre>
       </section>
 
-      <section className="card space-y-3">
-        <h2 className="label">Tool shapes (7 days)</h2>
-        {toolShapes.length === 0 ? (
-          <p className="text-meta text-muted">no tool-shape history</p>
-        ) : (
-          toolShapes.map(({ project, rows }) => (
-            <div key={project} className="space-y-2">
-              <h3 className="text-body font-semibold">{project}</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-meta">
-                  <thead className="text-muted">
-                    <tr>
-                      <th className="pb-1 pr-4 font-normal">shape</th>
-                      <th className="pb-1 pr-4 text-right font-normal">turns</th>
-                      <th className="pb-1 text-right font-normal">context-tokens</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, i) => (
-                      <tr key={`${str(row["shape"])}-${i}`}>
-                        <td className="py-1 pr-4"><code>{str(row["shape"])}</code></td>
-                        <td className="py-1 pr-4 text-right tabular-nums">
-                          {(num(row["turns"]) ?? 0).toLocaleString()}
-                        </td>
-                        <td className="py-1 text-right tabular-nums">
-                          {(num(row["context_tokens"]) ?? 0).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-"""Decision 39: a blocked task queued to resume keeps its file lease until it can run."""
+"""A blocked task queued to resume keeps its file lease until it can run."""
 import contextlib
 import io
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-resume-hold-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, recovery, state as S, tasks as T  # noqa: E402
 from altitude import monitor  # noqa: E402
 
 
@@ -20,12 +20,13 @@ class TestResumeHold(unittest.TestCase):
     _number = 0
 
     def setUp(self):
+        recovery.hold_path().unlink(missing_ok=True)
         type(self)._number += 1
         self.project = f"resume-hold-{self._number}"
         self.repo = _TMP / self.project / "repo"
         self.repo.mkdir(parents=True)
         config.save_projects({self.project: {
-            "name": self.project, "path": str(self.repo), "stacks": ["python"], "wip": 20,
+            "name": self.project, "path": str(self.repo), "wip": 20,
         }})
 
         self.resumed = []
@@ -42,13 +43,14 @@ class TestResumeHold(unittest.TestCase):
     def tearDown(self):
         (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
          engines.usage_hold, monitor.quota, monitor.quota_hold) = self.originals
+        recovery.hold_path().unlink(missing_ok=True)
 
     def _resume_session(self, project, slug, text, session_id=None):
         self.resumed.append({"project": project, "slug": slug, "text": text, "session_id": session_id})
         return {"agent": {"id": f"new-{slug}"}, "stdout": ""}
 
     def _task(self, title, state, path, created):
-        task = T.new(self.project, title, "S", "request", actor="l3", paths=[path])
+        task = T.new(self.project, title, "request", actor="l3", paths=[path])
         task.update({
             "state": state,
             "created": created,
@@ -64,14 +66,14 @@ class TestResumeHold(unittest.TestCase):
         self._task("running holder", "running", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         blocked = self._task("blocked worker", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
 
-        result = dispatch.resume_blocked(self.project, blocked["slug"], "Use the approved value.", prefix="Altitude: ")
+        result = dispatch.resume_blocked(self.project, blocked["slug"], "Use the selected value.", prefix="Altitude: ")
 
         task = S.load_task(self.project, blocked["slug"])
         self.assertTrue(result["deferred"])
         self.assertEqual(task["state"], "blocked")
         self.assertIn("waiting for lease: `running-holder`", task["blocked_reason"])
         self.assertIn("altitude/shared.py", task["blocked_reason"])
-        self.assertEqual(task["resume_answer"], "Use the approved value.")
+        self.assertEqual(task["resume_answer"], "Use the selected value.")
         self.assertEqual(task["resume_prefix"], "Altitude: ")
         self.assertTrue(task["resume_after"])
         self.assertEqual(self.resumed, [])
@@ -80,11 +82,11 @@ class TestResumeHold(unittest.TestCase):
     def test_due_resume_uses_stored_answer_after_holder_finishes(self):
         holder = self._task("active lease", "running", "bin/alt", "2026-01-01T00:00:00+00:00")
         blocked = self._task("waiting resume", "blocked", "bin/alt", "2026-01-02T00:00:00+00:00")
-        blocked["blocked_reason"] = "Which envelope should I use?"
+        blocked["blocked_reason"] = "Which retry strategy should I use?"
         S.save_task(self.project, blocked)
-        dispatch.resume_blocked(self.project, blocked["slug"], "Keep the raised envelope.", prefix="Altitude: ")
+        dispatch.resume_blocked(self.project, blocked["slug"], "Use the focused retry.", prefix="Altitude: ")
         self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_question"],
-                         "Which envelope should I use?")
+                         "Which retry strategy should I use?")
         holder["state"] = "done"
         S.save_task(self.project, holder)
 
@@ -94,8 +96,8 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(resumed, [blocked["slug"]])
         self.assertEqual(task["state"], "running")
         self.assertEqual(self.resumed[0]["text"],
-                         "Altitude: Keep the raised envelope.\nContinue from your progress file; finish to *done* and rewrite the report.")
-        self.assertEqual(task["blocked_question"], "Which envelope should I use?")
+                         "Altitude: Use the focused retry.\nContinue from your progress file; finish to *done* and rewrite the report.")
+        self.assertEqual(task["blocked_question"], "Which retry strategy should I use?")
         self.assertNotIn("resume_after", task)
         self.assertNotIn("resume_answer", task)
         self.assertNotIn("resume_prefix", task)
@@ -126,8 +128,8 @@ class TestResumeHold(unittest.TestCase):
         pending["resume_after"] = "2026-01-01T00:00:00+00:00"
         S.save_task(self.project, pending)
         self._task("plain block", "blocked", "altitude/plain.py", "2026-01-01T00:00:00+00:00")
-        pending_target = self._task("pending target", "approved", "altitude/pending.py", "2026-01-02T00:00:00+00:00")
-        plain_target = self._task("plain target", "approved", "altitude/plain.py", "2026-01-02T00:00:00+00:00")
+        pending_target = self._task("pending target", "queued", "altitude/pending.py", "2026-01-02T00:00:00+00:00")
+        plain_target = self._task("plain target", "queued", "altitude/plain.py", "2026-01-02T00:00:00+00:00")
 
         leases = dispatch.leases(self.project)
 
@@ -135,8 +137,8 @@ class TestResumeHold(unittest.TestCase):
         self.assertIn("blocked with a pending resume", dispatch.wip_hold(self.project, pending_target) or "")
         self.assertIsNone(dispatch.wip_hold(self.project, plain_target))
 
-    def test_older_approved_candidate_is_held_by_pending_resume_lease(self):
-        candidate = self._task("older candidate", "approved", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
+    def test_older_queued_candidate_is_held_by_pending_resume_lease(self):
+        candidate = self._task("older candidate", "queued", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         pending = self._task("pending holder", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
         pending["resume_after"] = "2026-01-03T00:00:00+00:00"
         S.save_task(self.project, pending)

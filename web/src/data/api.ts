@@ -77,17 +77,12 @@ export const QuotaSchema = z
   })
   .passthrough();
 
-// Decision 46 — the card is executive. `question` is the dilemma in plain words and `options` are
-// short labels; `context` is the situation in ≤2 plain sentences that goes *above* it, and `detail`
-// holds the reasoning, ids and file names that must stay *behind* it. Both are optional: older
-// cards (and blocked cards before altitude/tasks.py started attaching the block reason) carry
-// neither, and such a card must still render exactly as it did before.
+// Rows for tasks blocked on user input.
 export const DecisionSchema = z
   .object({
     project: z.string(),
     slug: z.string(),
     kind: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     question: z.string().nullish(),
     context: z.string().nullish(),
@@ -119,7 +114,7 @@ export const WipSchema = z
     machine: z.number(),
     limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
-    // why: "dispatch" (state approved) or "resume" (blocked with resume_after) — digest.py wip().
+    // why: "dispatch" (state queued) or "resume" (blocked with resume_after) — digest.py wip().
     waiting: z.array(
       z.object({ project: z.string(), slug: z.string(), why: z.string().nullish() }).passthrough(),
     ),
@@ -154,7 +149,6 @@ export const TaskRowSchema = z
   .object({
     slug: z.string(),
     state: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     updated: z.string().nullish(),
     // Set to the usage-limit reset timestamp when Altitude holds a blocked L2 to resume it
@@ -183,16 +177,24 @@ export const ProjectViewSchema = z
   })
   .passthrough();
 
+export const TaskMessageSchema = z
+  .object({
+    id: z.string(),
+    at: z.string().nullish(),
+    role: z.enum(["burak", "l2"]),
+    text: z.string(),
+  })
+  .passthrough();
+
 export const TaskViewSchema = z
   .object({
     slug: z.string(),
     state: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     resume_after: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
+    messages: z.array(TaskMessageSchema).nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
-    critique: z.unknown().nullish(),
     report_json: z.unknown().nullish(),
     live: z.unknown().nullish(),
   })
@@ -217,7 +219,6 @@ export const MonitorSchema = z
     quota: QuotaSchema,
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
-    tool_shapes: z.record(z.string(), z.unknown()).nullish(),
   })
   .passthrough();
 
@@ -244,18 +245,6 @@ export const ChatViewSchema = z
   })
   .passthrough();
 
-/** Every ledger section is a list of rule rows (altitude/rules.py), not prose. */
-const LedgerRules = z.array(z.record(z.string(), z.unknown())).nullish();
-
-export const RulesSchema = z
-  .object({
-    global: LedgerRules,
-    stack: LedgerRules,
-    project: LedgerRules,
-    incidents: LedgerRules,
-  })
-  .passthrough();
-
 export type Quota = z.infer<typeof QuotaSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
@@ -265,13 +254,13 @@ export type ProjectRow = z.infer<typeof ProjectRowSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
+export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
-export type RulesView = z.infer<typeof RulesSchema>;
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
 
@@ -326,15 +315,6 @@ export function useChat(project: string, limit = 60) {
   });
 }
 
-export function useRules(project: string) {
-  return useQuery({
-    queryKey: ["rules", project],
-    queryFn: async () => RulesSchema.parse(await api(`/api/rules/${project}`)),
-    refetchInterval: pollInterval,
-    enabled: Boolean(project),
-  });
-}
-
 // ---- mutation hooks --------------------------------------------------------------------
 
 export interface DecideInput {
@@ -342,8 +322,6 @@ export interface DecideInput {
   slug: string;
   /** Index into the decision's options list (the server does int(option)). */
   option?: number;
-  /** Decision 50: feedback on a proposal → the proposal is redone around `note` (required). */
-  revise?: boolean;
   note?: string;
 }
 
@@ -366,7 +344,6 @@ export interface TaskActionInput {
   action: string;
   reason?: string;
   title?: string;
-  class?: string;
   request?: string;
 }
 
@@ -389,8 +366,6 @@ export function useTaskAction(project: string) {
 export interface ProjectAddInput {
   name: string;
   path?: string;
-  /** Comma-separated stack names, as the server expects. */
-  stacks?: string;
   approval?: string;
   wip?: number;
 }
@@ -420,8 +395,13 @@ export interface L2MessageInput {
 }
 
 export function useL2Message(project: string) {
+  const queryClient = useQueryClient();
   return useOptimisticMutation<L2MessageInput, unknown, ProjectView>({
-    mutationFn: (input) => post("/api/l2/message", input),
+    mutationFn: async (input) => {
+      const out = await post("/api/l2/message", input);
+      void queryClient.invalidateQueries({ queryKey: ["task", input.project, input.slug] });
+      return out;
+    },
     queryKey: ["project", project],
     update: () => undefined,
     failureMessage: "Couldn't send the message to the L2.",

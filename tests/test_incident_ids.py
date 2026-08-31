@@ -1,6 +1,5 @@
-"""Incident ids are unique under concurrent faults (I-013). Two `l2-died` faults raised in the same second both
-counted the same rows, both got `I-009`, and the blind write kept only the second record. The id now comes from
-the highest id ever issued and the file is reserved with O_EXCL, so a race loses nothing. Runs against a
+"""Incident ids remain unique under concurrent faults. Allocation uses the highest id ever issued and reserves
+the file with O_EXCL, so simultaneous writers cannot overwrite one another. Runs against a
 throwaway ALTITUDE_HOME; every test builds its own temp home, never the live ledger."""
 import json
 import os
@@ -18,19 +17,19 @@ from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-iid-")
 REPO = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, REPO)
-from altitude import config, improve, state as S  # noqa: E402
+from altitude import config, incidents, state as S  # noqa: E402
 
 # One racing child for the multi-process test. It announces itself only once the import is done, so the parent can
 # wait for every child to be armed before firing the gun; then it spins on `go` and files one incident.
 CHILD = '''
 import os, sys, time
 sys.path.insert(0, sys.argv[1])
-from altitude import improve
+from altitude import incidents
 ready, go, marker = sys.argv[2], sys.argv[3], sys.argv[4]
 open(ready, "w").close()
 while not os.path.exists(go):
     time.sleep(0.002)
-res = improve.new_incident("demo", title=marker, task=None, what=marker, evidence="events.log",
+res = incidents.new_incident("demo", title=marker, task=None, what=marker, evidence="events.log",
                            cause="not yet analysed", tags=["system-fault"])
 print(res["id"])
 '''
@@ -42,7 +41,7 @@ class TempHome:
 
     # (module, attribute, path under the temp home) for every constant a module froze out of config.ROOT at import.
     DERIVED = ((config, "INCIDENT_INDEX", "incidents.jsonl"), (config, "PROJECTS_FILE", "projects.json"),
-               (config, "MONITOR_DIR", "monitor"), (improve, "FAULTS", "monitor/faults.json"))
+               (config, "MONITOR_DIR", "monitor"), (incidents, "FAULTS", "monitor/faults.json"))
 
     def use_temp_home(self, project: str = "demo") -> Path:
         self._saved = [(config, "ROOT", config.ROOT)] + [(m, k, getattr(m, k)) for m, k, _ in self.DERIVED]
@@ -54,7 +53,7 @@ class TempHome:
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         repo = root / "repo"
         (repo / "docs" / "incidents").mkdir(parents=True, exist_ok=True)
-        config.save_projects({project: {"name": project, "path": str(repo), "stacks": ["python"]}})
+        config.save_projects({project: {"name": project, "path": str(repo)}})
         return root
 
     def _restore_home(self):
@@ -64,7 +63,7 @@ class TempHome:
 
 def ledger_row(iid: str, project: str = "demo") -> str:
     return json.dumps({"at": "2026-08-29T00:00:00", "project": project, "id": iid, "title": iid, "task": None,
-                       "tags": [], "scope": "project", "mechanism": "incident-only", "rule": None, "cause": ""},
+                       "tags": [], "cause": ""},
                       sort_keys=True)
 
 
@@ -74,29 +73,28 @@ class TestNextIncidentId(TempHome, unittest.TestCase):
         self.root = self.use_temp_home()
 
     def test_empty_everywhere_starts_at_one(self):
-        self.assertEqual(improve.next_incident_id("demo"), "I-001")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-001")
 
     def test_a_gap_is_never_reused_and_a_duplicate_never_shifts_the_max(self):
-        """The I-013 wreckage itself: I-009 filed twice, I-010 never issued, I-013 present. Counting rows says
-        I-004; counting the folder says I-003. The next free id is I-014."""
+        """Duplicate rows and gaps do not lower the next id below the highest id already issued."""
         ledger = config.project_dir("demo") / "incidents.jsonl"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text("\n".join(ledger_row(i) for i in ("I-009", "I-009", "I-011", "I-013")) + "\n")
-        self.assertEqual(improve.next_incident_id("demo"), "I-014")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-014")
 
     def test_every_source_of_ids_is_consulted(self):
         d = config.project_dir("demo") / "incidents"
         d.mkdir(parents=True, exist_ok=True)
         (d / "I-004.md").write_text("altitude-side copy")
-        self.assertEqual(improve.next_incident_id("demo"), "I-005")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-005")
         (Path(config.project_path("demo")) / "docs" / "incidents" / "I-021.md").write_text("repo copy")
-        self.assertEqual(improve.next_incident_id("demo"), "I-022")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-022")
         config.INCIDENT_INDEX.write_text(ledger_row("I-030") + "\n")
-        self.assertEqual(improve.next_incident_id("demo"), "I-031")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-031")
 
     def test_another_projects_ids_do_not_count(self):
         config.INCIDENT_INDEX.write_text(ledger_row("I-099", project="other") + "\n" + ledger_row("I-002") + "\n")
-        self.assertEqual(improve.next_incident_id("demo"), "I-003")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-003")
 
     def test_unparseable_ids_are_skipped_not_crashed_on(self):
         ledger = config.project_dir("demo") / "incidents.jsonl"
@@ -106,7 +104,7 @@ class TestNextIncidentId(TempHome, unittest.TestCase):
         d = config.project_dir("demo") / "incidents"
         d.mkdir(parents=True, exist_ok=True)
         (d / "I-draft.md").write_text("not an id")
-        self.assertEqual(improve.next_incident_id("demo"), "I-007")
+        self.assertEqual(incidents.next_incident_id("demo"), "I-007")
 
 
 class TestReserveIncidentFile(TempHome, unittest.TestCase):
@@ -115,7 +113,7 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         self.root = self.use_temp_home()
 
     def file_incident(self, what: str) -> dict:
-        return improve.new_incident("demo", title=what, task=None, what=what, evidence="events.log",
+        return incidents.new_incident("demo", title=what, task=None, what=what, evidence="events.log",
                                     cause="not yet analysed", tags=["system-fault"])
 
     def test_an_existing_incident_file_is_never_clobbered(self):
@@ -132,13 +130,13 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         d = config.project_dir("demo") / "incidents"
         d.mkdir(parents=True, exist_ok=True)
         (d / "I-001.md").write_text("squatter")
-        old = improve.next_incident_id
-        improve.next_incident_id = lambda project: "I-001"
+        old = incidents.next_incident_id
+        incidents.next_incident_id = lambda project: "I-001"
         try:
             with self.assertRaises(RuntimeError) as e:
                 self.file_incident("doomed")
         finally:
-            improve.next_incident_id = old
+            incidents.next_incident_id = old
         self.assertIn("I-001", str(e.exception))
         self.assertIn("already exists", str(e.exception))
         self.assertEqual((d / "I-001.md").read_text(), "squatter")
@@ -149,12 +147,12 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         d = config.project_dir("demo") / "incidents"
         d.mkdir(parents=True, exist_ok=True)
         (d / "I-001.md").write_text("taken by a racer")
-        real, calls = improve.next_incident_id, []
-        improve.next_incident_id = lambda project: (calls.append(project), "I-001" if len(calls) == 1 else real(project))[1]
+        real, calls = incidents.next_incident_id, []
+        incidents.next_incident_id = lambda project: (calls.append(project), "I-001" if len(calls) == 1 else real(project))[1]
         try:
             res = self.file_incident("retried")
         finally:
-            improve.next_incident_id = real
+            incidents.next_incident_id = real
         self.assertEqual(len(calls), 2, "the collision must have driven exactly one retry")
         self.assertEqual(res["id"], "I-002")
         self.assertEqual((d / "I-001.md").read_text(), "taken by a racer")
@@ -165,7 +163,7 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         allocation must never take that same flock — it is not reentrant, and a nested take would hang altd while
         holding the lock. The watchdog turns that hang into a failure instead of wedging the suite."""
         def watchdog(signum, frame):
-            raise AssertionError("new_incident blocked while the caller held the project lock — nested flock (I-013)")
+            raise AssertionError("new_incident blocked while the caller held the project lock — nested flock")
 
         previous = signal.signal(signal.SIGALRM, watchdog)
         signal.setitimer(signal.ITIMER_REAL, 10)
@@ -215,7 +213,7 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         self.assertEqual(len(set(ids)), len(ids), f"duplicate incident ids allocated: {sorted(ids)}")
         self.assertEqual(sorted(ids), [f"I-{n:03d}" for n in range(1, len(ids) + 1)])
         self.assertEqual(sorted(p.stem for p in d.glob("I-*.md")), sorted(ids))
-        self.assertEqual(improve.next_incident_id("demo"), f"I-{len(ids) + 1:03d}")
+        self.assertEqual(incidents.next_incident_id("demo"), f"I-{len(ids) + 1:03d}")
         return ids
 
     def test_concurrent_incidents_get_distinct_ids_and_keep_every_body(self):
@@ -230,14 +228,14 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
             directory.mkdir(parents=True, exist_ok=True)
             yield
 
-        real = improve._alloc_lock
-        improve._alloc_lock = no_lock
-        self.addCleanup(lambda: setattr(improve, "_alloc_lock", real))
+        real = incidents._alloc_lock
+        incidents._alloc_lock = no_lock
+        self.addCleanup(lambda: setattr(incidents, "_alloc_lock", real))
         self.race(workers=8, rounds=4)
 
     def test_separate_processes_racing_on_one_home_get_distinct_ids(self):
-        """The real I-013 shape: two independent processes filing a fault at the same moment. Children share one
-        ALTITUDE_HOME and are released by a file barrier, so the flock and the exclusive create are doing the work
+        """Two independent processes file evidence at the same moment. Children share one ALTITUDE_HOME and are
+        released by a file barrier, so the flock and the exclusive create are doing the work
         across process boundaries, not just across threads."""
         workers, deadline = 6, time.monotonic() + 60
         script = self.root / "racer.py"

@@ -1,4 +1,4 @@
-"""Decision 44: an exhausted subscription window is a hold with a reset time — detected, held, auto-resumed."""
+"""An exhausted subscription window is detected, held until its reset time, and then resumed."""
 import json
 import os
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-limit-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, engines, dispatch, tasks as T, digest  # noqa: E402
+from altitude import config, state as S, engines, dispatch, monitor, recovery, tasks as T, digest  # noqa: E402
 
 LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 
@@ -33,8 +33,16 @@ class TestDetect(unittest.TestCase):
 
 
 class TestHold(unittest.TestCase):
+    def setUp(self):
+        recovery.hold_path().unlink(missing_ok=True)
+        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        monitor.quota = lambda: {"known": True}
+        monitor.quota_hold = lambda: None
+
     def tearDown(self):
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")  # never leave a live hold behind for other tests
+        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        recovery.hold_path().unlink(missing_ok=True)
 
     def test_hold_until_reset_then_clear(self):
         future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="seconds")
@@ -51,7 +59,7 @@ class TestPollAndResume(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
 
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
         orig = engines.claude_agents, S.list_tasks, dispatch.job_detail
@@ -75,7 +83,7 @@ class TestPollAndResume(unittest.TestCase):
 
     def test_resume_due_is_oldest_first_and_wip_throttled(self):
         past = "2026-01-01T00:00:00+00:00"
-        base = {"class": "S", "state": "blocked", "resume_after": past, "updated": S.now()}
+        base = {"state": "blocked", "resume_after": past, "updated": S.now()}
         for i, slug in enumerate(("c-newest", "a-oldest", "b-middle")):
             S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
             S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})

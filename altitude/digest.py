@@ -1,4 +1,4 @@
-"""Cross-project Decision queue, WIP, digest text, Kokoro rendering (ARCHITECTURE §6)."""
+"""Cross-project user-input queue, WIP summary, digest text, and Kokoro rendering."""
 from __future__ import annotations
 import os
 import subprocess
@@ -6,14 +6,11 @@ from pathlib import Path
 
 from . import config, state as S, tasks as T
 
-CLASS_RANK = {"L": 0, "M": 1, "S": 2}
-
-
 def queue() -> list[dict]:
     items = []
     for p in config.load_projects():
         items += T.decisions(p)
-    items.sort(key=lambda i: (0 if i["kind"] == "blocked" else 1, CLASS_RANK.get(i["class"], 3), i.get("asked") or ""))
+    items.sort(key=lambda i: i.get("asked") or "")
     return items
 
 
@@ -28,20 +25,20 @@ def fyis(limit: int = 30) -> list[dict]:
 def wip() -> dict:
     per = {p: sum(1 for t in S.list_tasks(p) if t["state"] == "running") for p in config.load_projects()}
     return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT, "limit_machine": config.WIP_PER_MACHINE,
-            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "approved" else "resume"}
+            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "queued" else "resume"}
                         for p in config.load_projects() for t in S.list_tasks(p)
-                        if t["state"] == "approved" or (t["state"] == "blocked" and t.get("resume_after"))]}
+                        if t["state"] == "queued" or (t["state"] == "blocked" and t.get("resume_after"))]}
 
 
 def text() -> str:
     q = queue()
     lines = ["# Altitude digest", ""]
     if q:
-        lines += [f"{len(q)} decision(s) waiting:"] + [f"- [{i['project']}] {i['slug']} ({i['class']}): {i['question'][:200]}" for i in q]
+        lines += [f"{len(q)} task(s) need input:"] + [f"- [{i['project']}] {i['slug']}: {i['question'][:200]}" for i in q]
     else:
         lines.append("No decisions waiting.")
     w = wip()
-    lines.append(f"Running: {w['machine']} orchestrator(s) — " + ", ".join(f"{p} {n}" for p, n in w["per_project"].items() if n) + ".")
+    lines.append(f"Running: {w['machine']} L2 task(s) — " + ", ".join(f"{p} {n}" for p, n in w["per_project"].items() if n) + ".")
     if w["waiting"]:
         lines.append("Waiting for a slot: " + ", ".join(f"{x['project']}/{x['slug']}" for x in w["waiting"]) + ".")
     f = fyis(8)
@@ -57,7 +54,7 @@ def speak(txt: str) -> Path | None:
     from — that script has no file output, so altd calls the server itself). Returns the wav path; faults are raised."""
     import json as _json
     import urllib.request
-    from . import improve
+    from . import incidents
     url = os.environ.get("TTS_URL", "http://127.0.0.1:8880/v1/audio/speech")
     voice = os.environ.get("TTS_VOICE", "af_heart")
     out = config.ROOT / "digest.wav"
@@ -66,11 +63,11 @@ def speak(txt: str) -> Path | None:
     try:
         with urllib.request.urlopen(req, timeout=300) as r:
             data = r.read()
-    except Exception as e:  # noqa: BLE001 — network/HTTP/timeout: one fault, no fallback (decision 36)
-        improve.system_fault("tts", f"{url}: {e}")
+    except Exception as e:  # noqa: BLE001 — network/HTTP/timeout: one fault, no silent fallback
+        incidents.system_fault("tts", f"{url}: {e}")
         return None
     if not data.startswith(b"RIFF"):
-        improve.system_fault("tts", f"{url}: response is not a WAV ({len(data)} bytes, starts {data[:12]!r})")
+        incidents.system_fault("tts", f"{url}: response is not a WAV ({len(data)} bytes, starts {data[:12]!r})")
         return None
     tmp = out.with_suffix(".tmp")
     tmp.write_bytes(data)

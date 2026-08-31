@@ -1,4 +1,4 @@
-"""Decision 48: PRs merge by default for every class; `hold_merge` (with a reason) is the exception and travels in the brief."""
+"""PRs merge by default; `hold_merge` is the explicit exception."""
 import os
 import sys
 import tempfile
@@ -18,16 +18,17 @@ class TestMergePolicy(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         REPO.mkdir()
-        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO)}})
 
-    def test_l_class_merges_by_default(self):
-        T.new("altitude", "merge-l", "L", "req")
+    def test_tasks_merge_by_default(self):
+        T.new("altitude", "merge-l", "req")
         b = dispatch.build_brief("altitude", "merge-l")
-        self.assertIn("Merge when the review is addressed and CI is green", b)
+        self.assertIn("Merge when the applicable checks and any appropriate review are complete", b)
+        self.assertIn("Review is optional", b)
         self.assertNotIn("Held for Burak", b)
 
     def test_hold_is_the_exception_and_says_why(self):
-        T.new("altitude", "merge-hold", "S", "req", hold_merge="rewrites the deploy workflow")
+        T.new("altitude", "merge-hold", "req", hold_merge="rewrites the deploy workflow")
         b = dispatch.build_brief("altitude", "merge-hold")
         self.assertIn("Held for Burak", b); self.assertIn("rewrites the deploy workflow", b)
         T.set_hold_merge("altitude", "merge-hold", None, actor="l3")

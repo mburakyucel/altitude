@@ -1,11 +1,41 @@
-"""Dispatch an L2 as `claude --bg` in a worktree; poll `claude agents`; notice done (ARCHITECTURE §5)."""
+"""Dispatch one task-owning L2 in its worktree, monitor it, and safely resume its session."""
 from __future__ import annotations
+from contextlib import contextmanager
+import fcntl
 import json
+import secrets
 from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, git_policy, rules, state as S, tasks as T
+from . import config, engines, git_policy, recovery, state as S, tasks as T
+
+
+class DispatchFailure(T.TransitionError):
+    """A launch fault already persisted and routed through the global recovery fuse."""
+
+
+def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
+    """Leave a failed launch queued, clear its transient claim, and trip recovery once."""
+    reason = str(error)[:300]
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") == "queued":
+            task["dispatching"] = None
+            S.save_task(project, task)
+    S.append_event(project, slug, "dispatch-failed", reason=reason)
+    from . import incidents
+    incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug)
+    return DispatchFailure(f"dispatch failed: {reason}")
+
+
+def record_resume_failure(project: str, slug: str, previous: str, error: object) -> RuntimeError:
+    """Persist a failed replacement launch and hold further ordinary work for recovery."""
+    reason = str(error)[:300]
+    S.append_event(project, slug, "resume-failed", previous=previous, reason=reason)
+    from . import incidents
+    incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
+    return RuntimeError(f"resume of {project}/{slug} failed: {reason}")
 
 
 def project_never_list(repo: Path) -> str:
@@ -15,7 +45,7 @@ def project_never_list(repo: Path) -> str:
         lines = [l.strip("- ").strip() for l in md.read_text().splitlines() if re.match(r"^\s*-\s*\*\*?never", l, re.I) or "never" in l.lower()[:40]]
         if lines:
             return "; ".join(l[:160] for l in lines[:8])
-    return "no changes outside the brief; no weakened guardrails; high-impact classes: open the PR and stop"
+    return "no changes outside the brief; no weakened guardrails; honor any recorded merge hold"
 
 
 JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
@@ -118,45 +148,34 @@ def build_brief(project: str, slug: str) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
-    proposal = (d / "proposal.md").read_text() if (d / "proposal.md").exists() else (d / "request.md").read_text()
-    env = task["envelope"]
-    dec = task.get("decision") or {}
-    approval_note = f" — Burak chose: {dec['chosen']}" if dec.get("chosen") else ""
-    if dec.get("chosen") and dec.get("detail"):  # decision 46: the card is short; the conditions behind it travel with the brief
-        approval_note += f"\n\nBehind the card (the L3's reasoning and conditions — binding where they say so):\n{dec['detail']}"
-    if dec.get("chosen") and dec.get("note"):  # decision 50: Burak's own words with the answer are binding too
-        approval_note += f"\n\nBurak's note with that answer (binding): {dec['note']}"
+    request = (d / "request.md").read_text()
     policy = proj.get("approval", "default")
-    if task.get("hold_merge"):  # decision 48: the hold is the exception, and it says why
-        merge_policy = f"**Held for Burak** — open the PR, get it review-clean and CI-green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
+    if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
+        merge_policy = f"**Held for Burak** — open the PR, make it ready for any required review, get its checks green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
     else:
-        merge_policy = {"default": "Merge when the review is addressed and CI is green — every class, L included (decision 48). Only a brief marked *held* stops at the open PR.",
+        merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     text = (config.TEMPLATES / "brief.md").read_text().format(
-        slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
+        slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
-        engine_line=(f"the engine is forced to **{task['engine']}** for this task." if task.get("engine") else "the engine is Altitude's choice."),
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
-        paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the proposal's file list)",
+        paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
-        l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
-        verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
+        repo=config.project_path(project),
         branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
-        proposal=proposal, **{"class": task["class"]})
-    stack = rules.compile_section(rules.stack_rules(proj.get("stacks", [])), "Stack rules")
-    return text + ("\n" + stack if stack else "")
+        request=request)
+    return text
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-dispatch settings passed with --settings: hooks that enforce the envelope, nothing global."""
+    """Per-dispatch settings: repository guardrails and passive edit telemetry."""
     hooks = config.HOOKS
     settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]},
-                       {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
-        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}  # decision 49: the 300k umbrella, also for resumed sessions
+        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p
@@ -167,8 +186,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     # its remote-backed gate and this task's worktree has a provenance-safe base.
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task["state"] != "approved":
-            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task["state"] != "queued":
+            raise T.TransitionError(f"{slug} is {task['state']}, not queued")
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         held = wip_hold(project, task)
@@ -179,19 +198,19 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
-        from . import improve
-        improve.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
     try:
         worktree_path = _task_worktree(repo, project, slug, origin_sha)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import improve
-        improve.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by task provenance gate: {exc}") from exc
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task["state"] != "approved":
-            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task["state"] != "queued":
+            raise T.TransitionError(f"{slug} is {task['state']}, not queued")
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         task["dispatching"] = S.now()
@@ -199,50 +218,127 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     attempt = task.get("attempt", 0) + 1
     dispatch_id = f"{slug}-{attempt}"
     name = f"{project}/{dispatch_id}"
-    d = S.task_dir(project, slug)
-    brief_md = build_brief(project, slug)
-    T.brief(project, slug, brief_md, actor="altd")
-    # envelope file the hooks read (keyed by dispatch id; session id is learned after launch)
-    env_file = config.MONITOR_DIR / f"envelope-{project}--{dispatch_id}.json"
-    S.write_json(env_file, {"project": project, "slug": slug, "dispatch_id": dispatch_id, **task["envelope"]})
-    settings = session_settings(project, slug, f"{project}--{dispatch_id}")
-    persona = rules.compiled_persona("l2", project)
-    proj = config.project(project)
-    res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
-                            permission_mode="auto", max_turns=task["envelope"]["max_turns"],
-                            model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
-                            extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
-    agent = res.get("agent") or {}
-    if res["returncode"] != 0 and not agent:
+    l2_token = secrets.token_urlsafe(24)
+    agent = {}
+    try:
+        brief_md = build_brief(project, slug)
+        T.brief(project, slug, brief_md, actor="altd")
+        settings = session_settings(project, slug, f"{project}--{dispatch_id}")
+        persona = config.PERSONAS / "l2.md"
+        proj = config.project(project)
+        res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
+                                permission_mode="auto",
+                                model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
+                                extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id,
+                                                           "l2_token": l2_token}),
+                                spawn_guard=recovery.launch_permission(project, task))
+    except recovery.LaunchHeld as exc:
         with S.project_lock(project):
-            t2 = S.load_task(project, slug); t2["dispatching"] = None; S.save_task(project, t2)
-        S.append_event(project, slug, "dispatch-failed", stdout=res["stdout"][:300], stderr=res["stderr"][:300])
-        raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
-    worktree = str(worktree_path)
-    T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent.get("sessionId"), agent_id=agent.get("id"),
-               worktree=worktree, branch=worktree_branch(slug, worktree, agent.get("id")))
-    if agent.get("sessionId"):
+            held_task = S.load_task(project, slug)
+            held_task["dispatching"] = None
+            S.save_task(project, held_task)
+        S.append_event(project, slug, "dispatch-held", reason=str(exc))
+        raise T.TransitionError(str(exc)) from exc
+    except Exception as exc:
+        raise record_dispatch_failure(project, slug, exc) from exc
+    agent = res.get("agent") or {}
+    try:
+        if res.get("returncode") != 0:
+            raise RuntimeError(f"claude --bg failed: {res.get('stderr', '')[:300] or res.get('stdout', '')[:300]}")
+        if not agent.get("id") or not agent.get("sessionId"):
+            raise RuntimeError("claude --bg returned without a concrete agent id and session id")
+        worktree = str(worktree_path)
+        T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent["sessionId"], agent_id=agent["id"],
+                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]), l2_token=l2_token)
+    except T.TransitionError as exc:
+        if agent.get("id"):
+            try:
+                engines.claude_stop(agent["id"])
+            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
+                pass
+        try:
+            current_state = S.load_task(project, slug).get("state")
+        except (KeyError, OSError, ValueError):
+            current_state = None
+        if current_state != "queued":
+            S.append_event(project, slug, "dispatch-cancelled", reason=str(exc)[:300])
+            raise
+        raise record_dispatch_failure(project, slug, exc) from exc
+    except Exception as exc:
+        if agent.get("id"):
+            try:
+                engines.claude_stop(agent["id"])
+            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
+                pass
+        raise record_dispatch_failure(project, slug, exc) from exc
+    try:
         S.write_json(config.MONITOR_DIR / f"session-{agent['sessionId']}.json",
                      {"project": project, "slug": slug, "dispatch_id": dispatch_id, "level": "l2"})
-    return {"dispatch_id": dispatch_id, "agent": agent, "stdout": res["stdout"]}
+    except Exception as exc:  # noqa: BLE001 — ownership is already durable; hold dispatch but keep tracking the worker
+        S.append_event(project, slug, "session-index-failed", reason=str(exc)[:300])
+        from . import incidents
+        incidents.system_fault("session-index", f"{project}/{slug}: {exc}", project=project, task=slug)
+    return {"dispatch_id": dispatch_id, "agent": agent, "stdout": res.get("stdout", "")}
 
 
 def l2_env(project: str, task: dict) -> dict:
-    """The env every L2 session (fresh or resumed) needs: the hooks read the session key to find their envelope."""
+    """The ownership identity every fresh or resumed L2 session needs."""
     return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": task["slug"],
-            "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}"}
+            "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}",
+            "ALTITUDE_DISPATCH_ID": str(task["dispatch_id"]),
+            "ALTITUDE_L2_TOKEN": str(task["l2_token"])}
 
 
-def resume_session(project: str, slug: str, text: str, session_id: str | None = None) -> dict:
+@contextmanager
+def _resume_lock(project: str, slug: str):
+    """Serialize replacements of one L2 across the server and human-run CLI processes."""
+    path = S.task_dir(project, slug) / ".resume.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str | None = None,
+                             expected_session_id: str | None = None,
+                             expected_agent_id: str | None = None,
+                             expected_state: str | None = None) -> None:
+    if task.get("state") not in ("running", "blocked"):
+        raise T.TransitionError(f"{slug}: L2 can be resumed only while running or blocked (state {task.get('state')})")
+    checks = (
+        ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+        ("session", expected_session_id, task.get("session_id")),
+        ("agent", expected_agent_id, task.get("agent_id")),
+        ("state", expected_state, task.get("state")),
+    )
+    for label, expected, current in checks:
+        if expected is not None and current != expected:
+            raise T.TransitionError(f"{slug}: L2 {label} changed before resume ({expected!r} → {current!r})")
+
+
+def _resume_session_locked(project: str, slug: str, text: str, session_id: str | None = None, *,
+                           expected_dispatch_id: str | None = None,
+                           expected_session_id: str | None = None,
+                           expected_agent_id: str | None = None,
+                           expected_state: str | None = None) -> dict:
     """Re-attach the task's L2 transcript in a new --bg worker (in the task's worktree) and hand it `text`.
 
     A resumed session gets a new session id and agent id: the task is rebound to the live row, so `poll()` follows the
     new worker instead of re-reading the old one's `failed`/`done` row. No fallback to the main checkout: a missing
-    worktree is a dispatch-again situation, not a place to run an L2 that thinks it is on its own branch."""
+    worktree is a dispatch-again situation, not a place to run an L2 that thinks it is on its own branch. The caller's
+    optional expected fields fence a user message to the exact L2 row it was composed against."""
     task = S.load_task(project, slug)
+    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
+                             expected_session_id=expected_session_id,
+                             expected_agent_id=expected_agent_id, expected_state=expected_state)
     sid = session_id or task.get("session_id")
     if not sid:
         raise T.TransitionError("no session to resume; dispatch again")
+    if session_id is not None and task.get("session_id") != session_id:
+        raise T.TransitionError(f"{slug}: requested session is no longer the current L2 session")
     cwd = Path(task.get("worktree") or "")
     if not task.get("worktree") or not cwd.is_dir():
         raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
@@ -253,28 +349,101 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
         # branch, and every committed ancestor remain strict.
         _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import improve
-        improve.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
+    # Provenance checks may take a network round trip. Re-read before spending an engine launch.
+    current = S.load_task(project, slug)
+    _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
+                             expected_session_id=sid, expected_agent_id=task.get("agent_id"),
+                             expected_state=task.get("state"))
     name = f"{project}/{task['dispatch_id']}"
-    res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
-                                   max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
-                                   extra_env=l2_env(project, task))
-    live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
-    if not live:
-        raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
+    replacement_token = secrets.token_urlsafe(24)
+    try:
+        held = recovery.dispatch_hold(project, task)
+        if held:
+            raise recovery.LaunchHeld(held)
+        res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
+                                       settings=S.task_dir(project, slug) / "settings.json",
+                                       extra_env=l2_env(project, {**task, "l2_token": replacement_token}),
+                                       spawn_guard=recovery.launch_permission(project, task))
+    except recovery.LaunchHeld as exc:
+        S.append_event(project, slug, "resume-held", reason=str(exc), previous=sid)
+        raise T.TransitionError(str(exc)) from exc
+    except Exception as exc:
+        raise record_resume_failure(project, slug, sid, exc) from exc
+    try:
+        live = [a for a in engines.claude_agents()
+                if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")
+                and a.get("sessionId") and a.get("id")
+                and (a.get("sessionId") != sid or a.get("id") != task.get("agent_id"))]
+    except Exception as exc:
+        raise record_resume_failure(project, slug, sid, exc) from exc
+    if res.get("returncode") != 0 or not live:
+        for row in live:
+            try:
+                engines.claude_stop(row["id"])
+            except Exception:  # noqa: BLE001 — the recovery fuse records the launch failure below
+                pass
+        note = res.get("stderr", "")[:200] or res.get("stdout", "")[:200]
+        if res.get("returncode") != 0:
+            detail = note or f"resume launcher exited {res.get('returncode')}"
+        else:
+            detail = "no concrete live worker"
+            if note:
+                detail += f" ({note})"
+        raise record_resume_failure(project, slug, sid, detail)
     new = max(live, key=lambda a: a.get("startedAt") or 0)
-    with S.project_lock(project):
-        t = S.load_task(project, slug)
-        t["agent_id"], t["session_id"] = new.get("id"), new.get("sessionId")
-        S.save_task(project, t)
+    changed = None
+    try:
+        with S.project_lock(project):
+            t = S.load_task(project, slug)
+            try:
+                _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
+                                         expected_session_id=sid, expected_agent_id=task.get("agent_id"),
+                                         expected_state=task.get("state"))
+            except T.TransitionError as exc:
+                changed = exc
+            else:
+                t["agent_id"], t["session_id"], t["l2_token"] = new["id"], new["sessionId"], replacement_token
+                S.save_task(project, t)
+    except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held
+        try:
+            engines.claude_stop(new["id"])
+        except Exception:  # noqa: BLE001 — recovery owns any worker the stop command could not reach
+            pass
+        raise record_resume_failure(project, slug, sid, f"could not bind replacement worker: {exc}") from exc
+    if changed is not None:
+        engines.claude_stop(new["id"])
+        S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],
+                       reason=str(changed))
+        raise T.TransitionError(f"{slug}: task generation changed during resume; replacement worker stopped") from changed
+    if task.get("agent_id") and task.get("agent_id") != new["id"]:
+        try:
+            engines.claude_stop(task["agent_id"])
+        except Exception as exc:  # noqa: BLE001 — new ownership is durable; surface cleanup as private evidence
+            from . import incidents
+            incidents.system_fault("l2-replaced-worker", f"{project}/{slug}: {exc}", project=project, task=slug)
     S.append_event(project, slug, "resumed", agent_id=new.get("id"), session_id=new.get("sessionId"), previous=sid)
     res["agent"] = new
     return res
 
 
-def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ") -> dict:
+def resume_session(project: str, slug: str, text: str, session_id: str | None = None, **expected) -> dict:
+    with _resume_lock(project, slug):
+        return _resume_session_locked(project, slug, text, session_id, **expected)
+
+
+def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
+                           expected_dispatch_id: str | None = None,
+                           expected_session_id: str | None = None,
+                           expected_agent_id: str | None = None,
+                           expected_state: str | None = None,
+                           locked_resume: bool = True) -> dict:
     task = S.load_task(project, slug)
+    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
+                             expected_session_id=expected_session_id,
+                             expected_agent_id=expected_agent_id, expected_state=expected_state)
     if task["state"] == "blocked":
         hold = wip_hold(project, task)
         if hold:
@@ -282,6 +451,9 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
                        if hold.startswith("file lease: ") else f"waiting: {hold}")
             with S.project_lock(project):
                 task = S.load_task(project, slug)
+                _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
+                                         expected_session_id=expected_session_id,
+                                         expected_agent_id=expected_agent_id, expected_state=expected_state)
                 if "blocked_question" not in task:
                     task["blocked_question"] = task.get("blocked_reason")
                 task["resume_answer"] = answer
@@ -293,7 +465,18 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
             return {"deferred": True, "hold": hold, "waiting": waiting}
     if task.get("agent_id"):  # the idle worker that stopped at the block keeps nothing the transcript does not
         engines.claude_stop(task["agent_id"])
-    res = resume_session(project, slug, f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
+    prompt = f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report."
+    expected = {key: value for key, value in {
+        "expected_dispatch_id": expected_dispatch_id,
+        "expected_session_id": expected_session_id,
+        "expected_agent_id": expected_agent_id,
+        "expected_state": expected_state,
+    }.items() if value is not None}
+    if locked_resume:
+        res = _resume_session_locked(project, slug, prompt, **expected)
+    else:
+        # Keep the public resume seam used by callers and tests; it owns its own cross-process lock.
+        res = resume_session(project, slug, prompt, **expected)
     T.resume(project, slug, answer=answer)
     with S.project_lock(project):
         task = S.load_task(project, slug)
@@ -305,6 +488,38 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
     return res
 
 
+def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", **expected) -> dict:
+    return _resume_blocked_locked(project, slug, answer, prefix, locked_resume=False, **expected)
+
+
+def message_l2(project: str, slug: str, text: str) -> dict:
+    """Persist Burak's message and deliver it only to the L2 generation he addressed."""
+    text = str(text or "").strip()
+    if not text:
+        raise T.TransitionError("task message is empty")
+    with _resume_lock(project, slug):
+        task = S.load_task(project, slug)
+        _require_resume_snapshot(task, slug)
+        if not task.get("dispatch_id") or not task.get("session_id"):
+            raise T.TransitionError(f"{slug}: no current L2 dispatch generation")
+        expected = {
+            "expected_dispatch_id": task["dispatch_id"],
+            "expected_session_id": task["session_id"],
+            "expected_agent_id": task.get("agent_id"),
+            "expected_state": task["state"],
+        }
+        message = T.append_task_message(
+            project, slug, "burak", text, actor="burak",
+            expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
+            expected_state=task["state"],
+        )
+        if task["state"] == "blocked":
+            result = _resume_blocked_locked(project, slug, text, **expected)
+        else:
+            result = _resume_session_locked(project, slug, text, **expected)
+        return {**result, "message": message}
+
+
 def resume_due(project: str) -> list[str]:
     """Tasks blocked by an exhausted window come back by themselves once it reopens — oldest first, WIP-throttled."""
     if engines.usage_hold():
@@ -313,7 +528,7 @@ def resume_due(project: str) -> list[str]:
     due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
     for t in sorted(due, key=_resume_order):
         if wip_hold(project, t):
-            continue  # a lease or the improve-serialization rule holds this one; a younger unrelated task may still go
+            continue  # a lease holds this one; a younger unrelated task may still go
         if "resume_answer" in t:
             answer = t["resume_answer"]
             prefix = t.get("resume_prefix", "")
@@ -346,7 +561,7 @@ def _norm(p: str) -> str:
 
 
 def paths_overlap(a: list[str], b: list[str]) -> list[str]:
-    """Paths collide when equal or when one is a directory prefix of the other (decision 39)."""
+    """Paths collide when equal or when one is a directory prefix of the other."""
     out = []
     for x in map(_norm, a):
         for y in map(_norm, b):
@@ -359,9 +574,10 @@ BROAD_CLAIMS = ("tests", "docs", "altitude", "web", "hooks", "bin", "personas", 
 
 
 def narrow(paths: list[str]) -> list[str]:
-    """Decision 51 addendum: a claim on a whole top-level directory (`tests/`, `docs/`) is not a lease — it would hold every
-    task in the project behind one (2026-08-30: 23 approved tasks waited on a single `tests/` claim). Files and deeper
-    directories lease; top-level directory claims are dropped here, so briefs still show them but nothing waits on them."""
+    """Drop whole top-level directory claims because they are too broad to be useful leases.
+
+    Files and deeper directories still lease, and briefs still show the original declared scope.
+    """
     return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
 
 
@@ -462,12 +678,8 @@ def _expand_entry(entry: str) -> list[str]:
 
 
 def task_paths(project: str, task: dict) -> list[str]:
-    """The paths a task has declared: `--paths` on the task, else the proposal's `files`. This is the *staging* lease
-    (`alt land` refuses changes outside it); the *hold* lease is `narrow()` of it — see wip_hold."""
-    entries = task.get("paths")
-    if not entries:
-        p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
-        entries = p.get("files") or []
+    """The task's declared staging lease; `alt land` refuses changes outside it."""
+    entries = task.get("paths") or []
     return [path for entry in entries for path in _expand_entry(str(entry))]
 
 
@@ -502,14 +714,7 @@ def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
         return "", None
 
 
-def rule_application(task: dict) -> bool:
-    """A task that edits the rules ledger (docs/RULES.md, docs/incidents) — those serialize; every other improve task
-    relies on leases like anyone else (decision 51: the broad "one improve task at a time" held 11 tasks for hours)."""
-    paths = task.get("paths") or []
-    return str(task.get("slug", "")).startswith("apply-r-") or any(str(p).strip().lstrip("./").startswith(("docs/RULES.md", "docs/incidents")) for p in paths)
-
-
-PER_TASK_HOLDS = ("file lease", "one rule-application")  # holds that belong to one task; the rest of the queue is still dispatchable
+PER_TASK_HOLDS = ("file lease", "recovery hold")  # skip held ordinary work so the claimed repair can be reached
 
 
 def per_task_hold(hold: str | None) -> bool:
@@ -517,13 +722,14 @@ def per_task_hold(hold: str | None) -> bool:
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    held = recovery.dispatch_hold(project, task)
+    if held:
+        return held
     held = engines.usage_hold()
     if held:
         return f"usage limit: subscription window exhausted, resets {held}"
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
-    if task and rule_application(task) and any(rule_application(t) for t in running):
-        return "one rule-application task at a time (they edit the same ledger)"
     if task:
         mine = task_paths(project, task)
         mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
@@ -547,8 +753,11 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
         return f"WIP limit: {total} running on this machine"
     from .monitor import quota_hold, quota
     if not (quota() or {}).get("known"):
-        from . import improve  # decision 36: the reserve line cannot be enforced — say so, once a day
-        improve.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line (decision 31) is not being enforced; run `alt install-statusline` or fix the monitor")
+        from . import incidents
+        incidents.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line is not being enforced; run `alt install-statusline` or fix the monitor")
+        held = recovery.dispatch_hold(project, task)
+        if held:
+            return held
     q = quota_hold()
     if q:
         return q
@@ -575,7 +784,7 @@ def poll(project: str) -> list[dict]:
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             detail, at = job_detail(a.get("id"))
             lim = engines.usage_limit_in(detail, now=at)
-            if lim:  # decision 44: the worker is waiting for the window, not for a human
+            if lim:  # the worker is waiting for the usage window, not for a human
                 finished.append({"task": t, "agent": a, "limited": lim})
                 S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
                 continue
@@ -609,7 +818,7 @@ DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded
 
 
 def pull_after_done(project: str, task: dict) -> list[str]:
-    """Self-deploy (decision 43): when a project's checkout *is* the deployment — Altitude's own repo — fast-forward it to
+    """When a project's checkout is its deployment, fast-forward it to
     origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
     changes need a restart: those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here."""
     import subprocess
@@ -634,8 +843,8 @@ def pull_after_done(project: str, task: dict) -> list[str]:
             return []
         files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        from . import improve
-        improve.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        from . import incidents
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
         T.fyi(project, task.get("slug"), f"self-deploy refused in {repo}: {str(e)[:300]}")
         return [f"self-deploy refused: {str(e)[:160]}"]
     code = [f for f in files if f.startswith(DEPLOY_DIRS)]
@@ -647,7 +856,7 @@ def pull_after_done(project: str, task: dict) -> list[str]:
         S.write_json(pend_p, pend)
         T.fyi(project, task.get("slug"), f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
                                         f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
-                                        f"`systemctl --user restart altitude` when convenient; L2 workers survive it (decision 42).")
+                                        "an authorized service restart after verification.")
         notes.append(f"restart pending ({len(code)} code files)")
     return notes
 
@@ -666,7 +875,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     every guard; a background session can remain when its tree is ineligible. Orphan reclamation is intentionally
     outside this done-time pass and belongs to the accepted caller/prune follow-up."""
     import subprocess
-    from . import improve
+    from . import incidents
     repo = config.project_path(project)
     slug = task.get("slug") or ""
     notes = []
@@ -750,21 +959,21 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     try:
         fetch = subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
     except (subprocess.SubprocessError, OSError) as e:
-        improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
         return finish_after_failure(f"git fetch failed: {e}")
     if fetch.returncode != 0:
         error = (fetch.stderr or fetch.stdout).strip()[:120] or "git fetch failed"
         reason = f"could not refresh origin/main: {error}"
-        improve.system_fault("cleanup-fetch", f"{project}: {reason}", project=project, task=slug)
+        incidents.system_fault("cleanup-fetch", f"{project}: {reason}", project=project, task=slug)
         return finish_after_failure(reason)
     try:
         listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as e:
-        improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
         return finish_after_failure(f"git worktree list failed: {e}")
     if listed.returncode != 0:
         error = (listed.stderr or listed.stdout).strip()[:120] or "git worktree list failed"
-        improve.system_fault("cleanup-git", f"{project}: {error}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {error}", project=project, task=slug)
         return finish_after_failure(f"git worktree list failed: {error}")
 
     records = []
@@ -803,7 +1012,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 if a.get("cwd") and a.get("state") not in ("failed", "done", "stopped")]
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
         reason = f"live Claude session list unavailable: {e}"
-        improve.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=slug)
         for wt, _branch, _candidate in eligible:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
         notes.append(f"skipped worktree cleanup: {e}")
@@ -826,13 +1035,13 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                                           capture_output=True, text=True, timeout=30)
             except (subprocess.SubprocessError, OSError) as e:
                 reason = f"merge-base indeterminate: {e}"
-                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
             if not reason and ancestry.returncode == 1:
                 reason = "branch has commits not on origin/main"
             elif not reason and ancestry.returncode != 0:
                 stderr = (ancestry.stderr or "").strip()[:120] or "(empty stderr)"
                 reason = f"merge-base indeterminate (exit {ancestry.returncode}); stderr: {stderr}"
-                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
         if reason:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
@@ -844,7 +1053,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 rm_note = engines.claude_rm(task["agent_id"])
             except (subprocess.SubprocessError, OSError, RuntimeError) as e:
                 reason = f"claude rm failed: {e}"
-                improve.system_fault("cleanup-claude-rm", f"{project}/{slug}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-claude-rm", f"{project}/{slug}: {reason}", project=project, task=slug)
             else:
                 notes.append(f"claude rm {task['agent_id']}: {(rm_note or 'completed')[:120]}")
         if not reason:
@@ -858,7 +1067,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     error = (rm.stderr or rm.stdout).strip()[:120] or f"exit {rm.returncode}"
                     reason = f"git worktree remove failed: {error}"
             if reason:
-                improve.system_fault("cleanup-worktree-remove", f"{project}/{slug} {wt}: {reason}",
+                incidents.system_fault("cleanup-worktree-remove", f"{project}/{slug} {wt}: {reason}",
                                      project=project, task=slug)
         if not reason:
             try:
@@ -871,7 +1080,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     error = (deleted.stderr or deleted.stdout).strip()[:120] or f"exit {deleted.returncode}"
                     reason = f"git branch delete failed after worktree removal: {error}"
             if reason:
-                improve.system_fault("cleanup-branch-delete", f"{project}/{slug} {branch}: {reason}",
+                incidents.system_fault("cleanup-branch-delete", f"{project}/{slug} {branch}: {reason}",
                                      project=project, task=slug)
         if reason:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)

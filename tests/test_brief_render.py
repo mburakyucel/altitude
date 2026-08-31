@@ -15,26 +15,19 @@ from altitude import config, dispatch, tasks  # noqa: E402
 PROJECT = "brief-render-template-test"
 REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
-    "approval_note",
     "branch",
-    "class",
-    "engine_line",
-    "l1_in_flight",
     "leases",
-    "max_turns",
     "merge_policy",
     "model",
     "never_list",
     "paths",
     "project",
-    "proposal",
+    "request",
     "repo",
     "report_schema",
     "slug",
-    "subagent_launches",
     "task_dir",
     "title",
-    "verification",
 }
 UNFORMATTED_FIELD = r"\{[A-Za-z_][A-Za-z0-9_]*\}"
 
@@ -45,19 +38,17 @@ class TestBriefRender(unittest.TestCase):
         config.ensure_root()
         REPO.mkdir(exist_ok=True)
         projects = config.load_projects()
-        projects[PROJECT] = {"name": PROJECT, "path": str(REPO), "stacks": ["python"]}
+        projects[PROJECT] = {"name": PROJECT, "path": str(REPO)}
         config.save_projects(projects)
 
         default_task = tasks.new(
             PROJECT,
             "Brief render default policy fixture",
-            "S",
             "Render a dispatch brief from a safe request.",
         )
         held_task = tasks.new(
             PROJECT,
             "Brief render held policy fixture",
-            "S",
             "Render a held dispatch brief from a safe request.",
             hold_merge="requires a maintainer release",
         )
@@ -97,6 +88,14 @@ class TestBriefRender(unittest.TestCase):
             with self.subTest(held="Held for Burak" in rendered):
                 self.assertIn("never merge around the hold", rendered)
                 self.assertIn("full local test suite on merged `main`", rendered)
+
+    def test_direct_execution_and_optional_review_survive_rendering(self):
+        rendered = self.default_rendered
+        self.assertIn("implement directly", rendered)
+        self.assertIn("zero, one, or several L1s", rendered)
+        self.assertIn("Direct implementation is normal", rendered)
+        self.assertIn("Review is optional", rendered)
+        self.assertIn("alt task reply", rendered)
 
 
 if __name__ == "__main__":

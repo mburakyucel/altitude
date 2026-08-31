@@ -1,12 +1,10 @@
-"""Which engine runs a piece of work (decision 45): forced > role rule > remaining quota > default policy.
+"""Choose an engine for an optional L1 or reviewer from an override and available quota.
 
 Never silent: every choice carries its reason, and it lands in the run record and the events log."""
 from __future__ import annotations
 
 from . import config, state as S
 
-ROLE_ENGINES = {"l3": "claude", "l2": "claude", "proposal": "codex", "sizer": "codex"}  # by design: L2 is a Claude session; L3 is Claude with a Codex
-# turn whenever the Claude window is exhausted (decision 56); proposals and sizing are Codex (decision 56); the critic is the *other* engine from the proposal
 QUOTA_CODEX = "quota-codex.json"
 
 
@@ -23,17 +21,16 @@ def other(engine: str) -> str:
     return "claude" if engine == "codex" else "codex"
 
 
-def pick_engine(role: str, *, forced: str | None = None, task: dict | None = None, other_than: str | None = None) -> dict:
-    """{engine, why}. `forced` (command line) beats the task's `engine`, which beats the role rule; L1s and reviewers are
-    then split by remaining quota, and when neither seat is readable the default policy decides — out loud."""
+def pick_engine(role: str, *, forced: str | None = None, other_than: str | None = None) -> dict:
+    """Return ``{engine, why}`` for an optional L1 or reviewer.
+
+    A run-specific override wins. Otherwise quota headroom and the configured L1 default decide,
+    with the reason recorded in the run.
+    """
     if forced:
         if forced not in config.ENGINES:
             raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
         return {"engine": forced, "why": "forced on the command line"}
-    if task and task.get("engine"):
-        return {"engine": task["engine"], "why": f"forced on the task ({task.get('slug')})"}
-    if role in ROLE_ENGINES:
-        return {"engine": ROLE_ENGINES[role], "why": f"{role} is always {ROLE_ENGINES[role]} by design"}
     from .monitor import quota
     cl, cx = quota() or {}, quota_codex()
     cl_used = float(cl["five_hour"]) if cl.get("known") and cl.get("five_hour") is not None else None
@@ -54,7 +51,7 @@ def pick_engine(role: str, *, forced: str | None = None, task: dict | None = Non
             why += f" → default policy {eng}"
     else:
         eng = config.L1_DEFAULT_ENGINE
-        why = f"both quotas unknown → default policy {eng} (Burak 2026-08-30: Claude is the constrained seat)"
+        why = f"both quotas unknown → default policy {eng}"
     if other_than and eng == other_than:  # a reviewer should not share the author's engine when the other one has room
         alt = other(eng)
         alt_used = {"claude": cl_used, "codex": cx_used}[alt]

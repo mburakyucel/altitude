@@ -1,4 +1,4 @@
-"""Decision 56: the L3 turn runs on Codex when the Claude window is exhausted (before the turn, or when it closes mid-turn)."""
+"""An L3 turn uses Codex when the Claude window is exhausted before or during the turn."""
 import json
 import os
 import sys
@@ -18,7 +18,7 @@ class TestCodexL3(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         (_TMP / "repo").mkdir()
-        config.save_projects({"k": {"name": "k", "path": str(_TMP / "repo"), "stacks": ["python"]}})
+        config.save_projects({"k": {"name": "k", "path": str(_TMP / "repo")}})
 
     def _run(self, held: bool, claude_limited: bool = False):
         calls = []
