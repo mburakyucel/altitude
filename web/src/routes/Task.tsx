@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
-import type { TaskView } from "../data/api";
+import type { TaskMessage, TaskView } from "../data/api";
 import { launchLabel } from "../data/launches";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
@@ -78,6 +78,29 @@ function Events({ events }: { events: Array<Record<string, unknown>> }) {
   );
 }
 
+function messageTime(at: string | null | undefined): string {
+  if (!at) return "";
+  const date = new Date(at);
+  return Number.isNaN(date.valueOf()) ? "" : date.toLocaleString();
+}
+
+function ConversationMessage({ message }: { message: TaskMessage }) {
+  const mine = message.role === "burak";
+  const when = messageTime(message.at);
+  return (
+    <article
+      className={`card max-w-[85%] space-y-1 ${mine ? "ml-auto" : "mr-auto"}`}
+      data-role={message.role}
+    >
+      <p className="text-meta text-muted">
+        {mine ? "You" : "L2"}
+        {when ? ` · ${when}` : ""}
+      </p>
+      <p className="whitespace-pre-wrap text-body text-ink-2">{message.text}</p>
+    </article>
+  );
+}
+
 function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState("");
@@ -91,6 +114,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const spend = rec(task["spend"]);
   const live = rec(task["live"]);
   const files = Object.entries(task.files ?? {});
+  const messages = task.messages ?? [];
   const events = task.events ?? [];
   const dispatchId = str(task["dispatch_id"]);
   const sessionId = str(task["session_id"]);
@@ -180,6 +204,50 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         </section>
       ) : null}
 
+      <section className="space-y-3" aria-label="Task conversation">
+        <h2 className="label">Task conversation</h2>
+        {messages.length === 0 ? <p className="text-muted">No messages yet.</p> : null}
+        <div className="flex flex-col gap-3">
+          {messages.map((item, index) => (
+            <ConversationMessage key={item.id || `${item.at ?? "message"}-${index}`} message={item} />
+          ))}
+        </div>
+        {state === "running" || state === "blocked" ? (
+          <div className="space-y-2">
+            <textarea
+              className="field w-full"
+              aria-label="Message the L2"
+              placeholder="Ask a question or steer this task"
+              rows={3}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && message.trim()) {
+                  e.preventDefault();
+                  sendL2.mutate(
+                    { project, slug, text: message.trim() },
+                    { onSuccess: () => setMessage("") },
+                  );
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={sendL2.isPending || message.trim().length === 0}
+              onClick={() => {
+                sendL2.mutate(
+                  { project, slug, text: message.trim() },
+                  { onSuccess: () => setMessage("") },
+                );
+              }}
+            >
+              Send
+            </button>
+          </div>
+        ) : null}
+      </section>
+
       <section className="space-y-2">
         <h2 className="label">Actions</h2>
         <input
@@ -207,32 +275,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
           ))}
         </div>
       </section>
-
-      {state === "running" || state === "blocked" ? (
-        <section className="space-y-2">
-          <h2 className="label">Message the L2</h2>
-          <textarea
-            className="field w-full"
-            aria-label="Message the L2"
-            rows={2}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={sendL2.isPending || message.trim().length === 0}
-            onClick={() => {
-              sendL2.mutate(
-                { project, slug, text: message.trim() },
-                { onSuccess: () => setMessage("") },
-              );
-            }}
-          >
-            Send
-          </button>
-        </section>
-      ) : null}
 
       {task.critique != null ? (
         <details className="card">

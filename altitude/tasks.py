@@ -2,7 +2,10 @@
 from __future__ import annotations
 from pathlib import Path
 
+import json
+import os
 import re
+import uuid
 
 from . import config, state as S
 
@@ -58,6 +61,88 @@ ENVELOPE = {  # decision 31 / ROLES.md table
 
 class TransitionError(Exception):
     pass
+
+
+TASK_MESSAGE_ROLES = ("burak", "l2")
+
+
+def append_task_message(project: str, slug: str, role: str, text: str, *,
+                        expected_dispatch_id: str, expected_session_id: str | None = None,
+                        expected_state: str | None = None, actor: str | None = None) -> dict:
+    """Append one human-facing task message for the exact current L2 dispatch.
+
+    The conversation is an append-only JSONL artifact separate from operational events and
+    engine output.  Every writer must name the dispatch it believes it owns; stale pages and
+    stale L2 processes therefore fail before they can speak into a replacement task.  The
+    project lock serializes the append with lifecycle changes, and fsync makes a successful
+    return a durable message rather than a buffered best effort.
+    """
+    if role not in TASK_MESSAGE_ROLES:
+        raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
+    text = str(text or "").strip()
+    if not text:
+        raise TransitionError("task message is empty")
+    if not expected_dispatch_id:
+        raise TransitionError("task message has no dispatch owner")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        allowed_states = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
+        if task.get("state") not in allowed_states:
+            raise TransitionError(f"{slug}: cannot message L2 in {task.get('state')} state")
+        if task.get("dispatch_id") != expected_dispatch_id:
+            raise TransitionError(
+                f"{slug}: L2 dispatch changed from {expected_dispatch_id!r} "
+                f"to {task.get('dispatch_id')!r}"
+            )
+        if expected_session_id is not None and task.get("session_id") != expected_session_id:
+            raise TransitionError(f"{slug}: L2 session changed before the message was recorded")
+        if expected_state is not None and task.get("state") != expected_state:
+            raise TransitionError(
+                f"{slug}: task changed from {expected_state} to {task.get('state')} "
+                "before the message was recorded"
+            )
+        message = {
+            "id": uuid.uuid4().hex,
+            "at": S.now(),
+            "role": role,
+            "text": text,
+            "dispatch_id": task["dispatch_id"],
+            "session_id": task.get("session_id"),
+            "by": actor or role,
+        }
+        path = S.task_dir(project, slug) / "conversation.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as stream:
+            stream.write(json.dumps(message, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        S.append_event(project, slug, "task-message", message_id=message["id"], role=role,
+                       dispatch_id=task["dispatch_id"], by=message["by"])
+        return message
+
+
+def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
+    """Read the durable task conversation, failing loudly on a corrupt record."""
+    path = S.task_dir(project, slug) / "conversation.jsonl"
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    if limit is not None:
+        count = max(0, int(limit))
+        lines = lines[-count:] if count else []
+    messages = []
+    for line_number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"corrupt task conversation in {path} at line {line_number}: {exc}") from exc
+        if (not isinstance(message, dict) or message.get("role") not in TASK_MESSAGE_ROLES
+                or not isinstance(message.get("text"), str)):
+            raise ValueError(f"corrupt task conversation in {path} at line {line_number}: invalid message")
+        messages.append(message)
+    return messages
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:

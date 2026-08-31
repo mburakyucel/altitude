@@ -844,13 +844,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": True, "slug": t["slug"]})
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
-                project, slug, text = o["project"], o["slug"], o["text"]
-                t = S.load_task(project, slug)
-                qa = S.task_dir(project, slug) / "qa.md"
-                with open(qa, "a") as f:
-                    f.write(f"\n## Burak → L2 ({S.now()})\n{text}\n")
-                res = dispatch.resume_blocked(project, slug, text) if t["state"] == "blocked" else dispatch.resume_session(project, slug, text)
-                return self._json({"ok": True, "stdout": res.get("stdout"), "stderr": res.get("stderr")})
+                project, slug = o["project"], o["slug"]
+                text = str(o.get("text") or "").strip()
+                if not text:
+                    return self._json({"error": "empty task message"}, 400)
+                try:
+                    res = dispatch.message_l2(project, slug, text)
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                return self._json({"ok": True, "message": res["message"],
+                                   "deferred": bool(res.get("deferred")),
+                                   "stdout": res.get("stdout"), "stderr": res.get("stderr")})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
             if api == "chat":
@@ -918,8 +922,9 @@ def project_view(name: str) -> dict:
 def task_view(project: str, slug: str) -> dict:
     t = S.load_task(project, slug)
     d = S.task_dir(project, slug)
-    files = {f: (d / f"{f}.md").read_text() for f in ("request", "proposal", "brief", "report", "digest", "progress", "qa") if (d / f"{f}.md").exists()}
-    return {**t, "files": files, "events": S.read_events(project, slug), "critique": S.read_json(d / "critique.json"),
+    files = {f: (d / f"{f}.md").read_text() for f in ("request", "proposal", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+    return {**t, "files": files, "messages": T.task_messages(project, slug),
+            "events": S.read_events(project, slug), "critique": S.read_json(d / "critique.json"),
             "report_json": S.read_json(d / "report.json"), "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 

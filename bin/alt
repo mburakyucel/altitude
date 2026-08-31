@@ -56,7 +56,7 @@ def main(argv=None) -> None:
     aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
     for name in ("reject", "park", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("unpark", "show", "events"):
+    for name in ("unpark", "show", "events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
     rs = ts.add_parser("resume", help="decision 52: re-attach a blocked L2 (its transcript, its worktree); raise the envelope first when the block was the cap")
@@ -69,6 +69,8 @@ def main(argv=None) -> None:
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
+    rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
+    rp.add_argument("text", nargs="?", default="-"); rp.add_argument("--file"); rp.add_argument("--slug")
     ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
 
     f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
@@ -189,6 +191,15 @@ def main(argv=None) -> None:
             out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
+        elif tc == "reply":
+            if ACTOR != "l2":
+                sys.exit("alt task reply: only the current L2 may use this command")
+            slug = args.slug or os.environ.get("ALTITUDE_TASK")
+            dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+            if not slug or not dispatch_id:
+                sys.exit("alt task reply: ALTITUDE_TASK and ALTITUDE_DISPATCH_ID are required")
+            out(T.append_task_message(p, slug, "l2", _stdin_or_file(args),
+                                      expected_dispatch_id=dispatch_id, actor="l2"))
         elif tc == "show":
             out(S.load_task(p, args.slug))
         elif tc == "status":
@@ -199,6 +210,8 @@ def main(argv=None) -> None:
             out(status.status(p, slug))
         elif tc == "events":
             out(S.read_events(p, args.slug))
+        elif tc == "messages":
+            out(T.task_messages(p, args.slug))
         elif tc == "list":
             out([{k: t.get(k) for k in ("slug", "class", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
         return

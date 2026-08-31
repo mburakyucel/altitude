@@ -6,7 +6,10 @@ Record PR numbers and merge SHAs, `main` run ids and results, and deploy status.
 
 ## Review
 
-Record every finding with its tag, severity, summary, disposition, and reason. Disposition is `fixed`, `dismissed`, or `open`. Use `open` only when **Blocked** is non-empty, and preserve the reviewer's finding text verbatim in the summary so a resumed L2 can continue from it.
+Record every finding with its tag, severity, summary, disposition, and reason. If independent review
+was not needed, say so here and use an empty `review` list in `report.json`. Disposition is `fixed`,
+`dismissed`, or `open`. Use `open` only when **Blocked** is non-empty, and preserve the finding text so
+a resumed L2 can continue from it.
 
 ## Deviations
 
@@ -30,4 +33,4 @@ Record work deliberately left out.
 
 ## Spend
 
-Record turns, subagent launches, retries, reverts, and model tiers.
+Record turns, subagent launches (zero is valid), retries, reverts, and model tiers.

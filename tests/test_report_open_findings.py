@@ -102,6 +102,13 @@ class TestReportOpenFindings(unittest.TestCase):
         self.assertEqual(verdict["problems"], [])
         self.assertFalse(any("open review findings" in signal for signal in verdict["signals"]))
 
+    def test_no_independent_review_is_a_clean_report(self):
+        _, verdict = self._report("no-review-needed", [], "")
+
+        self.assertEqual(verdict["verdict"], "ok")
+        self.assertEqual(verdict["problems"], [])
+        self.assertFalse(any("review" in signal for signal in verdict["signals"]))
+
     def test_schema_keeps_existing_dispositions_and_allows_open(self):
         schema_path = Path(__file__).resolve().parent.parent / "schemas" / "report.json"
         schema = json.loads(schema_path.read_text())

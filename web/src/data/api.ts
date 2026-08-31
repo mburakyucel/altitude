@@ -183,6 +183,15 @@ export const ProjectViewSchema = z
   })
   .passthrough();
 
+export const TaskMessageSchema = z
+  .object({
+    id: z.string(),
+    at: z.string().nullish(),
+    role: z.enum(["burak", "l2"]),
+    text: z.string(),
+  })
+  .passthrough();
+
 export const TaskViewSchema = z
   .object({
     slug: z.string(),
@@ -191,6 +200,7 @@ export const TaskViewSchema = z
     title: z.string().nullish(),
     resume_after: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
+    messages: z.array(TaskMessageSchema).nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
     critique: z.unknown().nullish(),
     report_json: z.unknown().nullish(),
@@ -253,6 +263,7 @@ export type ProjectRow = z.infer<typeof ProjectRowSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
+export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
@@ -398,8 +409,13 @@ export interface L2MessageInput {
 }
 
 export function useL2Message(project: string) {
+  const queryClient = useQueryClient();
   return useOptimisticMutation<L2MessageInput, unknown, ProjectView>({
-    mutationFn: (input) => post("/api/l2/message", input),
+    mutationFn: async (input) => {
+      const out = await post("/api/l2/message", input);
+      void queryClient.invalidateQueries({ queryKey: ["task", input.project, input.slug] });
+      return out;
+    },
     queryKey: ["project", project],
     update: () => undefined,
     failureMessage: "Couldn't send the message to the L2.",

@@ -23,7 +23,8 @@ class TestMergePolicy(unittest.TestCase):
     def test_l_class_merges_by_default(self):
         T.new("altitude", "merge-l", "L", "req")
         b = dispatch.build_brief("altitude", "merge-l")
-        self.assertIn("Merge when the review is addressed and CI is green", b)
+        self.assertIn("Merge when the applicable checks and any appropriate review are complete", b)
+        self.assertIn("Review is optional", b)
         self.assertNotIn("Held for Burak", b)
 
     def test_hold_is_the_exception_and_says_why(self):

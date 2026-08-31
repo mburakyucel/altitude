@@ -44,6 +44,10 @@ const running = {
   ],
   critique: { verdict: "revise", notes: ["tighten the brief"] },
   report_json: { ok: true },
+  messages: [
+    { id: "m-1", at: "2026-08-29T12:01:00Z", role: "burak", text: "Keep the change focused." },
+    { id: "m-2", at: "2026-08-29T12:02:00Z", role: "l2", text: "I will use one focused PR." },
+  ],
 };
 
 const proposed = { ...running, state: "proposed", live: null };
@@ -97,6 +101,11 @@ describe("Task", () => {
     expect(screen.getByText("REPORT BODY")).toBeInTheDocument();
     expect(screen.getByText("critique (revise)")).toBeInTheDocument();
     expect(screen.getByText("Events (2)")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
+    expect(screen.getByText("Keep the change focused.")).toBeInTheDocument();
+    expect(screen.getByText("I will use one focused PR.")).toBeInTheDocument();
+    expect(document.querySelector('[data-role="burak"]')).toHaveTextContent("You");
+    expect(document.querySelector('[data-role="l2"]')).toHaveTextContent("L2");
     expect(screen.getByText(/dispatched \{"detail":"worker up"\}/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "‹ altitude" })).toHaveAttribute(
       "href",

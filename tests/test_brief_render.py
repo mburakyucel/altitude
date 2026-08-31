@@ -34,7 +34,6 @@ EXPECTED_FIELDS = {
     "subagent_launches",
     "task_dir",
     "title",
-    "verification",
 }
 UNFORMATTED_FIELD = r"\{[A-Za-z_][A-Za-z0-9_]*\}"
 
@@ -97,6 +96,14 @@ class TestBriefRender(unittest.TestCase):
             with self.subTest(held="Held for Burak" in rendered):
                 self.assertIn("never merge around the hold", rendered)
                 self.assertIn("full local test suite on merged `main`", rendered)
+
+    def test_direct_execution_and_optional_review_survive_rendering(self):
+        rendered = self.default_rendered
+        self.assertIn("implement directly", rendered)
+        self.assertIn("zero, one, or several L1s", rendered)
+        self.assertIn("`subagent_launches: 0` are normal", rendered)
+        self.assertIn("Review is optional", rendered)
+        self.assertIn("alt task reply", rendered)
 
 
 if __name__ == "__main__":
