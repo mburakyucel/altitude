@@ -50,9 +50,14 @@ class TestCleanupScope(unittest.TestCase):
         git("worktree", "add", "-q", "-b", "worktree-orphan", ".claude/worktrees/orphan", "origin/main", cwd=self.repo)
         def boom(): raise RuntimeError("claude agents down")
         engines.claude_rm, engines.claude_agents = (lambda aid: "removed"), boom
-        notes = dispatch.cleanup_after_done("altitude", {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "updated": S.now()})
+        with mock.patch("altitude.incidents.system_fault") as fault:
+            notes = dispatch.cleanup_after_done(
+                "altitude",
+                {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "updated": S.now()},
+            )
         self.assertIn("orphan", git("worktree", "list", "--porcelain", cwd=self.repo))
         self.assertTrue(any("skipped worktree cleanup" in n for n in notes), notes)
+        fault.assert_called_once()
 
 
 class TestSelfDeploy(unittest.TestCase):
