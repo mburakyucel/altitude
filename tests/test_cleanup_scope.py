@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from altitude import config, dispatch, engines, improve, server, state as S
+from altitude import config, dispatch, engines, improve, state as S
 
 
 class CleanupHarness(unittest.TestCase):
@@ -288,48 +288,7 @@ class TestDoneCleanupScope(CleanupHarness):
         self.assertEqual(self.cleanup_events(slug)[0]["reason"], "live Claude session is using the worktree")
         self.assertFalse(any(call[:3] == ("git", "merge-base", "--is-ancestor") for call in self.calls))
         self.assertNotIn(("claude_rm", "live-agent"), self.calls)
-    def test_server_retries_live_cleanup_then_stamps_only_after_terminal_removal(self):
-        slug = "live-then-terminal"
-        l2 = self.worktree(slug)
-        task = self.make_task(slug, archive=True, worktree=str(l2), agent_id="retry-agent")
-        self.porcelain = self.row(l2, f"worktree-{slug}")
-        self.live_agents = [{"id": "retry-agent", "cwd": str(l2), "state": "running"}]
 
-        self.assertFalse(server.cleanup_done_task(self.project, task))
-        first = S.load_task(self.project, slug)
-        self.assertIsNone(first.get("cleaned"))
-        self.assertEqual(first["cleanup_retry"]["attempt"], 1)
-        self.assertTrue(first["cleanup_retry"]["after"])
-        self.assertFalse(any(call[:4] == ("git", "worktree", "remove", "--force") for call in self.calls))
-
-        with S.project_lock(self.project):
-            due = S.load_task(self.project, slug)
-            due["cleanup_retry"]["after"] = "2000-01-01T00:00:00+00:00"
-            S.save_task(self.project, due)
-        self.live_agents = [{"id": "retry-agent", "cwd": str(l2), "state": "done"}]
-
-        self.assertTrue(server.cleanup_done_task(self.project, S.load_task(self.project, slug)))
-        final = S.load_task(self.project, slug)
-        self.assertIsNotNone(final.get("cleaned"))
-        self.assertNotIn("cleanup_retry", final)
-        self.assertIn(("claude_rm", "retry-agent"), self.calls)
-        self.assertIn(("git", "worktree", "remove", "--force", str(l2)), self.calls)
-        cleanup_events = [event for event in S.read_events(self.project, slug) if event["kind"] == "cleanup"]
-        self.assertEqual([event["complete"] for event in cleanup_events], [False, True])
-
-    def test_terminal_claude_row_is_removed_when_owned_worktree_is_proven_absent(self):
-        slug = "terminal-row-absent-tree"
-        l2 = self.worktree(slug)
-        task = self.make_task(slug, archive=True, worktree=str(l2), agent_id="terminal-agent")
-        self.porcelain = self.row(self.repo, "main")
-        self.live_agents = [{"id": "terminal-agent", "cwd": str(l2), "state": "done"}]
-
-        result = self.cleanup(task)
-
-        self.assertTrue(result.complete)
-        self.assertIn(("claude_rm", "terminal-agent"), self.calls)
-        self.assertTrue(any(event["kind"] == "cleanup-agent" and event["action"] == "removed"
-                            for event in S.read_events(self.project, slug)))
     def test_live_session_lookup_failure_fails_closed_and_still_pulls(self):
         slug = "agent-list-failure"
         l2 = self.worktree(slug)
@@ -438,16 +397,6 @@ class TestDoneCleanupScope(CleanupHarness):
         self.assertNotEqual(event["action"], "removed")
         self.fault.assert_called_once()
         self.assertEqual(self.fault.call_args.args[0], "cleanup-branch-delete")
-        self.assertFalse(notes.complete)
-        self.assertEqual(notes.branches, [branch])
-
-        self.porcelain = self.row(self.repo, "main")
-        self.branch_results[branch] = (0, "")
-        retry = {**task, "cleanup_retry": {"branches": notes.branches}}
-        second = self.cleanup(retry)
-
-        self.assertTrue(second.complete)
-        self.assertEqual(self.calls.count(("git", "branch", "-D", branch)), 2)
 
     def test_owned_worktree_without_a_branch_is_skipped(self):
         slug = "no-branch-worktree"

@@ -22,9 +22,7 @@ When the task carries a merge hold, open the PR, report ok with the PR number an
 
 **Parallel work (decision 39):** your lease: {paths}. Other L2s running in this project right now: {leases}. The lease shown here is the raw staging lease that `alt land` enforces (decision 39). A bare top-level directory such as `tests/` or `docs/` in another task's lease list is not a hold; only narrowed file and deeper-directory claims hold under the decision 51 addendum, and `alt task status`'s `hold_paths` is the authoritative hold lease. Stay inside your lease; if you must touch a path another running task holds, stop with `Blocked: lease` rather than racing it. Never restart/stop the `altitude` or `tutor` units, never bind ports 8890/8080/8443 (a hook blocks these) — for a smoke test run `ALTITUDE_TIMERS=0 ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=<ephemeral> bin/alt serve` and report "needs `systemctl --user restart altitude`" after merge. Land with `alt land --message "<msg>"`; merging your own branch is `alt land --message "<msg>" --merge`, which refuses under a merge hold — and since no alt command merges an L1's PR for you, read `hold_merge` in `alt task status {slug}` before any `gh pr merge` and never merge around a hold. `alt land` stages only your lease (refusing if anything outside it changed), commits with the Altitude trailer, pushes, opens or reuses the PR and waits for checks: one plain command, nothing for the Safety Net (R-003) to refuse.
 
-**Context:** the proposal below is approved{approval_note}. Repo: `{repo}`. Task folder: `{task_dir}`. Worktree: this session runs in its own worktree/branch `{branch}`.
-
-{checkpoint_guidance}
+**Context:** the proposal below is approved{approval_note}. Repo: `{repo}`. Task folder: `{task_dir}` (write `progress.md`, `report.md`, `report.json` there). Worktree: this session runs in its own worktree/branch `{branch}`.
 
 **Orientation:** use `alt task status {slug}` — one JSON with task state, worktree and branch, PRs and their checks, the `main` run, live envelope counts, leases and holds. Never read transcripts, hook counters (`~/.altitude/monitor/*.json`) or `claude agents` yourself.
 

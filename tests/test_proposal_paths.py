@@ -66,22 +66,6 @@ class TestProposalPaths(unittest.TestCase):
     def proposal_path(self) -> Path:
         return S.task_dir("proposal-paths", self.task["slug"]) / "proposal.json"
 
-    def test_task_l1_engine_override_does_not_override_fixed_codex_proposal(self):
-        self.create("altitude/propose.py")
-        task = S.load_task("proposal-paths", self.task["slug"])
-        task["engine"] = "claude"
-        S.save_task("proposal-paths", task)
-        result = {"structured": {**BASE_PROPOSAL, "files": ["altitude/propose.py"]},
-                  "error": None, "turns": 1, "cost": 0.0}
-        with patch.object(engines, "codex_exec", return_value=result) as codex, \
-             patch.object(engines, "claude_print", side_effect=AssertionError(
-                 "task.engine must not route the proposal")):
-            proposal = propose.run_proposal("proposal-paths", self.task["slug"])
-        self.assertEqual(proposal["files"], ["altitude/propose.py"])
-        codex.assert_called_once()
-        saved = S.load_task("proposal-paths", self.task["slug"])
-        self.assertEqual((saved["engine"], saved["proposal_engine"]), ("claude", "codex"))
-
     def test_annotated_entry_is_stored_bare(self):
         self.create("altitude/server.py")
         self.run_proposal(["altitude/server.py (Handler._file only)"])

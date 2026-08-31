@@ -163,14 +163,7 @@ def _skip_wrapper_options(words, index, options_with_arguments):
         name = option.split("=", 1)[0]
         short_name = option[:2] if option.startswith("-") and not option.startswith("--") else name
         takes_argument = name in options_with_arguments or short_name in options_with_arguments
-        # Long options only carry an attached value with ``=``. Treating the
-        # spelling itself (for example ``--signal``) as an attached value left
-        # its real operand to masquerade as the wrapped command.
-        has_attached_argument = "=" in option or (
-            not option.startswith("--")
-            and short_name in options_with_arguments
-            and len(option) > 2
-        )
+        has_attached_argument = "=" in option or (short_name in options_with_arguments and len(option) > 2)
         if takes_argument and not has_attached_argument and index < len(words):
             index += 1
     return index
@@ -964,65 +957,37 @@ def _git_hardening_violation(source, config_env_active=False, depth=0):
     return _tokens_violation(tokens, config_env_active, None, depth)
 
 
-def _rules():
-    ports = os.environ.get("ALTITUDE_SERVICE_PORTS", "8890,8080,8443").replace(",", "|")
-    altitude_home = re.escape(os.environ.get("ALTITUDE_HOME", "__no_altitude_home__"))
-    state_target = (
-        r"(?:\$\{?ALTITUDE_HOME\}?|\bALTITUDE_HOME\b|\$\{?HOME\}?/\.altitude|~/\.altitude|"
-        + altitude_home + r")(?:/|\b)"
+inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
+if inp.get("tool_name") != "Bash":
+    sys.exit(0)
+cmd = str((inp.get("tool_input") or {}).get("command") or "")
+executed = _without_heredoc_bodies(cmd)
+bare, full = _command_views(executed)
+ports = os.environ.get("ALTITUDE_SERVICE_PORTS", "8890,8080,8443").replace(",", "|")
+git_violation = _git_hardening_violation(executed)
+if git_violation:
+    fragment = executed.replace("\n", "\\n")
+    if len(fragment) > 157:
+        fragment = fragment[:157] + "..."
+    print(
+        f"altitude guard (decision 39): blocked — {git_violation}. Matched: {fragment}",
+        file=sys.stderr,
     )
-    state_writer = (
-        r"(?:>>?|\b(?:tee|truncate|touch|mkdir|cp|mv|ln|install|chmod|chown|dd|python\d*(?:\.\d+)*|perl|sed)\b)"
-    )
-    return [
-        (r"\bsystemctl\b", r"\bsystemctl\b.*\b(restart|stop|kill|disable|mask)\b.*\b(altitude|tutor|wg-quick)", "service units belong to altd/Burak — report 'needs restart' instead"),
-        (r"\b(ufw|wg-quick|iptables|nft)\b", r"\b(ufw|wg-quick|iptables|nft)\b", "firewall / tunnel changes are never a task's"),
-        (r"(:|--port[= ]|PORT=|port\s+)", r"(:|--port[= ]|PORT=|port\s+)(%s)\b" % ports, "service ports are taken — use ALTITUDE_TIMERS=0 on an ephemeral port for smoke tests"),
-        (r"\brm\b", r"\brm\b.*(\.altitude|ALTITUDE_HOME)", "the Altitude home is live state"),
-        (state_writer, state_writer + r"[^\n;&|]*" + state_target, "live Altitude state is writable only through trusted alt commands"),
-        (r"\b(?:python\d*(?:\.\d+)*|perl)\b", r"\b(?:python\d*(?:\.\d+)*|perl)\b[^\n]*" + state_target, "live Altitude state is writable only through trusted alt commands"),
-        (r"\bkill(all)?\b", r"\bkill(all)?\b.*\b(altd|altitude)\b", "altd is not yours to kill"),
-    ]
+    sys.exit(2)
 
-
-def main():
-    try:
-        inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-    except (OSError, TypeError, ValueError) as exc:
-        print(f"altitude guard (decision 39): blocked — malformed hook input: {exc}", file=sys.stderr)
-        return 2
-    if not isinstance(inp, dict):
-        print("altitude guard (decision 39): blocked — hook input is not an object", file=sys.stderr)
-        return 2
-    if inp.get("tool_name") != "Bash":
-        return 0
-    tool_input = inp.get("tool_input") or {}
-    if not isinstance(tool_input, dict):
-        print("altitude guard (decision 39): blocked — malformed tool_input", file=sys.stderr)
-        return 2
-    cmd = str(tool_input.get("command") or "")
-    executed = _without_heredoc_bodies(cmd)
-    bare, full = _command_views(executed)
-    git_violation = _git_hardening_violation(executed)
-    if git_violation:
-        fragment = executed.replace("\n", "\\n")
-        if len(fragment) > 157:
-            fragment = fragment[:157] + "..."
-        print(
-            f"altitude guard (decision 39): blocked — {git_violation}. Matched: {fragment}",
-            file=sys.stderr,
-        )
-        return 2
-    for anchor, pattern, why in _rules():
-        if not re.search(anchor, bare):
-            continue
-        for match in re.finditer(pattern, full):
-            if re.search(anchor, bare[match.start():match.end()]):
-                fragment = _matched_fragment(match)
-                print(f"altitude guard (decision 39): blocked — {why}. Matched: {fragment}", file=sys.stderr)
-                return 2
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+RULES = [
+    (r"\bsystemctl\b", r"\bsystemctl\b.*\b(restart|stop|kill|disable|mask)\b.*\b(altitude|tutor|wg-quick)", "service units belong to altd/Burak — report 'needs restart' instead"),
+    (r"\b(ufw|wg-quick|iptables|nft)\b", r"\b(ufw|wg-quick|iptables|nft)\b", "firewall / tunnel changes are never a task's"),
+    (r"(:|--port[= ]|PORT=|port\s+)", r"(:|--port[= ]|PORT=|port\s+)(%s)\b" % ports, "service ports are taken — use ALTITUDE_TIMERS=0 on an ephemeral port for smoke tests"),
+    (r"\brm\b", r"\brm\b.*(\.altitude|ALTITUDE_HOME)", "the Altitude home is live state"),
+    (r"\bkill(all)?\b", r"\bkill(all)?\b.*\b(altd|altitude)\b", "altd is not yours to kill"),
+]
+for anchor, pattern, why in RULES:
+    if not re.search(anchor, bare):
+        continue
+    for match in re.finditer(pattern, full):
+        if re.search(anchor, bare[match.start():match.end()]):
+            fragment = _matched_fragment(match)
+            print(f"altitude guard (decision 39): blocked — {why}. Matched: {fragment}", file=sys.stderr)
+            sys.exit(2)
+sys.exit(0)

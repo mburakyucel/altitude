@@ -11,12 +11,11 @@ const NAV = [
   { to: "/monitor", label: "Monitor", end: false, badge: false },
 ];
 
-/** The persistent readout from the 0.1 header: "5h 12% · 7d 40%", or "Claude quota unknown". */
+/** The persistent readout from the 0.1 header: "5h 12% · 7d 40%", or "quota unknown". */
 function quotaText(quota: Quota | undefined): string {
-  const windows: string[] = [];
-  if (quota?.known && quota.five_hour != null) windows.push(`5h ${Math.round(quota.five_hour)}%`);
-  if (quota?.known && quota.seven_day != null) windows.push(`7d ${Math.round(quota.seven_day)}%`);
-  return windows.length > 0 ? `Claude ${windows.join(" · ")}` : "Claude quota unknown";
+  return quota && quota.known && quota.five_hour != null && quota.seven_day != null
+    ? `5h ${Math.round(quota.five_hour)}% · 7d ${Math.round(quota.seven_day)}%`
+    : "quota unknown";
 }
 
 /** Layout route: sidebar at md and up, five-tab bottom bar below md. */

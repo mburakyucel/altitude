@@ -90,7 +90,7 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         prior += "\n\n## Previous proposal run rejected by validation\n" + failure["message"] + "\n\n" + fix
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
-    choice = route.pick_engine("proposal", forced="claude" if model else None)
+    choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
     if choice["engine"] == "codex":  # decision 56: the proposal is Codex work — persona inline, read-only sandbox, strict schema
         res = engines.codex_exec((config.PERSONAS / "proposal.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
                                  schema=config.SCHEMAS / "proposal.json", timeout=1200, effort=config.CODEX_EFFORT.get("proposal"))

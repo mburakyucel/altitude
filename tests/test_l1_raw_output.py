@@ -5,7 +5,7 @@ import os
 import re
 import tempfile
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -53,9 +53,6 @@ class TestL1RawOutput(unittest.TestCase):
             "engine": engine,
             "model": "test-model",
             "worktree": str(self.root),
-            "generation": "g1", "dispatch_id": "task-1", "state": "running", "isolated_clone": True,
-            "git_dir": str(self.root / "gitdir"), "hooks_path": str(self.root / "hooks"),
-            "origin_sha": "a" * 40, "origin_url": "https://example.invalid/repo", "branch": "l1/test",
         }
         faults = []
         engine_call = response if callable(response) else lambda *_args, **_kwargs: response
@@ -63,10 +60,6 @@ class TestL1RawOutput(unittest.TestCase):
             stack.enter_context(mock.patch.object(l1, "load", return_value=rec))
             stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
             stack.enter_context(mock.patch.object(l1, "save", return_value=None))
-            stack.enter_context(mock.patch.object(S, "project_lock", side_effect=lambda *_a, **_k: nullcontext()))
-            stack.enter_context(mock.patch.object(l1, "_task_generation_current", return_value=True))
-            stack.enter_context(mock.patch.object(l1, "_engine_started", return_value=None))
-            stack.enter_context(mock.patch.object(l1.git_policy, "require_hooks_installed", return_value=self.root))
             stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="")))
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", engine_call))
@@ -163,27 +156,16 @@ class TestL1RawOutput(unittest.TestCase):
         self.assertEqual(faults, [])
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
-        raw_stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
-
-        class FakeProcess:
-            pid = 456
-            returncode = 0
-
-            def __init__(self):
-                self.stdout = io.StringIO(raw_stdout)
-                self.stderr = io.StringIO("codex diagnostic\n")
-
-            def wait(self):
-                return self.returncode
-
-            def kill(self):
-                self.returncode = -9
-
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: FakeProcess()):
+        completed = SimpleNamespace(
+            stdout=json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n",
+            stderr="codex diagnostic\n",
+            returncode=0,
+        )
+        with mock.patch.object(engines.subprocess, "run", return_value=completed):
             result = engines.codex_exec("prompt", cwd=self.root)
 
-        self.assertEqual(result["raw_stdout"], raw_stdout)
-        self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
+        self.assertEqual(result["raw_stdout"], completed.stdout)
+        self.assertEqual(result["raw_stderr"], completed.stderr)
 
     def test_claude_print_returns_raw_stream_json_and_stderr(self):
         event = {"type": "result", "result": "done", "session_id": "sid", "is_error": False}

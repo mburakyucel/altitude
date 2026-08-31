@@ -2,13 +2,11 @@
 
 Never silent: every choice carries its reason, and it lands in the run record and the events log."""
 from __future__ import annotations
-import time
-from datetime import datetime
 
 from . import config, state as S
 
-ROLE_ENGINES = {"l3": "claude", "proposal": "codex", "sizer": "codex"}
-# L2 is Claude while it has room, then Codex; proposals and sizing are Codex; a critic is the other proposal engine.
+ROLE_ENGINES = {"l3": "claude", "l2": "claude", "proposal": "codex", "sizer": "codex"}  # by design: L2 is a Claude session; L3 is Claude with a Codex
+# turn whenever the Claude window is exhausted (decision 56); proposals and sizing are Codex (decision 56); the critic is the *other* engine from the proposal
 QUOTA_CODEX = "quota-codex.json"
 
 
@@ -18,54 +16,11 @@ def quota_codex() -> dict:
     if not p.exists():
         return {"known": False}
     d = S.read_json(p, {}) or {}
-    try:
-        age = time.time() - datetime.fromisoformat(str(d.get("read_at"))).timestamp()
-        fresh = -300 <= age <= 1800
-    except (TypeError, ValueError):
-        fresh = False
-    known = bool(d.get("known")) and d.get("primary_used") is not None and fresh
-    out = {**d, "known": known}
-    if not known and not out.get("why"):
-        out["why"] = "Codex quota reading is stale"
-    return out
+    return {**d, "known": bool(d.get("known")) and d.get("primary_used") is not None}
 
 
 def other(engine: str) -> str:
     return "claude" if engine == "codex" else "codex"
-
-
-def pick_l3_engine(*, forced: str | None = None, previous: str | None = None) -> dict:
-    """Route L3 by weekly remaining-percentage ratio, with hysteresis to avoid ping-pong."""
-    from . import engines
-    held = engines.usage_hold()
-    if held:
-        return {"engine": "codex", "why": f"Claude window exhausted until {held}"}
-    if forced:
-        if forced not in config.ENGINES:
-            raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
-        return {"engine": forced, "why": f"project pins l3_engine={forced}"}
-    from .monitor import quota, quota_hold
-    reserve = quota_hold()
-    if reserve:
-        return {"engine": "codex", "why": f"{reserve} → preserve Claude headroom with Codex L3"}
-    claude, codex = quota() or {}, quota_codex()
-    cl_used = claude.get("seven_day") if claude.get("known") else None
-    cx_used = None
-    if codex.get("known"):
-        for prefix in ("primary", "secondary"):
-            if codex.get(f"{prefix}_window_minutes") == 10080 and codex.get(f"{prefix}_used") is not None:
-                cx_used = codex[f"{prefix}_used"]
-                break
-    if cl_used is None or cx_used is None:
-        engine = previous if previous in config.ENGINES else "claude"
-        return {"engine": engine, "why": f"weekly quota ratio unavailable → keep {engine} to avoid engine switching"}
-    cl_remaining, cx_remaining = max(0.0, 100.0 - float(cl_used)), max(0.0, 100.0 - float(cx_used))
-    ratio = float("inf") if cl_remaining == 0 and cx_remaining > 0 else (cx_remaining / cl_remaining if cl_remaining else 1.0)
-    threshold = config.L3_CODEX_EXIT_RATIO if previous == "codex" else config.L3_CODEX_ENTER_RATIO
-    engine = "codex" if ratio >= threshold else "claude"
-    why = (f"weekly remaining capacity: codex {cx_remaining:.0f}% / claude {cl_remaining:.0f}% = {ratio:.2f}x; "
-           f"{'stay on' if previous == engine else 'route to'} {engine} at {threshold:.2f}x threshold")
-    return {"engine": engine, "why": why}
 
 
 def pick_engine(role: str, *, forced: str | None = None, task: dict | None = None, other_than: str | None = None) -> dict:
@@ -77,16 +32,6 @@ def pick_engine(role: str, *, forced: str | None = None, task: dict | None = Non
         return {"engine": forced, "why": "forced on the command line"}
     if task and task.get("engine"):
         return {"engine": task["engine"], "why": f"forced on the task ({task.get('slug')})"}
-    if role == "l2":
-        from . import engines
-        held = engines.usage_hold()
-        if held:
-            return {"engine": "codex", "why": f"Claude window exhausted until {held} → Codex L2 (decision 56)"}
-        from .monitor import quota_hold
-        reserve = quota_hold()
-        if reserve:
-            return {"engine": "codex", "why": f"{reserve} → preserve Claude headroom with a Codex L2 (decision 56)"}
-        return {"engine": "claude", "why": "Claude has room; L2 stays on Claude by design (decision 56)"}
     if role in ROLE_ENGINES:
         return {"engine": ROLE_ENGINES[role], "why": f"{role} is always {ROLE_ENGINES[role]} by design"}
     from .monitor import quota
