@@ -9,10 +9,10 @@ WorkingDirectory=%h/Projects/altitude
 ExecStart=%h/Projects/altitude/bin/alt serve
 Restart=on-failure
 RestartSec=20
-# `claude --bg` workers (and the claude daemon that forks them) are started from altd and therefore live in this
-# cgroup. With the default KillMode=control-group every `systemctl restart altitude` killed all running L2s
-# (2026-08-30, two L2s lost). Only altd itself is stopped; the workers are meant to outlive it.
-KillMode=process
+# Every engine started by altd is part of this service's ownership domain. A
+# stop/restart must leave no unowned workers behind; Claude transcripts and task
+# worktrees are the durable resume boundary, not processes that outlive altd.
+KillMode=control-group
 Environment=ALTITUDE_HOST=10.88.0.1
 Environment=ALTITUDE_PORT=8890
 Environment=ALTITUDE_SERVICE=1
