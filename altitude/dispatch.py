@@ -208,11 +208,11 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     persona = config.PERSONAS / "l2.md"
     proj = config.project(project)
     try:
-        with recovery.launch_permission(project, task):
-            res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
-                                    permission_mode="auto", max_turns=task["envelope"]["max_turns"],
-                                    model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
-                                    extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
+        res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
+                                permission_mode="auto", max_turns=task["envelope"]["max_turns"],
+                                model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
+                                extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}),
+                                spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
         with S.project_lock(project):
             held_task = S.load_task(project, slug)
@@ -266,10 +266,13 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     name = f"{project}/{task['dispatch_id']}"
     try:
-        with recovery.launch_permission(project, task):
-            res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
-                                           max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
-                                           extra_env=l2_env(project, task))
+        held = recovery.dispatch_hold(project, task)
+        if held:
+            raise recovery.LaunchHeld(held)
+        res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
+                                       max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
+                                       extra_env=l2_env(project, task),
+                                       spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
         S.append_event(project, slug, "resume-held", reason=str(exc), previous=sid)
         raise T.TransitionError(str(exc)) from exc

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -295,9 +296,28 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     return out
 
 
+def _guarded_spawn(cmd: list[str], *, cwd: Path, env: dict, guard=None) -> subprocess.CompletedProcess:
+    """Serialize only the irreversible Popen boundary; do not hold the guard while the CLI waits."""
+    with guard if guard is not None else nullcontext():
+        proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=env)
+    try:
+        stdout, stderr = proc.communicate(timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        exc.stdout, exc.stderr = stdout, stderr
+        raise
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
 def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None, persona: Path | None = None,
               permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
-              settings: Path | None = None, extra_env: dict | None = None) -> dict:
+              settings: Path | None = None, extra_env: dict | None = None, spawn_guard=None) -> dict:
     """Start a background session (verified shape). Returns what `claude --bg` printed + the agent row."""
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--permission-mode", permission_mode]
     if worktree:
@@ -311,7 +331,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
     cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
     env = clean_env()
     env.update(extra_env or {})
-    p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)
+    p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
     row = find_agent(name)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": row}
 
@@ -344,7 +364,7 @@ def find_agent(name: str | None = None, agent_id: str | None = None, session_id:
 
 def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path | None = None,
                      permission_mode: str = "auto", max_turns: int | None = None, settings: Path | None = None,
-                     extra_env: dict | None = None) -> dict:
+                     extra_env: dict | None = None, spawn_guard=None) -> dict:
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--resume", session_id, "--permission-mode", permission_mode]
     if persona:
         cmd += ["--append-system-prompt-file", str(persona)]
@@ -353,7 +373,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
     cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
     env = clean_env()
     env.update(extra_env or {})
-    p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=120, env=env)
+    p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": find_agent(name)}
 
 

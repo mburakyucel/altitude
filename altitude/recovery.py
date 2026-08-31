@@ -64,26 +64,32 @@ def status() -> dict | None:
 
 def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
          actor: str = "altd") -> dict:
-    """Trip the fuse without dispatching recovery work."""
+    """Publish the fuse first, then settle any worker already past launch permission."""
     reason = _clean(reason or "system health fault", 500)
     kind = _clean(kind or "system-health", 100)
     actor = _clean(actor, 40)
     incident = _clean(incident, 80) or None
+    # Do not wait for the launch barrier before publishing. flock waiters are not FIFO: if an ordinary launch
+    # queued ahead of this fault, it could otherwise acquire the barrier and spawn before the hold became visible.
+    with _lock():
+        current = status() or {"active": True, "since": S.now(), "faults": [], "repair": None}
+        now = S.now()
+        matches = [row for row in current.get("faults") or [] if row.get("kind") == kind]
+        other = [row for row in current.get("faults") or [] if row.get("kind") != kind]
+        count = sum(max(1, int(row.get("count", 1))) for row in matches) + 1
+        first = min((row.get("first") or row.get("at") or now for row in matches), default=now)
+        previous_incident = next((row.get("incident") for row in reversed(matches) if row.get("incident")), None)
+        fault = {"first": first, "last": now, "count": count, "kind": kind, "reason": reason,
+                 "incident": incident or previous_incident, "by": actor}
+        current.update({"active": True, "updated": now})
+        current["faults"] = [*other[-19:], fault]
+        S.write_json(hold_path(), current)
+    # A launcher that yielded from launch_permission before publication is already committed to spawning. Wait
+    # only for that short spawn boundary to settle. Every queued launcher rechecks the now-published hold first.
+    # State and launch locks are deliberately never nested, avoiding an inversion with launch_permission.
     with _launch_lock():
-        with _lock():
-            current = status() or {"active": True, "since": S.now(), "faults": [], "repair": None}
-            now = S.now()
-            matches = [row for row in current.get("faults") or [] if row.get("kind") == kind]
-            other = [row for row in current.get("faults") or [] if row.get("kind") != kind]
-            count = sum(max(1, int(row.get("count", 1))) for row in matches) + 1
-            first = min((row.get("first") or row.get("at") or now for row in matches), default=now)
-            previous_incident = next((row.get("incident") for row in reversed(matches) if row.get("incident")), None)
-            fault = {"first": first, "last": now, "count": count, "kind": kind, "reason": reason,
-                     "incident": incident or previous_incident, "by": actor}
-            current.update({"active": True, "updated": now})
-            current["faults"] = [*other[-19:], fault]
-            S.write_json(hold_path(), current)
-            return current
+        pass
+    return current
 
 
 def attach_incident(kind: str, incident: str) -> dict | None:

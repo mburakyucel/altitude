@@ -6,7 +6,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -99,6 +99,127 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(held[0]["count"], 2)
         self.assertEqual(held[0]["incident"], fault["incident"])
 
+    def test_hold_publishes_before_a_prequeued_launch_can_cross_the_boundary(self):
+        """Adversarial FIFO order: A owns barrier, B queues, then hold queues; B must still refuse."""
+        ordinary = {"slug": "ordinary-b", "source": "chat"}
+        condition = threading.Condition()
+        owner = None
+        queue = []
+        a_inside = threading.Event()
+        release_a = threading.Event()
+        b_queued = threading.Event()
+        b_spawned = threading.Event()
+        b_held = threading.Event()
+        published = threading.Event()
+        hold_done = threading.Event()
+        errors = []
+
+        @contextmanager
+        def fifo_launch_lock():
+            nonlocal owner
+            name = threading.current_thread().name
+            with condition:
+                queue.append(name)
+                if name == "launch-b":
+                    b_queued.set()
+                while owner is not None or queue[0] != name:
+                    condition.wait()
+                queue.pop(0)
+                owner = name
+            try:
+                yield
+            finally:
+                with condition:
+                    owner = None
+                    condition.notify_all()
+
+        real_write_json = S.write_json
+
+        def observed_write(path, value):
+            real_write_json(path, value)
+            if path == recovery.hold_path() and value.get("active"):
+                published.set()
+
+        def launch_a():
+            try:
+                with recovery.launch_permission("altitude", ordinary):
+                    a_inside.set()
+                    release_a.wait(5)
+            except BaseException as exc:  # pragma: no cover - reported by assertion below
+                errors.append(exc)
+
+        def launch_b():
+            try:
+                with recovery.launch_permission("altitude", ordinary):
+                    b_spawned.set()
+            except recovery.LaunchHeld:
+                b_held.set()
+            except BaseException as exc:  # pragma: no cover - reported by assertion below
+                errors.append(exc)
+
+        def trip_hold():
+            try:
+                recovery.hold("launch ownership changed", kind="launch-race")
+                hold_done.set()
+            except BaseException as exc:  # pragma: no cover - reported by assertion below
+                errors.append(exc)
+
+        with mock.patch.object(recovery, "_launch_lock", fifo_launch_lock), \
+                mock.patch.object(S, "write_json", side_effect=observed_write):
+            a = threading.Thread(target=launch_a, name="launch-a")
+            b = threading.Thread(target=launch_b, name="launch-b")
+            hold = threading.Thread(target=trip_hold, name="fault-hold")
+            a.start()
+            self.assertTrue(a_inside.wait(2))
+            b.start()
+            self.assertTrue(b_queued.wait(2), "B must already be queued behind A")
+            hold.start()
+            self.assertTrue(published.wait(2), "the hold must publish while A still owns the barrier")
+            self.assertFalse(hold_done.is_set(), "hold still settles A after publishing")
+            self.assertFalse(b_spawned.is_set())
+            release_a.set()
+            for thread in (a, b, hold):
+                thread.join(2)
+
+        self.assertEqual(errors, [])
+        self.assertTrue(b_held.is_set())
+        self.assertFalse(b_spawned.is_set())
+        self.assertTrue(hold_done.is_set())
+
+    def test_engine_launch_guard_covers_popen_but_not_cli_wait(self):
+        guard_active = False
+
+        @contextmanager
+        def spawn_guard():
+            nonlocal guard_active
+            guard_active = True
+            try:
+                yield
+            finally:
+                guard_active = False
+
+        class FakeProcess:
+            returncode = 0
+
+            def communicate(self, timeout):
+                self.assert_guard_released()
+                return "started", ""
+
+            def assert_guard_released(self):
+                if guard_active:
+                    raise AssertionError("spawn guard remained held while waiting for the CLI")
+
+        def popen(*args, **kwargs):
+            self.assertTrue(guard_active, "Popen is the guarded irreversible boundary")
+            return FakeProcess()
+
+        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(engines, "find_agent", return_value=None):
+            result = engines.claude_bg("altitude/test", "prompt", cwd=self.repo,
+                                       settings=self.root / "settings.json", spawn_guard=spawn_guard())
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"], "started")
+
     def test_recovery_task_requires_an_active_hold_and_explicit_actor(self):
         with self.assertRaisesRegex(T.TransitionError, "requires an active recovery hold"):
             T.new("altitude", "unheld repair", "S", "request", actor="l3", source="recovery")
@@ -155,14 +276,22 @@ class TestRecoveryFuse(unittest.TestCase):
             improve.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
             return "a" * 40
 
+        crossed_spawn_boundary = mock.Mock()
+
+        def guarded_launch(*args, spawn_guard, **kwargs):
+            with spawn_guard:
+                crossed_spawn_boundary()
+            return {"stdout": "", "stderr": "", "returncode": 0, "agent": None}
+
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
                 mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=fault_then_return), \
                 mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
-                mock.patch.object(engines, "claude_bg") as launch:
+                mock.patch.object(engines, "claude_bg", side_effect=guarded_launch) as launch:
             with self.assertRaisesRegex(T.TransitionError, "recovery hold: fetch-race"):
                 dispatch.run("altitude", ordinary["slug"])
 
-        launch.assert_not_called()
+        launch.assert_called_once()
+        crossed_spawn_boundary.assert_not_called()
         current = S.load_task("altitude", ordinary["slug"])
         self.assertEqual(current["state"], "approved")
         self.assertIsNone(current.get("dispatching"))

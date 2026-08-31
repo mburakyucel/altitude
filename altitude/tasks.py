@@ -79,11 +79,11 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 def new(project: str, title: str, cls: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, engine: str | None = None, hold_merge: str | None = None) -> dict:
+    if source == "recovery" and cls in ("auto", None):
+        raise TransitionError("recovery delegation requires an explicit S, M, or L class; it cannot wait for automatic sizing")
     if cls == "auto":  # decision 53: the intake sizer picks the class (Burak does not have to)
         cls = None
-    if source == "recovery" and cls is None:
-        raise TransitionError("recovery delegation requires an explicit S, M, or L class; it cannot wait for automatic sizing")
-    if cls not in S.CLASSES:
+    elif cls not in S.CLASSES:
         raise TransitionError(f"class must be one of {S.CLASSES} or auto")
     if model and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
