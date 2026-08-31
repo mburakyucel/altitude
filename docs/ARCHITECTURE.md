@@ -64,8 +64,11 @@ carry an explicit merge hold for Burak review.
 System faults are deduplicated into private incident evidence and activate a global recovery fuse.
 The launch permit is checked for both fresh and resumed work, including the final launch boundary.
 Ordinary work stays held while recovery is active. L3 may claim one recovery task; a second repair
-is refused. Incidents are evidence only and never create tasks, personas, or follow-up
-sessions automatically.
+is refused. Incident records are evidence only and never create tasks, personas, or follow-up work.
+Separately, the active fuse carries one durable, deduplicated L3 attention request. The
+server runs at most one recovery turn for it at a time, retains failed turns with bounded backoff, and
+audits successful handling. After stability returns, L3 triages the evidence: narrow corrective follow-up
+is an FYI, while broad architecture, policy, or system work is preserved for Burak as a proposal or issue.
 
 The service lifecycle is separate from source changes. The current deployment remains stopped and
 runtime-masked until a separately authorized restart verifies the merged main commit and its CI.

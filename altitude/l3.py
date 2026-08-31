@@ -74,7 +74,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         if precheck is not None and not precheck():
             return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                     "turns": 0, "structured": None, "error": None, "tools": [], "skipped": True,
-                    "_turn_started_at": None}
+                    "completed": False, "_turn_started_at": None}
         proj = config.project(project)
         S.regen_state_md(project)
         inf = info(project)
@@ -121,6 +121,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                  turns=res["turns"], tools=res["tools"][:40])
         S.regen_state_md(project)
         res["context_percent"] = pct
+        res["completed"] = True
         return res
 
 
@@ -136,7 +137,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_sta
               "Same persona, same commands (`alt …`); the state and task files live under ALTITUDE_HOME.\n\n"
             + ("## Recent chat (oldest first)\n" + history + "\n\n" if history else "") + prompt)
     S.project_log(project, "l3-codex", reason=reason, trigger=trigger)
-    res = engines.codex_exec(text, cwd=config.ROOT, sandbox="workspace-write", timeout=1200, effort=config.CODEX_EFFORT.get("l3"),
+    res = engines.codex_exec(text, cwd=config.ROOT, sandbox="workspace-write", timeout=config.L3_CODEX_TURN_TIMEOUT,
+                             effort=config.CODEX_EFFORT.get("l3"),
                              extra_config=[f'sandbox_workspace_write.writable_roots=["{config.ROOT}"]', "sandbox_workspace_write.network_access=true"],
                              extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)},
                              fault_context={"project": project})
@@ -144,7 +146,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_sta
     tokens = int(usage.get("input_tokens", 0) or 0) + int(usage.get("output_tokens", 0) or 0)
     out = {"text": res.get("text") or "", "session_id": inf.get("session_id") or "", "usage": usage, "context_tokens": tokens,
            "cost": 0.0, "turns": 1, "structured": None, "error": res.get("error"), "tools": [], "skipped": False,
-           "_turn_started_at": turn_started_at, "engine": "codex", "degraded": reason}
+           "completed": False, "_turn_started_at": turn_started_at, "engine": "codex", "degraded": reason}
     if res.get("error") and not out["text"]:
         chat_log(project, "error", f"codex L3 turn failed: {res['error']}", trigger=trigger, engine="codex")
         return out
@@ -153,6 +155,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_sta
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex", degraded=reason)
     S.regen_state_md(project)
+    out["completed"] = True
     return out
 
 

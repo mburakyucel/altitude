@@ -4,9 +4,16 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import secrets
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 
 from . import config, state as S
+
+
+RECOVERY_TURN_RETRY_SECONDS = 300
+RECOVERY_TURN_MAX_RETRY_SECONDS = 1800
+RECOVERY_TURN_CLAIM_SECONDS = max(config.L3_TURN_TIMEOUT, config.L3_CODEX_TURN_TIMEOUT) + 60
 
 
 def hold_path():
@@ -72,7 +79,8 @@ def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
     # Do not wait for the launch barrier before publishing. flock waiters are not FIFO: if an ordinary launch
     # queued ahead of this fault, it could otherwise acquire the barrier and spawn before the hold became visible.
     with _lock():
-        current = status() or {"active": True, "since": S.now(), "faults": [], "repair": None}
+        current = status() or {"active": True, "since": S.now(), "episode": secrets.token_urlsafe(12),
+                               "faults": [], "repair": None}
         now = S.now()
         matches = [row for row in current.get("faults") or [] if row.get("kind") == kind]
         other = [row for row in current.get("faults") or [] if row.get("kind") != kind]
@@ -109,6 +117,189 @@ def attach_incident(kind: str, incident: str) -> dict | None:
                 S.write_json(hold_path(), current)
                 break
         return current
+
+
+def request_l3_attention(project: str | None, *, kind: str, incident: str | None = None) -> dict | None:
+    """Attach one durable L3 wake request to the active recovery episode.
+
+    Fault kinds coalesce into one record. Repeated evidence for a kind already represented in the episode updates
+    the fuse but does not fan out another model turn. A target-less request remains durable evidence and is not
+    dispatched to an arbitrary project.
+    """
+    kind, incident = _clean(kind, 100), _clean(incident, 80) or None
+    project = _clean(project, 100) or None
+    with _lock():
+        current = status()
+        if not current:
+            return None
+        episode = _clean(current.get("episode") or current.get("since"), 40)
+        attention = current.get("l3_attention")
+        if not isinstance(attention, dict) or attention.get("episode") != episode:
+            attention = {
+                "episode": episode,
+                "project": project,
+                "requested": S.now(),
+                "updated": S.now(),
+                "revision": 1,
+                "handled_revision": 0,
+                "attempts": 0,
+                "next_attempt": None,
+                "faults": [],
+            }
+        if attention.get("project") is None and project:
+            attention["project"] = project
+        faults = list(attention.get("faults") or [])
+        existing = next((row for row in faults if row.get("kind") == kind), None)
+        if existing is None:
+            faults.append({"kind": kind, "incident": incident})
+        elif incident and not existing.get("incident"):
+            existing["incident"] = incident
+        attention["faults"] = faults[-20:]
+        attention["updated"] = S.now()
+        current["l3_attention"] = attention
+        current["updated"] = S.now()
+        S.write_json(hold_path(), current)
+        return dict(attention)
+
+
+def _due(when: object, now: datetime) -> bool:
+    if not when:
+        return True
+    try:
+        return datetime.fromisoformat(str(when)) <= now
+    except ValueError:
+        return True
+
+
+def _claim_active(attention: dict, now: datetime) -> bool:
+    claimed = attention.get("claimed")
+    if not attention.get("claim") or not claimed:
+        return False
+    try:
+        return datetime.fromisoformat(str(claimed)) + timedelta(seconds=RECOVERY_TURN_CLAIM_SECONDS) > now
+    except ValueError:
+        return False
+
+
+def _attention_snapshot(project: str, attention: dict) -> dict:
+    return {
+        "episode": attention.get("episode"),
+        "project": project,
+        "revision": int(attention.get("revision") or 0),
+        "attempts": int(attention.get("attempts") or 0),
+        "claim": attention.get("claim"),
+        "faults": [
+            {"kind": _clean(row.get("kind"), 100), "incident": _clean(row.get("incident"), 80) or None}
+            for row in (attention.get("faults") or [])[-20:]
+        ],
+    }
+
+
+def l3_attention_due(project: str, *, now: datetime | None = None) -> dict | None:
+    """Return a bounded wake snapshot when this project's active episode is due."""
+    current = status()
+    attention = (current or {}).get("l3_attention")
+    if not isinstance(attention, dict) or attention.get("project") != project:
+        return None
+    revision = int(attention.get("revision") or 0)
+    if revision <= int(attention.get("handled_revision") or 0):
+        return None
+    now = now or datetime.now(timezone.utc)
+    if _claim_active(attention, now) or not _due(attention.get("next_attempt"), now):
+        return None
+    return _attention_snapshot(project, attention)
+
+
+def claim_l3_attention(project: str) -> dict | None:
+    """Atomically claim a due wake across server processes; an abandoned claim expires after the turn timeout."""
+    now = datetime.now(timezone.utc)
+    with _lock():
+        current = status()
+        attention = (current or {}).get("l3_attention")
+        if not isinstance(attention, dict) or attention.get("project") != project:
+            return None
+        revision = int(attention.get("revision") or 0)
+        if revision <= int(attention.get("handled_revision") or 0):
+            return None
+        if _claim_active(attention, now) or not _due(attention.get("next_attempt"), now):
+            return None
+        attention["claim"] = secrets.token_urlsafe(12)
+        attention["claimed"] = now.replace(microsecond=0).isoformat()
+        current["l3_attention"] = attention
+        current["updated"] = S.now()
+        S.write_json(hold_path(), current)
+        return _attention_snapshot(project, attention)
+
+
+def l3_attention_is_current(project: str, episode: str, revision: int, claim: str) -> bool:
+    """Fence a delayed wake and renew its lease at the post-L3-lock model-start boundary."""
+    with _lock():
+        current = status()
+        attention = (current or {}).get("l3_attention")
+        valid = bool(isinstance(attention, dict) and attention.get("project") == project
+                     and attention.get("episode") == episode and int(attention.get("revision") or 0) == revision
+                     and int(attention.get("handled_revision") or 0) < revision and attention.get("claim") == claim)
+        if not valid:
+            return False
+        attention["claimed"] = S.now()
+        current["l3_attention"] = attention
+        current["updated"] = S.now()
+        S.write_json(hold_path(), current)
+        return True
+
+
+def fail_l3_attention(project: str, episode: str, revision: int, claim: str, error: str) -> bool:
+    """Leave the same wake pending with bounded exponential backoff."""
+    with _lock():
+        current = status()
+        attention = (current or {}).get("l3_attention")
+        if (not isinstance(attention, dict) or attention.get("project") != project
+                or attention.get("episode") != episode or attention.get("claim") != claim):
+            return False
+        if int(attention.get("revision") or 0) != revision:
+            return False
+        attempts = int(attention.get("attempts") or 0) + 1
+        delay = min(RECOVERY_TURN_RETRY_SECONDS * (2 ** min(attempts - 1, 3)),
+                    RECOVERY_TURN_MAX_RETRY_SECONDS)
+        attention.update({
+            "attempts": attempts,
+            "last_error": _clean(error or "L3 recovery turn failed", 200),
+            "last_attempt": S.now(),
+            "next_attempt": (datetime.now(timezone.utc) + timedelta(seconds=delay)).replace(microsecond=0).isoformat(),
+        })
+        attention.pop("claim", None)
+        attention.pop("claimed", None)
+        current["l3_attention"] = attention
+        current["updated"] = S.now()
+        S.write_json(hold_path(), current)
+        return True
+
+
+def complete_l3_attention(project: str, episode: str, revision: int, claim: str) -> bool:
+    """Acknowledge only the exact wake snapshot that a successful L3 turn handled."""
+    with _lock():
+        current = status()
+        attention = (current or {}).get("l3_attention")
+        if (not isinstance(attention, dict) or attention.get("project") != project
+                or attention.get("episode") != episode or attention.get("claim") != claim):
+            return False
+        if int(attention.get("revision") or 0) != revision:
+            return False
+        attention.update({"handled_revision": revision, "handled": S.now(), "next_attempt": None})
+        attention.pop("last_error", None)
+        attention.pop("claim", None)
+        attention.pop("claimed", None)
+        current["l3_attention"] = attention
+        current["updated"] = S.now()
+        S.write_json(hold_path(), current)
+    try:
+        S.project_log(project, "recovery-turn-handled", episode=episode, revision=revision,
+                      faults=list(attention.get("faults") or [])[-20:])
+    except OSError:
+        # The hold record and eventual clearance record still durably carry the handled revision. Do not replay a
+        # successful model turn merely because this supplementary audit append failed.
+        pass
+    return True
 
 
 def claim_repair(project: str, slug: str, *, actor: str) -> dict:
@@ -204,6 +395,11 @@ def clear(reason: str, *, actor: str) -> dict:
                  "incident": _clean(row.get("incident"), 80) or None}
                 for row in (current.get("faults") or [])[-20:]
             ],
+            "l3_attention": ({
+                "project": _clean(current["l3_attention"].get("project"), 100) or None,
+                "revision": int(current["l3_attention"].get("revision") or 0),
+                "handled_revision": int(current["l3_attention"].get("handled_revision") or 0),
+            } if isinstance(current.get("l3_attention"), dict) else None),
         }
         history = clearance_history_path()
         history.parent.mkdir(parents=True, exist_ok=True)

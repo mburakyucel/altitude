@@ -7,6 +7,7 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -45,6 +46,242 @@ class TestRecoveryFuse(unittest.TestCase):
 
         ordinary = T.new("altitude", "ordinary work", "request", actor="l3", source="chat")
         self.assertIn("recovery hold", dispatch.wip_hold("altitude", ordinary))
+
+    def test_fault_episode_requests_one_deduplicated_l3_turn_without_a_task(self):
+        first = incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        second = incidents.system_fault("test-health", "same mechanism failed again", project="altitude")
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        attention = recovery.l3_attention_due("altitude")
+        self.assertIsNotNone(attention)
+        self.assertEqual(attention["revision"], 1)
+        self.assertEqual([row["kind"] for row in attention["faults"]], ["test-health"])
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_wake_is_durable_before_incident_rendering_can_fail(self):
+        with mock.patch.object(incidents, "new_incident", side_effect=OSError("incident store unavailable")):
+            with self.assertRaisesRegex(OSError, "incident store unavailable"):
+                incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+
+        attention = recovery.l3_attention_due("altitude")
+        self.assertIsNotNone(attention)
+        self.assertEqual([row["kind"] for row in attention["faults"]], ["test-health"])
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_different_faults_coalesce_into_one_successful_recovery_turn(self):
+        incidents.system_fault("first-health", "first failure", project="altitude")
+        incidents.system_fault("second-health", "second failure", project="altitude")
+        calls = []
+
+        def turn(project, prompt, **kwargs):
+            self.assertTrue(kwargs["precheck"]())
+            calls.append((project, prompt, kwargs["trigger"]))
+            return {"error": None, "skipped": False, "completed": True}
+
+        with mock.patch.object(server.l3, "turn", side_effect=turn):
+            server.run_recovery_turn("altitude")
+            server.run_recovery_turn("altitude")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("first-health", calls[0][1])
+        self.assertIn("second-health", calls[0][1])
+        self.assertEqual(calls[0][2], "system-recovery")
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        self.assertIsNotNone(recovery.status(), "a successful L3 turn must not clear the fuse")
+        history = [row for row in S.read_project_log("altitude") if row.get("kind") == "recovery-turn-handled"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["revision"], 1)
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_failed_recovery_turn_retries_the_same_wake_with_backoff(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        with mock.patch.object(server.l3, "turn", return_value={"error": "capacity", "skipped": False}):
+            server.run_recovery_turn("altitude")
+
+        held = recovery.status()
+        attention = held["l3_attention"]
+        self.assertEqual(attention["attempts"], 1)
+        self.assertEqual(attention["handled_revision"], 0)
+        self.assertIsNotNone(attention["next_attempt"])
+        self.assertIsNone(recovery.l3_attention_due("altitude"), "backoff prevents a tight timer retry loop")
+        self.assertFalse(any(row.get("kind") == "recovery-turn-handled" for row in S.read_project_log("altitude")))
+
+        attention["next_attempt"] = "1970-01-01T00:00:00+00:00"
+        S.write_json(recovery.hold_path(), held)
+
+        retry = recovery.claim_l3_attention("altitude")
+        self.assertIsNotNone(retry)
+        self.assertTrue(recovery.l3_attention_is_current(
+            "altitude", retry["episode"], retry["revision"], retry["claim"]))
+        self.assertTrue(recovery.complete_l3_attention(
+            "altitude", retry["episode"], retry["revision"], retry["claim"]))
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        self.assertEqual(len([row for row in S.read_project_log("altitude")
+                              if row.get("kind") == "recovery-turn-handled"]), 1)
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_clear_cancels_a_stale_wake_and_a_new_episode_can_wake(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        old = recovery.claim_l3_attention("altitude")
+        recovery.clear("operator verified the episode is stable", actor="burak")
+
+        with mock.patch.object(server.l3, "turn") as turn:
+            server.run_recovery_turn("altitude")
+        turn.assert_not_called()
+        self.assertFalse(recovery.l3_attention_is_current(
+            "altitude", old["episode"], old["revision"], old["claim"]))
+
+        # Fault dedupe spans episodes, so the repeated kind must still create a fresh wake after clearance.
+        self.assertIsNone(incidents.system_fault("test-health", "failed after clearance", project="altitude"))
+        new = recovery.l3_attention_due("altitude")
+        self.assertIsNotNone(new)
+        self.assertNotEqual(new["episode"], old["episode"])
+
+    def test_recovery_turn_exception_does_not_file_a_recursive_workflow_fault(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        with mock.patch.object(server.l3, "turn", side_effect=RuntimeError("model unavailable")):
+            server.run_recovery_turn("altitude")
+
+        self.assertEqual(set(S.read_json(incidents.FAULTS)), {"test-health"})
+        self.assertEqual(S.list_tasks("altitude"), [])
+        self.assertEqual(recovery.status()["l3_attention"]["attempts"], 1)
+
+    def test_fault_arriving_during_a_turn_joins_the_same_episode_without_another_turn(self):
+        incidents.system_fault("first-health", "first failure", project="altitude")
+        prompts = []
+
+        def first_turn(project, prompt, **kwargs):
+            self.assertTrue(kwargs["precheck"]())
+            prompts.append(prompt)
+            incidents.system_fault("second-health", "arrived during recovery", project="altitude")
+            return {"error": None, "skipped": False, "completed": True}
+
+        with mock.patch.object(server.l3, "turn", side_effect=first_turn):
+            server.run_recovery_turn("altitude")
+
+        attention = recovery.status()["l3_attention"]
+        self.assertEqual(attention["revision"], 1)
+        self.assertEqual(attention["handled_revision"], 1)
+        self.assertEqual([row["kind"] for row in attention["faults"]], ["first-health", "second-health"])
+        self.assertEqual(len(prompts), 1)
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_clear_during_precheck_skips_without_recreating_the_episode(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+
+        def clear_then_precheck(project, prompt, **kwargs):
+            recovery.clear("operator cleared before the delayed turn", actor="burak")
+            self.assertFalse(kwargs["precheck"]())
+            return {"error": None, "skipped": True, "completed": False}
+
+        with mock.patch.object(server.l3, "turn", side_effect=clear_then_precheck):
+            server.run_recovery_turn("altitude")
+        self.assertIsNone(recovery.status())
+        self.assertFalse(any(row.get("kind") == "recovery-turn-handled" for row in S.read_project_log("altitude")))
+        self.assertEqual(S.list_tasks("altitude"), [])
+
+    def test_attention_claim_is_atomic_owner_fenced_and_recovers_when_stale(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        barrier = threading.Barrier(2)
+
+        def claim(_):
+            barrier.wait()
+            return recovery.claim_l3_attention("altitude")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = list(pool.map(claim, (1, 2)))
+        winners = [row for row in claims if row]
+        self.assertEqual(len(winners), 1)
+        winner = winners[0]
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        claimed = datetime.fromisoformat(recovery.status()["l3_attention"]["claimed"])
+        self.assertIsNone(recovery.l3_attention_due(
+            "altitude", now=claimed + timedelta(seconds=config.L3_CODEX_TURN_TIMEOUT)),
+            "a live Codex L3 turn must retain its claim for its entire execution timeout")
+        self.assertFalse(recovery.complete_l3_attention(
+            "altitude", winner["episode"], winner["revision"], "not-the-owner"))
+
+        held = recovery.status()
+        held["l3_attention"]["claimed"] = "1970-01-01T00:00:00+00:00"
+        S.write_json(recovery.hold_path(), held)
+        replacement = recovery.claim_l3_attention("altitude")
+        self.assertIsNotNone(replacement)
+        self.assertNotEqual(replacement["claim"], winner["claim"])
+        self.assertFalse(recovery.complete_l3_attention(
+            "altitude", winner["episode"], winner["revision"], winner["claim"]))
+        self.assertTrue(recovery.complete_l3_attention(
+            "altitude", replacement["episode"], replacement["revision"], replacement["claim"]))
+        self.assertFalse(recovery.complete_l3_attention(
+            "altitude", replacement["episode"], replacement["revision"], replacement["claim"]))
+
+    def test_post_l3_lock_precheck_renews_a_claim_that_waited_to_start(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        claim = recovery.claim_l3_attention("altitude")
+        held = recovery.status()
+        held["l3_attention"]["claimed"] = "1970-01-01T00:00:00+00:00"
+        S.write_json(recovery.hold_path(), held)
+
+        self.assertTrue(recovery.l3_attention_is_current(
+            "altitude", claim["episode"], claim["revision"], claim["claim"]))
+        renewed = datetime.fromisoformat(recovery.status()["l3_attention"]["claimed"])
+        self.assertGreater(renewed, datetime.fromisoformat("1970-01-01T00:00:00+00:00"))
+        self.assertIsNone(recovery.l3_attention_due(
+            "altitude", now=renewed + timedelta(seconds=config.L3_CODEX_TURN_TIMEOUT)))
+
+    def test_empty_l3_result_is_not_acknowledged_as_a_completed_turn(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        with mock.patch.object(server.l3, "turn", return_value={}):
+            server.run_recovery_turn("altitude")
+
+        attention = recovery.status()["l3_attention"]
+        self.assertEqual(attention["handled_revision"], 0)
+        self.assertEqual(attention["attempts"], 1)
+        self.assertNotIn("claim", attention)
+        self.assertFalse(any(row.get("kind") == "recovery-turn-handled" for row in S.read_project_log("altitude")))
+
+    def test_two_consumers_execute_only_the_atomic_claim_winner(self):
+        incidents.system_fault("test-health", "engine supervision failed", project="altitude")
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+
+        def turn(project, prompt, **kwargs):
+            calls.append(project)
+            entered.set()
+            self.assertTrue(release.wait(2))
+            self.assertTrue(kwargs["precheck"]())
+            return {"error": None, "skipped": False, "completed": True}
+
+        with mock.patch.object(server.l3, "turn", side_effect=turn):
+            first = threading.Thread(target=server.run_recovery_turn, args=("altitude",))
+            second = threading.Thread(target=server.run_recovery_turn, args=("altitude",))
+            first.start()
+            self.assertTrue(entered.wait(2))
+            second.start()
+            second.join(2)
+            release.set()
+            first.join(2)
+
+        self.assertEqual(calls, ["altitude"])
+        handled = [row for row in S.read_project_log("altitude") if row.get("kind") == "recovery-turn-handled"]
+        self.assertEqual(len(handled), 1)
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
+
+    def test_new_fault_kind_does_not_bypass_a_failed_turn_backoff(self):
+        incidents.system_fault("first-health", "first failure", project="altitude")
+        with mock.patch.object(server.l3, "turn", return_value={"error": "capacity", "skipped": False}):
+            server.run_recovery_turn("altitude")
+        before = recovery.status()["l3_attention"]
+
+        incidents.system_fault("second-health", "second failure", project="altitude")
+        after = recovery.status()["l3_attention"]
+
+        self.assertEqual(after["revision"], 1)
+        self.assertEqual(after["attempts"], before["attempts"])
+        self.assertEqual(after["next_attempt"], before["next_attempt"])
+        self.assertEqual([row["kind"] for row in after["faults"]], ["first-health", "second-health"])
+        self.assertIsNone(recovery.l3_attention_due("altitude"))
 
     def test_one_explicit_repair_is_allowed_until_l3_clears(self):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")

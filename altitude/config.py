@@ -67,6 +67,7 @@ WIP_PER_MACHINE = 10
 SESSIONS_PER_MACHINE = 24         # live Claude sessions (L2s + optional L1s) across all projects
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
 L3_TURN_TIMEOUT = 900             # seconds
+L3_CODEX_TURN_TIMEOUT = 1200       # Codex fallback runs without a resumable Claude session
 AGENT_POLL_SECONDS = 30
 
 PROJECTS_FILE = ROOT / "projects.json"
