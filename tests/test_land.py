@@ -94,6 +94,9 @@ class TestLand(unittest.TestCase):
         self._setenv("ALTITUDE_HOME", str(config.ROOT))
         self._setenv("ALTITUDE_PROJECT", "demo")
         self._setenv("ALTITUDE_TASK", "fix-x")
+        self._setenv("ALTITUDE_ACTOR", "burak")
+        self._setenv("ALTITUDE_DISPATCH_ID", "")
+        self._setenv("ALTITUDE_L2_TOKEN", "")
         d = S.tasks_dir("demo") / "fix-x"
         d.mkdir(parents=True)
         (d / "status.json").write_text(json.dumps(
@@ -132,6 +135,37 @@ class TestLand(unittest.TestCase):
         p = self.repo / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("changed\n")
+
+    def set_current_l2(self, *, state="running", dispatch_id="fix-x-1", token="current-token"):
+        path = S.tasks_dir("demo") / "fix-x" / "status.json"
+        task = json.loads(path.read_text())
+        task.update({"state": state, "dispatch_id": dispatch_id, "l2_token": token})
+        path.write_text(json.dumps(task))
+        self._setenv("ALTITUDE_ACTOR", "l2")
+        self._setenv("ALTITUDE_DISPATCH_ID", dispatch_id)
+        self._setenv("ALTITUDE_L2_TOKEN", token)
+
+    def record_commands(self):
+        commands = []
+        real = land._run
+
+        def record(args, cwd, timeout=120):
+            commands.append(args)
+            return real(args, cwd, timeout=timeout)
+
+        land._run = record
+        self.addCleanup(setattr, land, "_run", real)
+        return commands
+
+    def assert_no_publish_mutation(self, commands):
+        forbidden_git = {"fetch", "add", "commit", "push"}
+        self.assertEqual([args for args in commands if args and args[0] == "gh"], [])
+        self.assertEqual(
+            [args for args in commands if len(args) > 1 and args[0] == "git" and args[1] in forbidden_git],
+            [],
+        )
+        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertNotIn("worktree-fix-x", self.remote_heads())
 
     def fake_runner(self, name, exit_code=0, output="", script=None):
         p = self.tmp / "ghbin" / name
@@ -197,6 +231,51 @@ class TestLand(unittest.TestCase):
         with self.assertRaisesRegex(land.LandError, "rogue.txt"):
             land.land("msg", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+
+    def test_non_l2_automated_actors_cannot_land(self):
+        self.leased_change()
+        commands = self.record_commands()
+        self._setenv("ALTITUDE_ACTOR", "l1")
+        for actor in ("l1", "l3", "altd"):
+            with self.subTest(actor=actor):
+                os.environ["ALTITUDE_ACTOR"] = actor
+                with self.assertRaisesRegex(land.LandError, "only the current L2 or Burak"):
+                    land.land("must refuse", cwd=self.repo, wait=0)
+        self.assert_no_publish_mutation(commands)
+
+    def test_stale_l2_generation_cannot_land(self):
+        self.set_current_l2()
+        os.environ["ALTITUDE_L2_TOKEN"] = "replaced-token"
+        self.leased_change()
+        commands = self.record_commands()
+        with self.assertRaisesRegex(land.LandError, "session generation changed"):
+            land.land("must refuse", cwd=self.repo, wait=0)
+        self.assert_no_publish_mutation(commands)
+
+    def test_l2_must_own_the_running_dispatch(self):
+        self.set_current_l2()
+        self.leased_change()
+        commands = self.record_commands()
+
+        os.environ["ALTITUDE_DISPATCH_ID"] = "fix-x-0"
+        with self.assertRaisesRegex(land.LandError, "dispatch ownership changed"):
+            land.land("must refuse", cwd=self.repo, wait=0)
+
+        os.environ["ALTITUDE_DISPATCH_ID"] = "fix-x-1"
+        task_path = S.tasks_dir("demo") / "fix-x" / "status.json"
+        task = json.loads(task_path.read_text())
+        task["state"] = "reported"
+        task_path.write_text(json.dumps(task))
+        with self.assertRaisesRegex(land.LandError, "task is not running"):
+            land.land("must refuse", cwd=self.repo, wait=0)
+        self.assert_no_publish_mutation(commands)
+
+    def test_current_l2_can_land(self):
+        self.set_current_l2()
+        self.leased_change()
+        result = land.land("fix: current publisher", cwd=self.repo, wait=0)
+        self.assertEqual(result["pr"], 101)
+        self.assertEqual(result["staged"], ["src/thing.py"])
 
     def test_plain_and_merge_land_refuse_unprovenanced_history_before_mutation(self):
         (self.repo / "rogue-history.txt").write_text("direct commit\n")

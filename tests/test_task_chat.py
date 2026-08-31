@@ -203,6 +203,40 @@ class TestResumeGenerationFence(unittest.TestCase):
         stop.assert_called_once_with("agent-new")
         self.assertEqual(S.load_task(project, "resume-race")["state"], "rejected")
 
+    def test_resume_persistence_failure_stops_the_unowned_replacement_and_holds_recovery(self):
+        project = "task-chat-resume-persist"
+        repo = _TMP / project / "repo"
+        worktree = repo / ".claude" / "worktrees" / "resume-persist"
+        worktree.mkdir(parents=True, exist_ok=True)
+        projects = config.load_projects()
+        projects[project] = {"name": project, "path": str(repo)}
+        config.save_projects(projects)
+        S.save_task(project, {
+            "slug": "resume-persist", "title": "persist", "state": "running",
+            "dispatch_id": "resume-persist-1", "session_id": "session-old", "agent_id": "agent-old",
+            "l2_token": "token-old", "worktree": str(worktree), "created": S.now(),
+        })
+        rows = [{"id": "agent-new", "sessionId": "session-new",
+                 "name": f"{project}/resume-persist-1", "state": "working", "startedAt": 2}]
+        result = {"stdout": "", "stderr": "", "returncode": 0}
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_validate_task_worktree"), \
+             mock.patch.object(engines, "claude_resume_bg", return_value=result), \
+             mock.patch.object(engines, "claude_agents", return_value=rows), \
+             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
+             mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")), \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            with self.assertRaisesRegex(RuntimeError, "could not bind replacement worker"):
+                dispatch.resume_session(project, "resume-persist", "continue")
+
+        stop.assert_called_once_with("agent-new")
+        current = S.load_task(project, "resume-persist")
+        self.assertEqual((current["agent_id"], current["session_id"], current["l2_token"]),
+                         ("agent-old", "session-old", "token-old"))
+        self.assertEqual(S.read_events(project, "resume-persist")[-1]["kind"], "resume-failed")
+        fault.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -271,10 +271,14 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
                 pass
         raise record_dispatch_failure(project, slug, exc) from exc
-    if agent.get("sessionId"):
+    try:
         S.write_json(config.MONITOR_DIR / f"session-{agent['sessionId']}.json",
                      {"project": project, "slug": slug, "dispatch_id": dispatch_id, "level": "l2"})
-    return {"dispatch_id": dispatch_id, "agent": agent, "stdout": res["stdout"]}
+    except Exception as exc:  # noqa: BLE001 — ownership is already durable; hold dispatch but keep tracking the worker
+        S.append_event(project, slug, "session-index-failed", reason=str(exc)[:300])
+        from . import incidents
+        incidents.system_fault("session-index", f"{project}/{slug}: {exc}", project=project, task=slug)
+    return {"dispatch_id": dispatch_id, "agent": agent, "stdout": res.get("stdout", "")}
 
 
 def l2_env(project: str, task: dict) -> dict:
@@ -391,17 +395,24 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         raise record_resume_failure(project, slug, sid, detail)
     new = max(live, key=lambda a: a.get("startedAt") or 0)
     changed = None
-    with S.project_lock(project):
-        t = S.load_task(project, slug)
+    try:
+        with S.project_lock(project):
+            t = S.load_task(project, slug)
+            try:
+                _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
+                                         expected_session_id=sid, expected_agent_id=task.get("agent_id"),
+                                         expected_state=task.get("state"))
+            except T.TransitionError as exc:
+                changed = exc
+            else:
+                t["agent_id"], t["session_id"], t["l2_token"] = new["id"], new["sessionId"], replacement_token
+                S.save_task(project, t)
+    except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held
         try:
-            _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
-                                     expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                                     expected_state=task.get("state"))
-        except T.TransitionError as exc:
-            changed = exc
-        else:
-            t["agent_id"], t["session_id"], t["l2_token"] = new["id"], new["sessionId"], replacement_token
-            S.save_task(project, t)
+            engines.claude_stop(new["id"])
+        except Exception:  # noqa: BLE001 — recovery owns any worker the stop command could not reach
+            pass
+        raise record_resume_failure(project, slug, sid, f"could not bind replacement worker: {exc}") from exc
     if changed is not None:
         engines.claude_stop(new["id"])
         S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],

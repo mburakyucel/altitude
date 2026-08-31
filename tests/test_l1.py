@@ -62,10 +62,20 @@ class TestL1Runs(unittest.TestCase):
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
 
+    def setUp(self):
+        keys = ("ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK",
+                "ALTITUDE_DISPATCH_ID", "ALTITUDE_L2_TOKEN")
+        self._owner_env = {key: os.environ.get(key) for key in keys}
+
     def tearDown(self):
         # A sandbox-denial case intentionally trips the production recovery fuse. Keep that
         # evidence from leaking into unrelated resume tests in the same discovery process.
         recovery.hold_path().unlink(missing_ok=True)
+        for key, value in self._owner_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def _task(self, slug):
         T.new("altitude", slug, "req", actor="l3")

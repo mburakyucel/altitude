@@ -185,7 +185,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
               "Read <task_dir>/report.md if you need more.\n\n"
-              "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
+              "Handle the report: write a concise digest and use `alt task done`, or block/resume with the exact gap; "
               "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
               "a repair task or healing workflow. "
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "

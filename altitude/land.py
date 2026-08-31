@@ -82,6 +82,29 @@ def _resolve(branch: str, project: str | None) -> tuple[str | None, str | None, 
     return project, slug, task
 
 
+def _require_current_publisher(project: str, slug: str, task: dict) -> None:
+    """Fence automated landing to the exact currently-running L2 generation.
+
+    A hand-run command has no actor (or explicitly names Burak). Every automated
+    caller must be the L2 that owns the task now: L1s and control-plane actors do
+    not publish, and a replaced L2's inherited environment cannot publish after
+    its generation token rotates.
+    """
+    actor = os.environ.get("ALTITUDE_ACTOR")
+    if actor is None or actor == "burak":
+        return
+    if actor != "l2":
+        raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or Burak may land")
+    if task.get("state") != "running":
+        raise LandError(f"current L2 cannot land {project}/{slug}: task is not running")
+    dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+    if not dispatch_id or task.get("dispatch_id") != dispatch_id:
+        raise LandError(f"current L2 cannot land {project}/{slug}: dispatch ownership changed")
+    l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+    if not l2_token or task.get("l2_token") != l2_token:
+        raise LandError(f"current L2 cannot land {project}/{slug}: session generation changed")
+
+
 def _changes(root: Path) -> list[tuple[str, list[str]]]:
     """Working-tree changes as (XY, paths) groups — a rename is one group carrying both ends. `-z` so
     spaced and quoted paths never bite; untracked files listed one by one, never as a directory."""
@@ -554,6 +577,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
             "pass `--project` or run from the dispatch environment"
         )
+    # This is deliberately before fetch, staging, or any GitHub call.  Put the
+    # fence in the library rather than only in bin/alt so direct callers cannot
+    # bypass current-publisher ownership.
+    _require_current_publisher(project, slug, task)
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
