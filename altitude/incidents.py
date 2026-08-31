@@ -68,9 +68,12 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         S.write_json(FAULTS, faults)
         from . import recovery
         recovery.hold(detail or kind, kind=kind, incident=rec.get("incident"), actor="altd")
+        target = "altitude" if "altitude" in config.load_projects() else project
+        # The fuse and its one L3 wake are durable before incident rendering or FYI I/O. Those enrich the same
+        # episode afterward; their failure must never leave a silent hold that nobody is asked to inspect.
+        recovery.request_l3_attention(target, kind=kind, incident=rec.get("incident"))
         if recent:
             return None
-        target = "altitude" if "altitude" in config.load_projects() else project
         inc = None
         if target:
             inc = new_incident(target, title=f"system fault: {kind}", task=task,
@@ -82,6 +85,8 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
             S.write_json(FAULTS, faults)
             recovery.attach_incident(kind, inc["id"])
             T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}. Evidence recorded; no recovery work was created automatically.", actor="altd")
+        if inc:
+            recovery.request_l3_attention(target, kind=kind, incident=inc["id"])
         return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
 
 

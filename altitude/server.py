@@ -276,6 +276,62 @@ def drain_hook_faults() -> None:
         incidents.system_fault("hook", ln[:400])
 
 
+def run_recovery_turn(project: str) -> None:
+    """Consume one durable recovery wake without turning a failed wake into another system fault."""
+    attention = None
+    try:
+        attention = recovery.claim_l3_attention(project)
+        if not attention:
+            return
+        episode, revision, claim = attention["episode"], attention["revision"], attention["claim"]
+        faults = ", ".join(
+            f"{row['kind']}" + (f" ({row['incident']})" if row.get("incident") else "")
+            for row in attention.get("faults") or []
+        ) or "system health fault"
+        prompt = (
+            f"Altitude recovery needs your attention for the active recovery episode. Fault evidence: {faults}. "
+            "Inspect the current recovery status and actual task/session state. Do not create routine work or a chain of "
+            "healing tasks. If code is genuinely needed, delegate the episode's single recovery L2. Never restart or "
+            "unmask Altitude without Burak's separate explicit authorization. Keep the fuse active until health is "
+            "verified. After stability returns, triage the incident evidence: report a narrow corrective follow-up as "
+            "an FYI, and preserve broad architecture, policy, or system work as a proposal or GitHub issue for Burak."
+        )
+        result = l3.turn(
+            project,
+            prompt,
+            trigger="system-recovery",
+            precheck=lambda: recovery.l3_attention_is_current(project, episode, revision, claim),
+        )
+        if result.get("skipped"):
+            return
+        error = result.get("error") or ("usage/capacity limited" if result.get("limited") else None)
+        if error or result.get("completed") is not True:
+            recovery.fail_l3_attention(project, episode, revision, claim,
+                                       str(error or "L3 turn did not record completion"))
+            log(f"[recovery:{project}] L3 turn remains pending after failure")
+            return
+        if recovery.complete_l3_attention(project, episode, revision, claim):
+            log(f"[recovery:{project}] L3 handled recovery episode {episode}")
+    except Exception as e:  # noqa: BLE001 — retry this same wake; never recursively file a workflow fault
+        if attention:
+            try:
+                recovery.fail_l3_attention(project, attention["episode"], attention["revision"],
+                                           attention["claim"], str(e))
+            except Exception as state_error:  # noqa: BLE001 — journal is the final non-recursive fallback
+                log(f"[recovery:{project}] could not preserve failed L3 wake: {state_error}")
+        log(f"[recovery:{project}] L3 turn failed and remains pending: {e}")
+
+
+def wake_recovery_l3(project: str) -> None:
+    try:
+        due = recovery.l3_attention_due(project)
+    except Exception as e:  # noqa: BLE001 — never recursively fault the fault-notification path
+        log(f"[recovery:{project}] cannot read the pending L3 wake: {e}")
+        return
+    if due:
+        spawn(f"recovery:{project}", run_recovery_turn, project)
+
+
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
@@ -284,6 +340,7 @@ def tick() -> None:
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
+            wake_recovery_l3(project)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
