@@ -81,12 +81,13 @@ def main(argv=None) -> None:
     ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat")
     sub.add_parser("l3-reset")
     ic = sub.add_parser("incident"); ics = ic.add_subparsers(dest="icmd", required=True)
-    inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[]); inew.add_argument("--generalizable", default="unknown"); inew.add_argument("--mechanism", default="incident-only"); inew.add_argument("--scope", default="project")
+    inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[])
     iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--reason", required=True)
     ics.add_parser("list")
-    ru = sub.add_parser("rule"); rus = ru.add_subparsers(dest="rcmd", required=True)
-    rp = rus.add_parser("propose"); rp.add_argument("--incident", required=True); rp.add_argument("--title", required=True); rp.add_argument("--text", required=True); rp.add_argument("--mechanism", default="rule", choices=["rule", "instruction", "skill", "incident-only"]); rp.add_argument("--scope", default="project", choices=["project", "stack", "global"]); rp.add_argument("--stack"); rp.add_argument("--where", default=""); rp.add_argument("--prevents", default=""); rp.add_argument("--effect", default="")
-    rus.add_parser("list"); rus.add_parser("audit-input")
+    rc = sub.add_parser("recovery"); rcs = rc.add_subparsers(dest="recovery_cmd", required=True)
+    rcs.add_parser("status")
+    rh = rcs.add_parser("hold"); rh.add_argument("--reason", required=True)
+    rr = rcs.add_parser("clear"); rr.add_argument("--reason", required=True)
     ideas = sub.add_parser("idea"); ideas.add_argument("text")
     sub.add_parser("backlog")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
@@ -243,8 +244,8 @@ def main(argv=None) -> None:
     if c == "incident":
         from altitude import improve; p = _project(args)
         if args.icmd == "new":
-            out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause, tags=args.tag,
-                                     generalizable=args.generalizable, mechanism=args.mechanism, scope=args.scope, actor=ACTOR))
+            out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
+                                     tags=args.tag, actor=ACTOR))
         elif args.icmd == "amend":
             fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status)) if v is not None}
             try:
@@ -254,16 +255,17 @@ def main(argv=None) -> None:
         else:
             out([r for r in improve.index() if r["project"] == p])
         return
-    if c == "rule":
-        from altitude import improve, rules; p = _project(args)
-        if args.rcmd == "propose":
-            out(improve.propose_rule(p, incident=args.incident, title=args.title, text=args.text, mechanism=args.mechanism, scope=args.scope,
-                                     stack=args.stack, where=args.where, prevents=args.prevents, effect=args.effect, actor=ACTOR))
-        elif args.rcmd == "audit-input":
-            out(improve.audit_input(p))
+    if c == "recovery":
+        from altitude import recovery
+        if args.recovery_cmd == "hold":
+            out(recovery.hold(args.reason, actor=ACTOR))
+        elif args.recovery_cmd == "clear":
+            try:
+                out(recovery.clear(args.reason, actor=ACTOR))
+            except ValueError as e:
+                sys.exit(f"alt: {e}")
         else:
-            proj = config.project(p)
-            out(rules.global_rules() + rules.stack_rules(proj.get("stacks", [])) + rules.project_rules(config.project_path(p)))
+            out(recovery.status() or {"active": False})
         return
     if c == "idea":
         from altitude import intake; res = intake.idea(_project(args), args.text, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return

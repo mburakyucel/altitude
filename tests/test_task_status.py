@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, state as S, status as task_status  # noqa: E402
+from altitude import config, dispatch, monitor, recovery, state as S, status as task_status  # noqa: E402
 
 
 GH = """#!/usr/bin/env python3
@@ -79,6 +79,11 @@ class TestTaskStatus(unittest.TestCase):
             setattr(config, name, value)
             self.addCleanup(setattr, config, name, old)
         config.ensure_root()
+        recovery.hold_path().unlink(missing_ok=True)
+        quota = mock.patch.object(monitor, "quota", return_value={"known": True})
+        quota_hold = mock.patch.object(monitor, "quota_hold", return_value=None)
+        quota.start(); quota_hold.start()
+        self.addCleanup(quota.stop); self.addCleanup(quota_hold.stop)
 
         self.repo = self.tmp / "repo"
         self.repo.mkdir()

@@ -211,7 +211,7 @@ def regen_state_md(project: str) -> str:
     inc = config.project_dir(project) / "incidents.jsonl"
     if inc.exists():
         recent = [json.loads(l) for l in inc.read_text().splitlines()[-5:] if l.strip()]
-        lines += ["", "## Recent incidents", ""] + [f"- {i.get('id')}: {i.get('title', '')[:120]} → {i.get('rule') or 'incident-only'}" for i in recent]
+        lines += ["", "## Recent incidents", ""] + [f"- {i.get('id')}: {i.get('title', '')[:120]}" for i in recent]
     text = "\n".join(lines) + "\n"
     atomic_write(config.project_dir(project) / "STATE.md", text)
     return text

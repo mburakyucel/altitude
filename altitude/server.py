@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, mechanize, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, monitor, propose, quota_codex, recovery, refs, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -425,15 +425,14 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                         t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
                     log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                     return
-    inc = improve.index()
     # [R-007] The report-landed substance belongs in the task record, not a turn-log reply.
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
-              f"Read <task_dir>/report.md if you need more. Incidents in other projects (for scope decisions): "
-              f"{json.dumps([{k: r.get(k) for k in ('project', 'id', 'tags')} for r in inc[-20:]])}\n\n"
+              "Read <task_dir>/report.md if you need more.\n\n"
               "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
-              "then the post-mortem pass (incident + right-sized rule, or one line saying nothing went wrong). "
+              "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
+              "a rule, repair task, or healing workflow. "
               "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
@@ -490,6 +489,8 @@ def dispatch_waiting(project: str) -> None:
             continue
         hold = dispatch.wip_hold(project, t)
         if hold and dispatch.per_task_hold(hold):  # decision 51: a leased task must not block the queue behind it
+            if hold.startswith("recovery hold"):
+                S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             continue
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
@@ -501,7 +502,7 @@ def dispatch_waiting(project: str) -> None:
             log(f"[{project}/{t['slug']}] dispatch failed: {e}")
             T.block(project, t["slug"], f"dispatch failed: {e}"[:300])
     hp = config.project_dir(project) / "hold.json"
-    if hp.exists():
+    if hp.exists() and not recovery.status():
         hp.unlink()
 
 
@@ -558,37 +559,10 @@ def tick() -> None:
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
                     S.append_event(project, t["slug"], "cleanup", notes=notes)
                     log(f"[{project}/{t['slug']}] cleanup: {notes}")
-            try:
-                mechanize.run_due(project)
-            except Exception as e:  # noqa: BLE001
-                log(f"[{project}] mechanize failed: {e}\n{traceback.format_exc()}")
-                improve.system_fault(f"mechanize:{project}", str(e), project=project)
-            weekly_audit(project)
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
             improve.system_fault("tick", f"{project}: {e}", project=project)
     morning_digest()
-
-
-def weekly_audit(project: str) -> None:
-    inf = l3.info(project)
-    last = inf.get("last_audit")
-    if last and time.time() - datetime.fromisoformat(last).timestamp() < 7 * 86400:
-        return
-    if not inf.get("session_id"):
-        return
-    inf["last_audit"] = S.now()
-    l3.save_info(project, inf)
-    data = improve.audit_input(project)
-    # [R-007] The audit substance belongs in rule records and FYIs, not a turn-log reply.
-    spawn(f"audit:{project}", l3.turn, project,
-          "Weekly rule audit. Input (rules with their incidents, recent incidents, cross-project promotion candidates):\n"
-          + json.dumps(data)[:12000] + "\n\nFor each probation/active rule: recurred? exercised? origin still true? Retire, tighten, or keep — "
-          "each retirement/tightening via `alt rule propose` (FYI-with-veto). Propose promotions only where two projects share a tag. "
-          "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
-          "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
-          "and whether anything waits on Burak.",
-          "audit")
 
 
 _last_digest_day = [None]
@@ -779,11 +753,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(refs.resolve(parts[2], unquote(parts[3])))
                 except KeyError as e:
                     return self._json({"error": f"unknown reference {e}"}, 404)
-            if api == "rules" and len(parts) > 2:
-                proj = config.project(parts[2])
-                return self._json({"global": rules.global_rules(), "stack": rules.stack_rules(proj.get("stacks", [])),
-                                   "project": rules.project_rules(config.project_path(parts[2])),
-                                   "incidents": [r for r in improve.index() if r["project"] == parts[2]]})
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")

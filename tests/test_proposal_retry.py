@@ -141,7 +141,6 @@ class TestProposalRetry(unittest.TestCase):
             patch.object(server, "resume_stranded_reports"),
             patch.object(server.dispatch, "resume_due", return_value=[]),
             patch.object(server, "dispatch_waiting"),
-            patch.object(server, "weekly_audit"),
             patch.object(server, "morning_digest"),
             patch.object(server, "spawn", side_effect=record_spawn),
             patch.dict(server._bg, {}, clear=True),

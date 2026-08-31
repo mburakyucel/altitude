@@ -4,7 +4,7 @@ import json
 import threading
 from pathlib import Path
 
-from . import config, engines, rules, state as S
+from . import config, engines, state as S
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -91,7 +91,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
             inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None, "context_percent": 0,
                         "rotated_from": sid, "rotated_at": S.now()})
             save_info(project, inf)
-        persona = rules.compiled_persona("l3", project)
+        persona = config.PERSONAS / "l3.md"
         turn_started_at = S.now()
         chat_log(project, "user", prompt, trigger=trigger, at=turn_started_at)
         held = engines.usage_hold()
@@ -115,7 +115,6 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         inf.update({"session_id": res["session_id"], "turns": (0 if fresh else inf.get("turns", 0)) + 1,
                     "context_percent": pct, "last_turn": S.now(), "last_cost": res["cost"],
                     "started": inf.get("started") if not fresh else S.now(),
-                    "last_audit": inf.get("last_audit") or S.now(),   # first weekly audit a week after the first turn
                     "context_state": engines.context_state(pct),
                     "rotate_next": pct >= config.CONTEXT_ACT * 100,
                     "rotate_reason": f"context {pct}% ≥ act line {int(config.CONTEXT_ACT * 100)}% (decision 12)" if pct >= config.CONTEXT_ACT * 100 else None})

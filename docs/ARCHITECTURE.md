@@ -38,8 +38,9 @@ flowchart TD
     G --> CI[base-owned remote Python check]
     L2 -->|report files| S
     A --> V[verify and close / L3 report turn]
-    V --> H[incidents / rules / mechanize]
-    H -->|new repair tasks| D
+    V --> H[incident evidence]
+    H --> F[recovery hold]
+    F -.explicit one repair L2.-> D
     K[hooks and shell-policy parsing] -.enforce.-> L2
     K -.enforce.-> W
 ```
@@ -53,39 +54,8 @@ Chat, and Monitor routes over a Python HTTP API. Most complexity accumulated beh
 - Process, session, worktree, task, and report ownership are not bound to one durable generation.
 - Policy is partly inferred by parsing shell commands, environment, and several ledgers.
 - Landing is split between local policy and a small base-owned GitHub Actions check.
-- Recovery uses the same task-producing machinery it is trying to repair.
-
-### The unhealthy feedback loop
-
-```mermaid
-flowchart LR
-    F[system or task fault] --> I[incident / FYI]
-    I --> J[L3 judgment]
-    J --> T[new healing task]
-    T --> W[more agent and Git activity]
-    W --> F
-    W --> PM[post-mortem]
-    PM --> R[proposed rule]
-    R --> T
-    A[audit / mechanize timer] --> I
-```
-
-At the stabilization boundary there were 78 live task records—26 blocked, 32 parked, and 20
-rejected—with no healthy active task. There were also 19 pending rules, roughly 79 incident
-records, and 126 registered worktrees. Deduplication can reduce identical records, but it does not
-remove this positive-feedback design.
-
-### Scale snapshot
-
-- About 13,100 lines of executable, frontend, and workflow code.
-- About 9,800 lines of tests across 508 test methods.
-- About 35,500 words of documentation plus 4,200 words of personas.
-- Seven personas, five schemas, 47 CLI parser entries, and 56 recorded decisions.
-- Roughly 2,000 lines implement policy indirectly through shell parsing, Git policy, and
-  launch/edit hooks.
-
-These numbers are context, not deletion targets. Existing components must be evaluated against the
-agreed operating model before deciding what to retain, collapse, rewrite, or remove.
+- A system fault trips a recovery hold; ordinary dispatch remains stopped until explicit L3 or
+  human clearance, with at most one explicitly claimed recovery L2.
 
 ## Agreed operating model
 
@@ -255,8 +225,7 @@ Incident handling follows this order:
 1. Capture evidence immediately.
 2. Recover the system under L3's control.
 3. Review and coalesce the incident after stability returns.
-4. Decide whether it needs a narrow correction, a durable rule/mechanism, a proposal, or only
-   historical evidence.
+4. Preserve any worthwhile follow-up as a GitHub issue for Burak to select later.
 
 L3 may complete bounded operational actions within the current recovery episode, and the one
 recovery L2 may finish a narrow corrective code change within its existing task and PR. Any
@@ -270,9 +239,10 @@ restart cleanup.
 
 ## Target boundaries and agent discretion
 
-The left column is the required pre-restart target, not a claim about current main. This
-documentation PR implements none of these runtime controls by itself. The implementation status of
-each boundary must be verified before it is relied upon operationally.
+The recovery fuse currently enforces the two recovery rows below: a recorded system fault holds
+ordinary dispatch until explicit L3 or human clearance, and only the one explicitly claimed
+recovery L2 may pass that hold. The other rows remain restart-boundary outcomes and must be verified
+before they are relied upon operationally.
 
 | Must be enforced by the system | Left to model judgment |
 |---|---|
@@ -303,17 +273,6 @@ This document does not yet choose:
 Those decisions should follow focused analysis against this operating model. Existing work is
 preserved in Git history and the stabilization archive so it can be evaluated rather than discarded
 or automatically resumed.
-
-## Corrections to older documentation
-
-- The CLI does not currently talk only to a single writer; it imports state operations directly.
-- The implemented lifecycle has nine declared states, not five, plus marker-driven transitions.
-- No general Git/GitHub/worker reconcile matches the old architecture description.
-- The previously described deterministic Small lane and runtime Settings surface are absent on main.
-- The React router has no Listen route, although older documentation and server plumbing mention it.
-- The earlier cgroup, manifest, and artifact gate has been replaced by the small remote Python
-  check described above. That check supplies test evidence; it is not by itself the complete
-  landing authority.
 
 ## Restart boundary
 

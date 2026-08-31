@@ -80,7 +80,7 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
 
         orig = (config.load_projects, S.list_tasks, engines.usage_hold, dispatch.poll, dispatch.resume_due,
                 server.log, server.drain_hook_faults, server.resume_stranded_reports, server.dispatch_waiting,
-                server.weekly_audit, server.morning_digest, server.run_proposal_flow)
+                server.morning_digest, server.run_proposal_flow)
         config.load_projects = lambda: {PROJECT: {"name": PROJECT, "path": config.ROOT.as_posix(),
                                                   "stacks": ["python"]}}
         S.list_tasks = lambda project, **kw: [S.load_task(project, slug)]   # this test's task, not the module's
@@ -91,7 +91,6 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
         server.drain_hook_faults = lambda: None
         server.resume_stranded_reports = lambda project: None
         server.dispatch_waiting = lambda project: None
-        server.weekly_audit = lambda project: None
         server.morning_digest = lambda: None
         server.run_proposal_flow = flow
         try:
@@ -99,7 +98,7 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
         finally:
             (config.load_projects, S.list_tasks, engines.usage_hold, dispatch.poll, dispatch.resume_due,
              server.log, server.drain_hook_faults, server.resume_stranded_reports, server.dispatch_waiting,
-             server.weekly_audit, server.morning_digest, server.run_proposal_flow) = orig
+             server.morning_digest, server.run_proposal_flow) = orig
         self.assertFalse([m for m in logs if "tick failed" in m], f"the tick itself must not fault: {logs}")
         return logs
 
@@ -213,8 +212,7 @@ class TestServerTurnPromptsAreConversation(unittest.TestCase):
 
     def test_server_prompts_put_details_in_records_without_reply_budgets(self):
         prompts: dict[str, str] = {}
-        originals = (l3.turn, server.spawn, l3.info, l3.save_info,
-                     server.improve.index, server.improve.audit_input)
+        originals = (l3.turn, server.spawn)
 
         def capture(project, prompt, trigger=None, **kwargs):
             prompts[trigger] = prompt
@@ -239,21 +237,15 @@ class TestServerTurnPromptsAreConversation(unittest.TestCase):
 
         l3.turn = capture
         server.spawn = immediately
-        l3.info = lambda project: {"session_id": "audit-session"}
-        l3.save_info = lambda project, info: None
-        server.improve.index = lambda: []
-        server.improve.audit_input = lambda project: {}
         try:
             server.start_l3(PROJECT)
             server.run_proposal_flow(PROJECT, proposal_slug)
             server.report_turn(PROJECT, report_task, {"verdict": "blocked", "problems": [], "signals": [],
                                                        "spend": {}, "prs": [], "report": {}})
-            server.weekly_audit(PROJECT)
         finally:
-            (l3.turn, server.spawn, l3.info, l3.save_info,
-             server.improve.index, server.improve.audit_input) = originals
+            (l3.turn, server.spawn) = originals
 
-        self.assertEqual(set(prompts), {"start", "proposal-ready", "report-landed", "audit"})
+        self.assertEqual(set(prompts), {"start", "proposal-ready", "report-landed"})
         reply_budget = re.compile(r"≤\s*\d+\s+(?:plain\s+)?(?:sentences|lines)")
         for trigger, prompt in prompts.items():
             matches = reply_budget.findall(prompt)
@@ -262,7 +254,7 @@ class TestServerTurnPromptsAreConversation(unittest.TestCase):
             self.assertIn("the card `--detail`, the digest, the FYI, or the task folder", prompt)
             self.assertIn("not in the reply text", prompt)
         self.assertIn("a few plain sentences", prompts["start"])
-        for trigger in ("proposal-ready", "report-landed", "audit"):
+        for trigger in ("proposal-ready", "report-landed"):
             self.assertIn("at most two plain sentences", prompts[trigger])
 
 

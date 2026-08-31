@@ -18,9 +18,8 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
         "refusing to use the live ~/.altitude state from a unittest process; "
         "set ALTITUDE_HOME to a throwaway directory before importing altitude"
     )
-REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, rules/, schemas/, templates/, web/
+REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, schemas/, templates/, web/
 PERSONAS = REPO / "personas"
-RULES = REPO / "rules"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"
 WEB = REPO / "web"

@@ -23,7 +23,6 @@ class TestCardContract(unittest.TestCase):
         config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
         (REPO / "docs" / "DECISIONS.md").write_text("# Decisions\n\n| # | Status | Decision | Why | Cost |\n|---|---|---|---|---|\n"
                                                     "| 31 | settled | **Reserve line.** Hold at 80%. | quota | some |\n| 32 | proposed | other | w | c |\n")
-        (REPO / "docs" / "RULES.md").write_text("# Rules\n\n## R-002 — reserve a launch\nbody two\n\n## R-003 — One plain command per Bash call\nbody three\nmore\n")
         (REPO / "docs" / "incidents" / "I-007.md").write_text("# I-007 — quota reserve line has no data source\n\nwhat happened\n")
 
     def _task(self, slug):
@@ -63,12 +62,10 @@ class TestCardContract(unittest.TestCase):
 
 
 class TestRefs(unittest.TestCase):
-    def test_decision_rule_and_incident_resolve(self):
+    def test_decision_and_incident_resolve(self):
         d = refs.resolve("altitude", "decision 31")
         self.assertEqual(d["kind"], "decision"); self.assertIn("Reserve line", d["text"]); self.assertIn("Why: quota", d["text"])
         self.assertEqual(refs.resolve("altitude", "31")["title"], "Decision 31")
-        r = refs.resolve("altitude", "r-003")
-        self.assertEqual(r["kind"], "rule"); self.assertTrue(r["title"].startswith("R-003")); self.assertIn("more", r["text"]); self.assertNotIn("body two", r["text"])
         i = refs.resolve("altitude", "I-007")
         self.assertEqual(i["kind"], "incident"); self.assertIn("what happened", i["text"])
         for bad in ("decision 99", "R-999", "I-999", "nonsense"):

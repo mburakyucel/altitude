@@ -1,5 +1,5 @@
 """`alt incident amend`: a filed incident can be corrected, but never quietly — the replaced text stays
-beneath a dated `amended:` line, the index row is corrected so the audit reads the new cause, and the
+beneath a dated `amended:` line, the evidence index receives the new cause, and the
 originating task gets an event. Runs against a throwaway ALTITUDE_HOME; every test builds its own fixture
 incident in a temp dir, never the live ledger."""
 import contextlib
@@ -188,7 +188,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
 
 
 class TestAmendIndex(TempHome, unittest.TestCase):
-    """A correction the index never sees is invisible to `alt incident list` and to the weekly audit."""
+    """A correction must reach both the project and global evidence indexes."""
 
     def setUp(self):
         self.root = self.use_temp_home()
@@ -209,8 +209,6 @@ class TestAmendIndex(TempHome, unittest.TestCase):
         self.assertEqual(improve.next_incident_id("demo"), before)      # no row appended, no id burned
         per_project = (self.root / "demo" / "incidents.jsonl").read_text().splitlines()
         self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the reviewer was never briefed"])
-        audited = [r for r in improve.audit_input("demo")["incidents"] if r["id"] == self.inc["id"]]
-        self.assertEqual(audited[0]["cause"], "the reviewer was never briefed")
 
     def test_amending_an_unindexed_field_leaves_the_row_alone(self):
         improve.amend_incident("demo", self.inc["id"], status="closed", reason="fixed")
@@ -269,8 +267,7 @@ class TestAmendCLI(TempHome, unittest.TestCase):
 class TestTemplateStaysClean(unittest.TestCase):
 
     def test_the_template_carries_no_amendment_note(self):
-        """`propose_rule` pastes a whole incident file into the apply-rule request, and every new incident is
-        a copy of this template — a maintenance comment here would ship into PR bodies and docs/incidents/."""
+        """Every new incident is a copy of this template, so maintenance notes do not belong in it."""
         self.assertNotIn("amended", (config.TEMPLATES / "incident.md").read_text())
 
 

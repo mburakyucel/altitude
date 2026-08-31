@@ -244,18 +244,6 @@ export const ChatViewSchema = z
   })
   .passthrough();
 
-/** Every ledger section is a list of rule rows (altitude/rules.py), not prose. */
-const LedgerRules = z.array(z.record(z.string(), z.unknown())).nullish();
-
-export const RulesSchema = z
-  .object({
-    global: LedgerRules,
-    stack: LedgerRules,
-    project: LedgerRules,
-    incidents: LedgerRules,
-  })
-  .passthrough();
-
 export type Quota = z.infer<typeof QuotaSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
@@ -271,7 +259,6 @@ export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
-export type RulesView = z.infer<typeof RulesSchema>;
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
 
@@ -321,15 +308,6 @@ export function useChat(project: string, limit = 60) {
   return useQuery({
     queryKey: ["chat", project],
     queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
-    refetchInterval: pollInterval,
-    enabled: Boolean(project),
-  });
-}
-
-export function useRules(project: string) {
-  return useQuery({
-    queryKey: ["rules", project],
-    queryFn: async () => RulesSchema.parse(await api(`/api/rules/${project}`)),
     refetchInterval: pollInterval,
     enabled: Boolean(project),
   });

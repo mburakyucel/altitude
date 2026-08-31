@@ -12,7 +12,7 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-resume-hold-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, recovery, state as S, tasks as T  # noqa: E402
 from altitude import monitor  # noqa: E402
 
 
@@ -20,6 +20,7 @@ class TestResumeHold(unittest.TestCase):
     _number = 0
 
     def setUp(self):
+        recovery.hold_path().unlink(missing_ok=True)
         type(self)._number += 1
         self.project = f"resume-hold-{self._number}"
         self.repo = _TMP / self.project / "repo"
@@ -42,6 +43,7 @@ class TestResumeHold(unittest.TestCase):
     def tearDown(self):
         (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
          engines.usage_hold, monitor.quota, monitor.quota_hold) = self.originals
+        recovery.hold_path().unlink(missing_ok=True)
 
     def _resume_session(self, project, slug, text, session_id=None):
         self.resumed.append({"project": project, "slug": slug, "text": text, "session_id": session_id})

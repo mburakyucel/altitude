@@ -92,9 +92,22 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         while S.task_dir(project, slug).exists():
             n += 1
             slug = f"{base}-{n}"
+        recovery_claimed = False
+        if source == "recovery":
+            from . import recovery
+            try:
+                recovery.claim_repair(project, slug, actor=actor)
+            except ValueError as exc:
+                raise TransitionError(str(exc)) from exc
+            recovery_claimed = True
         d = S.tasks_dir(project) / slug
-        d.mkdir(parents=True)
-        S.atomic_write(d / "request.md", request.rstrip() + "\n")
+        try:
+            d.mkdir(parents=True)
+            S.atomic_write(d / "request.md", request.rstrip() + "\n")
+        except Exception:
+            if recovery_claimed:
+                recovery.release_failed_claim(project, slug)
+            raise
         task = {"slug": slug, "title": title, "class": cls, "state": "requested", "created": S.now(),
                 "attempt": 0, "proposal_attempts": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
@@ -102,8 +115,19 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
                 "decision": None, "blocked_reason": None, "source": source, "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "engine": engine,  # decision 45: a forced engine for every L1 of this task (None = by quota)
                 "hold_merge": (hold_merge or "").strip() or None}  # decision 48: why Burak merges this one himself (None = the L2 merges)
-        S.save_task(project, task)
-        S.append_event(project, slug, "new", by=actor, cls=cls, title=title, source=source)
+        if source == "recovery":
+            task["state"] = "approved"
+        try:
+            S.save_task(project, task)
+        except Exception:
+            if recovery_claimed:
+                recovery.release_failed_claim(project, slug)
+            raise
+        S.append_event(project, slug, "new", by=actor, cls=cls, title=title, source=source,
+                       recovery_delegated=source == "recovery")
+        if source == "recovery":
+            S.append_event(project, slug, "state", frm="requested", to="approved", by=actor,
+                           recovery_delegated=True)
         S.regen_state_md(project)
         return task
 

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, git_policy, rules, state as S, tasks as T
+from . import config, engines, git_policy, state as S, tasks as T
 
 
 def project_never_list(repo: Path) -> str:
@@ -143,8 +143,7 @@ def build_brief(project: str, slug: str) -> str:
         verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
         branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
         proposal=proposal, **{"class": task["class"]})
-    stack = rules.compile_section(rules.stack_rules(proj.get("stacks", [])), "Stack rules")
-    return text + ("\n" + stack if stack else "")
+    return text
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
@@ -206,7 +205,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     env_file = config.MONITOR_DIR / f"envelope-{project}--{dispatch_id}.json"
     S.write_json(env_file, {"project": project, "slug": slug, "dispatch_id": dispatch_id, **task["envelope"]})
     settings = session_settings(project, slug, f"{project}--{dispatch_id}")
-    persona = rules.compiled_persona("l2", project)
+    persona = config.PERSONAS / "l2.md"
     proj = config.project(project)
     res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
                             permission_mode="auto", max_turns=task["envelope"]["max_turns"],
@@ -257,7 +256,7 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
         improve.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     name = f"{project}/{task['dispatch_id']}"
-    res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=rules.compiled_persona("l2", project),
+    res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
                                    max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
                                    extra_env=l2_env(project, task))
     live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
@@ -502,14 +501,7 @@ def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
         return "", None
 
 
-def rule_application(task: dict) -> bool:
-    """A task that edits the rules ledger (docs/RULES.md, docs/incidents) — those serialize; every other improve task
-    relies on leases like anyone else (decision 51: the broad "one improve task at a time" held 11 tasks for hours)."""
-    paths = task.get("paths") or []
-    return str(task.get("slug", "")).startswith("apply-r-") or any(str(p).strip().lstrip("./").startswith(("docs/RULES.md", "docs/incidents")) for p in paths)
-
-
-PER_TASK_HOLDS = ("file lease", "one rule-application")  # holds that belong to one task; the rest of the queue is still dispatchable
+PER_TASK_HOLDS = ("file lease", "recovery hold")  # skip held ordinary work so the claimed repair can be reached
 
 
 def per_task_hold(hold: str | None) -> bool:
@@ -517,13 +509,15 @@ def per_task_hold(hold: str | None) -> bool:
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
+    from . import recovery
+    held = recovery.dispatch_hold(project, task)
+    if held:
+        return held
     held = engines.usage_hold()
     if held:
         return f"usage limit: subscription window exhausted, resets {held}"
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
-    if task and rule_application(task) and any(rule_application(t) for t in running):
-        return "one rule-application task at a time (they edit the same ledger)"
     if task:
         mine = task_paths(project, task)
         mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
@@ -549,6 +543,9 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     if not (quota() or {}).get("known"):
         from . import improve  # decision 36: the reserve line cannot be enforced — say so, once a day
         improve.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line (decision 31) is not being enforced; run `alt install-statusline` or fix the monitor")
+        held = recovery.dispatch_hold(project, task)
+        if held:
+            return held
     q = quota_hold()
     if q:
         return q

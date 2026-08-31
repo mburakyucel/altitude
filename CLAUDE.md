@@ -8,8 +8,6 @@ operating model, and the boundaries that prevent collisions and recursive recove
 - The Altitude service is deliberately stopped and masked.
 - Do not restart it, replay archived tasks, or resume the old orchestration/self-healing queue
   unless Burak explicitly asks.
-- Treat `docs/ROLES.md`, `docs/KICKOFF.md`, `docs/DECISIONS.md`, and `docs/RULES.md` as
-  historical inputs where they conflict with the current architecture.
 - An incident or review finding does not authorize creating another task, rule, or agent session.
 
 ## Working contract

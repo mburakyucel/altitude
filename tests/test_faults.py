@@ -9,7 +9,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-faults-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, improve, verify, engines, dispatch  # noqa: E402
+from altitude import config, state as S, improve, recovery, verify, engines, dispatch  # noqa: E402
 
 
 class TestSystemFault(unittest.TestCase):
@@ -18,6 +18,9 @@ class TestSystemFault(unittest.TestCase):
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
         os.makedirs(os.path.join(_TMP, "docs"), exist_ok=True)
+
+    def tearDown(self):
+        recovery.hold_path().unlink(missing_ok=True)
 
     def test_fault_files_incident_and_inbox_once_per_kind(self):
         first = improve.system_fault("test-kind", "something broke", project="altitude", task="t1")

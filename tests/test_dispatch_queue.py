@@ -1,4 +1,4 @@
-"""Decision 51: a per-task hold (lease, ledger serialization) skips that task; the queue behind it still dispatches."""
+"""A per-task file-lease hold skips that task; the queue behind it still dispatches."""
 import os
 import sys
 import tempfile
@@ -8,7 +8,7 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-queue-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, dispatch, engines  # noqa: E402
+from altitude import config, state as S, tasks as T, dispatch, engines, monitor, recovery  # noqa: E402
 from altitude import server  # noqa: E402
 
 
@@ -18,6 +18,16 @@ class TestQueue(unittest.TestCase):
         config.ensure_root()
         (_TMP / "repo").mkdir()
         config.save_projects({"q": {"name": "q", "path": str(_TMP / "repo"), "stacks": ["python"], "wip": 5}})
+
+    def setUp(self):
+        recovery.hold_path().unlink(missing_ok=True)
+        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        monitor.quota = lambda: {"known": True}
+        monitor.quota_hold = lambda: None
+
+    def tearDown(self):
+        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        recovery.hold_path().unlink(missing_ok=True)
 
     def test_top_level_directory_claims_do_not_lease(self):
         self.assertEqual(dispatch.narrow(["tests/", "tests/test_x.py", "docs", "web/dist/assets/", "altitude/server.py"]),
@@ -38,7 +48,7 @@ class TestQueue(unittest.TestCase):
 
     def test_per_task_hold_does_not_block_the_queue(self):
         self.assertTrue(dispatch.per_task_hold("file lease: `x` is running on a.py"))
-        self.assertTrue(dispatch.per_task_hold("one rule-application task at a time (they edit the same ledger)"))
+        self.assertTrue(dispatch.per_task_hold("recovery hold: system fault"))
         self.assertFalse(dispatch.per_task_hold("WIP limit: 5 running in q"))
         self.assertFalse(dispatch.per_task_hold(None))
         running = T.new("q", "busy", "S", "r", actor="l3", paths=["altitude/server.py"])
