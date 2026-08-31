@@ -1,4 +1,4 @@
-"""Decision 39: parallel L2s without collisions — leases, session ceiling, guard hook."""
+"""File leases and capacity limits let independent L2 tasks run without collisions."""
 import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-par-")

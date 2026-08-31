@@ -76,8 +76,13 @@ class TestL1Runs(unittest.TestCase):
         )
         with S.project_lock("altitude"):
             t = S.load_task("altitude", slug)
-            t["worktree"], t["branch"] = str(worktree), f"worktree-{slug}"
+            t.update({"worktree": str(worktree), "branch": f"worktree-{slug}", "state": "running",
+                      "dispatch_id": f"{slug}-1", "session_id": f"session-{slug}",
+                      "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}"})
             S.save_task("altitude", t)
+        os.environ.update({"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": "altitude",
+                           "ALTITUDE_TASK": slug, "ALTITUDE_DISPATCH_ID": f"{slug}-1",
+                           "ALTITUDE_L2_TOKEN": f"token-{slug}"})
         brief = S.task_dir("altitude", slug) / "sub-1.md"; brief.write_text("# sub-brief\nchange one thing\n")
         return slug, brief
 
@@ -105,8 +110,17 @@ class TestL1Runs(unittest.TestCase):
 
     def test_reviewer_can_run_on_the_other_engine(self):
         slug, brief = self._task("l1-review")
-        first = l1.start("altitude", slug, brief)
-        _wait_done("altitude", slug, first["name"])
+        # This is a routing/launch test, not a Codex sandbox integration test. Record the
+        # completed author generation directly so a host-level Codex preflight denial cannot
+        # trip the recovery fuse and make the independent Claude reviewer look broken.
+        l1.save("altitude", slug, {
+            "n": 1, "name": "implementer-1", "role": "implementer", "engine": "codex",
+            "why": "default policy", "model": None,
+            "worktree": str(REPO / ".claude" / "worktrees" / slug),
+            "branch": f"worktree-{slug}", "brief": str(brief), "started": S.now(),
+            "pid": None, "done": S.now(),
+            "result": {"error": None, "pr": None, "summary": "synthetic completed author"},
+        })
         rev = l1.start("altitude", slug, brief, role="reviewer")
         self.assertEqual(rev["engine"], "claude", "author was codex → reviewer takes claude")
         self.assertEqual(
@@ -174,6 +188,28 @@ class TestL1Runs(unittest.TestCase):
         self.assertEqual(Path(rec["worktree"]).resolve(), parent.resolve())
         self.assertEqual(rec["branch"], f"worktree-{slug}")
         _wait_done("altitude", slug, rec["name"])
+
+    def test_stale_blocked_and_recovery_held_l2s_cannot_launch_l1(self):
+        slug, brief = self._task("l1-owner-fence")
+        with self.assertRaisesRegex(T.TransitionError, "ownership changed"):
+            l1.start("altitude", slug, brief, expected_dispatch_id=f"{slug}-1",
+                     expected_l2_token="stale-token")
+
+        with S.project_lock("altitude"):
+            task = S.load_task("altitude", slug)
+            task["state"] = "blocked"
+            S.save_task("altitude", task)
+        with self.assertRaisesRegex(T.TransitionError, "current running L2"):
+            l1.start("altitude", slug, brief)
+
+        with S.project_lock("altitude"):
+            task = S.load_task("altitude", slug)
+            task["state"] = "running"
+            S.save_task("altitude", task)
+        recovery.hold("test recovery episode", kind="test", actor="l3")
+        with self.assertRaisesRegex(T.TransitionError, "recovery hold"):
+            l1.start("altitude", slug, brief)
+        self.assertEqual(l1.list_runs("altitude", slug), [])
 
 
 if __name__ == "__main__":

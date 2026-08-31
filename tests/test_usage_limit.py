@@ -1,4 +1,4 @@
-"""Decision 44: an exhausted subscription window is a hold with a reset time — detected, held, auto-resumed."""
+"""An exhausted subscription window is detected, held until its reset time, and then resumed."""
 import json
 import os
 import sys

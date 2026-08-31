@@ -128,7 +128,7 @@ class TestTaskStatus(unittest.TestCase):
         S.write_json(other_dir / "status.json", {
             "slug": "other-task", "state": "running", "paths": ["altitude/server.py"]})
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json", {
-            "subagent_launches": 2, "edits": 7, "files": ["altitude/status.py"]})
+            "edits": 7, "files": ["altitude/status.py"]})
         S.write_json(config.MONITOR_DIR / "statusline-test.json", {
             "_at": time.time(), "rate_limits": {"five_hour": {"used_percentage": 10}}})
 
@@ -311,7 +311,7 @@ class TestTaskStatus(unittest.TestCase):
 
     def test_dispatch_keyed_counts_are_read(self):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
-                     {"subagent_launches": 4, "edits": 11})
+                     {"edits": 11})
         result = task_status.status("demo", "task-one")
         self.assertEqual(result["counts"], {"edits": 11})
         self.assertEqual(result["errors"], [])

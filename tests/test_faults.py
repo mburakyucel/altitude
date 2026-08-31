@@ -1,4 +1,4 @@
-"""Decision 36: Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
+"""Altitude's own faults are raised, not papered over. Runs against a throwaway ALTITUDE_HOME."""
 import json
 import os
 import sys

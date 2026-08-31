@@ -1,13 +1,41 @@
-"""Dispatch an L2 as `claude --bg` in a worktree; poll `claude agents`; notice done (ARCHITECTURE §5)."""
+"""Dispatch one task-owning L2 in its worktree, monitor it, and safely resume its session."""
 from __future__ import annotations
 from contextlib import contextmanager
 import fcntl
 import json
+import secrets
 from datetime import datetime, timezone
 import re
 from pathlib import Path
 
 from . import config, engines, git_policy, recovery, state as S, tasks as T
+
+
+class DispatchFailure(T.TransitionError):
+    """A launch fault already persisted and routed through the global recovery fuse."""
+
+
+def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
+    """Leave a failed launch queued, clear its transient claim, and trip recovery once."""
+    reason = str(error)[:300]
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") == "queued":
+            task["dispatching"] = None
+            S.save_task(project, task)
+    S.append_event(project, slug, "dispatch-failed", reason=reason)
+    from . import incidents
+    incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug)
+    return DispatchFailure(f"dispatch failed: {reason}")
+
+
+def record_resume_failure(project: str, slug: str, previous: str, error: object) -> RuntimeError:
+    """Persist a failed replacement launch and hold further ordinary work for recovery."""
+    reason = str(error)[:300]
+    S.append_event(project, slug, "resume-failed", previous=previous, reason=reason)
+    from . import incidents
+    incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
+    return RuntimeError(f"resume of {project}/{slug} failed: {reason}")
 
 
 def project_never_list(repo: Path) -> str:
@@ -190,17 +218,19 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     attempt = task.get("attempt", 0) + 1
     dispatch_id = f"{slug}-{attempt}"
     name = f"{project}/{dispatch_id}"
-    d = S.task_dir(project, slug)
-    brief_md = build_brief(project, slug)
-    T.brief(project, slug, brief_md, actor="altd")
-    settings = session_settings(project, slug, f"{project}--{dispatch_id}")
-    persona = config.PERSONAS / "l2.md"
-    proj = config.project(project)
+    l2_token = secrets.token_urlsafe(24)
+    agent = {}
     try:
+        brief_md = build_brief(project, slug)
+        T.brief(project, slug, brief_md, actor="altd")
+        settings = session_settings(project, slug, f"{project}--{dispatch_id}")
+        persona = config.PERSONAS / "l2.md"
+        proj = config.project(project)
         res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
                                 permission_mode="auto",
                                 model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
-                                extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}),
+                                extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id,
+                                                           "l2_token": l2_token}),
                                 spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
         with S.project_lock(project):
@@ -209,15 +239,38 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             S.save_task(project, held_task)
         S.append_event(project, slug, "dispatch-held", reason=str(exc))
         raise T.TransitionError(str(exc)) from exc
+    except Exception as exc:
+        raise record_dispatch_failure(project, slug, exc) from exc
     agent = res.get("agent") or {}
-    if res["returncode"] != 0 and not agent:
-        with S.project_lock(project):
-            t2 = S.load_task(project, slug); t2["dispatching"] = None; S.save_task(project, t2)
-        S.append_event(project, slug, "dispatch-failed", stdout=res["stdout"][:300], stderr=res["stderr"][:300])
-        raise RuntimeError(f"claude --bg failed: {res['stderr'][:300] or res['stdout'][:300]}")
-    worktree = str(worktree_path)
-    T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent.get("sessionId"), agent_id=agent.get("id"),
-               worktree=worktree, branch=worktree_branch(slug, worktree, agent.get("id")))
+    try:
+        if res.get("returncode") != 0:
+            raise RuntimeError(f"claude --bg failed: {res.get('stderr', '')[:300] or res.get('stdout', '')[:300]}")
+        if not agent.get("id") or not agent.get("sessionId"):
+            raise RuntimeError("claude --bg returned without a concrete agent id and session id")
+        worktree = str(worktree_path)
+        T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent["sessionId"], agent_id=agent["id"],
+                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]), l2_token=l2_token)
+    except T.TransitionError as exc:
+        if agent.get("id"):
+            try:
+                engines.claude_stop(agent["id"])
+            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
+                pass
+        try:
+            current_state = S.load_task(project, slug).get("state")
+        except (KeyError, OSError, ValueError):
+            current_state = None
+        if current_state != "queued":
+            S.append_event(project, slug, "dispatch-cancelled", reason=str(exc)[:300])
+            raise
+        raise record_dispatch_failure(project, slug, exc) from exc
+    except Exception as exc:
+        if agent.get("id"):
+            try:
+                engines.claude_stop(agent["id"])
+            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
+                pass
+        raise record_dispatch_failure(project, slug, exc) from exc
     if agent.get("sessionId"):
         S.write_json(config.MONITOR_DIR / f"session-{agent['sessionId']}.json",
                      {"project": project, "slug": slug, "dispatch_id": dispatch_id, "level": "l2"})
@@ -228,7 +281,8 @@ def l2_env(project: str, task: dict) -> dict:
     """The ownership identity every fresh or resumed L2 session needs."""
     return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": task["slug"],
             "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}",
-            "ALTITUDE_DISPATCH_ID": str(task["dispatch_id"])}
+            "ALTITUDE_DISPATCH_ID": str(task["dispatch_id"]),
+            "ALTITUDE_L2_TOKEN": str(task["l2_token"])}
 
 
 @contextmanager
@@ -300,23 +354,41 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
                              expected_session_id=sid, expected_agent_id=task.get("agent_id"),
                              expected_state=task.get("state"))
     name = f"{project}/{task['dispatch_id']}"
+    replacement_token = secrets.token_urlsafe(24)
     try:
         held = recovery.dispatch_hold(project, task)
         if held:
             raise recovery.LaunchHeld(held)
         res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
                                        settings=S.task_dir(project, slug) / "settings.json",
-                                       extra_env=l2_env(project, task),
+                                       extra_env=l2_env(project, {**task, "l2_token": replacement_token}),
                                        spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
         S.append_event(project, slug, "resume-held", reason=str(exc), previous=sid)
         raise T.TransitionError(str(exc)) from exc
-    live = [a for a in engines.claude_agents()
-            if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")
-            and a.get("sessionId") and a.get("id")
-            and (a.get("sessionId") != sid or a.get("id") != task.get("agent_id"))]
-    if not live:
-        raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
+    except Exception as exc:
+        raise record_resume_failure(project, slug, sid, exc) from exc
+    try:
+        live = [a for a in engines.claude_agents()
+                if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")
+                and a.get("sessionId") and a.get("id")
+                and (a.get("sessionId") != sid or a.get("id") != task.get("agent_id"))]
+    except Exception as exc:
+        raise record_resume_failure(project, slug, sid, exc) from exc
+    if res.get("returncode") != 0 or not live:
+        for row in live:
+            try:
+                engines.claude_stop(row["id"])
+            except Exception:  # noqa: BLE001 — the recovery fuse records the launch failure below
+                pass
+        note = res.get("stderr", "")[:200] or res.get("stdout", "")[:200]
+        if res.get("returncode") != 0:
+            detail = note or f"resume launcher exited {res.get('returncode')}"
+        else:
+            detail = "no concrete live worker"
+            if note:
+                detail += f" ({note})"
+        raise record_resume_failure(project, slug, sid, detail)
     new = max(live, key=lambda a: a.get("startedAt") or 0)
     changed = None
     with S.project_lock(project):
@@ -328,13 +400,19 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         except T.TransitionError as exc:
             changed = exc
         else:
-            t["agent_id"], t["session_id"] = new["id"], new["sessionId"]
+            t["agent_id"], t["session_id"], t["l2_token"] = new["id"], new["sessionId"], replacement_token
             S.save_task(project, t)
     if changed is not None:
         engines.claude_stop(new["id"])
         S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],
                        reason=str(changed))
         raise T.TransitionError(f"{slug}: task generation changed during resume; replacement worker stopped") from changed
+    if task.get("agent_id") and task.get("agent_id") != new["id"]:
+        try:
+            engines.claude_stop(task["agent_id"])
+        except Exception as exc:  # noqa: BLE001 — new ownership is durable; surface cleanup as private evidence
+            from . import incidents
+            incidents.system_fault("l2-replaced-worker", f"{project}/{slug}: {exc}", project=project, task=slug)
     S.append_event(project, slug, "resumed", agent_id=new.get("id"), session_id=new.get("sessionId"), previous=sid)
     res["agent"] = new
     return res

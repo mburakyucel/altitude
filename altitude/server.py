@@ -253,11 +253,13 @@ def dispatch_waiting(project: str) -> None:
         try:
             res = dispatch.run(project, t["slug"])
             log(f"[{project}/{t['slug']}] dispatched {res['dispatch_id']} agent={res['agent'].get('id') if res.get('agent') else None}")
+        except dispatch.DispatchFailure as e:
+            log(f"[{project}/{t['slug']}] {e}")
         except T.TransitionError as e:
             log(f"[{project}/{t['slug']}] dispatch held before launch: {e}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}/{t['slug']}] dispatch failed: {e}")
-            T.block(project, t["slug"], f"dispatch failed: {e}"[:300])
+            dispatch.record_dispatch_failure(project, t["slug"], e)
     hp = config.project_dir(project) / "hold.json"
     if hp.exists() and not recovery.status():
         hp.unlink()

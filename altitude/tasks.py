@@ -30,7 +30,8 @@ TASK_MESSAGE_ROLES = ("burak", "l2")
 
 def append_task_message(project: str, slug: str, role: str, text: str, *,
                         expected_dispatch_id: str, expected_session_id: str | None = None,
-                        expected_state: str | None = None, actor: str | None = None) -> dict:
+                        expected_state: str | None = None, expected_l2_token: str | None = None,
+                        actor: str | None = None) -> dict:
     """Append one human-facing task message for the exact current L2 dispatch.
 
     The conversation is an append-only JSONL artifact separate from operational events and
@@ -46,6 +47,8 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
         raise TransitionError("task message is empty")
     if not expected_dispatch_id:
         raise TransitionError("task message has no dispatch owner")
+    if role == "l2" and not expected_l2_token:
+        raise TransitionError("L2 message has no session generation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         allowed_states = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
@@ -58,6 +61,8 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
             )
         if expected_session_id is not None and task.get("session_id") != expected_session_id:
             raise TransitionError(f"{slug}: L2 session changed before the message was recorded")
+        if expected_l2_token is not None and task.get("l2_token") != expected_l2_token:
+            raise TransitionError(f"{slug}: L2 generation changed before the message was recorded")
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(
                 f"{slug}: task changed from {expected_state} to {task.get('state')} "
@@ -126,6 +131,8 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, hold_merge: str | None = None) -> dict:
+    if source not in ("chat", "recovery"):
+        raise TransitionError("task source must be chat or recovery")
     if model and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
     config.project(project)
@@ -155,7 +162,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
                 "branch": None, "prs": [], "spend": {}, "blocked_reason": None, "source": source,
-                "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
+                "verified": None, "model": model, "l2_token": None,
+                "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
         try:
             S.save_task(project, task)
@@ -188,11 +196,13 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 
 
 def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | None, agent_id: str | None,
-             worktree: str | None, branch: str | None, actor: str = "altd") -> dict:
+             worktree: str | None, branch: str | None, l2_token: str, actor: str = "altd") -> dict:
+    if not session_id or not agent_id or not l2_token:
+        raise TransitionError(f"{slug}: dispatch requires a concrete agent, session, and L2 generation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         task.update({"dispatch_id": dispatch_id, "session_id": session_id, "agent_id": agent_id,
-                     "worktree": worktree, "branch": branch, "blocked_reason": None,
+                     "l2_token": l2_token, "worktree": worktree, "branch": branch, "blocked_reason": None,
                      "dispatched": S.now()})
         task["attempt"] = int(dispatch_id.rsplit("-", 1)[-1]) if dispatch_id.rsplit("-", 1)[-1].isdigit() else task["attempt"] + 1
         return _move(project, task, "running", actor, dispatch_id=dispatch_id, session_id=session_id)

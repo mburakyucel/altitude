@@ -50,7 +50,7 @@ def main(argv=None) -> None:
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("show", "events", "messages"):
@@ -100,7 +100,15 @@ def main(argv=None) -> None:
         if not slug:
             sys.exit("alt l1: ALTITUDE_TASK required (every L2 session has it)")
         if args.lcmd == "run":
-            out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model, name=args.name, cwd=args.cwd))
+            if ACTOR != "l2":
+                sys.exit("alt l1 run: only the current L2 may launch task helpers")
+            dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            if not dispatch_id or not l2_token:
+                sys.exit("alt l1 run: ALTITUDE_DISPATCH_ID and ALTITUDE_L2_TOKEN are required")
+            out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model,
+                         name=args.name, cwd=args.cwd, expected_dispatch_id=dispatch_id,
+                         expected_l2_token=l2_token))
         elif args.lcmd == "wait":
             out(L1.wait(p, slug, args.name, timeout=args.timeout))
         elif args.lcmd == "status":
@@ -173,10 +181,11 @@ def main(argv=None) -> None:
                 sys.exit("alt task reply: only the current L2 may use this command")
             slug = args.slug or os.environ.get("ALTITUDE_TASK")
             dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
-            if not slug or not dispatch_id:
-                sys.exit("alt task reply: ALTITUDE_TASK and ALTITUDE_DISPATCH_ID are required")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            if not slug or not dispatch_id or not l2_token:
+                sys.exit("alt task reply: ALTITUDE_TASK, ALTITUDE_DISPATCH_ID, and ALTITUDE_L2_TOKEN are required")
             out(T.append_task_message(p, slug, "l2", _stdin_or_file(args),
-                                      expected_dispatch_id=dispatch_id, actor="l2"))
+                                      expected_dispatch_id=dispatch_id, expected_l2_token=l2_token, actor="l2"))
         elif tc == "show":
             out(S.load_task(p, args.slug))
         elif tc == "status":

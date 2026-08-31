@@ -1,4 +1,4 @@
-"""Decision 38: model tiers are explicit; Fable only by an explicit task override."""
+"""Role model defaults are explicit; task-level overrides are persisted and validated."""
 import os, sys, tempfile, unittest
 from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-models-")

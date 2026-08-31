@@ -1,4 +1,4 @@
-"""Decision 39 guard: inspect executed shell text, not quoted prose."""
+"""The command guard inspects executed shell text, not quoted prose."""
 import json
 import shutil
 import subprocess

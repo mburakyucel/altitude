@@ -20,13 +20,12 @@ ALT = Path(__file__).resolve().parent.parent / "bin" / "alt"
 
 
 def fixture_incident(root: Path, project: str = "demo", iid: str = "I-001", task: str = "fix-the-thing",
-                     what: str = "the reviewer pass never ran") -> Path:
+                     what: str = "the worker used stale repository state") -> Path:
     """An incident file written from the real template, so a template change breaks these tests loudly."""
     body = (config.TEMPLATES / "incident.md").read_text().format(
-        id=iid, title="the L2 skipped the reviewer", date=S.now()[:10], task=task, project=project,
+        id=iid, title="the task used stale repository state", date=S.now()[:10], task=task, project=project,
         what=what, evidence="events.log 00:15:07 running->blocked",
-        cause="the envelope had no slack", generalizable="unknown", mechanism="rule", scope="project",
-        rule="-", status="watch")
+        cause="the worktree base was not refreshed", status="watch")
     p = root / project / "incidents" / f"{iid}.md"
     S.atomic_write(p, body)
     return p
@@ -69,17 +68,17 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         self.original = self.path.read_text()
 
     def test_round_trip_rewrites_named_fields_and_keeps_the_original(self):
-        res = incidents.amend_incident("demo", "I-001", cause="the reviewer was never briefed", status="closed",
+        res = incidents.amend_incident("demo", "I-001", cause="the remote base was fetched too late", status="closed",
                                      reason="root cause was wrong; Burak corrected it in chat", actor="burak")
         self.assertEqual(res["amended"], ["cause", "status"])
         body = self.path.read_text()
-        self.assertIn("- root cause: the reviewer was never briefed\n", body)
+        self.assertIn("- root cause: the remote base was fetched too late\n", body)
         self.assertIn("- status: closed\n", body)
-        self.assertIn("- what happened: the reviewer pass never ran\n", body)   # untouched
+        self.assertIn("- what happened: the worker used stale repository state\n", body)   # untouched
         self.assertIn("- evidence: events.log 00:15:07 running->blocked\n", body)
         audit = f"amended: {S.now()[:10]} by burak: root cause was wrong; Burak corrected it in chat"
         self.assertIn(audit, body)
-        self.assertLess(body.index(audit), body.index("- was root cause: the envelope had no slack"))
+        self.assertLess(body.index(audit), body.index("- was root cause: the worktree base was not refreshed"))
         self.assertLess(body.index(audit), body.index("- was status: watch"))
 
     def test_multi_line_value_is_replaced_whole_and_recoverable_verbatim(self):
@@ -152,7 +151,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
             incidents.amend_incident("demo", "I-001", cause="x", reason="  ")
 
     def test_event_lands_on_the_originating_task(self):
-        incidents.amend_incident("demo", "I-001", what="the reviewer ran but found nothing",
+        incidents.amend_incident("demo", "I-001", what="the worker detected the stale base before editing",
                                reason="misread the log", actor="burak")
         events = S.read_events("demo", "fix-the-thing")
         self.assertEqual([e["kind"] for e in events], ["incident-amended"])
@@ -180,7 +179,7 @@ class TestAmendIncident(TempHome, unittest.TestCase):
         self.assertFalse((self.root / "demo" / "tasks" / "ghost-task").exists())
 
     def test_the_correction_reaches_the_project_log_and_state_md(self):
-        incidents.amend_incident("demo", "I-001", cause="the reviewer was never briefed", reason="corrected",
+        incidents.amend_incident("demo", "I-001", cause="the remote base was fetched too late", reason="corrected",
                                actor="burak")
         kinds = [e["kind"] for e in S.read_project_log("demo")]
         self.assertIn("incident-amended", kinds)
@@ -195,26 +194,26 @@ class TestAmendIndex(TempHome, unittest.TestCase):
         self.repo = self.root / "repo"
         (self.repo / "docs").mkdir(parents=True)
         config.save_projects({"demo": {"path": str(self.repo)}})
-        self.inc = incidents.new_incident("demo", title="the L2 skipped the reviewer", task=None,
-                                        what="the reviewer pass never ran", evidence="events.log 00:15:07",
-                                        cause="the envelope had no slack", tags=["reviewer"])
+        self.inc = incidents.new_incident("demo", title="the task used stale repository state", task=None,
+                                        what="the worker used stale repository state", evidence="events.log 00:15:07",
+                                        cause="the worktree base was not refreshed", tags=["git"])
 
     def test_amended_cause_replaces_the_indexed_cause_without_adding_a_row(self):
         before = incidents.next_incident_id("demo")
-        incidents.amend_incident("demo", self.inc["id"], cause="the reviewer was never briefed",
+        incidents.amend_incident("demo", self.inc["id"], cause="the remote base was fetched too late",
                                reason="root cause was wrong", actor="burak")
         rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["cause"], "the reviewer was never briefed")
+        self.assertEqual(rows[0]["cause"], "the remote base was fetched too late")
         self.assertEqual(incidents.next_incident_id("demo"), before)      # no row appended, no id burned
         per_project = (self.root / "demo" / "incidents.jsonl").read_text().splitlines()
-        self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the reviewer was never briefed"])
+        self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the remote base was fetched too late"])
 
     def test_amending_an_unindexed_field_leaves_the_row_alone(self):
         incidents.amend_incident("demo", self.inc["id"], status="closed", reason="fixed")
         rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["cause"], "the envelope had no slack")
+        self.assertEqual(rows[0]["cause"], "the worktree base was not refreshed")
 
 
 class TestAmendCLI(TempHome, unittest.TestCase):

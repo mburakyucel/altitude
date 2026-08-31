@@ -51,7 +51,7 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
             why += f" → default policy {eng}"
     else:
         eng = config.L1_DEFAULT_ENGINE
-        why = f"both quotas unknown → default policy {eng} (Burak 2026-08-30: Claude is the constrained seat)"
+        why = f"both quotas unknown → default policy {eng}"
     if other_than and eng == other_than:  # a reviewer should not share the author's engine when the other one has room
         alt = other(eng)
         alt_used = {"claude": cl_used, "codex": cx_used}[alt]

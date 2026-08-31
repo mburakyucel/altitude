@@ -35,10 +35,10 @@ class TestHolds(unittest.TestCase):
         recovery.hold_path().unlink(missing_ok=True)
 
     def test_unrelated_tasks_do_not_serialize(self):
-        a = T.new("h", "fix server", "r", actor="l3", source="incident", paths=["altitude/server.py"])
+        a = T.new("h", "fix server", "r", actor="l3", paths=["altitude/server.py"])
         a["state"] = "running"; S.save_task("h", a)
-        b = T.new("h", "fix monitor", "r", actor="l3", source="incident", paths=["altitude/monitor.py"])
-        self.assertIsNone(dispatch.wip_hold("h", b), "two incident tasks on different files run in parallel")
+        b = T.new("h", "fix monitor", "r", actor="l3", paths=["altitude/monitor.py"])
+        self.assertIsNone(dispatch.wip_hold("h", b), "ordinary tasks on different files may run in parallel")
 
     def test_stopped_sessions_are_not_live(self):
         agents = [{"kind": "background", "state": "stopped"}] * config.SESSIONS_PER_MACHINE + [{"kind": "background", "state": "working"}]

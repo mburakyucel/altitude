@@ -142,7 +142,7 @@ def read_events(project: str, slug: str) -> list[dict]:
 
 
 def project_log(project: str, kind: str, **data) -> None:
-    """Project-level events (ideas, rotations, audits, holds) — not tied to a task."""
+    """Project-level events such as L3 rotations and incidents, not tied to a task."""
     p = config.project_dir(project) / "events.log"
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "a") as f:

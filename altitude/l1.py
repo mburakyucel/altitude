@@ -8,9 +8,10 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, incidents, route, state as S, tasks as T
+from . import config, engines, git_policy, incidents, recovery, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
@@ -91,13 +92,46 @@ def _alive(pid: int | None) -> bool:
         return False
 
 
+def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token: str | None) -> None:
+    if task.get("state") != "running":
+        raise T.TransitionError(f"{slug}: optional L1s may launch only for the current running L2")
+    if not dispatch_id or not l2_token:
+        raise T.TransitionError(f"{slug}: current L2 dispatch and generation are required")
+    if task.get("dispatch_id") != dispatch_id or task.get("l2_token") != l2_token:
+        raise T.TransitionError(f"{slug}: L2 ownership changed before the L1 launch")
+    if not task.get("session_id") or not task.get("agent_id"):
+        raise T.TransitionError(f"{slug}: current L2 has no concrete session and agent")
+
+
+@contextmanager
+def _launch_permission(project: str, slug: str, dispatch_id: str, l2_token: str):
+    """Fence the final L1 Popen against both recovery and a concurrent L2 replacement."""
+    # Project state can already reach the recovery launch barrier while holding this lock
+    # (for example, quota-fault detection during dispatch). Keep that established lock order
+    # here as project -> launch; the reverse order can deadlock fault publication against L1.
+    with S.project_lock(project):
+        snapshot = S.load_task(project, slug)
+        _require_current_l2(snapshot, slug, dispatch_id, l2_token)
+        with recovery.launch_permission(project, snapshot):
+            current = S.load_task(project, slug)
+            _require_current_l2(current, slug, dispatch_id, l2_token)
+            yield
+
+
 def start(project: str, slug: str, brief: Path, *, role: str = "implementer", engine: str | None = None,
-          model: str | None = None, name: str | None = None, cwd: str | None = None) -> dict:
+          model: str | None = None, name: str | None = None, cwd: str | None = None,
+          expected_dispatch_id: str | None = None, expected_l2_token: str | None = None) -> dict:
     if role not in ("implementer", "reviewer"):
         raise T.TransitionError("role must be implementer or reviewer")
     if not Path(brief).exists():
         raise T.TransitionError(f"brief not found: {brief}")
     task = S.load_task(project, slug)
+    expected_dispatch_id = expected_dispatch_id or os.environ.get("ALTITUDE_DISPATCH_ID")
+    expected_l2_token = expected_l2_token or os.environ.get("ALTITUDE_L2_TOKEN")
+    _require_current_l2(task, slug, expected_dispatch_id, expected_l2_token)
+    held = recovery.dispatch_hold(project, task)
+    if held:
+        raise T.TransitionError(held)
     lock_path = runs_dir(project, slug) / ".lock"
     with open(lock_path, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -111,11 +145,13 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
         if name in used_names:
             raise T.TransitionError(f"run {name!r} already exists")
         return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
-                      n=n, author=author, runs=runs)
+                      n=n, author=author, runs=runs, expected_dispatch_id=expected_dispatch_id,
+                      expected_l2_token=expected_l2_token)
 
 
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
-           name: str, cwd: str | None, n: int, author: str | None, runs: list[dict]) -> dict:
+           name: str, cwd: str | None, n: int, author: str | None, runs: list[dict],
+           expected_dispatch_id: str, expected_l2_token: str) -> dict:
     """Route, make the worktree, write the prompt, and start the detached wrapper."""
     choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine,
                                other_than=author if role == "reviewer" else None)
@@ -197,8 +233,17 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
     log = open(runs_dir(project, slug) / f"{name}.log", "ab")
     env = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l1"}
     try:
-        child = subprocess.Popen([sys.executable, str(config.REPO / "bin" / "alt"), "l1", "_exec", slug, name], cwd=str(workdir),
-                                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+        with _launch_permission(project, slug, expected_dispatch_id, expected_l2_token):
+            child = subprocess.Popen([sys.executable, str(config.REPO / "bin" / "alt"), "l1", "_exec", slug, name], cwd=str(workdir),
+                                     stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+    except recovery.LaunchHeld as e:
+        rec.update({"done": S.now(), "result": {"error": str(e), "pr": None, "summary": None}})
+        save(project, slug, rec)
+        raise T.TransitionError(str(e)) from e
+    except T.TransitionError as e:
+        rec.update({"done": S.now(), "result": {"error": str(e), "pr": None, "summary": None}})
+        save(project, slug, rec)
+        raise
     except OSError as e:  # the wrapper itself never ran: close the record and charge nothing
         rec.update({"done": S.now(), "result": {"error": f"L1 process failed to start: {type(e).__name__}: {e}",
                                                 "pr": None, "summary": None}})

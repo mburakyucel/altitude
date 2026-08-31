@@ -89,9 +89,6 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"{sp['reverts']} revert(s)")
     if int(sp.get("retries", 0) or 0) > 1:
         out["signals"].append(f"{sp['retries']} retries")
-    est = task.get("estimate") or {}
-    if est.get("turns") and int(sp.get("turns", 0) or 0) > 2 * int(est["turns"]):
-        out["signals"].append(f"turns {sp['turns']} > 2× estimate {est['turns']}")
     tags = [r.get("tag") for r in review if r.get("tag")]
     seen = _seen_tags(project, slug)
     rep_tags = sorted(set(t for t in tags if t in seen))
@@ -111,7 +108,7 @@ def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None)
     counts_p = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
     hook = (S.read_json(counts_p, {}) if counts_p else {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
-                    "subagent_launches_hook": hook.get("subagent_launches"), "edits_hook": hook.get("edits"),
+                    "edits_hook": hook.get("edits"),
                     "retries": (sp or {}).get("retries")}
     return out
 

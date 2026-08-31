@@ -1,4 +1,4 @@
-"""Decision 39: a blocked task queued to resume keeps its file lease until it can run."""
+"""A blocked task queued to resume keeps its file lease until it can run."""
 import contextlib
 import io
 import json

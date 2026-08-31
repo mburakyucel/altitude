@@ -104,20 +104,20 @@ class TestCleanClose(unittest.TestCase):
 
     def test_each_nonclean_signal_keeps_the_existing_l3_turn(self):
         cases = {
-            "problem": ("S", lambda report, verdict: verdict["problems"].append("contradiction"), {}),
-            "decisions": ("S", lambda report, verdict: report["decisions"].append({"question": "choose", "options": ["a"]}), {}),
-            "blocked": ("S", lambda report, verdict: report.update(blocked="waiting"), {}),
-            "fyi": ("S", lambda report, verdict: report["fyi"].append("route this"), {}),
-            "signals": ("S", lambda report, verdict: verdict["signals"].append("one deviation"), {}),
-            "deploy": ("S", lambda report, verdict: report["landed"].update(deploy="failed: unhealthy"), {}),
-            "deploy-missing": ("S", lambda report, verdict: report["landed"].pop("deploy"), {}),
-            "deploy-empty": ("S", lambda report, verdict: report["landed"].update(deploy=""), {}),
-            "hold-merge": ("S", None, {"hold_merge": True}),
-            "unmerged-pr": ("S", lambda report, verdict: report["landed"]["prs"][0].update(merged=False), {}),
-            "follow-ups": ("S", lambda report, verdict: report["follow_ups"].append("fix the flaky test"), {}),
-            "state-blocked": ("S", None, {"live_state": "blocked"}),
+            "problem": (lambda report, verdict: verdict["problems"].append("contradiction"), {}),
+            "decisions": (lambda report, verdict: report["decisions"].append({"question": "choose", "options": ["a"]}), {}),
+            "blocked": (lambda report, verdict: report.update(blocked="waiting"), {}),
+            "fyi": (lambda report, verdict: report["fyi"].append("route this"), {}),
+            "signals": (lambda report, verdict: verdict["signals"].append("one deviation"), {}),
+            "deploy": (lambda report, verdict: report["landed"].update(deploy="failed: unhealthy"), {}),
+            "deploy-missing": (lambda report, verdict: report["landed"].pop("deploy"), {}),
+            "deploy-empty": (lambda report, verdict: report["landed"].update(deploy=""), {}),
+            "hold-merge": (None, {"hold_merge": True}),
+            "unmerged-pr": (lambda report, verdict: report["landed"]["prs"][0].update(merged=False), {}),
+            "follow-ups": (lambda report, verdict: report["follow_ups"].append("fix the flaky test"), {}),
+            "state-blocked": (None, {"live_state": "blocked"}),
         }
-        for name, (cls, change, task_options) in cases.items():
+        for name, (change, task_options) in cases.items():
             with self.subTest(name=name):
                 task, verdict = self._task_and_verdict(f"dirty-{name}", change=change, **task_options)
                 expected_state = S.load_task(PROJECT, task["slug"])["state"]

@@ -1,4 +1,4 @@
-"""I-030: workspace-write Codex turns prove the host sandbox can write every promised root before spending."""
+"""Workspace-write Codex turns prove the host sandbox can write every promised root before spending."""
 import os
 import subprocess
 import tempfile

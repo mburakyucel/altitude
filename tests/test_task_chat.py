@@ -40,6 +40,7 @@ class TestTaskConversation(unittest.TestCase):
             "dispatch_id": f"{self.slug}-1",
             "session_id": "session-old",
             "agent_id": "agent-old",
+            "l2_token": "token-old",
             "worktree": str(self.worktree),
             "branch": f"worktree-{self.slug}",
         })
@@ -67,7 +68,7 @@ class TestTaskConversation(unittest.TestCase):
         T.append_task_message(self.project, self.slug, "burak", "Can we keep this small?",
                               expected_dispatch_id=f"{self.slug}-1", actor="burak")
         T.append_task_message(self.project, self.slug, "l2", "Yes. I will keep one focused PR.",
-                              expected_dispatch_id=f"{self.slug}-1", actor="l2")
+                              expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2")
         (S.task_dir(self.project, self.slug) / "qa.md").write_text("legacy log dump\n")
 
         with mock.patch.object(server.monitor, "sessions", return_value=[]):
@@ -84,7 +85,7 @@ class TestTaskConversation(unittest.TestCase):
         S.save_task(self.project, task)
         with self.assertRaisesRegex(T.TransitionError, "dispatch changed"):
             T.append_task_message(self.project, self.slug, "l2", "stale reply",
-                                  expected_dispatch_id=f"{self.slug}-1", actor="l2")
+                                  expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2")
         self.assertEqual(T.task_messages(self.project, self.slug), [])
 
         task = S.load_task(self.project, self.slug)
@@ -113,12 +114,14 @@ class TestTaskConversation(unittest.TestCase):
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
         old = {name: os.environ.get(name) for name in (
-            "ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_DISPATCH_ID")}
+            "ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_DISPATCH_ID",
+            "ALTITUDE_L2_TOKEN")}
         os.environ.update({
             "ALTITUDE_ACTOR": "l2",
             "ALTITUDE_PROJECT": self.project,
             "ALTITUDE_TASK": self.slug,
             "ALTITUDE_DISPATCH_ID": f"{self.slug}-1",
+            "ALTITUDE_L2_TOKEN": "token-old",
         })
         try:
             namespace = runpy.run_path(str(cli))
@@ -153,6 +156,18 @@ class TestTaskConversation(unittest.TestCase):
         path.write_text("{not json\n")
         with self.assertRaisesRegex(ValueError, "corrupt task conversation"):
             T.task_messages(self.project, self.slug)
+
+    def test_replaced_l2_token_cannot_reply_under_the_same_dispatch_id(self):
+        task = S.load_task(self.project, self.slug)
+        task.update({"session_id": "session-new", "agent_id": "agent-new", "l2_token": "token-new"})
+        S.save_task(self.project, task)
+
+        with self.assertRaisesRegex(T.TransitionError, "generation changed"):
+            T.append_task_message(
+                self.project, self.slug, "l2", "reply from replaced worker",
+                expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2",
+            )
+        self.assertEqual(T.task_messages(self.project, self.slug), [])
 
 
 class TestResumeGenerationFence(unittest.TestCase):

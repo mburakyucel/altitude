@@ -49,7 +49,7 @@ class CleanupHarness(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         # cleanup_after_done imports altitude.incidents locally; this is the exact function it calls. The FAULTS path is
-        # also redirected above so a broken mock still cannot touch the real monitor or file an I-071 successor.
+        # also redirected above so a broken mock still cannot touch the real monitor or file real incident evidence.
         fault_patcher = mock.patch("altitude.incidents.system_fault")
         self.fault = fault_patcher.start()
         self.addCleanup(fault_patcher.stop)

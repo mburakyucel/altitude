@@ -1,5 +1,4 @@
-"""Decision 49: one 300k umbrella for every Claude session — explicit autoCompactWindow on each launch, percentages
-against the real 1M window, L3 act line at 300k."""
+"""Claude sessions use one 300k compaction boundary and report percentages against the 1M window."""
 import json
 import os
 import sys

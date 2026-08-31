@@ -1,7 +1,7 @@
-"""I-055: Codex L1s know the host patch constraint and surface sandbox setup failures."""
+"""Codex L1s receive the host patch constraint and surface sandbox setup failures."""
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -10,6 +10,20 @@ from altitude import config, engines, incidents, l1, route, state as S
 
 
 class TestL1PatchNote(unittest.TestCase):
+    def test_final_l1_launch_boundary_rechecks_the_l2_generation(self):
+        old = {"state": "running", "source": "chat", "dispatch_id": "task-1",
+               "session_id": "session-1", "agent_id": "agent-1", "l2_token": "token-old"}
+        replacement = {**old, "session_id": "session-2", "agent_id": "agent-2",
+                       "l2_token": "token-new"}
+        crossed = mock.Mock()
+        with mock.patch.object(S, "load_task", side_effect=[old, replacement]), \
+             mock.patch.object(S, "project_lock", return_value=nullcontext()), \
+             mock.patch.object(l1.recovery, "launch_permission", return_value=nullcontext()):
+            with self.assertRaisesRegex(l1.T.TransitionError, "ownership changed"):
+                with l1._launch_permission("project", "task", "task-1", "token-old"):
+                    crossed()
+        crossed.assert_not_called()
+
     def test_persisted_prompt_has_patch_note_only_for_codex(self):
         cases = (
             ("implementer", "l1", "codex"),
@@ -40,7 +54,9 @@ class TestL1PatchNote(unittest.TestCase):
                     stack.enter_context(mock.patch.object(route, "pick_engine", pick_engine))
                     stack.enter_context(mock.patch.object(
                         S, "load_task", return_value={
-                            "worktree": str(root)
+                            "state": "running", "worktree": str(root), "source": "chat",
+                            "dispatch_id": "task-1", "session_id": "session-1",
+                            "agent_id": "agent-1", "l2_token": "token-1",
                         }
                     ))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
@@ -54,7 +70,8 @@ class TestL1PatchNote(unittest.TestCase):
                     stack.enter_context(mock.patch.object(l1.git_policy, "commits_missing_task_trailer", return_value=[]))
                     stack.enter_context(mock.patch.object(config, "project_path", return_value=root))
                     stack.enter_context(mock.patch.object(l1.subprocess, "Popen", return_value=SimpleNamespace(pid=123)))
-                    rec = l1.start("project", slug, brief, role=role, engine=engine, cwd=str(root))
+                    rec = l1.start("project", slug, brief, role=role, engine=engine, cwd=str(root),
+                                   expected_dispatch_id="task-1", expected_l2_token="token-1")
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])
@@ -154,8 +171,8 @@ class TestL1PatchNote(unittest.TestCase):
             "task": "task",
         }])
 
-    # The record I-055 left behind (tasks/apply-r-011-i-031/l1/implementer-2.json) carried no raw bwrap
-    # line at all: error None, returncode 0, and the denial only in the worker's own final sentence.
+    # Some sandbox denials carry no raw bwrap line: error None, returncode 0, and the denial only in the
+    # worker's own final sentence.
     STOPPED = ("RESULT: no PR — Stopped because bubblewrap sandbox setup denied both mandated file writes "
                "and Git/Altitude commands before any change could be made.")
 

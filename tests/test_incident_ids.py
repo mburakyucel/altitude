@@ -1,6 +1,5 @@
-"""Incident ids are unique under concurrent faults (I-013). Two `l2-died` faults raised in the same second both
-counted the same rows, both got `I-009`, and the blind write kept only the second record. The id now comes from
-the highest id ever issued and the file is reserved with O_EXCL, so a race loses nothing. Runs against a
+"""Incident ids remain unique under concurrent faults. Allocation uses the highest id ever issued and reserves
+the file with O_EXCL, so simultaneous writers cannot overwrite one another. Runs against a
 throwaway ALTITUDE_HOME; every test builds its own temp home, never the live ledger."""
 import json
 import os
@@ -64,7 +63,7 @@ class TempHome:
 
 def ledger_row(iid: str, project: str = "demo") -> str:
     return json.dumps({"at": "2026-08-29T00:00:00", "project": project, "id": iid, "title": iid, "task": None,
-                       "tags": [], "scope": "project", "mechanism": "incident-only", "rule": None, "cause": ""},
+                       "tags": [], "cause": ""},
                       sort_keys=True)
 
 
@@ -77,8 +76,7 @@ class TestNextIncidentId(TempHome, unittest.TestCase):
         self.assertEqual(incidents.next_incident_id("demo"), "I-001")
 
     def test_a_gap_is_never_reused_and_a_duplicate_never_shifts_the_max(self):
-        """The I-013 wreckage itself: I-009 filed twice, I-010 never issued, I-013 present. Counting rows says
-        I-004; counting the folder says I-003. The next free id is I-014."""
+        """Duplicate rows and gaps do not lower the next id below the highest id already issued."""
         ledger = config.project_dir("demo") / "incidents.jsonl"
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text("\n".join(ledger_row(i) for i in ("I-009", "I-009", "I-011", "I-013")) + "\n")
@@ -165,7 +163,7 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         allocation must never take that same flock — it is not reentrant, and a nested take would hang altd while
         holding the lock. The watchdog turns that hang into a failure instead of wedging the suite."""
         def watchdog(signum, frame):
-            raise AssertionError("new_incident blocked while the caller held the project lock — nested flock (I-013)")
+            raise AssertionError("new_incident blocked while the caller held the project lock — nested flock")
 
         previous = signal.signal(signal.SIGALRM, watchdog)
         signal.setitimer(signal.ITIMER_REAL, 10)
@@ -236,8 +234,8 @@ class TestReserveIncidentFile(TempHome, unittest.TestCase):
         self.race(workers=8, rounds=4)
 
     def test_separate_processes_racing_on_one_home_get_distinct_ids(self):
-        """The real I-013 shape: two independent processes filing a fault at the same moment. Children share one
-        ALTITUDE_HOME and are released by a file barrier, so the flock and the exclusive create are doing the work
+        """Two independent processes file evidence at the same moment. Children share one ALTITUDE_HOME and are
+        released by a file barrier, so the flock and the exclusive create are doing the work
         across process boundaries, not just across threads."""
         workers, deadline = 6, time.monotonic() + 60
         script = self.root / "racer.py"

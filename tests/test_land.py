@@ -638,8 +638,8 @@ class TestLand(unittest.TestCase):
             land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    # R-006 / I-020: where no workflow and no check exist, the exact merge candidate's local suite is the
-    # gate. Absence, skipped checks, stale revisions, and unreadable test reports never become green.
+    # Where no workflow and no check exist, the exact merge candidate's local suite is the gate. Absence,
+    # skipped checks, stale revisions, and unreadable test reports never become green.
 
     def test_no_ci_merges_after_a_green_local_suite_and_records_the_count(self):
         self.leased_change()

@@ -11,8 +11,8 @@ from pathlib import Path
 from . import config, state as S, tasks as T
 
 STATUSES = ("open", "watch", "closed")
-# Every bullet templates/incident.md writes, in order. A value may run over many lines (ARCHITECTURE §8 shows
-# multi-line `what happened`/`evidence`), so a field ends only at the NEXT one of these labels, at the amendment
+# Every bullet templates/incident.md writes, in order. A value may run over many lines, so a field ends only at
+# the NEXT one of these labels, at the amendment
 # history, or at EOF — never at a stray `- ` line or a blank line inside the value.
 INCIDENT_LABELS = ("date", "task", "project", "what happened", "evidence", "root cause", "status")
 # Fields `alt incident amend` may rewrite, in template order → the bullet label each one owns in incident.md.
@@ -262,7 +262,7 @@ def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3
     bottom of the file, oldest first:
 
         amended: 2026-08-30 by burak: root cause was wrong; corrected in chat
-        - was root cause: the envelope had no slack
+        - was root cause: the worker used stale repository state
 
     Everything is validated before the file is touched — a refusal writes nothing, anywhere."""
     reason = (reason or "").strip()

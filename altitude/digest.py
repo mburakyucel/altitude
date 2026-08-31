@@ -1,4 +1,4 @@
-"""Cross-project Decision queue, WIP, digest text, Kokoro rendering (ARCHITECTURE §6)."""
+"""Cross-project user-input queue, WIP summary, digest text, and Kokoro rendering."""
 from __future__ import annotations
 import os
 import subprocess
