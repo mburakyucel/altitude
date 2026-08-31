@@ -124,7 +124,7 @@ def claim_repair(project: str, slug: str, *, actor: str) -> dict:
             for name in config.load_projects()
             for task in S.list_tasks(name)
             if task.get("source") == "recovery"
-            and task.get("state") in ("requested", "proposed", "approved", "running", "blocked", "reported")
+            and task.get("state") in ("queued", "running", "blocked", "reported")
         ]
         if active:
             name, existing = active[0]

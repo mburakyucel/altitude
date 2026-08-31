@@ -27,19 +27,12 @@ interface ActionSpec {
 }
 
 const ACTIONS: ActionSpec[] = [
-  { action: "dispatch", label: "Dispatch", states: ["approved"] },
-  { action: "unpark", label: "Unpark", states: ["parked"] },
+  { action: "dispatch", label: "Dispatch", states: ["queued"] },
   { action: "done", label: "Mark done", states: ["reported"] },
-  {
-    action: "park",
-    label: "Park",
-    states: ["approved", "running", "blocked"],
-    reason: true,
-  },
   {
     action: "reject",
     label: "Reject",
-    states: ["approved", "blocked", "parked"],
+    states: ["queued", "running", "blocked", "reported"],
     reason: true,
   },
 ];
@@ -154,7 +147,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         {agentId ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
         {held ? (
           <p className="text-body text-ink-2">
-            Queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold
+            Queued: Altitude resumes this L2 itself when the operational hold
             clears ({blockedReason})
           </p>
         ) : blockedReason ? (
@@ -235,7 +228,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <input
           className="field w-full"
           aria-label="Reason"
-          placeholder="Reason (required to park / reject)"
+          placeholder="Reason (required to reject)"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
@@ -246,9 +239,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
               type="button"
               className={a.primary ? "btn btn-primary" : "btn"}
               title={a.title}
-              // Park and Reject are destructive and irreversible from here; the 0.1 app refused
-              // them without a reason and Project.tsx still does, so they stay disabled until one
-              // is typed rather than firing on a single unconfirmed click.
+              // Reject archives the task immediately, so require an explicit reason.
               disabled={act.isPending || (a.reason === true && reason.trim().length === 0)}
               onClick={() => run(a)}
             >

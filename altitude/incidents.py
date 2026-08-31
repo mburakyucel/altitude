@@ -48,7 +48,7 @@ def _fault_lock():
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
-    """Record a fault as evidence and an FYI, without creating repair or rule work.
+    """Record a fault as evidence and an FYI without creating repair work.
 
     One incident per kind per 24 hours keeps a persistent fault from flooding the evidence store. Explicit
     operational recovery remains L3's responsibility; this function never dispatches or creates a task.
@@ -103,7 +103,8 @@ INCIDENT_ID_ATTEMPTS = 20
 
 @contextmanager
 def _alloc_lock(directory: Path):
-    """A lock of its own for incident-id allocation, deliberately NOT `S.project_lock` (I-013). This is a leaf:
+    """Use a dedicated leaf lock for incident-id allocation, never ``S.project_lock``.
+
     it is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
     with itself nor invert an order against the project lock — and `dispatch.run` does hold a project lock while
     `wip_hold` files a `quota-unknown` fault, so reusing that lock here would deadlock altd outright."""
@@ -147,9 +148,10 @@ def _issued_incident_numbers(project: str) -> list[int]:
 
 
 def next_incident_id(project: str) -> str:
-    """One past the highest id ever issued — never a count (I-013): two `l2-died` faults in the same second both
-    counted the same 8 rows and both got `I-009`, and the blind overwrite behind it kept only the second. A gap
-    left by a lost or renumbered record is never handed out again either."""
+    """Return one past the highest id ever issued, never a row count.
+
+    This preserves uniqueness across gaps and duplicate historical rows.
+    """
     nums = _issued_incident_numbers(project)
     return f"I-{(max(nums) + 1) if nums else 1:03d}"
 
@@ -158,8 +160,8 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
                  tags: list[str], actor: str = "l3") -> dict:
     """Write incident evidence into the project's Altitude state.
 
-    Filing an incident never creates a task, proposes a rule, or schedules a healing workflow.
-    Safe to call while holding any project lock — allocation takes a leaf lock of its own (I-013), precisely so a
+    Filing an incident never creates a task or schedules a healing workflow.
+    Safe to call while holding any project lock: allocation takes a leaf lock of its own, so a
     caller that already holds one (`dispatch.run` does, around the `wip_hold` that files `quota-unknown`) cannot
     deadlock on it."""
     template = (config.TEMPLATES / "incident.md").read_text()
@@ -172,7 +174,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     # zero-byte file behind. The real id is not known until the reservation succeeds, and only that value differs,
     # so if this pass renders the one below cannot fail.
     template.format(id="I-000", **fields)
-    # (I-013) Reserve the id with an exclusive create, then fill the file atomically. The empty file IS the
+    # Reserve the id with an exclusive create, then fill the file atomically. The empty file is the
     # reservation and holds the id against every other racer — process or thread — while `atomic_write` replaces
     # it whole, so a crash mid-write can never leave a half-parsed incident. An existing incidents/I-NNN.md is
     # never overwritten: we take the next free id, or give up loudly. The lock only stops racers spinning here.

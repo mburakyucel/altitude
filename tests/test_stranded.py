@@ -16,7 +16,7 @@ class TestStrandedReports(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
         base = {"created": S.now(), "updated": S.now(), "verified": {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [], "report": {}}}
         for slug, state, handled, report in (("stranded", "reported", None, True), ("stranded-blocked", "blocked", None, True),
                                              ("handled", "reported", S.now(), True), ("no-report", "blocked", None, False),

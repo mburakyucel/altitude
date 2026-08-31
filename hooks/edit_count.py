@@ -9,7 +9,7 @@ mon = root / "monitor"; mon.mkdir(parents=True, exist_ok=True)
 key = os.environ.get("ALTITUDE_SESSION_KEY")
 p = mon / f"counts-{key or sid}.json"
 
-def fault(msg):  # decision 36: leave a line the server raises as a system fault instead of silently resetting
+def fault(msg):  # leave a line the server raises as a system fault instead of silently resetting
     try:
         with open(mon / "hook-faults.log", "a") as f: f.write(f"edit_count.py session={sid} key={key or sid}: {msg}\n")
     except OSError: pass
@@ -25,9 +25,7 @@ except OSError as e:
     fault(f"counts file lock unavailable, proceeding unlocked: {e}")
 
 try:
-    legacy_p = mon / f"counts-{sid}.json"
-    source_p = legacy_p if key and not p.exists() and legacy_p.exists() else p
-    try: c = json.loads(source_p.read_text()) if source_p.exists() else {}
+    try: c = json.loads(p.read_text()) if p.exists() else {}
     except Exception as e: c = {}; fault(f"counts file unreadable, reset: {e}")
     c["edits"] = int(c.get("edits", 0)) + 1
     files = set(c.get("files") or []); fp = (inp.get("tool_input") or {}).get("file_path")

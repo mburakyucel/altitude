@@ -88,7 +88,7 @@ class TestTaskStatus(unittest.TestCase):
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         (self.repo / ".github" / "workflows").mkdir(parents=True)
-        config.save_projects({"demo": {"path": str(self.repo), "stacks": [], "wip": 5}})
+        config.save_projects({"demo": {"path": str(self.repo), "wip": 5}})
 
         self.bin_dir = self.tmp / "bin"
         self.bin_dir.mkdir()
@@ -127,7 +127,7 @@ class TestTaskStatus(unittest.TestCase):
         other_dir.mkdir(parents=True)
         S.write_json(other_dir / "status.json", {
             "slug": "other-task", "state": "running", "paths": ["altitude/server.py"]})
-        S.write_json(config.MONITOR_DIR / "counts-sid-1.json", {
+        S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json", {
             "subagent_launches": 2, "edits": 7, "files": ["altitude/status.py"]})
         S.write_json(config.MONITOR_DIR / "statusline-test.json", {
             "_at": time.time(), "rate_limits": {"five_hour": {"used_percentage": 10}}})
@@ -309,7 +309,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertIsNone(result["wip_hold"])
         self.assertEqual(result["wip_hold"], dispatch.wip_hold("demo", task))
 
-    def test_dispatch_keyed_counts_win_over_the_legacy_session_file(self):
+    def test_dispatch_keyed_counts_are_read(self):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
                      {"subagent_launches": 4, "edits": 11})
         result = task_status.status("demo", "task-one")

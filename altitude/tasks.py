@@ -1,4 +1,4 @@
-"""Task lifecycle — five states, one writer. Every transition goes through here."""
+"""Task lifecycle — queued, running, blocked, reported, then archived. Every transition goes through here."""
 from __future__ import annotations
 import json
 import os
@@ -13,11 +13,10 @@ def short_reason(reason: str, limit: int = 200) -> str:
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 TRANSITIONS = {
-    "approved": {"running", "parked", "rejected"},
-    "running": {"reported", "blocked", "parked"},
-    "blocked": {"running", "parked", "rejected", "reported"},
-    "reported": {"done", "running", "blocked"},                    # running: verifier says not done → resume
-    "parked": {"approved", "rejected"},
+    "queued": {"running", "rejected"},
+    "running": {"reported", "blocked", "rejected"},
+    "blocked": {"running", "rejected", "reported"},
+    "reported": {"done", "running", "blocked", "rejected"},      # running: verifier says not done → resume
     "done": set(),
     "rejected": set(),
 }
@@ -117,7 +116,7 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if to in ("parked", "rejected") and frm in ("running", "blocked") and task.get("agent_id"):
+    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
         from . import engines
         note = engines.claude_rm(task["agent_id"])
         S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"], note=note[:200])
@@ -126,7 +125,7 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
-        paths: list[str] | None = None, engine: str | None = None, hold_merge: str | None = None) -> dict:
+        paths: list[str] | None = None, hold_merge: str | None = None) -> dict:
     if model and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
     config.project(project)
@@ -152,13 +151,12 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             if recovery_claimed:
                 recovery.release_failed_claim(project, slug)
             raise
-        task = {"slug": slug, "title": title, "state": "approved", "created": S.now(),
+        task = {"slug": slug, "title": title, "state": "queued", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
                 "branch": None, "prs": [], "spend": {}, "blocked_reason": None, "source": source,
                 "verified": None, "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
-                "engine": engine,  # decision 45: a forced engine for every L1 of this task (None = by quota)
-                "hold_merge": (hold_merge or "").strip() or None}  # decision 48: why Burak merges this one himself (None = the L2 merges)
+                "hold_merge": (hold_merge or "").strip() or None}
         try:
             S.save_task(project, task)
         except Exception:
@@ -175,19 +173,10 @@ def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         task["blocked_reason"] = None
-        return _move(project, task, "rejected", actor, reason=reason)
-
-
-def park(project: str, slug: str, reason: str, actor: str = "l3") -> dict:
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        return _move(project, task, "parked", actor, reason=reason)
-
-
-def unpark(project: str, slug: str, actor: str = "l3") -> dict:
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        return _move(project, task, "approved", actor)
+        task = _move(project, task, "rejected", actor, reason=reason)
+        _archive(project, slug)
+        S.regen_state_md(project)
+        return task
 
 
 def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
@@ -273,7 +262,7 @@ def set_spend(project: str, slug: str, **spend) -> dict:
         return task
 
 
-# ---- Decisions and FYIs (the two outbound channels, decision 9) --------------
+# ---- User decisions and FYIs -------------------------------------------------
 
 def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
     """An FYI is a line in the project's inbox.jsonl; the page shows the tail."""
@@ -309,7 +298,7 @@ def decisions(project: str) -> list[dict]:
         if t["state"] == "blocked" and not t.get("resume_after"):  # an operational hold is not a user decision
             out.append({"project": project, "slug": t["slug"], "title": t["title"],
                         "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
-                        "options": ["Resume", "Park", "Reject"], "asked": t.get("updated"), "kind": "blocked",
+                        "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",
                         "detail": t.get("blocked_reason")})
     return out
 

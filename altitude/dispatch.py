@@ -122,7 +122,7 @@ def build_brief(project: str, slug: str) -> str:
     proj = config.project(project)
     request = (d / "request.md").read_text()
     policy = proj.get("approval", "default")
-    if task.get("hold_merge"):  # decision 48: the hold is the exception, and it says why
+    if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
         merge_policy = f"**Held for Burak** — open the PR, make it ready for any required review, get its checks green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
     else:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
@@ -130,7 +130,6 @@ def build_brief(project: str, slug: str) -> str:
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
-        engine_line=(f"the engine is forced to **{task['engine']}** for this task." if task.get("engine") else "the engine is Altitude's choice."),
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
@@ -148,7 +147,7 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
-        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}  # decision 49: the 300k umbrella, also for resumed sessions
+        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
     p = S.task_dir(project, slug) / "settings.json"
     S.write_json(p, settings)
     return p
@@ -159,8 +158,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     # its remote-backed gate and this task's worktree has a provenance-safe base.
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task["state"] != "approved":
-            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task["state"] != "queued":
+            raise T.TransitionError(f"{slug} is {task['state']}, not queued")
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         held = wip_hold(project, task)
@@ -171,19 +170,19 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
-        from . import improve
-        improve.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
     try:
         worktree_path = _task_worktree(repo, project, slug, origin_sha)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import improve
-        improve.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by task provenance gate: {exc}") from exc
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task["state"] != "approved":
-            raise T.TransitionError(f"{slug} is {task['state']}, not approved")
+        if task["state"] != "queued":
+            raise T.TransitionError(f"{slug} is {task['state']}, not queued")
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         task["dispatching"] = S.now()
@@ -292,8 +291,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         # branch, and every committed ancestor remain strict.
         _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import improve
-        improve.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     # Provenance checks may take a network round trip. Re-read before spending an engine launch.
     current = S.load_task(project, slug)
@@ -440,7 +439,7 @@ def resume_due(project: str) -> list[str]:
     due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
     for t in sorted(due, key=_resume_order):
         if wip_hold(project, t):
-            continue  # a lease or the improve-serialization rule holds this one; a younger unrelated task may still go
+            continue  # a lease holds this one; a younger unrelated task may still go
         if "resume_answer" in t:
             answer = t["resume_answer"]
             prefix = t.get("resume_prefix", "")
@@ -473,7 +472,7 @@ def _norm(p: str) -> str:
 
 
 def paths_overlap(a: list[str], b: list[str]) -> list[str]:
-    """Paths collide when equal or when one is a directory prefix of the other (decision 39)."""
+    """Paths collide when equal or when one is a directory prefix of the other."""
     out = []
     for x in map(_norm, a):
         for y in map(_norm, b):
@@ -486,9 +485,10 @@ BROAD_CLAIMS = ("tests", "docs", "altitude", "web", "hooks", "bin", "personas", 
 
 
 def narrow(paths: list[str]) -> list[str]:
-    """Decision 51 addendum: a claim on a whole top-level directory (`tests/`, `docs/`) is not a lease — it would hold every
-    task in the project behind one (2026-08-30: 23 approved tasks waited on a single `tests/` claim). Files and deeper
-    directories lease; top-level directory claims are dropped here, so briefs still show them but nothing waits on them."""
+    """Drop whole top-level directory claims because they are too broad to be useful leases.
+
+    Files and deeper directories still lease, and briefs still show the original declared scope.
+    """
     return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
 
 
@@ -664,8 +664,8 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
         return f"WIP limit: {total} running on this machine"
     from .monitor import quota_hold, quota
     if not (quota() or {}).get("known"):
-        from . import improve  # decision 36: the reserve line cannot be enforced — say so, once a day
-        improve.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line (decision 31) is not being enforced; run `alt install-statusline` or fix the monitor")
+        from . import incidents
+        incidents.system_fault("quota-unknown", "no statusline snapshot: the quota reserve line is not being enforced; run `alt install-statusline` or fix the monitor")
         held = recovery.dispatch_hold(project, task)
         if held:
             return held
@@ -695,7 +695,7 @@ def poll(project: str) -> list[dict]:
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             detail, at = job_detail(a.get("id"))
             lim = engines.usage_limit_in(detail, now=at)
-            if lim:  # decision 44: the worker is waiting for the window, not for a human
+            if lim:  # the worker is waiting for the usage window, not for a human
                 finished.append({"task": t, "agent": a, "limited": lim})
                 S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "limited": lim})
                 continue
@@ -729,7 +729,7 @@ DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded
 
 
 def pull_after_done(project: str, task: dict) -> list[str]:
-    """Self-deploy (decision 43): when a project's checkout *is* the deployment — Altitude's own repo — fast-forward it to
+    """When a project's checkout is its deployment, fast-forward it to
     origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
     changes need a restart: those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here."""
     import subprocess
@@ -754,8 +754,8 @@ def pull_after_done(project: str, task: dict) -> list[str]:
             return []
         files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        from . import improve
-        improve.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        from . import incidents
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
         T.fyi(project, task.get("slug"), f"self-deploy refused in {repo}: {str(e)[:300]}")
         return [f"self-deploy refused: {str(e)[:160]}"]
     code = [f for f in files if f.startswith(DEPLOY_DIRS)]
@@ -767,7 +767,7 @@ def pull_after_done(project: str, task: dict) -> list[str]:
         S.write_json(pend_p, pend)
         T.fyi(project, task.get("slug"), f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
                                         f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
-                                        f"`systemctl --user restart altitude` when convenient; L2 workers survive it (decision 42).")
+                                        "an authorized service restart after verification.")
         notes.append(f"restart pending ({len(code)} code files)")
     return notes
 
@@ -786,7 +786,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     every guard; a background session can remain when its tree is ineligible. Orphan reclamation is intentionally
     outside this done-time pass and belongs to the accepted caller/prune follow-up."""
     import subprocess
-    from . import improve
+    from . import incidents
     repo = config.project_path(project)
     slug = task.get("slug") or ""
     notes = []
@@ -870,21 +870,21 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     try:
         fetch = subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
     except (subprocess.SubprocessError, OSError) as e:
-        improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
         return finish_after_failure(f"git fetch failed: {e}")
     if fetch.returncode != 0:
         error = (fetch.stderr or fetch.stdout).strip()[:120] or "git fetch failed"
         reason = f"could not refresh origin/main: {error}"
-        improve.system_fault("cleanup-fetch", f"{project}: {reason}", project=project, task=slug)
+        incidents.system_fault("cleanup-fetch", f"{project}: {reason}", project=project, task=slug)
         return finish_after_failure(reason)
     try:
         listed = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=str(repo), capture_output=True, text=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as e:
-        improve.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {e}", project=project, task=slug)
         return finish_after_failure(f"git worktree list failed: {e}")
     if listed.returncode != 0:
         error = (listed.stderr or listed.stdout).strip()[:120] or "git worktree list failed"
-        improve.system_fault("cleanup-git", f"{project}: {error}", project=project, task=slug)
+        incidents.system_fault("cleanup-git", f"{project}: {error}", project=project, task=slug)
         return finish_after_failure(f"git worktree list failed: {error}")
 
     records = []
@@ -923,7 +923,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 if a.get("cwd") and a.get("state") not in ("failed", "done", "stopped")]
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
         reason = f"live Claude session list unavailable: {e}"
-        improve.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=slug)
+        incidents.system_fault("cleanup-agents", f"{project}: cannot list live sessions, removing nothing: {e}", project=project, task=slug)
         for wt, _branch, _candidate in eligible:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
         notes.append(f"skipped worktree cleanup: {e}")
@@ -946,13 +946,13 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                                           capture_output=True, text=True, timeout=30)
             except (subprocess.SubprocessError, OSError) as e:
                 reason = f"merge-base indeterminate: {e}"
-                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
             if not reason and ancestry.returncode == 1:
                 reason = "branch has commits not on origin/main"
             elif not reason and ancestry.returncode != 0:
                 stderr = (ancestry.stderr or "").strip()[:120] or "(empty stderr)"
                 reason = f"merge-base indeterminate (exit {ancestry.returncode}); stderr: {stderr}"
-                improve.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
         if reason:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
@@ -964,7 +964,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 rm_note = engines.claude_rm(task["agent_id"])
             except (subprocess.SubprocessError, OSError, RuntimeError) as e:
                 reason = f"claude rm failed: {e}"
-                improve.system_fault("cleanup-claude-rm", f"{project}/{slug}: {reason}", project=project, task=slug)
+                incidents.system_fault("cleanup-claude-rm", f"{project}/{slug}: {reason}", project=project, task=slug)
             else:
                 notes.append(f"claude rm {task['agent_id']}: {(rm_note or 'completed')[:120]}")
         if not reason:
@@ -978,7 +978,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     error = (rm.stderr or rm.stdout).strip()[:120] or f"exit {rm.returncode}"
                     reason = f"git worktree remove failed: {error}"
             if reason:
-                improve.system_fault("cleanup-worktree-remove", f"{project}/{slug} {wt}: {reason}",
+                incidents.system_fault("cleanup-worktree-remove", f"{project}/{slug} {wt}: {reason}",
                                      project=project, task=slug)
         if not reason:
             try:
@@ -991,7 +991,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     error = (deleted.stderr or deleted.stdout).strip()[:120] or f"exit {deleted.returncode}"
                     reason = f"git branch delete failed after worktree removal: {error}"
             if reason:
-                improve.system_fault("cleanup-branch-delete", f"{project}/{slug} {branch}: {reason}",
+                incidents.system_fault("cleanup-branch-delete", f"{project}/{slug} {branch}: {reason}",
                                      project=project, task=slug)
         if reason:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)

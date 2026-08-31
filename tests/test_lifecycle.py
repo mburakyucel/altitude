@@ -27,11 +27,11 @@ class TestLifecycle(unittest.TestCase):
     def test_lifecycle_sequence(self):
         config.ensure_root()
         P = config.load_projects()
-        P["demo"] = {"path": os.environ["ALTITUDE_HOME"], "stacks": ["python"]}
+        P["demo"] = {"path": os.environ["ALTITUDE_HOME"]}
         config.save_projects(P)
 
         t = T.new("demo", "Add beta stage with alarm rollback", "Add a beta pipeline stage…")
-        self.assertEqual(t["state"], "approved")
+        self.assertEqual(t["state"], "queued")
         self.assertNotIn("class", t)
         self.assertNotIn("envelope", t)
         self.assertEqual(T.decisions("demo"), [])
@@ -52,8 +52,11 @@ class TestLifecycle(unittest.TestCase):
 
         t2 = T.new("demo", "Add beta stage with alarm rollback", "again")
         self.assertTrue(t2["slug"].endswith("-2"))
-        self.assertEqual(t2["state"], "approved")
-        self.assertIn("Recently finished", (config.project_dir("demo") / "STATE.md").read_text())
+        self.assertEqual(t2["state"], "queued")
+        self.assertNotIn("Recently finished", (config.project_dir("demo") / "STATE.md").read_text())
+        T.reject("demo", t2["slug"], "tracked in a GitHub issue")
+        self.assertEqual(S.task_dir("demo", t2["slug"]).parent.name, "archive")
+        self.assertNotIn(t2["slug"], (config.project_dir("demo") / "STATE.md").read_text())
 
         self.assertIsInstance(T.inbox("demo"), list)
 

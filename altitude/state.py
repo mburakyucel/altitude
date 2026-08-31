@@ -12,8 +12,8 @@ from pathlib import Path
 
 from . import config
 
-STATES = ("approved", "running", "reported", "done", "rejected", "parked", "blocked")
-OPEN_STATES = ("approved", "running", "reported", "blocked")
+STATES = ("queued", "running", "reported", "done", "rejected", "blocked")
+OPEN_STATES = ("queued", "running", "reported", "blocked")
 
 
 def now() -> str:
@@ -39,7 +39,7 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 def read_json(path: Path, default=None):
-    """Missing file → default. A corrupt file raises (decision 36): silently defaulting would hide a real fault."""
+    """A missing file returns the default; corrupt state raises instead of hiding a fault."""
     try:
         text = Path(path).read_text()
     except FileNotFoundError:
@@ -188,7 +188,7 @@ def regen_state_md(project: str) -> str:
     lines += [f"- **{t['slug']}** ({age(t['updated'])}): {short[:200]}"
               for t in pending if (short := str(t.get("blocked_reason") or "blocked"))] or ["- none"]
     lines += ["", "## Tasks", ""]
-    for s in ("blocked", "running", "reported", "approved", "parked"):
+    for s in ("blocked", "running", "reported", "queued"):
         ts = by[s]
         if not ts:
             continue
@@ -206,12 +206,6 @@ def regen_state_md(project: str) -> str:
                 extra.append(f"turns {sp['turns']}")
             lines.append(f"- **{t['slug']}** {t['title']} — {age(t['updated'])}" + (" — " + "; ".join(extra) if extra else ""))
         lines.append("")
-    done = [t for t in list_tasks(project, include_archive=True) if t["state"] in ("done", "rejected")][-10:]
-    lines += ["## Recently finished", ""] + ([f"- {t['slug']} {t['state']} — {t['title']}" for t in done] or ["- none"])
-    inc = config.project_dir(project) / "incidents.jsonl"
-    if inc.exists():
-        recent = [json.loads(l) for l in inc.read_text().splitlines()[-5:] if l.strip()]
-        lines += ["", "## Recent incidents", ""] + [f"- {i.get('id')}: {i.get('title', '')[:120]}" for i in recent]
     text = "\n".join(lines) + "\n"
     atomic_write(config.project_dir(project) / "STATE.md", text)
     return text

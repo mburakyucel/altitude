@@ -8,7 +8,7 @@ from . import config, engines, state as S
 
 
 class VerifierFault(RuntimeError):
-    """The verifier's own tooling failed (gh, network): not a verdict on the L2's work (decision 36)."""
+    """The verifier's own tooling failed (gh, network), not the L2's work."""
 
 
 def gh(args: list[str], cwd: Path) -> dict | list | None:
@@ -31,8 +31,8 @@ def verify(project: str, slug: str) -> dict:
     try:
         return _verify(project, slug)
     except VerifierFault as e:
-        from . import improve
-        improve.system_fault("verifier", str(e), project=project, task=slug)
+        from . import incidents
+        incidents.system_fault("verifier", str(e), project=project, task=slug)
         return {"verdict": "fault", "problems": [f"verifier fault: {e}"], "signals": [], "spend": {}, "prs": [], "report": None, "fault": str(e)}
 
 
@@ -77,7 +77,7 @@ def _verify(project: str, slug: str) -> dict:
         out["problems"].append("no PRs landed and not blocked")
     if rep.get("roadmap_complete") is False or not (d / "progress.md").exists():
         out["problems"].append("roadmap missing or not complete")
-    # post-mortem signals (decision 30) — computed, not remembered
+    # Post-task signals are computed from the report, not remembered by a model.
     if rep.get("deviations"):
         out["signals"].append(f"{len(rep['deviations'])} deviation(s)")
     if rep.get("blocked"):
@@ -109,9 +109,7 @@ def _verify(project: str, slug: str) -> dict:
 def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None) -> dict:
     dispatch_id = task.get("dispatch_id")
     counts_p = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
-    if not counts_p or not counts_p.exists():
-        counts_p = config.MONITOR_DIR / f"counts-{task.get('session_id')}.json"
-    hook = S.read_json(counts_p, {}) or {}
+    hook = (S.read_json(counts_p, {}) if counts_p else {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
                     "subagent_launches_hook": hook.get("subagent_launches"), "edits_hook": hook.get("edits"),
                     "retries": (sp or {}).get("retries")}

@@ -44,16 +44,16 @@ def main(argv=None) -> None:
     lx = l1s.add_parser("_exec"); lx.add_argument("slug"); lx.add_argument("name")
 
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
-    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--stacks", default=""); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
+    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
     ps.add_parser("list"); ps.add_parser("discover")
     r = ps.add_parser("remove"); r.add_argument("name")
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
-    for name in ("reject", "park", "block"):
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
+    for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
-    for name in ("unpark", "show", "events", "messages"):
+    for name in ("show", "events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
     rs = ts.add_parser("resume", help="re-attach a blocked L2 with its transcript and worktree")
@@ -61,7 +61,7 @@ def main(argv=None) -> None:
     rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or answer")
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
-    hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
+    hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
@@ -114,7 +114,7 @@ def main(argv=None) -> None:
             path = Path(args.path or (config.PROJECT_ROOTS[0] / args.name)).expanduser()
             if not path.is_dir():
                 sys.exit(f"alt: {path} is not a directory")
-            P[args.name] = {"path": str(path), "stacks": [s for s in args.stacks.split(",") if s], "approval": args.approval, "wip": args.wip}
+            P[args.name] = {"path": str(path), "approval": args.approval, "wip": args.wip}
             config.save_projects(P); config.project_dir(args.name).mkdir(parents=True, exist_ok=True); S.regen_state_md(args.name); out(P[args.name])
         elif args.pcmd == "remove":
             P.pop(args.name, None); config.save_projects(P); out("removed")
@@ -128,11 +128,9 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine, hold_merge=args.hold_merge))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
-        elif tc == "park":
-            out(T.park(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "block":
             out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
@@ -150,8 +148,6 @@ def main(argv=None) -> None:
                          "agent": (res.get("agent") or {}).get("id")})
             else:
                 out(T.resume(p, args.slug, actor=ACTOR))
-        elif tc == "unpark":
-            out(T.unpark(p, args.slug, actor=ACTOR))
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
             if not declared:
@@ -230,18 +226,18 @@ def main(argv=None) -> None:
     if c == "l3-reset":
         from altitude import l3; l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
     if c == "incident":
-        from altitude import improve; p = _project(args)
+        from altitude import incidents; p = _project(args)
         if args.icmd == "new":
-            out(improve.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
+            out(incidents.new_incident(p, title=args.title, task=args.task, what=args.what, evidence=args.evidence, cause=args.cause,
                                      tags=args.tag, actor=ACTOR))
         elif args.icmd == "amend":
             fields = {k: v for k, v in (("what", args.what), ("evidence", args.evidence), ("cause", args.cause), ("status", args.status)) if v is not None}
             try:
-                out(improve.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
+                out(incidents.amend_incident(p, args.id, reason=args.reason, actor=ACTOR, **fields))
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:
-            out([r for r in improve.index() if r["project"] == p])
+            out([r for r in incidents.index() if r["project"] == p])
         return
     if c == "recovery":
         from altitude import recovery

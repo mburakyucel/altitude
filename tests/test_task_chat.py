@@ -29,7 +29,7 @@ class TestTaskConversation(unittest.TestCase):
         self.repo = _TMP / self.project / "repo"
         self.repo.mkdir(parents=True)
         projects = config.load_projects()
-        projects[self.project] = {"name": self.project, "path": str(self.repo), "stacks": []}
+        projects[self.project] = {"name": self.project, "path": str(self.repo)}
         config.save_projects(projects)
         task = T.new(self.project, "Direct conversation", "Build the focused change.")
         self.slug = task["slug"]
@@ -162,7 +162,7 @@ class TestResumeGenerationFence(unittest.TestCase):
         worktree = repo / ".claude" / "worktrees" / "resume-race"
         worktree.mkdir(parents=True, exist_ok=True)
         projects = config.load_projects()
-        projects[project] = {"name": project, "path": str(repo), "stacks": []}
+        projects[project] = {"name": project, "path": str(repo)}
         config.save_projects(projects)
         S.save_task(project, {
             "slug": "resume-race", "title": "race", "state": "running",
@@ -171,7 +171,7 @@ class TestResumeGenerationFence(unittest.TestCase):
         })
 
         def launch(*_args, **_kwargs):
-            T.park(project, "resume-race", "cancelled while resuming")
+            T.reject(project, "resume-race", "cancelled while resuming")
             return {"stdout": "", "stderr": "", "returncode": 0}
 
         rows = [{"id": "agent-new", "sessionId": "session-new",
@@ -186,7 +186,7 @@ class TestResumeGenerationFence(unittest.TestCase):
                 dispatch.resume_session(project, "resume-race", "continue")
 
         stop.assert_called_once_with("agent-new")
-        self.assertEqual(S.load_task(project, "resume-race")["state"], "parked")
+        self.assertEqual(S.load_task(project, "resume-race")["state"], "rejected")
 
 
 if __name__ == "__main__":

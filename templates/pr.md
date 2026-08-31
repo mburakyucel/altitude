@@ -1,6 +1,6 @@
 # {title}
 
-Altitude task `{task}` — `{branch}` → `{base}`, landed with `alt land` (decision 47, tier 0).
+Altitude task `{task}` — `{branch}` → `{base}`, landed through the guarded `alt land` path.
 
 {message}
 

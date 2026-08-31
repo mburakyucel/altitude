@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from altitude import config, engines, improve, l1, state as S
+from altitude import config, engines, incidents, l1, state as S
 
 
 def _response(**overrides):
@@ -64,7 +64,7 @@ class TestL1RawOutput(unittest.TestCase):
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", engine_call))
             stack.enter_context(mock.patch.object(engines, "claude_print", engine_call))
-            stack.enter_context(mock.patch.object(improve, "system_fault", side_effect=lambda **kw: faults.append(kw)))
+            stack.enter_context(mock.patch.object(incidents, "system_fault", side_effect=lambda **kw: faults.append(kw)))
             result = l1.exec_run("project", "task", name)
         return result, run_dir, faults
 

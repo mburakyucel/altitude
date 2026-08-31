@@ -38,7 +38,7 @@ class EditCountHook(unittest.TestCase):
         self.assertFalse((Path(self.home) / "monitor" / "counts-old-session.json").exists())
         self.assertFalse((Path(self.home) / "monitor" / "counts-new-session.json").exists())
 
-    def test_first_keyed_edit_seeds_the_session_count(self):
+    def test_first_keyed_edit_does_not_import_session_count(self):
         mon = Path(self.home) / "monitor"
         mon.mkdir(parents=True, exist_ok=True)
         legacy = mon / "counts-old-session.json"
@@ -47,9 +47,9 @@ class EditCountHook(unittest.TestCase):
         result = self.run_hook("old-session", "new.py", "demo--task-1")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.counts("demo--task-1")["edits"], 5)
-        self.assertEqual(self.counts("demo--task-1")["files"], ["new.py", "old.py"])
-        self.assertEqual(self.counts("demo--task-1")["subagent_launches"], 2)
+        self.assertEqual(self.counts("demo--task-1")["edits"], 1)
+        self.assertEqual(self.counts("demo--task-1")["files"], ["new.py"])
+        self.assertNotIn("subagent_launches", self.counts("demo--task-1"))
         self.assertEqual(json.loads(legacy.read_text())["edits"], 4)
 
     def test_without_dispatch_key_edits_remain_per_session(self):

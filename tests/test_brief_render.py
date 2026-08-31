@@ -16,7 +16,6 @@ PROJECT = "brief-render-template-test"
 REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
     "branch",
-    "engine_line",
     "leases",
     "merge_policy",
     "model",
@@ -39,7 +38,7 @@ class TestBriefRender(unittest.TestCase):
         config.ensure_root()
         REPO.mkdir(exist_ok=True)
         projects = config.load_projects()
-        projects[PROJECT] = {"name": PROJECT, "path": str(REPO), "stacks": ["python"]}
+        projects[PROJECT] = {"name": PROJECT, "path": str(REPO)}
         config.save_projects(projects)
 
         default_task = tasks.new(

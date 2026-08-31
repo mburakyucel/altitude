@@ -114,7 +114,7 @@ export const WipSchema = z
     machine: z.number(),
     limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
-    // why: "dispatch" (state approved) or "resume" (blocked with resume_after) — digest.py wip().
+    // why: "dispatch" (state queued) or "resume" (blocked with resume_after) — digest.py wip().
     waiting: z.array(
       z.object({ project: z.string(), slug: z.string(), why: z.string().nullish() }).passthrough(),
     ),
@@ -219,7 +219,6 @@ export const MonitorSchema = z
     quota: QuotaSchema,
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
-    tool_shapes: z.record(z.string(), z.unknown()).nullish(),
   })
   .passthrough();
 
@@ -367,8 +366,6 @@ export function useTaskAction(project: string) {
 export interface ProjectAddInput {
   name: string;
   path?: string;
-  /** Comma-separated stack names, as the server expects. */
-  stacks?: string;
   approval?: string;
   wip?: number;
 }

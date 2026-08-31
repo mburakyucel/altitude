@@ -31,13 +31,13 @@ CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 HOST = os.environ.get("ALTITUDE_HOST", "10.88.0.1")
 PORT = int(os.environ.get("ALTITUDE_PORT", "8890"))
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
-# TLS (decision 34): reuse the pocketbook's local CA + server cert for 10.88.0.1 when present (the phone already trusts it);
+# Reuse the pocketbook's local CA + server cert for 10.88.0.1 when present (the phone already trusts it);
 # otherwise `alt tls-init` makes an equivalent pair under ~/.altitude/tls. ALTITUDE_TLS=0 forces plain http.
 _POCKETBOOK_TLS = HOME / ".local/state/tutor/tls"
 TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", str(_POCKETBOOK_TLS if (_POCKETBOOK_TLS / "server.crt").exists() else ROOT / "tls"))).expanduser()
 TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
-# Context lines per engine (decision 12, settled 2026-08-30; numbers fixed by decision 49): Claude quality degrades past
+# Context lines per engine: Claude quality degrades past
 # ~25–30% of the window in Burak's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
 # 1,000,000-token window (probed 2026-08-30: result JSON `modelUsage[..].contextWindow`), so the umbrella for all Claude
 # sessions is **300k**: auto-compact there (explicit `autoCompactWindow` on every launch — never a percent override on
@@ -49,24 +49,21 @@ AUTOCOMPACT_WINDOW = int(CONTEXT_WINDOW * CONTEXT_ACT)   # 300_000, passed as Cl
 CONTEXT_WINDOW_CODEX = 256_000
 CONTEXT_WARN_CODEX = 0.80
 CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude only watches
-# Model tiers (decision 38, Burak 2026-08-30): judgement at the top (L3 = Fable, low volume), coding at least Opus,
-# Fable for the hard coding (L2 per task, L1 per sub-brief — dynamic), research/docs on Sonnet or Opus, never Fable.
-MODELS = {"l3": "fable", "l2": "opus", "l2_hard": "fable", "l1": "opus", "l1_hard": "fable",
-          "reviewer": "opus", "research": "sonnet",
-          "l1_codex": None, "reviewer_codex": None}   # None = the Codex CLI's configured default model
+# Default Claude models. A Codex L1/reviewer uses the Codex CLI's configured model unless its run overrides it.
+MODELS = {"l3": "fable", "l2": "opus", "l1": "opus", "reviewer": "opus"}
 ENGINES = ("claude", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
 CODEX_EFFORT = {"implementer": None, "reviewer": None, "l3": None}
-L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
+L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")
 L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
-QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
-WIP_PER_PROJECT = 3               # decision 21
-WIP_PER_MACHINE = 10              # Burak 2026-08-30: 10 concurrent tasks (decision 51 addendum)
+QUOTA_RESERVE = 0.70
+WIP_PER_PROJECT = 3
+WIP_PER_MACHINE = 10
 SESSIONS_PER_MACHINE = 24         # live Claude sessions (L2s + optional L1s) across all projects
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
 L3_TURN_TIMEOUT = 900             # seconds

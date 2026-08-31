@@ -16,12 +16,12 @@ class TestDirectDispatch(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"direct": {"name": "direct", "path": config.ROOT.as_posix(), "stacks": []}})
+        config.save_projects({"direct": {"name": "direct", "path": config.ROOT.as_posix()}})
 
     def test_new_task_is_immediately_queued_without_pipeline_metadata(self):
         task = T.new("direct", "Fix the focused bug", "Fix it and test it.", actor="burak")
 
-        self.assertEqual(task["state"], "approved")
+        self.assertEqual(task["state"], "queued")
         for removed in ("class", "envelope", "proposal_attempts", "decision", "estimate"):
             self.assertNotIn(removed, task)
         self.assertEqual(T.decisions("direct"), [])
@@ -36,7 +36,7 @@ class TestDirectDispatch(unittest.TestCase):
             self.assertFalse((config.PERSONAS / removed).exists())
 
     def test_waiting_task_dispatches_directly_to_l2(self):
-        queued = {"slug": "direct-one", "state": "approved"}
+        queued = {"slug": "direct-one", "state": "queued"}
         result = {"dispatch_id": "direct-one-1", "agent": {"id": "l2-agent"}}
         with mock.patch.object(S, "list_tasks", return_value=[queued]), \
              mock.patch.object(server.dispatch, "wip_hold", return_value=None), \

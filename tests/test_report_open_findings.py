@@ -20,7 +20,7 @@ class TestReportOpenFindings(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         projects = config.load_projects()
-        projects[PROJECT] = {"name": PROJECT, "path": _TMP, "stacks": ["python"]}
+        projects[PROJECT] = {"name": PROJECT, "path": _TMP}
         config.save_projects(projects)
 
     def _report(self, slug: str, review: list[dict], blocked: str) -> tuple[dict, dict]:

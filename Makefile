@@ -1,7 +1,7 @@
 .PHONY: run test web install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
-test:           ## lifecycle self-test (throwaway ALTITUDE_HOME) + rules unit tests
+test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
 	python3 -m unittest discover tests
 web:            ## build the SPA into web/dist (frozen-lockfile pnpm install + build; needs node >= 22)
 	cd web && export PATH="$$HOME/.nvm/versions/node/v24.14.0/bin:$$PATH" && pnpm install --frozen-lockfile && pnpm build

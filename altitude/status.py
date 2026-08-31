@@ -1,4 +1,4 @@
-"""Compact, fault-tolerant, read-only task orientation (decision 47, tier 0).
+"""Compact, fault-tolerant, read-only task orientation.
 
 ``wip_hold`` reports only the file-lease reason: it is a read-only subset of
 ``dispatch.wip_hold``, which is the dispatcher's state-advancing check.
@@ -94,14 +94,9 @@ def status(project: str, slug: str) -> dict:
             out[field] = task.get(field)
 
     dispatch_id = task.get("dispatch_id")
-    session_id = task.get("session_id")
     counts_path = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
-    if (counts_path is None or not counts_path.exists()) and session_id:
-        counts_path = config.MONITOR_DIR / f"counts-{session_id}.json"  # legacy session-keyed counter
-    if counts_path is not None:
+    if counts_path is not None and counts_path.exists():
         try:
-            if not counts_path.exists():
-                raise FileNotFoundError(counts_path)
             counts = S.read_json(counts_path, {})
             if not isinstance(counts, dict):
                 raise TypeError("counter file is not an object")

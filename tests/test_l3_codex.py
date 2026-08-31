@@ -18,7 +18,7 @@ class TestCodexL3(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         (_TMP / "repo").mkdir()
-        config.save_projects({"k": {"name": "k", "path": str(_TMP / "repo"), "stacks": ["python"]}})
+        config.save_projects({"k": {"name": "k", "path": str(_TMP / "repo")}})
 
     def _run(self, held: bool, claude_limited: bool = False):
         calls = []

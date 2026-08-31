@@ -92,27 +92,4 @@ describe("Monitor", () => {
     expect(screen.getByText("none")).toBeInTheDocument();
   });
 
-  it("renders the tool-shape empty state when history is absent", async () => {
-    mockFetch();
-    renderApp({ route: "/monitor" });
-
-    expect(await screen.findByText("no tool-shape history")).toBeInTheDocument();
-  });
-
-  it("renders project tool shapes with formatted counts", async () => {
-    mockFetch({
-      ...monitor,
-      tool_shapes: {
-        altitude: [
-          { shape: "git commit", turns: 1250, context_tokens: 9_876_543, sessions: 17 },
-        ],
-      },
-    });
-    renderApp({ route: "/monitor" });
-
-    expect(await screen.findByText("git commit")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: "altitude" })).toBeInTheDocument();
-    expect(screen.getByText("1,250")).toBeInTheDocument();
-    expect(screen.getByText("9,876,543")).toBeInTheDocument();
-  });
 });

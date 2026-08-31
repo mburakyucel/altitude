@@ -18,7 +18,7 @@ class TestContextWindow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": str(_TMP), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(_TMP)}})
 
     def test_umbrella_numbers(self):
         self.assertEqual(config.CONTEXT_WINDOW, 1_000_000)

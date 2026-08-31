@@ -1,16 +1,13 @@
 # Altitude web UI
 
-Vite + React 19 + TypeScript SPA, styled with Tailwind 4 over `design/tokens.css`
-(light/dark/system via `data-theme`). Data layer: TanStack Query + zod (`src/data/api.ts`),
-routing via react-router, tests with vitest + testing-library.
+Vite, React, and TypeScript SPA styled with Tailwind over `design/tokens.css`. TanStack Query and
+zod own the API boundary; react-router owns navigation; vitest and Testing Library cover behavior.
 
-- **Build for altd**: `make web` (repo root) — installs with a frozen lockfile and emits
-  `web/dist/`, which altd serves (SPA fallback; `/api/*` untouched).
-- **Develop**: `pnpm dev` — Vite dev server proxying `/api` and `/digest.wav` to a locally
-  running altd (self-signed TLS accepted). Needs node >= 22 and pnpm (corepack).
-- **Test**: `pnpm test` (vitest, jsdom). Typecheck: `pnpm typecheck`.
+- Build for the Python server: `make web` from the repository root. It installs from the frozen
+  lockfile and emits `web/dist/`, including the SPA fallback used by `altd`.
+- Develop: `pnpm dev`. Vite proxies `/api` and `/digest.wav` to a local server.
+- Test: `pnpm test`. Typecheck and production build: `pnpm build`.
 
-Route components live in `src/routes/` — Inbox, Projects, Project, Task, Chat, Monitor and
-Listen, all implemented. Shared pieces: `src/data/api.ts` (query/mutation hooks, `streamChat`),
-`src/data/launches.ts` (`launchLabel`), `src/data/useOptimisticMutation.ts`,
-`src/data/Toast.tsx`, and `src/test/render.tsx` (`renderApp`).
+The four primary navigation destinations are Inbox, Projects, Chat, and Monitor. Project and Task
+are detail routes. Shared API, mutation, toast, and test helpers live under `src/data/` and
+`src/test/`.

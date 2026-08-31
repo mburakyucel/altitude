@@ -151,7 +151,7 @@ export default function Chat() {
   const ctx = num(l3["context_percent"]);
   const session = str(l3["session_id"]);
   const disabled = streaming || busy;
-  // The 0.1 project strip: one link per managed project, straight to that project's chat.
+  // One link per managed project, straight to that project's chat.
   const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
   return (

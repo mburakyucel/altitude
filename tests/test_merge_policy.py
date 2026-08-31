@@ -18,7 +18,7 @@ class TestMergePolicy(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         REPO.mkdir()
-        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO)}})
 
     def test_tasks_merge_by_default(self):
         T.new("altitude", "merge-l", "req")

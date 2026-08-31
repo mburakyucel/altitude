@@ -17,7 +17,7 @@ class TestQueue(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         (_TMP / "repo").mkdir()
-        config.save_projects({"q": {"name": "q", "path": str(_TMP / "repo"), "stacks": ["python"], "wip": 5}})
+        config.save_projects({"q": {"name": "q", "path": str(_TMP / "repo"), "wip": 5}})
 
     def setUp(self):
         recovery.hold_path().unlink(missing_ok=True)
@@ -35,7 +35,7 @@ class TestQueue(unittest.TestCase):
         running = T.new("q", "broad", "r", actor="l3", paths=["tests/", "altitude/lane.py"])
         running["state"] = "running"; S.save_task("q", running)
         t = T.new("q", "narrow", "r", actor="l3", paths=["tests/test_other.py"])
-        t["state"] = "approved"; S.save_task("q", t)
+        t["state"] = "queued"; S.save_task("q", t)
         real = engines.claude_agents; engines.claude_agents = lambda: []
         try:
             self.assertIsNone(dispatch.wip_hold("q", t), "a bare tests/ claim must not hold a task touching one test file")
@@ -56,7 +56,7 @@ class TestQueue(unittest.TestCase):
         leased = T.new("q", "leased", "r", actor="l3", paths=["altitude/server.py"])
         free = T.new("q", "free", "r", actor="l3", paths=["altitude/monitor.py"])
         for t in (leased, free):
-            t["state"] = "approved"; S.save_task("q", t)
+            t["state"] = "queued"; S.save_task("q", t)
         started = []
         real_run, real_agents = dispatch.run, engines.claude_agents
         dispatch.run = lambda project, slug: started.append(slug) or {"dispatch_id": slug, "agent": None}

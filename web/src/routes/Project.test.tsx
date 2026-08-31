@@ -13,7 +13,7 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 
 const project = {
   name: "altitude",
-  config: { stacks: ["python", "web"], approval: "ask", wip: 2 },
+  config: { approval: "ask", wip: 2 },
   l3: { session_id: "abcdef1234567890", turns: 12, context_percent: 33, last_turn: ago(7) },
   busy: false,
   tasks: [
@@ -29,7 +29,7 @@ const project = {
         edits: 7,
       },
     },
-    { slug: "add-badge", state: "approved", title: "Add the badge", updated: ago(30) },
+    { slug: "add-badge", state: "queued", title: "Add the badge", updated: ago(30) },
   ],
   archive: [{ slug: "old-thing", state: "done", title: "Old thing" }],
   inbox: [{ at: ago(9), slug: "fix-timer", text: "L2 picked it up" }],
@@ -39,11 +39,11 @@ const project = {
       title: "Add the badge",
       question: "Stopped mid-task: Which badge color should be used?",
       asked: ago(4),
-      options: ["Resume", "Park", "Reject"],
+      options: ["Resume", "Reject"],
       kind: "blocked",
     },
   ],
-  incidents: [{ id: "INC-1", title: "altd restarted", tags: ["restart"], rule: "R-002" }],
+  incidents: [{ id: "INC-1", title: "altd restarted", tags: ["restart"] }],
   hold: null,
   state_md: "# STATE\nall good",
 };
@@ -85,7 +85,7 @@ describe("Project", () => {
     await screen.findByRole("link", { name: "Fix the timer" });
     expect(screen.getByText("Tasks (2)")).toBeInTheDocument();
     expect(screen.getByText(/session abcdef12 · 12 turns · context 33% · last 7m/)).toBeInTheDocument();
-    expect(screen.getByText(/stacks: python, web · approval: ask · WIP 2/)).toBeInTheDocument();
+    expect(screen.getByText(/approval: ask · WIP 2/)).toBeInTheDocument();
     expect(screen.getByText(/L1 runs 1/)).toBeInTheDocument();
     expect(screen.getByText(/L2 active\/tool · ctx 44%/)).toBeInTheDocument();
     expect(screen.getByText("Needs you (1)")).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("Project", () => {
     expect(screen.getByText("Done / rejected (1)")).toBeInTheDocument();
   });
 
-  it("dispatches an approved task through /api/task/action", async () => {
+  it("dispatches a queued task through /api/task/action", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
@@ -165,7 +165,7 @@ describe("Project", () => {
     const heldCard = cardFor(await screen.findByRole("link", { name: "Held task" }));
     expect(
       within(heldCard).getByText(
-        /^queued: Altitude resumes this L2 itself when the WIP \/ one-rule-task-at-a-time hold clears \(usage limit: /,
+        /^queued: Altitude resumes this L2 itself when the operational hold clears \(usage limit: /,
       ),
     ).toBeInTheDocument();
     expect(within(heldCard).queryByText(/^blocked: /)).toBeNull();
@@ -173,11 +173,11 @@ describe("Project", () => {
 
     const stuckCard = cardFor(screen.getByRole("link", { name: "Stuck task" }));
     expect(within(stuckCard).getByText("blocked: the test suite will not run")).toBeInTheDocument();
-    expect(within(stuckCard).queryByText(/one-rule-task-at-a-time/)).toBeNull();
+    expect(within(stuckCard).queryByText(/operational hold/)).toBeNull();
     expect(stuckCard).toHaveClass("border-danger/40");
   });
 
-  it("creates a new task without a class selector", async () => {
+  it("creates a new task directly", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 

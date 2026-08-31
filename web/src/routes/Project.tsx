@@ -42,16 +42,15 @@ function arr(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** Actions offered for a task in this state, in the 0.1 app's order. */
+/** Actions offered directly on the compact task card. */
 function actionsFor(state: string): { action: string; label: string; primary?: boolean }[] {
   const out: { action: string; label: string; primary?: boolean }[] = [];
-  if (state === "approved") out.push({ action: "dispatch", label: "Dispatch" });
-  if (state === "parked") out.push({ action: "unpark", label: "Unpark" });
+  if (state === "queued") out.push({ action: "dispatch", label: "Dispatch" });
   return out;
 }
 
 function TaskCard({ project, task }: { project: string; task: TaskRow }) {
-  const [panel, setPanel] = useState<"" | "park" | "message">("");
+  const [panel, setPanel] = useState<"" | "message">("");
   const [text, setText] = useState("");
   const act = useTaskAction(project);
   const message = useL2Message(project);
@@ -78,7 +77,7 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   const held = state === "blocked" && Boolean(task.resume_after);
   if (held) {
     meta.push(
-      `queued: Altitude resumes this L2 itself when the WIP / one-rule-task-at-a-time hold clears (${blockedReason})`,
+      `queued: Altitude resumes this L2 itself when the operational hold clears (${blockedReason})`,
     );
   } else if (blockedReason) {
     meta.push(`blocked: ${blockedReason}`);
@@ -86,7 +85,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
 
   const progress = str(task.progress_tail);
   const canMessage = ["running", "blocked"].includes(state);
-  const canPark = ["approved", "running", "blocked"].includes(state);
 
   return (
     <article className={`card space-y-3 ${state === "blocked" && !held ? "border-danger/40" : ""}`}>
@@ -128,15 +126,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
             Message L2
           </button>
         ) : null}
-        {canPark ? (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setPanel(panel === "park" ? "" : "park")}
-          >
-            Park
-          </button>
-        ) : null}
         <Link className="ml-auto text-meta" to={`/projects/${project}/tasks/${task.slug}`}>
           Open
         </Link>
@@ -146,10 +135,8 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
           <input
             className="field flex-1"
             value={text}
-            placeholder={panel === "park" ? "Why park it?" : "Message for the L2"}
-            aria-label={
-              panel === "park" ? `Reason for parking ${task.slug}` : `Message the L2 on ${task.slug}`
-            }
+            placeholder="Message for the L2"
+            aria-label={`Message the L2 on ${task.slug}`}
             onChange={(event) => setText(event.target.value)}
           />
           <button
@@ -157,16 +144,12 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
             className="btn btn-primary"
             disabled={!text.trim() || act.isPending || message.isPending}
             onClick={() => {
-              if (panel === "park") {
-                act.mutate({ project, slug: task.slug, action: "park", reason: text.trim() });
-              } else {
-                message.mutate({ project, slug: task.slug, text: text.trim() });
-              }
+              message.mutate({ project, slug: task.slug, text: text.trim() });
               setText("");
               setPanel("");
             }}
           >
-            {panel === "park" ? "Confirm park" : "Send"}
+            Send
           </button>
         </div>
       ) : null}
@@ -184,7 +167,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
   const slug = str(row.slug);
   const title = str(row.title) || slug;
   const options = arr(row.options).map(String);
-  const fallback = ["Resume", "Park", "Reject"];
+  const fallback = ["Resume", "Reject"];
   const labels = options.length > 0 ? options : fallback;
   const onSettled = () => queryClient.invalidateQueries({ queryKey: ["project", project] });
   return (
@@ -279,7 +262,6 @@ function L3Card({ project, data }: { project: string; data: Record<string, unkno
         ...(l3.rotate_next ? ["rotates next turn"] : []),
       ].join(" · ")
     : "not started yet — send a chat message";
-  const stacks = arr(config.stacks).map(String).join(", ") || "—";
   return (
     <section className="card space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -299,7 +281,7 @@ function L3Card({ project, data }: { project: string; data: Record<string, unkno
         </button>
       </div>
       <p className="text-meta text-muted">
-        stacks: {stacks} · approval: {str(config.approval) || "default"} · WIP{" "}
+        approval: {str(config.approval) || "default"} · WIP{" "}
         {num(config.wip) ?? "—"}
       </p>
       {data.hold ? (
@@ -382,7 +364,7 @@ export default function Project() {
               <li key={str(incident.id) || index} className="text-body">
                 <span className="font-semibold">{str(incident.id)}</span> {str(incident.title)}{" "}
                 <span className="text-meta text-muted">
-                  {arr(incident.tags).map(String).join(", ")} → {str(incident.rule) || "incident-only"}
+                  {arr(incident.tags).map(String).join(", ") || "evidence"}
                 </span>
               </li>
             ))}

@@ -10,14 +10,12 @@ class TestModels(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix(), "stacks": []}})
+        config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix()}})
 
     def test_tiers(self):
         self.assertEqual(config.MODELS["l3"], "fable")            # judgement at the top
         self.assertEqual(config.MODELS["l1"], "opus")             # coding at least Opus
-        self.assertEqual(config.MODELS["l1_hard"], "fable")       # dynamic per sub-brief
-        for k in ("research",):
-            self.assertNotEqual(config.MODELS[k], "fable")        # research/docs never Fable
+        self.assertEqual(set(config.MODELS), {"l3", "l2", "l1", "reviewer"})
 
     def test_task_carries_explicit_model_only(self):
         t = T.new("p", "plain", "r", actor="burak")

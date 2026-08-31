@@ -58,7 +58,7 @@ class TestL1Runs(unittest.TestCase):
         subprocess.run(["git", "init", "-q", "--bare", str(remote)], cwd=REPO, check=True)
         subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=REPO, check=True)
         subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=REPO, check=True)
-        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(REPO)}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
 
@@ -67,8 +67,8 @@ class TestL1Runs(unittest.TestCase):
         # evidence from leaking into unrelated resume tests in the same discovery process.
         recovery.hold_path().unlink(missing_ok=True)
 
-    def _task(self, slug, engine=None):
-        T.new("altitude", slug, "req", actor="l3", engine=engine)
+    def _task(self, slug):
+        T.new("altitude", slug, "req", actor="l3")
         worktree = REPO / ".claude" / "worktrees" / slug
         subprocess.run(
             ["git", "worktree", "add", "-q", "-b", f"worktree-{slug}", str(worktree), "origin/main"],
@@ -96,10 +96,10 @@ class TestL1Runs(unittest.TestCase):
         kinds = [e["kind"] for e in S.read_events("altitude", slug)] if hasattr(S, "read_events") else ["l1-started", "l1-finished"]
         self.assertIn("l1-started", kinds); self.assertIn("l1-finished", kinds)
 
-    def test_task_engine_forces_claude_and_pr_is_parsed(self):
-        slug, brief = self._task("l1-claude", engine="claude")
-        rec = l1.start("altitude", slug, brief)
-        self.assertEqual(rec["engine"], "claude"); self.assertIn("forced on the task", rec["why"])
+    def test_run_engine_override_selects_claude_and_pr_is_parsed(self):
+        slug, brief = self._task("l1-claude")
+        rec = l1.start("altitude", slug, brief, engine="claude")
+        self.assertEqual(rec["engine"], "claude"); self.assertIn("command line", rec["why"])
         done = _wait_done("altitude", slug, rec["name"])
         self.assertEqual(done["result"]["pr"], 42)
 

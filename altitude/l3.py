@@ -1,4 +1,4 @@
-"""The L3 session — headless, resumable, driven by the server, one turn at a time (decision 16)."""
+"""The L3 session — headless, resumable, driven by the server, one turn at a time."""
 from __future__ import annotations
 import json
 import threading
@@ -10,7 +10,7 @@ _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
 ALLOWED_TOOLS = ("Read,Grep,Glob,Bash(alt *),Bash(git log*),Bash(git diff --stat*),Bash(gh pr view*),"
-                 "Bash(gh pr list*),Bash(gh issue *),Bash(gh run *),Agent")
+                 "Bash(gh pr list*),Bash(gh issue *),Bash(gh run *)")
 
 
 def lock(project: str) -> threading.Lock:
@@ -69,7 +69,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
     """Run one L3 turn. Serialized per project. Handles start, resume, and rotation.
 
     `on_start(pid)` receives the turn subprocess's pid: it outlives an altd restart, so the caller can record
-    it and tell an in-flight turn from a dead one afterwards (incident I-011)."""
+    it and tell an in-flight turn from a dead one afterwards."""
     with lock(project):
         if precheck is not None and not precheck():
             return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
@@ -79,15 +79,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         S.regen_state_md(project)
         inf = info(project)
         sid = inf.get("session_id")
-        over = (inf.get("context_percent") or 0) >= config.CONTEXT_ACT * 100  # decision 12: checked at turn start, not only after
+        over = (inf.get("context_percent") or 0) >= config.CONTEXT_ACT * 100
         if over and sid and not inf.get("rotate_next"):
             inf["rotate_reason"] = f"context {inf.get('context_percent')}% ≥ act line {int(config.CONTEXT_ACT * 100)}% at turn start"
         fresh = not sid or inf.get("rotate_next", False) or over
         if fresh and sid:
             S.project_log(project, "l3-rotate", old=sid, reason=inf.get("rotate_reason", "requested"))
-            # the rotation is a decision, so it is persisted *before* the turn runs: it used to be saved only
-            # when the turn returned, so an altd that restarted mid-turn read the old session id back and
-            # rotated the very same session again, once per restart (I-011: three `l3-rotate old=e9aa9612`)
+            # Persist rotation before the turn so a restart cannot rotate the same session repeatedly.
             inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None, "context_percent": 0,
                         "rotated_from": sid, "rotated_at": S.now()})
             save_info(project, inf)
@@ -95,7 +93,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         turn_started_at = S.now()
         chat_log(project, "user", prompt, trigger=trigger, at=turn_started_at)
         held = engines.usage_hold()
-        if proj.get("l3_engine") == "codex" or held:  # decision 56: the L3 does not stop when the Claude window is out
+        if proj.get("l3_engine") == "codex" or held:  # L3 falls back visibly when the Claude window is closed
             return _codex_turn(project, prompt, trigger, persona, turn_started_at,
                                reason=f"Claude window exhausted until {held}" if held else "project pins l3_engine=codex")
         res = engines.claude_print(
@@ -117,7 +115,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                     "started": inf.get("started") if not fresh else S.now(),
                     "context_state": engines.context_state(pct),
                     "rotate_next": pct >= config.CONTEXT_ACT * 100,
-                    "rotate_reason": f"context {pct}% ≥ act line {int(config.CONTEXT_ACT * 100)}% (decision 12)" if pct >= config.CONTEXT_ACT * 100 else None})
+                    "rotate_reason": f"context {pct}% ≥ act line {int(config.CONTEXT_ACT * 100)}%" if pct >= config.CONTEXT_ACT * 100 else None})
         save_info(project, inf)
         chat_log(project, "assistant", res["text"] or (res["error"] or ""), trigger=trigger, context_percent=pct,
                  turns=res["turns"], tools=res["tools"][:40])
@@ -127,9 +125,9 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
 
 
 def _codex_turn(project: str, prompt: str, trigger: str, persona: Path, turn_started_at: str, *, reason: str) -> dict:
-    """One L3 turn on Codex (decision 56). No transcript: the state file and the recent chat are its memory, exactly as a
+    """One L3 turn on Codex. No transcript: the state file and the recent chat are its memory, exactly as a
     fresh Claude session. The Claude session id is kept for when the window reopens; the turn is labelled `codex` in the
-    chat log, the project log and the result — a degraded state that is visible, never a silent substitution (decision 36)."""
+    chat log, the project log and the result — a degraded state that is visible, never a silent substitution."""
     inf = info(project)
     recent = chat_history(project, 20)
     history = "\n".join(f"- {m.get('role')}: {str(m.get('text') or '')[:600]}" for m in recent if m.get("role") in ("user", "assistant"))

@@ -1,4 +1,4 @@
-"""Subscription CLIs driven headlessly (decision 1). Claude Code and Codex command builders + runners."""
+"""Headless Claude Code and Codex command builders and runners."""
 from __future__ import annotations
 import ast
 import json
@@ -70,7 +70,7 @@ class _BoundedRawCapture:
         data, truncated = cap_raw(bytes(self.head + self.tail), self.cap, total=self.total)
         return data.decode("utf-8", errors="replace"), truncated
 
-# ---- usage limit (decision 44): the subscription window closing is a hold with a reset time, not a failure ----------
+# ---- usage limit: the subscription window closing is a timed hold, not a failure ----------
 LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)
 RESETS = re.compile(r"resets?\s+(?:(?:at|in)\s+)?(?:([A-Za-z]{3,9}\s+\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.I)
 
@@ -146,12 +146,12 @@ def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
-    env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")  # I-021: `alt` in every session
+    env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     return env
 
 
 def claude_settings() -> Path:
-    """The settings every Claude launch without a per-dispatch file gets (decision 49): auto-compact at the 300k umbrella,
+    """The settings every Claude launch without a per-dispatch file gets: auto-compact at the configured window,
     stated explicitly rather than inherited from ~/.claude/settings.json. Rewritten when the number changes."""
     p = config.ROOT / "claude-settings.json"
     want = {"autoCompactWindow": config.AUTOCOMPACT_WINDOW}
@@ -174,8 +174,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
     made while a hold is in force.
 
-    `on_start(pid)` is called the moment the child exists. The turn outlives altd (systemd KillMode=process,
-    ce856bb), so its pid is the only evidence a *restarted* altd has that the turn is still running (I-011)."""
+    `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
+    restarted server distinguish an in-flight turn from a dead one."""
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
@@ -195,7 +195,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--model", model]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings())]
     if resume:
         cmd += ["--resume", resume]
     env = clean_env()
@@ -328,7 +328,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
         cmd += ["--max-turns", str(max_turns)]
     if model:
         cmd += ["--model", model]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings())]
     env = clean_env()
     env.update(extra_env or {})
     p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
@@ -342,7 +342,7 @@ def claude_agents() -> list[dict]:
                            timeout=60, env=clean_env())
         data = json.loads(p.stdout or "[]")
     except (subprocess.SubprocessError, ValueError, OSError) as e:
-        # decision 36: an empty list would read as "every L2 vanished" and block every running task — fail loudly instead
+        # An empty fallback would read as "every L2 vanished"; fail loudly instead.
         raise RuntimeError(f"claude agents --json failed: {e}") from e
     if p.returncode != 0:
         raise RuntimeError(f"claude agents --json exit {p.returncode}: {(p.stderr or '')[-300:]}")
@@ -370,7 +370,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
         cmd += ["--append-system-prompt-file", str(persona)]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
-    cmd += ["--settings", str(settings or claude_settings())]  # decision 49: the 300k umbrella rides on every launch
+    cmd += ["--settings", str(settings or claude_settings())]
     env = clean_env()
     env.update(extra_env or {})
     p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
@@ -430,7 +430,7 @@ def codex_sandbox_preflight(cwd: Path, extra_config: list[str] | None = None, ti
     """Prove the requested Linux sandbox can create, sync, and remove a sentinel in every writable root.
 
     `codex sandbox` cannot express these inline roots reliably, so probe the capability Codex depends on directly.
-    Other platforms and hosts without bwrap are outside I-030's failure mode and stay available with one warning.
+    Other platforms and hosts without bwrap stay available with one warning.
     """
     if not sys.platform.startswith("linux"):
         logger.warning("Codex sandbox preflight skipped: platform is not Linux")
@@ -492,10 +492,10 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         try:
             codex_sandbox_preflight(cwd, extra_config)
         except CodexSandboxPreflightError as exc:
-            from . import improve  # local: improve -> dispatch -> engines during module import
+            from . import incidents  # local import avoids the incident/engine module cycle
             fault_recorded = None
             try:
-                improve.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}",
+                incidents.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}",
                                      **(fault_context or {}))
                 fault_recorded = "codex-sandbox"
             except Exception:  # noqa: BLE001 — fault persistence must not replace the deterministic gate failure
@@ -560,7 +560,7 @@ def context_percent(context_tokens: int, engine: str = "claude") -> float:
 
 
 def context_state(pct: float | None, engine: str = "claude") -> str:
-    """ok | warn | act against the engine's lines (decision 12)."""
+    """Return ``ok``, ``warn``, or ``act`` against the engine's configured lines."""
     if pct is None:
         return "unknown"
     warn, act, _ = config.CONTEXT_LINES[engine]

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from altitude import config, dispatch, engines, improve, state as S
+from altitude import config, dispatch, engines, incidents, state as S
 
 
 class CleanupHarness(unittest.TestCase):
@@ -38,7 +38,7 @@ class CleanupHarness(unittest.TestCase):
             mock.patch.object(config, "MONITOR_DIR", self.monitor),
             mock.patch.object(config, "PROJECTS_FILE", self.state_root / "projects.json"),
             mock.patch.object(config, "INCIDENT_INDEX", self.state_root / "incidents.jsonl"),
-            mock.patch.object(improve, "FAULTS", self.monitor / "faults.json"),
+            mock.patch.object(incidents, "FAULTS", self.monitor / "faults.json"),
             mock.patch.object(config, "project_path", return_value=self.repo),
             mock.patch.object(dispatch, "pull_after_done", return_value=[]),
             mock.patch.object(engines, "claude_agents", side_effect=self._fake_agents),
@@ -48,9 +48,9 @@ class CleanupHarness(unittest.TestCase):
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
-        # cleanup_after_done imports altitude.improve locally; this is the exact function it calls. The FAULTS path is
+        # cleanup_after_done imports altitude.incidents locally; this is the exact function it calls. The FAULTS path is
         # also redirected above so a broken mock still cannot touch the real monitor or file an I-071 successor.
-        fault_patcher = mock.patch("altitude.improve.system_fault")
+        fault_patcher = mock.patch("altitude.incidents.system_fault")
         self.fault = fault_patcher.start()
         self.addCleanup(fault_patcher.stop)
 

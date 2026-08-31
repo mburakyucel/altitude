@@ -3,7 +3,7 @@
 **Goal:** {title}
 
 **Owner:** one L2 ({model}) owns this task end-to-end in `{branch}`. You may implement directly or use
-zero, one, or several L1s when that materially helps. {engine_line} Any L1 result is input that you own
+zero, one, or several L1s when that materially helps. Any L1 result is input that you own
 and integrate; it is not a transfer of responsibility.
 
 **Definition of done:** every code change goes through a PR; {merge_policy} The applicable repository

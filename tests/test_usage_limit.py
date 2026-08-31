@@ -59,7 +59,7 @@ class TestPollAndResume(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
 
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
         orig = engines.claude_agents, S.list_tasks, dispatch.job_detail

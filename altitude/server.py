@@ -1,4 +1,4 @@
-"""altd — the Altitude server: web app + JSON API + timers. Stdlib http.server, the pocketbook's shape (decision 29)."""
+"""altd — the Altitude web/API server and task timers."""
 from __future__ import annotations
 import json
 import mimetypes
@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, git_policy, improve, l3, monitor, quota_codex, recovery, refs, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -43,7 +43,7 @@ def spawn(key: str, fn, *a) -> bool:
             except Exception as e:  # noqa: BLE001
                 log(f"[{key}] failed: {e}\n{traceback.format_exc()}")
                 parts = key.split(":")
-                improve.system_fault(f"workflow:{parts[0]}", f"{key}: {e}", project=parts[1] if len(parts) > 1 else None,
+                incidents.system_fault(f"workflow:{parts[0]}", f"{key}: {e}", project=parts[1] if len(parts) > 1 else None,
                                      task=parts[2] if len(parts) > 2 else None)
         t = threading.Thread(target=run, name=key, daemon=True)
         _bg[key] = t
@@ -54,7 +54,7 @@ def spawn(key: str, fn, *a) -> bool:
 # ---- workflows the timers and buttons trigger --------------------------------
 
 def start_l3(project: str) -> None:
-    # [R-007] The start reply is a conversation with Burak, not a turn log.
+    # The start reply is a conversation with Burak, not a turn log.
     l3.turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
                      "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
                      "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
@@ -64,7 +64,7 @@ def start_l3(project: str) -> None:
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
-    if item.get("limited"):  # decision 44: hold, remember when to come back, say it once
+    if item.get("limited"):  # hold, remember when to come back, and announce the window once
         until, a = item["limited"], item.get("agent") or {}
         news = engines.note_usage_limit(until, f"L2 {a.get('id', '')} of {slug}")
         with S.project_lock(project):
@@ -86,7 +86,7 @@ def on_l2_finished(project: str, item: dict) -> None:
         return
     if item.get("died"):
         a = item.get("agent") or {}
-        improve.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
+        incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
                              f"`claude agents` state=failed", project=project, task=slug)
         T.block(project, slug, f"L2 session died before reporting (Altitude fault, not the L2's) — Resume from the card "
                                f"re-attaches its transcript (agent {a.get('id', '')})")
@@ -115,7 +115,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     The clean-close gate uses the on-disk report and live task state. It requires an ok verifier with no problems or
     signals, no merge hold, only merged PRs, at least one well-shaped successful main run, a healthy or not-applicable
     deploy, only fixed or dismissed review findings, and no decisions, blocks, FYIs, follow-ups, or post-mortem work.
-    Any malformed, corrupt, stale, or raced state fails closed to L3; corrupt JSON also raises a decision-36 system
+    Any malformed, corrupt, stale, or raced state fails closed to L3; corrupt JSON also raises a system
     fault. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart cut short is re-run by
     `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
@@ -139,9 +139,9 @@ def report_turn(project: str, t: dict, v: dict) -> None:
         except (KeyError, OSError):
             live, report = {}, None
         if task_error is not None:
-            improve.system_fault("task-json", f"{project}/{slug}: {task_error}", project=project, task=slug)
+            incidents.system_fault("task-json", f"{project}/{slug}: {task_error}", project=project, task=slug)
         if report_error is not None:
-            improve.system_fault("report-json", f"{project}/{slug}: {report_error}", project=project, task=slug)
+            incidents.system_fault("report-json", f"{project}/{slug}: {report_error}", project=project, task=slug)
         if isinstance(report, dict):
             landed = report.get("landed") or {}
             if not isinstance(landed, dict):
@@ -180,15 +180,15 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                         t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
                     log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                     return
-    # [R-007] The report-landed substance belongs in the task record, not a turn-log reply.
+    # Report details belong in the task record, not a turn-log reply.
     header = (f"Report landed for `{slug}`: verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
               "Read <task_dir>/report.md if you need more.\n\n"
               "Do the report-landed procedure from your instructions: digest + `alt task done`, or block/resume with the gap; "
               "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
-              "a rule, repair task, or healing workflow. "
-              "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+              "a repair task or healing workflow. "
+              "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
     res = l3.turn(project, header, trigger="report-landed")
@@ -240,10 +240,10 @@ def resume_stranded_reports(project: str) -> None:
 
 def dispatch_waiting(project: str) -> None:
     for t in S.list_tasks(project):
-        if t["state"] != "approved":
+        if t["state"] != "queued":
             continue
         hold = dispatch.wip_hold(project, t)
-        if hold and dispatch.per_task_hold(hold):  # decision 51: a leased task must not block the queue behind it
+        if hold and dispatch.per_task_hold(hold):
             if hold.startswith("recovery hold"):
                 S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             continue
@@ -271,7 +271,7 @@ def drain_hook_faults() -> None:
     lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
     p.unlink()
     for ln in lines[-20:]:
-        improve.system_fault("hook", ln[:400])
+        incidents.system_fault("hook", ln[:400])
 
 
 def tick() -> None:
@@ -297,7 +297,7 @@ def tick() -> None:
                     log(f"[{project}/{t['slug']}] cleanup: {notes}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
-            improve.system_fault("tick", f"{project}: {e}", project=project)
+            incidents.system_fault("tick", f"{project}: {e}", project=project)
     morning_digest()
 
 
@@ -319,7 +319,7 @@ def timer_loop() -> None:
         except Exception as e:  # noqa: BLE001
             log(f"tick: {e}\n{traceback.format_exc()}")
             try:
-                improve.system_fault("tick", str(e))
+                incidents.system_fault("tick", str(e))
             except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
                 log(f"tick: could not record fault: {e2}")
         time.sleep(config.AGENT_POLL_SECONDS)
@@ -394,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
     def _static(self, raw_path: str) -> None:
         """The built SPA (web/dist): hashed /assets/* immutable, index.html no-store, and any
         other GET falls back to index.html so client-side routes deep-link. A missing build is
-        an explicit 503 naming `make web` (decision 36), never a silent fallback."""
+        an explicit 503 naming `make web`, never a silent fallback."""
         dist = config.WEB_DIST.resolve()
         index = dist / "index.html"
         if not index.is_file():
@@ -466,29 +466,12 @@ class Handler(BaseHTTPRequestHandler):
             if api == "task" and len(parts) > 3:
                 return self._json(task_view(parts[2], parts[3]))
             if api == "monitor":
-                tool_shapes = {}
-                for project in config.load_projects():
-                    path = config.MONITOR_DIR / f"tool-shapes-{project}.json"
-                    if path.exists():
-                        try:
-                            histogram = S.read_json(path, {})
-                            if not isinstance(histogram, dict):
-                                raise TypeError(f"expected object in {path}")
-                            shapes = histogram.get("shapes", [])
-                            tool_shapes[project] = (shapes if isinstance(shapes, list) else [])[:10]
-                        except (ValueError, TypeError) as e:
-                            log(f"[{project}] warning: cannot display tool-shape histogram: {e}")
                 return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
-                                   "agents": engines.claude_agents(), "tool_shapes": tool_shapes})
+                                   "agents": engines.claude_agents()})
             if api == "digest":
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:
                 return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
-            if api == "ref" and len(parts) > 3:
-                try:
-                    return self._json(refs.resolve(parts[2], unquote(parts[3])))
-                except KeyError as e:
-                    return self._json({"error": f"unknown reference {e}"}, 404)
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
@@ -509,8 +492,8 @@ class Handler(BaseHTTPRequestHandler):
                 path = Path(o.get("path") or (config.PROJECT_ROOTS[0] / name))
                 if not path.is_dir():
                     return self._json({"error": f"{path} is not a directory"}, 400)
-                P[name] = {"path": str(path), "stacks": [s.strip() for s in (o.get("stacks") or "").split(",") if s.strip()],
-                           "approval": o.get("approval") or "default", "wip": int(o.get("wip") or config.WIP_PER_PROJECT)}
+                P[name] = {"path": str(path), "approval": o.get("approval") or "default",
+                           "wip": int(o.get("wip") or config.WIP_PER_PROJECT)}
                 config.save_projects(P)
                 config.project_dir(name).mkdir(parents=True, exist_ok=True)
                 S.regen_state_md(name)
@@ -524,26 +507,19 @@ class Handler(BaseHTTPRequestHandler):
                 t = S.load_task(project, slug)
                 if t["state"] != "blocked":
                     return self._json({"error": "only blocked tasks need a user decision"}, 409)
-                choice = ["Resume", "Park", "Reject"][int(opt)]
+                choice = ["Resume", "Reject"][int(opt)]
                 if choice == "Resume":
                     if t.get("session_id"):
                         spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
                     else:
                         T.resume(project, slug, actor="burak")
-                elif choice == "Park":
-                    T.park(project, slug, o.get("note") or "parked by Burak", actor="burak")
                 else:
                     T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by Burak"
-                if action == "park":
-                    T.park(project, slug, reason, actor="burak")
-                elif action == "unpark":
-                    T.unpark(project, slug, actor="burak")
-                    spawn(f"dispatch:{project}", dispatch_waiting, project)
-                elif action == "reject":
+                if action == "reject":
                     T.reject(project, slug, reason, actor="burak")
                 elif action == "done":
                     T.done(project, slug, actor="burak")
@@ -555,6 +531,8 @@ class Handler(BaseHTTPRequestHandler):
                     t = T.new(project, o["title"], o.get("request") or o["title"], actor="burak")
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
                     return self._json({"ok": True, "slug": t["slug"]})
+                else:
+                    return self._json({"error": f"unknown task action {action}"}, 400)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
                 project, slug = o["project"], o["slug"]
@@ -618,12 +596,12 @@ def project_view(name: str) -> dict:
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
         tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
-    order = {"blocked": 0, "running": 1, "reported": 2, "approved": 3, "parked": 4}
+    order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
-            "incidents": [r for r in improve.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
+            "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 
 
@@ -654,7 +632,7 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
-    if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance runs "current main"; a smoke/test altd must not clear the flag (I-013)
+    if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance clears the restart-pending flag
         try:
             git_policy.service_preflight(config.REPO)
             git_policy.require_hooks_installed(config.REPO)
@@ -671,7 +649,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
-        # decision 36: no silent fallback to loopback — exit non-zero and let systemd retry (wg0 may not be up yet)
+        # No silent fallback to loopback: exit non-zero and let systemd retry when the tunnel is ready.
         log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
         raise SystemExit(1)
     srv.daemon_threads = True

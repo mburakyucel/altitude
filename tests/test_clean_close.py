@@ -8,7 +8,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-clean-close-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, improve, l3, server, state as S, tasks as T  # noqa: E402
+from altitude import config, incidents, l3, server, state as S, tasks as T  # noqa: E402
 
 PROJECT = "cleanclose"
 
@@ -16,7 +16,7 @@ PROJECT = "cleanclose"
 def register() -> None:
     """Register this test project under whichever ROOT is live during suite discovery."""
     config.ensure_root()
-    config.save_projects({PROJECT: {"name": PROJECT, "path": config.ROOT.as_posix(), "stacks": ["python"]}})
+    config.save_projects({PROJECT: {"name": PROJECT, "path": config.ROOT.as_posix()}})
 
 
 class TestCleanClose(unittest.TestCase):
@@ -145,8 +145,8 @@ class TestCleanClose(unittest.TestCase):
                 **report, "landed": {**report["landed"], "deploy": "not-applicable"}}, True, False),
         )
         faults = []
-        original_fault = improve.system_fault
-        improve.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
+        original_fault = incidents.system_fault
+        incidents.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
         try:
             for name, build_report, closes, corrupt in cases:
                 with self.subTest(name=name):
@@ -162,7 +162,7 @@ class TestCleanClose(unittest.TestCase):
                     self.assertEqual(len(turns), 0 if closes else 1)
                     self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "done" if closes else "reported")
         finally:
-            improve.system_fault = original_fault
+            incidents.system_fault = original_fault
         self.assertEqual(len(faults), 1)
         self.assertEqual(faults[0][0][0], "report-json")
         self.assertEqual(faults[0][1], {"project": PROJECT, "task": "shape-corrupt-json"})
@@ -187,8 +187,8 @@ class TestCleanClose(unittest.TestCase):
 
     def test_missing_or_corrupt_live_status_falls_through_without_escaping(self):
         faults = []
-        original_fault = improve.system_fault
-        improve.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
+        original_fault = incidents.system_fault
+        incidents.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
         try:
             for name, corrupt in (("missing", False), ("corrupt", True)):
                 with self.subTest(name=name):
@@ -207,7 +207,7 @@ class TestCleanClose(unittest.TestCase):
                     self.assertEqual(turns[0][2], "report-landed")
                     self.assertTrue(any("l3_handled could not be stamped" in line for line in logs))
         finally:
-            improve.system_fault = original_fault
+            incidents.system_fault = original_fault
         self.assertEqual(len(faults), 1)
         self.assertEqual(faults[0][0][0], "task-json")
         self.assertEqual(faults[0][1], {"project": PROJECT, "task": "live-status-corrupt"})

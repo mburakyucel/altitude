@@ -80,7 +80,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         with mock.patch.object(engines.sys, "platform", "linux"):
             with mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"):
                 with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
-                    with mock.patch("altitude.improve.system_fault") as fault:
+                    with mock.patch("altitude.incidents.system_fault") as fault:
                         result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write",
                                                     fault_context={"project": "project", "task": "task"})
 
@@ -116,7 +116,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         with mock.patch.object(engines.sys, "platform", "linux"):
             with mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"):
                 with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
-                    with mock.patch("altitude.improve.system_fault") as fault:
+                    with mock.patch("altitude.incidents.system_fault") as fault:
                         result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write",
                                                     extra_config=extra)
 
@@ -136,7 +136,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
 
         with mock.patch.object(engines.shutil, "which") as which:
             with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
-                with mock.patch("altitude.improve.system_fault") as fault:
+                with mock.patch("altitude.incidents.system_fault") as fault:
                     result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="read-only")
 
         self.assertEqual(result["returncode"], 0)
@@ -235,7 +235,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         with mock.patch.object(engines.sys, "platform", "linux"):
             with mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"):
                 with mock.patch.object(engines.subprocess, "run", return_value=failure):
-                    with mock.patch("altitude.improve.system_fault", side_effect=OSError("fault store closed")):
+                    with mock.patch("altitude.incidents.system_fault", side_effect=OSError("fault store closed")):
                         with self.assertLogs(engines.logger.name, level="ERROR") as logs:
                             result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
 

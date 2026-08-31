@@ -3,13 +3,12 @@ import { Link } from "react-router";
 import { useOverview, useProjectAdd, useProjectRemove } from "../data/api";
 import type { ProjectRow } from "../data/api";
 
-/** The task states the row summarises, in the order the 0.1 app showed them. */
+/** Active task states in project-summary order. */
 const STATES = [
   "blocked",
   "running",
   "reported",
-  "approved",
-  "parked",
+  "queued",
 ] as const;
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
@@ -110,7 +109,6 @@ function ManagedRow({ project }: { project: ProjectRow }) {
 }
 
 function UnmanagedRow({ project }: { project: ProjectRow }) {
-  const [stacks, setStacks] = useState("");
   const add = useProjectAdd();
   return (
     <article className="card space-y-3">
@@ -119,13 +117,6 @@ function UnmanagedRow({ project }: { project: ProjectRow }) {
         <span className="ml-auto text-meta text-muted">{project.git ? "git" : "no git"}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input
-          className="field flex-1"
-          placeholder="Stacks (comma-separated, optional)"
-          aria-label={`Stacks for ${project.name}`}
-          value={stacks}
-          onChange={(event) => setStacks(event.target.value)}
-        />
         <button
           type="button"
           className="btn btn-primary"
@@ -134,7 +125,6 @@ function UnmanagedRow({ project }: { project: ProjectRow }) {
             add.mutate({
               name: project.name,
               path: project.path ?? undefined,
-              stacks: stacks.trim() || undefined,
             })
           }
         >
@@ -148,7 +138,6 @@ function UnmanagedRow({ project }: { project: ProjectRow }) {
 function AddProject() {
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
-  const [stacks, setStacks] = useState("");
   const add = useProjectAdd();
   return (
     <form
@@ -159,11 +148,9 @@ function AddProject() {
         add.mutate({
           name: name.trim(),
           path: path.trim() || undefined,
-          stacks: stacks.trim() || undefined,
         });
         setName("");
         setPath("");
-        setStacks("");
       }}
     >
       <h2 className="label">Add a project</h2>
@@ -181,13 +168,6 @@ function AddProject() {
           aria-label="Project path"
           value={path}
           onChange={(event) => setPath(event.target.value)}
-        />
-        <input
-          className="field flex-1"
-          placeholder="Stacks (optional)"
-          aria-label="Project stacks"
-          value={stacks}
-          onChange={(event) => setStacks(event.target.value)}
         />
         <button type="submit" className="btn btn-primary" disabled={add.isPending || !name.trim()}>
           Add

@@ -11,7 +11,7 @@ class TestLeases(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix(), "stacks": []}})
+        config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix()}})
         engines.claude_agents = lambda: []  # no live sessions
 
     def setUp(self):

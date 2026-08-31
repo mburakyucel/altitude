@@ -46,7 +46,7 @@ const running = {
   ],
 };
 
-const queued = { ...running, state: "approved", live: null };
+const queued = { ...running, state: "queued", live: null };
 
 const held = {
   ...running,
@@ -68,7 +68,7 @@ function stub(task: unknown) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
-    if (url.includes("/api/task/action")) return jsonResponse({ ok: true, state: "approved" });
+    if (url.includes("/api/task/action")) return jsonResponse({ ok: true, state: "queued" });
     if (url.includes("/api/task/")) return jsonResponse(task);
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
@@ -125,13 +125,13 @@ describe("Task", () => {
     });
   });
 
-  it("sends the typed reason with a park", async () => {
+  it("sends the typed reason with a reject", async () => {
     const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
     await user.type(screen.getByLabelText("Reason"), "waiting on the API");
-    await user.click(screen.getByRole("button", { name: "Park" }));
+    await user.click(screen.getByRole("button", { name: "Reject" }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
@@ -140,33 +140,28 @@ describe("Task", () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({
       project: "altitude",
       slug: "fix-timer",
-      action: "park",
+      action: "reject",
       reason: "waiting on the API",
     });
   });
 
-  // Park and Reject are irreversible from here and used to fire on one unconfirmed click with an
-  // optional reason; they now stay disabled until a reason is typed.
-  it("refuses park and reject until a reason is typed", async () => {
+  it("refuses reject until a reason is typed", async () => {
     const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
-    const park = screen.getByRole("button", { name: "Park" });
     const reject = screen.getByRole("button", { name: "Reject" });
-    expect(park).toBeDisabled();
     expect(reject).toBeDisabled();
     // a non-destructive action in the same row is unaffected
     expect(screen.getByRole("button", { name: "Dispatch" })).toBeEnabled();
 
-    await user.click(park);
+    await user.click(reject);
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(false);
 
     await user.type(screen.getByLabelText("Reason"), "   ");
-    expect(park).toBeDisabled();
+    expect(reject).toBeDisabled();
 
     await user.type(screen.getByLabelText("Reason"), "waiting on the API");
-    expect(park).toBeEnabled();
     expect(reject).toBeEnabled();
   });
 
@@ -178,7 +173,7 @@ describe("Task", () => {
 
     await screen.findByText("Fix the timer");
     const line = screen.getByText(
-      /^Queued: Altitude resumes this L2 itself when the WIP \/ one-rule-task-at-a-time hold clears \(usage limit: /,
+      /^Queued: Altitude resumes this L2 itself when the operational hold clears \(usage limit: /,
     );
     expect(line).toHaveClass("text-ink-2");
     expect(line).not.toHaveClass("text-danger");
@@ -192,7 +187,7 @@ describe("Task", () => {
     await screen.findByText("Fix the timer");
     const line = screen.getByText("Blocked: the test suite will not run");
     expect(line).toHaveClass("text-danger");
-    expect(document.body.textContent).not.toContain("one-rule-task-at-a-time");
+    expect(document.body.textContent).not.toContain("operational hold");
   });
 
   it("messages the L2 while the task is running", async () => {

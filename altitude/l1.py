@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, engines, git_policy, improve, route, state as S, tasks as T
+from . import config, engines, git_policy, incidents, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
@@ -45,8 +45,8 @@ def _codex_sandbox_denial(output: str | None) -> str | None:
 
 
 def _codex_sandbox_stop(text: str | None) -> str | None:
-    """The shape I-055 actually left behind. Codex does not surface the bwrap line to Altitude: on the real
-    incident `error` was None and the returncode 0, and the only evidence was the worker's own account of why
+    """Detect the host sandbox denial that Codex may omit from its structured error. On affected runs,
+    the structured `error` may be None with returncode 0, leaving only the worker's own account of why
     it stopped. Only consulted for a run that produced no PR, and a verbatim echo of CODEX_PATCH_NOTE is
     stripped first, so neither a landed run that merely discusses the sandbox nor the note itself can trigger it."""
     hay = (text or "").replace(CODEX_PATCH_NOTE, " ")
@@ -117,7 +117,7 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
            name: str, cwd: str | None, n: int, author: str | None, runs: list[dict]) -> dict:
     """Route, make the worktree, write the prompt, and start the detached wrapper."""
-    choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine, task=task,
+    choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine,
                                other_than=author if role == "reviewer" else None)
     base = Path(cwd) if cwd else Path(task.get("worktree") or config.project_path(project))
     if role == "implementer":
@@ -181,8 +181,8 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
         prompt += "\n\n" + CODEX_PATCH_NOTE
     prompt += FOOTER
     (runs_dir(project, slug) / f"{name}.prompt.md").write_text(prompt)
-    key = ("reviewer" if role == "reviewer" else "l1") + ("_codex" if choice["engine"] == "codex" else "")
-    model = model or config.MODELS.get(key)
+    key = "reviewer" if role == "reviewer" else "l1"
+    model = model or (None if choice["engine"] == "codex" else config.MODELS[key])
     if role == "implementer" and cwd:
         current = (_git(base, "rev-parse", "HEAD").stdout or "").strip()
         if current != parent_sha:
@@ -243,7 +243,7 @@ def exec_run(project: str, slug: str, name: str) -> dict:
         raw_stdout, raw_stderr = res.get("raw_stdout") or "", res.get("raw_stderr") or ""
         raw_stdout_truncated = bool(res.get("raw_stdout_truncated"))
         raw_stderr_truncated = bool(res.get("raw_stderr_truncated"))
-    except Exception as e:  # noqa: BLE001 — the record must close with the reason (decision 36)
+    except Exception as e:  # noqa: BLE001 — the record must close with the reason
         text, err = "", f"{type(e).__name__}: {e}"
         raw_stdout = getattr(e, "raw_stdout", getattr(e, "stdout", "")) or ""
         raw_stderr = getattr(e, "raw_stderr", getattr(e, "stderr", "")) or ""
@@ -281,7 +281,7 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     if denial:
         if res.get("fault_recorded") != "codex-sandbox":
             try:
-                improve.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
+                incidents.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
             except Exception as e:  # noqa: BLE001 — a fault raised about a broken run must not break the record too
                 err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
         summary = "engine fault: codex-sandbox"

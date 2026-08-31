@@ -18,7 +18,7 @@ describe("Inbox", () => {
           kind: "blocked",
           title: "Fix timer",
           question: "Stopped mid-task: Which timeout should I use?",
-          options: ["Resume", "Park", "Reject"],
+          options: ["Resume", "Reject"],
           detail: "The L2 needs a timeout value.",
         }],
         fyis: [],
@@ -30,7 +30,6 @@ describe("Inbox", () => {
     const { user } = renderApp({ route: "/inbox" });
 
     expect(await screen.findByText("Stopped mid-task: Which timeout should I use?")).toBeVisible();
-    expect(screen.queryByText(/proposal/i)).toBeNull();
     await user.type(screen.getByLabelText("Note for Fix timer"), "Use 30 seconds.");
     await user.click(screen.getByRole("button", { name: "Resume" }));
 

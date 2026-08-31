@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from altitude import config, engines, improve, l1, route, state as S
+from altitude import config, engines, incidents, l1, route, state as S
 
 
 class TestL1PatchNote(unittest.TestCase):
@@ -93,7 +93,7 @@ class TestL1PatchNote(unittest.TestCase):
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", return_value=response))
             stack.enter_context(mock.patch.object(engines, "claude_print", return_value=response))
-            stack.enter_context(mock.patch.object(improve, "system_fault", side_effect=lambda **kw: faults.append(kw)))
+            stack.enter_context(mock.patch.object(incidents, "system_fault", side_effect=lambda **kw: faults.append(kw)))
             result = l1.exec_run("project", "task", "implementer-1")
         return result, faults
 

@@ -19,7 +19,7 @@ function age(iso: string | null | undefined): string {
 function DecisionCard({ d }: { d: Decision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
-  const options = d.options ?? ["Resume", "Park", "Reject"];
+  const options = d.options ?? ["Resume", "Reject"];
   const blocked = d.kind === "blocked";
   return (
     <article className={`card space-y-3 ${blocked ? "border-danger/40" : ""}`}>

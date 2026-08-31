@@ -1,4 +1,4 @@
-"""Decision 45: engine choice — forced > task > role > quota headroom > default policy, always with a reason."""
+"""Optional L1/reviewer engine choice records its reason."""
 import os
 import sys
 import tempfile
@@ -21,11 +21,8 @@ class TestPickEngine(unittest.TestCase):
     def tearDown(self):
         monitor.quota, route.quota_codex = self._q, self._cx
 
-    def test_forced_and_task_and_role(self):
+    def test_run_override(self):
         self.assertEqual(route.pick_engine("l1", forced="claude")["engine"], "claude")
-        self.assertEqual(route.pick_engine("l1", task={"slug": "x", "engine": "codex"})["engine"], "codex")
-        self.assertEqual(route.pick_engine("l1", forced="claude", task={"slug": "x", "engine": "codex"})["engine"], "claude", "command line beats task")
-        self.assertEqual(route.pick_engine("l3")["engine"], "claude")
         with self.assertRaises(ValueError):
             route.pick_engine("l1", forced="gemini")
 

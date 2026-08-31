@@ -17,7 +17,7 @@ class TestDeadWorker(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
 
     def _poll(self, rows, tasks):
         orig_agents, orig_list = engines.claude_agents, S.list_tasks
@@ -91,7 +91,7 @@ class TestResumeRebinds(unittest.TestCase):
              mock.patch.object(
                  dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
              ), \
-             mock.patch("altitude.improve.system_fault") as fault, \
+             mock.patch("altitude.incidents.system_fault") as fault, \
              mock.patch.object(engines, "claude_resume_bg") as launch:
             with self.assertRaisesRegex(T.TransitionError, "foreign commit"):
                 dispatch.resume_session("altitude", "refused-resume", "go")

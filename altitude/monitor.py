@@ -1,4 +1,4 @@
-"""Context and quota per session; the reserve line (decision 31)."""
+"""Context and quota per session."""
 from __future__ import annotations
 import json
 import time
@@ -27,9 +27,8 @@ def sessions() -> list[dict]:
             if t["state"] in ("running", "blocked", "reported"):
                 dispatch_id = t.get("dispatch_id")
                 counts_p = config.MONITOR_DIR / f"counts-{name}--{dispatch_id}.json" if dispatch_id else None
-                if not counts_p or not counts_p.exists():
-                    counts_p = config.MONITOR_DIR / f"counts-{t.get('session_id')}.json"
-                counts = S.read_json(counts_p, {}) or {}
+                counts = S.read_json(counts_p, {}) if counts_p else {}
+                counts = counts or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 l1_dir = S.task_dir(name, t["slug"]) / "l1"
                 l1_runs = len(list(l1_dir.glob("*.json"))) if l1_dir.is_dir() else 0

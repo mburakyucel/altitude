@@ -13,7 +13,7 @@ from unittest import mock
 _BOOT = Path(tempfile.mkdtemp(prefix="altitude-recovery-safety-bootstrap-"))
 os.environ["ALTITUDE_HOME"] = str(_BOOT)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, improve, monitor, recovery, server, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, incidents, monitor, recovery, server, state as S, tasks as T  # noqa: E402
 
 
 class TestRecoveryFuse(unittest.TestCase):
@@ -27,17 +27,17 @@ class TestRecoveryFuse(unittest.TestCase):
             (config, "MONITOR_DIR", self.root / "monitor"),
             (config, "PROJECTS_FILE", self.root / "projects.json"),
             (config, "INCIDENT_INDEX", self.root / "incidents.jsonl"),
-            (improve, "FAULTS", self.root / "monitor" / "faults.json"),
+            (incidents, "FAULTS", self.root / "monitor" / "faults.json"),
         ):
             self.patches.enter_context(mock.patch.object(obj, name, value))
         config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": str(self.repo), "stacks": []}})
+        config.save_projects({"altitude": {"name": "altitude", "path": str(self.repo)}})
 
     def tearDown(self):
         self.patches.close()
 
     def test_system_fault_holds_dispatch_and_creates_no_task(self):
-        result = improve.system_fault("test-health", "engine supervision failed", project="altitude")
+        result = incidents.system_fault("test-health", "engine supervision failed", project="altitude")
 
         self.assertIsNotNone(result)
         self.assertEqual(S.list_tasks("altitude"), [], "fault evidence must not recursively create repair work")
@@ -50,7 +50,7 @@ class TestRecoveryFuse(unittest.TestCase):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")
         repair = T.new("altitude", "repair ownership", "diagnose and repair", actor="l3", source="recovery")
 
-        self.assertEqual(repair["state"], "approved", "recovery delegation bypasses proposal and user approval")
+        self.assertEqual(repair["state"], "queued", "recovery delegation enters the direct queue")
         self.assertIsNone(recovery.dispatch_hold("altitude", repair))
         with self.assertRaisesRegex(T.TransitionError, "already has active repair task"):
             T.new("altitude", "second repair", "another repair", actor="l3", source="recovery")
@@ -79,17 +79,17 @@ class TestRecoveryFuse(unittest.TestCase):
 
         def record(number):
             barrier.wait()
-            return improve.system_fault("parallel-health", f"failure {number}", project="altitude")
+            return incidents.system_fault("parallel-health", f"failure {number}", project="altitude")
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(record, (1, 2)))
 
         self.assertEqual(sum(result is not None for result in results), 1)
-        fault = S.read_json(improve.FAULTS)["parallel-health"]
+        fault = S.read_json(incidents.FAULTS)["parallel-health"]
         self.assertEqual(fault["count"], 2)
         self.assertIsNotNone(fault["incident"])
-        incidents = [row for row in improve.index() if row.get("title") == "system fault: parallel-health"]
-        self.assertEqual(len(incidents), 1)
+        rows = [row for row in incidents.index() if row.get("title") == "system fault: parallel-health"]
+        self.assertEqual(len(rows), 1)
         inbox = [json.loads(line) for line in
                  (config.project_dir("altitude") / "inbox.jsonl").read_text().splitlines()]
         notices = [row for row in inbox if "SYSTEM FAULT [parallel-health]" in row.get("text", "")]
@@ -230,7 +230,7 @@ class TestRecoveryFuse(unittest.TestCase):
     def test_recovery_task_needs_no_size_metadata(self):
         recovery.hold("manual hold", actor="l3")
         repair = T.new("altitude", "direct repair", "request", actor="l3", source="recovery")
-        self.assertEqual(repair["state"], "approved")
+        self.assertEqual(repair["state"], "queued")
         self.assertNotIn("class", repair)
         self.assertNotIn("envelope", repair)
         self.assertEqual(recovery.status()["repair"]["slug"], repair["slug"])
@@ -238,7 +238,7 @@ class TestRecoveryFuse(unittest.TestCase):
     def test_dispatch_skips_ordinary_work_and_reaches_claimed_repair(self):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")
         ordinary = T.new("altitude", "ordinary first", "request", actor="l3", source="chat")
-        ordinary["state"] = "approved"
+        ordinary["state"] = "queued"
         S.save_task("altitude", ordinary)
         repair = T.new("altitude", "repair second", "request", actor="l3", source="recovery")
         started = []
@@ -269,11 +269,11 @@ class TestRecoveryFuse(unittest.TestCase):
 
     def test_fault_during_git_prep_prevents_fresh_worker_launch(self):
         ordinary = T.new("altitude", "racy ordinary launch", "request", actor="l3", source="chat")
-        ordinary["state"] = "approved"
+        ordinary["state"] = "queued"
         S.save_task("altitude", ordinary)
 
         def fault_then_return(*args, **kwargs):
-            improve.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
+            incidents.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
             return "a" * 40
 
         crossed_spawn_boundary = mock.Mock()
@@ -293,7 +293,7 @@ class TestRecoveryFuse(unittest.TestCase):
         launch.assert_called_once()
         crossed_spawn_boundary.assert_not_called()
         current = S.load_task("altitude", ordinary["slug"])
-        self.assertEqual(current["state"], "approved")
+        self.assertEqual(current["state"], "queued")
         self.assertIsNone(current.get("dispatching"))
         self.assertEqual(recovery.status()["faults"][-1]["kind"], "fetch-race")
 
