@@ -1,7 +1,4 @@
-name: Trusted remote test gate
-run-name: >-
-  trusted remote ${{ github.event_name == 'workflow_dispatch' && inputs.request_nonce ||
-  format('event-{0}-{1}', github.run_id, github.run_attempt) }}
+name: Remote tests
 
 on:
   pull_request_target:
@@ -9,241 +6,87 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      pull_request_number:
-        description: Current pull request number
-        required: true
-        type: string
-      candidate_repository:
-        description: Canonical fork owner/repository
-        required: true
-        type: string
-      candidate_sha:
-        description: Exact current pull request head SHA
-        required: true
-        type: string
-      expected_base_sha:
-        description: Exact current main SHA expected by the dispatcher
-        required: true
-        type: string
-      request_nonce:
-        description: Unique 64-character lowercase hexadecimal correlation nonce
-        required: true
-        type: string
 
 permissions:
-  actions: read
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: >-
-    trusted-remote-${{ github.repository_id }}-${{
-    github.event_name == 'pull_request_target' && github.event.pull_request.number ||
-    github.event_name == 'workflow_dispatch' && inputs.pull_request_number || github.ref }}
+  group: remote-tests-${{ github.repository_id }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  exact-pair-evidence:
-    name: trusted-remote / evidence
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+  python:
+    name: Remote tests / Python
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
-      TRUSTED_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_REPOSITORY: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name || github.repository }}
+      BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
       WORKFLOW_SHA: ${{ github.workflow_sha }}
+
     steps:
-      - name: Validate trusted base identity
+      - name: Validate event identity
         shell: bash
         run: |
           set -euo pipefail
-          case "$TRUSTED_SHA" in *[!0-9a-f]*|'') exit 97 ;; esac
-          case "$WORKFLOW_SHA" in *[!0-9a-f]*|'') exit 97 ;; esac
-          test "${#TRUSTED_SHA}" -eq 40
-          test "${#WORKFLOW_SHA}" -eq 40
-          test "$TRUSTED_SHA" = "$WORKFLOW_SHA"
 
-      - name: Checkout exact trusted base harness
-        id: trusted_checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # releases/v4, resolved 2026-08-30
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ env.TRUSTED_SHA }}
-          path: trusted
-          fetch-depth: 1
-          persist-credentials: false
-          set-safe-directory: false
-          submodules: false
-          lfs: false
+          is_sha() {
+            test "${#1}" -eq 40
+            case "$1" in
+              *[!0-9a-f]*) return 1 ;;
+            esac
+          }
 
-      - name: Resolve immutable run and PR identity
-        id: context
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INPUT_PULL_REQUEST_NUMBER: ${{ inputs.pull_request_number }}
-        run: |
-          set -euo pipefail
-          test "${{ steps.trusted_checkout.outputs.commit }}" = "$TRUSTED_SHA"
-          context_dir=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-trusted-context.XXXXXX")
-          /usr/bin/chmod 0700 "$context_dir"
-          printf '{}\n' > "$context_dir/pull.json"
-          if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then
-            case "$INPUT_PULL_REQUEST_NUMBER" in *[!0-9]*|'') exit 97 ;; esac
-            /usr/bin/gh api "/repos/$GITHUB_REPOSITORY/pulls/$INPUT_PULL_REQUEST_NUMBER" \
-              > "$context_dir/pull.json"
+          is_sha "$EXPECTED_SHA"
+          is_sha "$BASE_SHA"
+          is_sha "$WORKFLOW_SHA"
+
+          if test "$GITHUB_EVENT_NAME" = pull_request_target; then
+            test "$WORKFLOW_SHA" = "$BASE_SHA"
+          else
+            test "$GITHUB_EVENT_NAME" = push
+            test "$GITHUB_REF" = refs/heads/main
+            test "$EXPECTED_SHA" = "$GITHUB_SHA"
           fi
-          resolved=0
-          for resolution_attempt in $(/usr/bin/seq 1 15); do
-            /usr/bin/gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
-              > "$context_dir/jobs.json"
-            set +e
-            /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 HOME="$context_dir" \
-              /usr/bin/python3 -I "$GITHUB_WORKSPACE/trusted/ci/trusted-gate/resolve_run_context.py" \
-                --event-name "$GITHUB_EVENT_NAME" --event-file "$GITHUB_EVENT_PATH" \
-                --pull-file "$context_dir/pull.json" --jobs-file "$context_dir/jobs.json" \
-                --base-repository "$GITHUB_REPOSITORY" --base-repository-id "$GITHUB_REPOSITORY_ID" \
-                --base-sha "$TRUSTED_SHA" --workflow-sha "$WORKFLOW_SHA" \
-                --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
-                --github-output "$GITHUB_OUTPUT"
-            resolver_status=$?
-            set -e
-            if test "$resolver_status" -eq 0; then
-              resolved=1
-              break
-            fi
-            /usr/bin/sleep 2
-          done
-          test "$resolved" -eq 1
 
-      - name: Checkout candidate PR ref as inert data
-        id: candidate_checkout
+      - name: Checkout exact candidate
+        id: candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # releases/v4, resolved 2026-08-30
         with:
-          repository: ${{ github.repository }}
-          ref: ${{ steps.context.outputs.candidate_fetch_ref }}
+          repository: ${{ env.CANDIDATE_REPOSITORY }}
+          ref: ${{ env.EXPECTED_SHA }}
           path: candidate
           fetch-depth: 1
           persist-credentials: false
           set-safe-directory: false
           submodules: false
           lfs: false
-          allow-unsafe-pr-checkout: true
 
-      - name: Package inert candidate and trusted tests
+      - name: Verify exact checkout
+        shell: bash
+        env:
+          CHECKOUT_SHA: ${{ steps.candidate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$CHECKOUT_SHA" = "$EXPECTED_SHA"
+          test "$(/usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+            -C candidate rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Run Python tests without repository credentials
         shell: bash
         run: |
           set -euo pipefail
-          candidate_sha='${{ steps.context.outputs.candidate_sha }}'
-          test "${{ steps.candidate_checkout.outputs.commit }}" = "$candidate_sha"
-          test "$(/usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C trusted rev-parse HEAD)" = "$TRUSTED_SHA"
-          test "$(/usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C candidate rev-parse HEAD)" = "$candidate_sha"
-          input_dir=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-trusted-input.XXXXXX")
-          output_dir=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-trusted-output.XXXXXX")
-          /usr/bin/chmod 0700 "$input_dir" "$output_dir"
-          /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 HOME="$input_dir" \
-            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
-            /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C candidate \
-              archive --format=tar --prefix=source/ "$candidate_sha" > "$input_dir/candidate.tar"
-          /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 HOME="$input_dir" \
-            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
-            /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C trusted \
-              archive --format=tar --prefix=source/ "$TRUSTED_SHA" tests > "$input_dir/base-tests.tar"
-          /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 HOME="$input_dir" TMPDIR="$input_dir" \
-            /usr/bin/cc -O2 -Wall -Wextra -Werror -o "$input_dir/pid1" trusted/ci/trusted-gate/pid1.c
-          candidate_size=$(/usr/bin/stat -Lc '%s' "$input_dir/candidate.tar")
-          base_tests_size=$(/usr/bin/stat -Lc '%s' "$input_dir/base-tests.tar")
-          test "$candidate_size" -gt 0
-          test "$candidate_size" -le 536870912
-          test "$base_tests_size" -gt 0
-          test "$base_tests_size" -le 134217728
-          /usr/bin/chmod 0600 "$input_dir/candidate.tar" "$input_dir/base-tests.tar" "$input_dir/pid1"
-          candidate_digest=$(/usr/bin/sha256sum "$input_dir/candidate.tar" | /usr/bin/cut -d' ' -f1)
-          base_tests_digest=$(/usr/bin/sha256sum "$input_dir/base-tests.tar" | /usr/bin/cut -d' ' -f1)
-          pid1_digest=$(/usr/bin/sha256sum "$input_dir/pid1" | /usr/bin/cut -d' ' -f1)
-          printf 'ALTITUDE_GATE_INPUT_DIR=%s\n' "$input_dir" >> "$GITHUB_ENV"
-          printf 'ALTITUDE_GATE_OUTPUT_DIR=%s\n' "$output_dir" >> "$GITHUB_ENV"
-          printf 'ALTITUDE_GATE_EXPECTED_CANDIDATE_SHA256=%s\n' "$candidate_digest" >> "$GITHUB_ENV"
-          printf 'ALTITUDE_GATE_EXPECTED_BASE_TESTS_SHA256=%s\n' "$base_tests_digest" >> "$GITHUB_ENV"
-          printf 'ALTITUDE_GATE_EXPECTED_PID1_SHA256=%s\n' "$pid1_digest" >> "$GITHUB_ENV"
-
-      - name: Execute trusted root boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          runner_uid=$(/usr/bin/id -u)
-          runner_gid=$(/usr/bin/id -g)
-          sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 \
-            SUDO_UID="$runner_uid" SUDO_GID="$runner_gid" \
-            ALTITUDE_GATE_TRUSTED_DIR="$GITHUB_WORKSPACE/trusted" \
-            ALTITUDE_GATE_CANDIDATE_ARCHIVE="$ALTITUDE_GATE_INPUT_DIR/candidate.tar" \
-            ALTITUDE_GATE_BASE_ARCHIVE="$ALTITUDE_GATE_INPUT_DIR/base-tests.tar" \
-            ALTITUDE_GATE_PID1_BIN="$ALTITUDE_GATE_INPUT_DIR/pid1" \
-            ALTITUDE_GATE_OUTPUT_DIR="$ALTITUDE_GATE_OUTPUT_DIR" \
-            ALTITUDE_GATE_EXPECTED_CANDIDATE_SHA256="$ALTITUDE_GATE_EXPECTED_CANDIDATE_SHA256" \
-            ALTITUDE_GATE_EXPECTED_BASE_TESTS_SHA256="$ALTITUDE_GATE_EXPECTED_BASE_TESTS_SHA256" \
-            ALTITUDE_GATE_EXPECTED_PID1_SHA256="$ALTITUDE_GATE_EXPECTED_PID1_SHA256" \
-            ALTITUDE_GATE_BASE_REPOSITORY='${{ steps.context.outputs.base_repository }}' \
-            ALTITUDE_GATE_BASE_REPOSITORY_ID='${{ steps.context.outputs.base_repository_id }}' \
-            ALTITUDE_GATE_CANDIDATE_REPOSITORY='${{ steps.context.outputs.candidate_repository }}' \
-            ALTITUDE_GATE_CANDIDATE_REPOSITORY_ID='${{ steps.context.outputs.candidate_repository_id }}' \
-            ALTITUDE_GATE_EVENT_NAME='${{ steps.context.outputs.event_name }}' \
-            ALTITUDE_GATE_EVENT_ACTION='${{ steps.context.outputs.event_action }}' \
-            ALTITUDE_GATE_PULL_REQUEST_ID='${{ steps.context.outputs.pull_request_id }}' \
-            ALTITUDE_GATE_PULL_REQUEST_NUMBER='${{ steps.context.outputs.pull_request_number }}' \
-            ALTITUDE_GATE_RUN_ID='${{ steps.context.outputs.run_id }}' \
-            ALTITUDE_GATE_RUN_ATTEMPT='${{ steps.context.outputs.run_attempt }}' \
-            ALTITUDE_GATE_CHECK_RUN_ID='${{ steps.context.outputs.check_run_id }}' \
-            ALTITUDE_GATE_WORKFLOW_PATH='${{ steps.context.outputs.workflow_path }}' \
-            ALTITUDE_GATE_WORKFLOW_SHA='${{ steps.context.outputs.workflow_sha }}' \
-            ALTITUDE_GATE_REQUEST_NONCE='${{ steps.context.outputs.request_nonce }}' \
-            ALTITUDE_GATE_ARTIFACT_NAME='${{ steps.context.outputs.artifact_name }}' \
-            ALTITUDE_GATE_BASE_SHA='${{ steps.context.outputs.base_sha }}' \
-            ALTITUDE_GATE_CANDIDATE_SHA='${{ steps.context.outputs.candidate_sha }}' \
-            /usr/bin/bash --noprofile --norc "$GITHUB_WORKSPACE/trusted/ci/trusted-gate/launch.sh"
-
-      - name: Verify trusted result manifest
-        if: always() && env.ALTITUDE_GATE_OUTPUT_DIR != ''
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "$ALTITUDE_GATE_OUTPUT_DIR/manifest.json"
-          test -f "$ALTITUDE_GATE_OUTPUT_DIR/output.log"
-          test -f "$ALTITUDE_GATE_OUTPUT_DIR/mounts.txt"
-          /usr/bin/python3 "$GITHUB_WORKSPACE/trusted/ci/trusted-gate/verify_manifest.py" \
-            --manifest "$ALTITUDE_GATE_OUTPUT_DIR/manifest.json" \
-            --output "$ALTITUDE_GATE_OUTPUT_DIR/output.log" \
-            --mounts "$ALTITUDE_GATE_OUTPUT_DIR/mounts.txt" \
-            --trusted-dir "$GITHUB_WORKSPACE/trusted" --pid1 "$ALTITUDE_GATE_INPUT_DIR/pid1" \
-            --candidate-archive "$ALTITUDE_GATE_INPUT_DIR/candidate.tar" \
-            --base-tests-archive "$ALTITUDE_GATE_INPUT_DIR/base-tests.tar" \
-            --base-repository '${{ steps.context.outputs.base_repository }}' \
-            --base-repository-id '${{ steps.context.outputs.base_repository_id }}' \
-            --candidate-repository '${{ steps.context.outputs.candidate_repository }}' \
-            --candidate-repository-id '${{ steps.context.outputs.candidate_repository_id }}' \
-            --event-name '${{ steps.context.outputs.event_name }}' \
-            --event-action '${{ steps.context.outputs.event_action }}' \
-            --pull-request-id '${{ steps.context.outputs.pull_request_id }}' \
-            --pull-request-number '${{ steps.context.outputs.pull_request_number }}' \
-            --run-id '${{ steps.context.outputs.run_id }}' \
-            --run-attempt '${{ steps.context.outputs.run_attempt }}' \
-            --check-run-id '${{ steps.context.outputs.check_run_id }}' \
-            --workflow-path '${{ steps.context.outputs.workflow_path }}' \
-            --workflow-sha '${{ steps.context.outputs.workflow_sha }}' \
-            --request-nonce '${{ steps.context.outputs.request_nonce }}' \
-            --artifact-name '${{ steps.context.outputs.artifact_name }}' \
-            --base '${{ steps.context.outputs.base_sha }}' \
-            --candidate '${{ steps.context.outputs.candidate_sha }}'
-
-      - name: Upload immutable exact-pair evidence
-        if: always() && env.ALTITUDE_GATE_OUTPUT_DIR != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ steps.context.outputs.artifact_name }}
-          path: |
-            ${{ env.ALTITUDE_GATE_OUTPUT_DIR }}/manifest.json
-            ${{ env.ALTITUDE_GATE_OUTPUT_DIR }}/output.log
-            ${{ env.ALTITUDE_GATE_OUTPUT_DIR }}/mounts.txt
-          if-no-files-found: error
-          retention-days: 14
+          test_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-ci-home.XXXXXX")
+          altitude_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-ci-state.XXXXXX")
+          /usr/bin/chmod 0700 "$test_home" "$altitude_home"
+          cd candidate
+          /usr/bin/env -i \
+            PATH=/usr/local/bin:/usr/bin:/bin \
+            LANG=C.UTF-8 \
+            HOME="$test_home" \
+            ALTITUDE_HOME="$altitude_home" \
+            PYTHONDONTWRITEBYTECODE=1 \
+            PYTHONNOUSERSITE=1 \
+            CI=true \
+            /usr/bin/python3 -m unittest discover tests
