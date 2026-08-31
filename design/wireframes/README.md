@@ -5,12 +5,16 @@ career-platform convention without `support.js`). They are **drafts for review, 
 reference** — every board says so with its `draft` pill. The spec the build consumes stays
 `web/design/tokens.css` and the code under `web/`.
 
-Every colour and size on these boards is a literal from `web/design/tokens.css` — the light block,
-the dark block, the type scale, the radii, the sidebar and drawer widths, the 4px spacing scale;
-the few exceptions are listed below. Typefaces are IBM Plex Sans (UI) and IBM Plex Mono (ids,
-timers, quotes, and the wireframe callouts), loaded from Google Fonts inside each board's
-`<helmet>`. No shared stylesheet, no build step, no JS: each board opens in a browser on its own with
-a clean console.
+This preserved checkpoint contains **3 of the 12 planned boards**. The originating task is paused;
+these files are not approval to implement the design. The remaining nine boards and the findings
+from the first visual review are deferred rather than kept alive as agent tasks.
+
+The boards derive their colours, type scale, radii, target size, sidebar width, drawer width, and
+spacing scale from `web/design/tokens.css`. Layout and annotation dimensions are board-local, and
+the deliberate value exceptions are listed below; this checkpoint has not had final token-
+conformance review. Typefaces are IBM Plex Sans (UI) and IBM Plex Mono (ids, timers, quotes, and
+wireframe callouts), loaded from Google Fonts inside each board's `<helmet>`. There is no shared
+stylesheet, build step, or JavaScript, but a faithful render still depends on those web fonts.
 
 ## Render
 
@@ -19,7 +23,8 @@ a clean console.
 renders every `*.dc.html` to `design/wireframes/shots/<Board>.png` with the machine's Chrome
 (`/usr/bin/google-chrome`; override with `CHROME=/path`). Desktop boards render at 1440×900; a board
 whose file name starts with `Mobile` renders at 390×844. `shots/` is gitignored — look at the PNGs,
-do not commit them.
+do not commit them. The script only proves that Chrome wrote a non-empty PNG. It does not certify
+font loading, a clean browser console, token fidelity, accessibility, or absence of visual clipping.
 
 ## Value exceptions
 
@@ -52,4 +57,10 @@ do not commit them.
   off the card so the card on the board is exactly what ships, and the feedback rule is shown as a
   before/after pair instead of prose.
 
-A later stage adds `canvas.json` (artboard positions for the design canvas) and the mobile boards.
+## Checkpoint limitations
+
+The first visual review recorded 7 major and 5 minor findings. They include unproven worst-case card
+copy, atom and token drift, deliberate layout differences that need clearer annotation, render-
+harness blind spots, and several density/readability concerns. Those findings and the missing nine
+boards should be reconsidered together after the system simplification review. This checkpoint does
+not include `canvas.json`, the mobile boards, or a complete route set.
