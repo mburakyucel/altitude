@@ -1409,19 +1409,30 @@ def recovery_pending(project: str, task: dict) -> bool:
     if not automatic or not _recoverable_identity(project, task):
         return False
     category, _ = automatic
+    pending = task.get("pending_resume") or {}
+    if (pending.get("generation") and pending.get("dispatch_id") == task.get("dispatch_id")
+            and pending.get("engine") == task_l2_engine(project, task)):
+        return True
     rec = task.get("auto_recovery") or {}
     attempts = int(rec.get("attempts") or 0) if rec.get("category") == category else 0
+    if (rec.get("category") == category and rec.get("in_flight")
+            and _seconds_since(rec.get("started") or "") < AUTO_RECOVERY_CLAIM_SECONDS):
+        return True
     return attempts < AUTO_RECOVERY_LIMIT
 
 
 def _claimed_worker_live(project: str, task: dict) -> bool:
     """Adopt an exact claimed worker, including a fast terminal worker with a current report."""
     pending = task.get("pending_resume") or {}
-    current_report = _current_report(project, task)
+    engine = task_l2_engine(project, task)
+    if (not pending.get("generation") or pending.get("dispatch_id") != task.get("dispatch_id")
+            or pending.get("engine") != engine):
+        return False
+    current_report = bool(task.get("report_not_before")) and _current_report(project, task)
     terminal = False
-    if task_l2_engine(project, task) == "codex":
+    if engine == "codex":
         record = codex_run(project, task["slug"])
-        if (pending.get("generation") and record.get("generation") != pending.get("generation")):
+        if record.get("generation") != pending.get("generation"):
             return False
         if record.get("dispatch_id") != task.get("dispatch_id"):
             return False
@@ -1447,11 +1458,37 @@ def _claimed_worker_live(project: str, task: dict) -> bool:
         live = S.load_task(project, task["slug"])
         if live.get("state") != "blocked":
             return live.get("state") == "running"
+        live_pending = live.get("pending_resume") or {}
+        if (live_pending.get("dispatch_id") != pending.get("dispatch_id")
+                or live_pending.get("generation") != pending.get("generation")
+                or live_pending.get("engine") != pending.get("engine")):
+            return False
         live["agent_id"] = agent.get("id")
         live["session_id"] = agent.get("sessionId") or live.get("session_id")
-        S.save_task(project, live)
-    T.resume(project, task["slug"], actor="altd", recovered_worker=True, recovered_terminal=terminal)
+        live["blocked_reason"] = None
+        live["needs_user"] = None
+        live.pop("pending_resume", None)
+        T._move(project, live, "running", "altd", recovered_worker=True, recovered_terminal=terminal)
     return True
+
+
+def _settle_auto_recovery(project: str, slug: str, token: str | None, *, error: str | None = None,
+                          deferred: bool | None = None) -> None:
+    """Settle only the matching bounded recovery attempt without resetting its charge."""
+    with S.project_lock(project):
+        live = S.load_task(project, slug)
+        rec = live.get("auto_recovery") or {}
+        if not token or not rec or rec.get("token") != token:
+            return
+        rec["in_flight"] = False
+        rec["finished"] = S.now()
+        rec["error"] = error
+        if deferred is None:
+            rec.pop("deferred", None)
+        else:
+            rec["deferred"] = bool(deferred)
+        live["auto_recovery"] = rec
+        S.save_task(project, live)
 
 
 def resume_recoverable(project: str) -> list[str]:
@@ -1462,24 +1499,29 @@ def resume_recoverable(project: str) -> list[str]:
     for snapshot in sorted(tasks, key=_resume_order):
         if snapshot.get("pending_resume"):
             if _claimed_worker_live(project, snapshot):
+                _settle_auto_recovery(
+                    project, snapshot["slug"], (snapshot.get("auto_recovery") or {}).get("token"))
                 back.append(snapshot["slug"])
                 continue
             if _seconds_since((snapshot.get("pending_resume") or {}).get("started") or "") < AUTO_RECOVERY_CLAIM_SECONDS:
                 continue
             with S.project_lock(project):
                 live = S.load_task(project, snapshot["slug"])
-                if live.get("state") == "blocked":
-                    live.pop("pending_resume", None)
-                    S.save_task(project, live)
+                live_pending = live.get("pending_resume") or {}
+                snapshot_pending = snapshot.get("pending_resume") or {}
+                if live.get("state") != "blocked":
+                    continue
+                if any(live_pending.get(key) != snapshot_pending.get(key)
+                       for key in ("dispatch_id", "generation", "engine")):
+                    continue
+                live.pop("pending_resume", None)
+                S.save_task(project, live)
         automatic = _automatic_recovery(snapshot)
         if not automatic or not _recoverable_identity(project, snapshot):
             continue
         category, note = automatic
         rec = snapshot.get("auto_recovery") or {}
         if rec.get("category") == category and rec.get("in_flight"):
-            if _claimed_worker_live(project, snapshot):
-                back.append(snapshot["slug"])
-                continue
             if _seconds_since(rec.get("started") or "") < AUTO_RECOVERY_CLAIM_SECONDS:
                 continue
         if wip_hold(project, snapshot):
@@ -1488,7 +1530,8 @@ def resume_recoverable(project: str) -> list[str]:
         token = f"{os.getpid()}:{datetime.now(timezone.utc).timestamp()}"
         with S.project_lock(project):
             live = S.load_task(project, snapshot["slug"])
-            if live.get("state") != "blocked" or str(live.get("blocked_reason") or "") != reason:
+            if (live.get("state") != "blocked" or str(live.get("blocked_reason") or "") != reason
+                    or live.get("pending_resume")):
                 continue
             rec = live.get("auto_recovery") or {}
             attempts = int(rec.get("attempts") or 0) if rec.get("category") == category else 0
@@ -1502,15 +1545,13 @@ def resume_recoverable(project: str) -> list[str]:
         try:
             result = resume_blocked(project, snapshot["slug"], note, prefix="Altitude automatic recovery: ")
         except Exception as exc:
-            with S.project_lock(project):
-                live = S.load_task(project, snapshot["slug"])
-                rec = live.get("auto_recovery") or {}
-                if rec.get("token") == token:
-                    rec["error"] = f"{type(exc).__name__}: {exc}"[:500]
-                    live["auto_recovery"] = rec
-                    S.save_task(project, live)
+            _settle_auto_recovery(
+                project, snapshot["slug"], token,
+                error=f"{type(exc).__name__}: {exc}"[:500])
             continue
-        if not result.get("deferred"):
+        deferred = bool(result.get("deferred"))
+        _settle_auto_recovery(project, snapshot["slug"], token, deferred=deferred)
+        if not deferred:
             back.append(snapshot["slug"])
     return back
 
