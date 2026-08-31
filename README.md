@@ -3,11 +3,11 @@
 *Keep Burak at altitude.* Altitude is an experimental control surface for turning high-level work
 into bounded agent execution while keeping the human at the decision points. The first implementation
 overbuilt its orchestration and self-healing control plane; the runtime is now deliberately stopped
-for an architecture reset. Start with the as-built map and smaller target below.
+for an architecture reset. Start with the as-built map and agreed operating model below.
 
 ## Docs
 
-1. `docs/ARCHITECTURE.md` — **start here**: current as-built system, failure loop, complexity inventory, six-component target, invariants, and restart boundary.
+1. `docs/ARCHITECTURE.md` — **start here**: current as-built system, failure loop, agreed L3/L2/L1 responsibilities, flexible delegation model, collision boundaries, recovery behavior, and restart boundary.
 2. `docs/VISION.md` — the original problem, product intent, principles, and success criteria.
 3. `docs/ROLES.md` — the older L1/L2/L3 contract; historical input to the reset, not authority to restart it.
 4. `docs/DECISIONS.md` and `docs/RULES.md` — historical decision and rule ledgers; they contain drift and must be reconciled before becoming binding again.

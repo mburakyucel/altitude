@@ -1,22 +1,24 @@
-# Altitude architecture reset
+# Altitude architecture: current system and agreed direction
 
-*Current as-built map and reduction target, 2026-08-31. This document replaces the aspirational v1
-description that had drifted away from the code. It is descriptive, not an instruction to restart
-the service or resume archived tasks.*
+*Updated 2026-08-31 after the stabilization review and the human/agent architecture discussion.
+This document records the current system honestly and the agreed operating model. It deliberately
+does not prescribe a request classifier, rigid workflow schema, storage technology, or module
+layout.*
 
-## Executive summary
+## Purpose
 
-Altitude grew a large control plane around early agent and Git collisions. Each failure encouraged
-another incident, rule, recovery task, hook, or agent session. That produced positive feedback:
-recovery work could itself fail and create more recovery work.
+Altitude gives Burak one high-level point of contact for a project while preserving direct access
+to the agent that owns each task. It should make agent work easier to direct, isolate, review,
+recover, and finish. It should not turn flexible conversation into a large mandatory orchestration
+pipeline.
 
-At the stabilization boundary the runtime had 78 live task records—26 blocked, 32 parked, and 20
-rejected—with no healthy active task. It also had 19 pending rules, roughly 79 incident records, and
-126 registered worktrees. The service is deliberately stopped and masked while that state is
-archived and removed from live scheduling.
+The governing design principle is:
 
-The next architecture should be smaller than the current one. Six components, three agent roles,
-one writer, one task state machine, and one bounded worker pipeline are enough.
+> Use model judgment to decide what work is needed. Use code to enforce ownership, isolation,
+> durability, reviewable integration, and safe recovery.
+
+The runtime is deliberately stopped and masked while the old live queue and session state are
+archived. Nothing in this document authorizes a restart or replay of archived tasks.
 
 ## Current system, as built
 
@@ -32,7 +34,7 @@ flowchart TD
     D --> L2[background L2]
     L2 -->|alt l1 run| R[detached L1 launcher]
     R --> W[Claude or Codex worker / reviewer]
-    W --> G[worktrees → PR → land]
+    W --> G[worktrees → PR → landing]
     G --> CI[GitHub checks and trusted-gate workflow]
     L2 -->|report files| S
     A --> V[verify and close / L3 report turn]
@@ -42,20 +44,16 @@ flowchart TD
     K -.enforce.-> W
 ```
 
-The user-facing product is comparatively straightforward: a React SPA with Inbox, Projects,
-Project, Task, Chat, and Monitor routes over a Python HTTP API. Most complexity is in the control
-plane behind it.
+The user-facing product is comparatively simple: a React SPA with Inbox, Projects, Project, Task,
+Chat, and Monitor routes over a Python HTTP API. Most complexity accumulated behind it:
 
-| Area | Current shape | Consequence |
-|---|---|---|
-| State | File records plus several ledgers and marker fields | Nine formal states and many implicit secondary state machines |
-| Writers | HTTP handlers, timer threads, and CLI processes call state code | The documented “one writer” invariant is not true |
-| Planning | Proposal, critic, L3, L2, nested L1, and reviewer roles | Small changes can pay for the full orchestration chain |
-| Workers | Background sessions, detached wrappers, nested worktrees | Ownership, resume, cleanup, and collision handling are difficult |
-| Policy | Hooks parse shell text, environment, and ledgers | Capabilities are indirect and costly to reason about |
-| Healing | Faults, post-mortems, rules, audits, and mechanization create work | Recovery can amplify the condition it is trying to repair |
-| Landing | Local landing logic plus generic checks and a separate remote gate | The new gate is large, currently fails before candidate execution, and is not the authoritative landing path |
-| Runtime | One service plus descendants with incomplete generation ownership | A restart is not yet a reliable whole-generation cleanup boundary |
+- HTTP handlers, timer threads, and CLI processes can all reach state-writing code.
+- The lifecycle has nine declared states plus many secondary marker fields.
+- Small work can enter proposal, critic, L3, L2, nested L1, review, and report stages.
+- Process, session, worktree, task, and report ownership are not bound to one durable generation.
+- Policy is partly inferred by parsing shell commands, environment, and several ledgers.
+- Landing is split between local logic, generic GitHub checks, and a separate remote-gate design.
+- Recovery uses the same task-producing machinery it is trying to repair.
 
 ### The unhealthy feedback loop
 
@@ -72,8 +70,10 @@ flowchart LR
     A[audit / mechanize timer] --> I
 ```
 
-There is no global breaker that prevents recovery work from generating more recovery work.
-Deduplication can reduce identical records, but it does not remove the positive-feedback design.
+At the stabilization boundary there were 78 live task records—26 blocked, 32 parked, and 20
+rejected—with no healthy active task. There were also 19 pending rules, roughly 79 incident
+records, and 126 registered worktrees. Deduplication can reduce identical records, but it does not
+remove this positive-feedback design.
 
 ### Scale snapshot
 
@@ -81,115 +81,235 @@ Deduplication can reduce identical records, but it does not remove the positive-
 - About 9,750 lines of tests across 517 test methods.
 - About 35,500 words of documentation plus 4,200 words of personas.
 - Seven personas, five schemas, 47 CLI parser entries, and 56 recorded decisions.
-- The trusted-gate change alone added about 3,500 lines, including C, shell, Python, and workflow code.
-- Roughly 2,000 lines implement policy indirectly through shell parsing, Git policy, and launch/edit hooks.
+- The trusted-gate change alone added about 3,500 lines across C, shell, Python, and workflow code.
+- Roughly 2,000 lines implement policy indirectly through shell parsing, Git policy, and
+  launch/edit hooks.
 
-Large tests and documentation are not inherently bad. Here they are warning signs because several binding
-documents describe behavior that does not exist, while implemented behavior is spread across marker fields,
-hooks, and process conventions.
+These numbers are context, not deletion targets. Existing components must be evaluated against the
+agreed operating model before deciding what to retain, collapse, rewrite, or remove.
 
-### Important corrections to the old architecture document
+## Agreed operating model
 
-- The CLI does not talk only to a single local writer; it imports state operations directly.
-- The lifecycle has nine declared states, not five, plus additional marker-driven transitions.
-- There is no general Git/GitHub/worker reconciliation job matching the old design.
-- The deterministic Small lane and runtime Settings surface described as implemented are absent on main.
-- The React router has no Listen route, although older docs and server plumbing still mention it.
-- The trusted remote gate is frozen evidence, not a working landing authority.
+```mermaid
+flowchart TD
+    U[Burak] -->|project direction and high-level conversation| L3[L3: project coordinator]
+    L3 -->|delegate when sustained task ownership is useful| L2[L2: end-to-end task owner]
+    U <-->|task-specific conversation and steering| L2
+    L2 -->|optional, at L2's discretion| L1[L1 subagents]
+    L1 -->|bounded results| L2
+    L2 --> PR[isolated worktree / branch → PR]
+    PR -->|checks and appropriate review| M[main]
+    L3 <-->|short progress and outcome summaries| L2
+    U -->|select or reference work| GH[GitHub issues: durable backlog]
+    GH --> L3
+```
 
-## Smallest useful target
+### L3: high-level point of contact
+
+L3 owns project-level conversation and coordination:
+
+- discuss roadmap, divisions of work, priorities, and high-level implementation choices with Burak;
+- maintain an overview of active tasks and what each L2 is building;
+- interpret flexible requests and decide whether to answer directly, ask a question, or delegate;
+- start and supervise L2s without becoming a relay for task-specific conversation;
+- receive concise progress, decision, and completion summaries from L2s;
+- own operational recovery when the platform itself is unhealthy.
+
+L3 is not required to mine or drain GitHub issues autonomously. Burak can point L3 to an issue or
+describe new work directly. L3 uses the conversation and project context rather than a keyword
+classifier or rigid request schema.
+
+### L2: directly reachable, end-to-end owner
+
+One L2 owns a task from its beginning to its defined outcome. Depending on the request, that outcome
+may be an architectural proposal, a landed implementation, or a system repair.
+
+L2:
+
+- talks directly with Burak about task-specific questions, decisions, and steering;
+- loads only the relevant repository and project context;
+- implements simple work directly;
+- may use zero, one, or several L1 subagents when parallelism or an independent perspective is
+  genuinely useful;
+- integrates all L1 results into the task's branch and remains accountable for them;
+- owns appropriate tests, review, PR handling, merge, and verification for code tasks;
+- writes a concise human-readable outcome for L3 and the durable audit record.
+
+The system does not precompute a mandatory number of implementers, reviewers, proposal passes, or
+critique rounds. L2 chooses the working method within the hard boundaries below.
+
+### L1: optional leverage
+
+L1 is a subagent used at L2's discretion. It is not a mandatory stage and does not own the overall
+task. Useful reasons to create an L1 include independent parallel work, focused research, a bounded
+implementation slice, or fresh review. L2 remains responsible for scope, integration, collisions,
+and completion.
+
+## Flexible requests, not workflow classes
+
+The following are examples of model judgment, not enumerated task types:
+
+- A simple high-level question may be answered by L3 in the project conversation.
+- A substantial architecture request may cause L3 to start an L2 so Burak can develop the proposal
+  directly with the task owner.
+- “Implement issue #123” may be enough for L3 to start an implementation L2 immediately.
+- “Let’s discuss this” should not create a task or issue merely because work-related language
+  appeared.
+- A design conversation may transition into implementation when Burak explicitly asks to build it,
+  or stop after preserving a proposal for later.
+
+For proposal or architecture work, an L2 begins with a light context load: the request, current
+architecture overview, relevant code/docs, and directly related issues or PRs. If that is enough,
+it proposes. Otherwise it asks Burak focused questions directly. It does not load the entire task,
+incident, rule, persona, or chat history by default.
+
+GitHub issues preserve proposals, deferred work, and requirements worth keeping. Ordinary
+conversation does not automatically become backlog.
+
+## Communication and product behavior
+
+Altitude has two human-facing conversations:
+
+1. **Project conversation with L3** — roadmap, prioritization, high-level coordination, cross-task
+   questions, and system health.
+2. **Task conversation with L2** — requirements, implementation choices, steering, feedback, and
+   decisions for that task.
+
+Direct L2 messages do not travel through L3. Relevant decisions are recorded with the task, and L3
+receives a concise summary so it retains project awareness.
+
+The primary Chat and task views show the human/model conversation. Internal prompts, tool logs,
+report-ingestion turns, polling chatter, and raw status dumps belong in an optional diagnostic view,
+not the conversation.
+
+The project overview shows active work and items needing an immediate decision. Selecting a task
+opens its L2 conversation and current branch/worktree/PR status.
+
+## Backlog and task lifecycle
+
+GitHub issues are the durable backlog, selected by Burak rather than drained autonomously.
+Altitude's task view is a working set, not a second permanent backlog:
+
+- active work remains visible while an L2 owns it;
+- a deferred or parked item is preserved in or linked to a GitHub issue, then leaves the active
+  working set;
+- completed work leaves the active view;
+- PRs, issues, decisions, reports, and incidents remain available as audit links without occupying
+  L3's main context.
+
+The exact storage representation and lifecycle vocabulary are implementation decisions to make
+later. The architecture requires unambiguous ownership and removal from active context, not a large
+status schema.
+
+## Isolation, review, and landing
+
+Every code change reaches main through a PR.
+
+The normal boundary is:
+
+- one active L2 owns one task branch and worktree;
+- any L1 work is isolated and integrated by that L2;
+- unrelated tasks do not share mutable worktrees or directly mutate main;
+- stale or superseded generations cannot publish or overwrite current work;
+- the PR runs the repository's appropriate checks;
+- L2 may merge after those checks and appropriate review are complete;
+- when work genuinely needs independent or user review, L2 flags and holds the PR for that review.
+
+Review depth is judgment-based. Large, consequential, or uncertain work may need independent
+high-level validation; small, well-bounded work should not be forced through a costly review
+pipeline solely to satisfy a class schema. Burak and L3 can require review for a particular task at
+any time.
+
+Security and validation support these boundaries, but collision prevention and reviewable
+integration are the primary architectural goals. The exact trusted-compute and landing mechanism
+must be reviewed separately rather than assumed from the current gate implementation.
+
+## Recovery and incident learning
+
+When Altitude is unhealthy, L3 owns the recovery episode:
 
 ```mermaid
 flowchart LR
-    U[1. UI and thin CLI] --> C[2. Single-writer core]
-    C <--> DB[(one durable task / event store)]
-    C --> J[3. Planner and exception judge]
-    C --> R[4. Generation-bound worker runner]
-    R --> W[worker plus fresh reviewer]
-    W --> G[5. SCM / CI gateway]
-    G --> C
-    C --> H[6. Health breaker and reconcile]
+    F[fault detected] --> P[pause ordinary dispatch]
+    P --> R[L3 inspects and reconciles state]
+    R --> S[preserve, resume, or safely stop existing work]
+    S --> Q{code change needed?}
+    Q -->|no| V[restart / verify as appropriate]
+    Q -->|yes| L2[one recovery L2]
+    L2 -->|direct diagnosis and isolated PR| V
+    V --> H[verify health / reopen dispatch]
+    H --> I[review and consolidate incident]
 ```
 
-The health breaker is part of the core control loop. It observes and reconciles state; it is not
-another task queue.
+L3 may perform operational recovery: pause dispatch, inspect ownership and health, preserve work,
+stop or resume sessions, reconcile state, restart the service, and verify it. Code changes remain
+owned by one recovery L2.
 
-### Work lanes
+A recovery L2 receives a concise incident brief and works directly. It does not pass through a
+mandatory proposal → critic → implementation pipeline. It may use L1s when useful, but it owns the
+repair end-to-end.
 
-| Lane | Pipeline | Hard boundary |
-|---|---|---|
-| Small | direct worker → fresh review → CI → land | At most one fix and re-review; no proposal, critic, L3 task orchestration, or nested L1 |
-| Medium | one short coordinator brief → Small pipeline | Add judgment, not another execution hierarchy |
-| Large | proposal → human decision → split into Medium tasks | No execution until the split and decision are explicit |
-| Healing | stop dispatch → deterministic reconcile → one bounded repair → two health probes | Healing cannot create another healing task |
+Incident handling follows this order:
 
-“L1” should collapse into the write-capable worker. Independent review remains a separate, fresh,
-read-only role. The resulting agent vocabulary is coordinator, worker, and reviewer.
+1. Capture evidence immediately.
+2. Recover the system under L3's control.
+3. Review and coalesce the incident after stability returns.
+4. Decide whether it needs a narrow correction, a durable rule/mechanism, a proposal, or only
+   historical evidence.
 
-## Collision-preventing invariants
+L3 may proceed with a narrow corrective follow-up and report it as an FYI. Broad architecture,
+policy, permission, or system-wide changes become a proposal or GitHub issue for Burak. An incident
+never automatically creates another incident, rule task, or healing-task chain.
 
-1. Every mutation crosses one supervisor transaction boundary. UI, CLI, timers, and agents do not
-   write task files independently.
-2. One task has one branch, one worktree, and one active generation. Reassignment requires the old
-   generation to be durably empty.
-3. Every command carries task id, generation, and expected state. Stale commands fail a
-   compare-and-swap check.
-4. Landing evidence binds the exact base and head. Publication uses an exact-base lease, never an
-   unrelated green check or unchecked fallback.
-5. Unknown ownership or a system fault closes normal dispatch. Recovery permits one executor and
-   cannot create or dispatch recovery tasks recursively.
-6. The Small lane is structurally bounded: worker → reviewer → one fix → reviewer/land. Promotion is
-   explicit and preserves the same history.
+Important incident classes include quota/reset stalls, stale or abandoned sessions, ownership
+ambiguity, deadlocks, dispatch stalls, lost or stale reports, repeated collisions, and incomplete
+restart cleanup.
 
-## What to preserve, collapse, and freeze
+## Hard boundaries and agent discretion
 
-Preserve:
+| Enforced by the system | Left to model judgment |
+|---|---|
+| One active task owner and current generation | Whether L3 answers or delegates |
+| Isolated branch/worktree ownership | How much context, research, or planning is useful |
+| PR-only integration for code | Whether L2 uses L1s and how many |
+| Stale generations cannot publish | Whether to ask a question or make a reasonable assumption |
+| Direct task steering reaches the owning L2 | Proposal format and conversational depth |
+| Completed/deferred work leaves active context | Appropriate test and review depth above repository minimums |
+| Recovery pauses ordinary dispatch | Whether a design conversation should transition into a build |
+| Incidents cannot recursively create work | Whether a narrow follow-up is useful after recovery |
 
-- The React product surface and the first three wireframe drafts.
-- Clear task transition semantics, one-worktree-per-task intent, exact identity/lease concepts, and
-  independent review.
-- Existing remote-gate work as evidence until a simpler replacement is proven.
+Minimal durable metadata may include identity, owner/generation, lifecycle position, conversation,
+worktree/branch, PR, and audit links. Proposals and outcomes should remain human-readable; elaborate
+JSON contracts are not an architectural requirement.
 
-Collapse:
+## Explicit non-decisions
 
-- L1 and L2 into one direct worker plus a fresh reviewer.
-- Seven personas into coordinator, worker, and reviewer.
-- CLI and HTTP mutation paths into the single-writer core.
-- Status, inbox, fault, incident, rule, and launch ledgers into one task/event store with generated
-  human views.
-- Shell-inferred permissions into structural runner operations.
+This document does not yet choose:
 
-Freeze until explicitly re-approved:
+- a database, event store, or exact file schema;
+- exact Python modules or API boundaries;
+- the final UI layout or wireframe design;
+- a fixed request taxonomy or programmatic size classifier;
+- a required proposal, critic, reviewer, or subagent count;
+- the final trusted-gate/landing implementation;
+- which existing files or components are deleted.
 
-- Automatic rule or skill application.
-- Weekly audits and incident mechanization.
-- Autonomous backlog draining and self-deploy/restart behavior.
-- Dynamic quota optimization and statusline mutation.
-- Remaining Listen/TTS product work.
-- Any attempt to “fix” the current gate by adding another containment layer before its threat model
-  and keep/simplify/revert decision are reviewed.
+Those decisions should follow focused analysis against this operating model. Existing work is
+preserved in Git history and the stabilization archive so it can be evaluated rather than discarded
+or automatically resumed.
 
-After migration, delete nested worker wrappers, obsolete compatibility markers, unused Listen
-plumbing, local unchecked landing fallbacks, and hook-based policy code that the structural runner
-replaces. Git history and the stabilization archive preserve the old work.
+## Corrections to older documentation
 
-## Consolidated follow-up
-
-Future work is intentionally limited to these issues:
-
-- #106 — single-writer core, one task/event store, and documentation reset.
-- #107 — direct Small lane and generation-owned workers.
-- #108 — global recovery breaker and deterministic reconciliation.
-- #109 — simpler trusted CI and exact-base landing.
-- #105 — bounded process-owned capabilities.
-- #104 — deferred wireframe review and optional completion.
-
-The archived tasks, rules, incidents, sessions, and worktrees are evidence for those issues. They
-must not be replayed into the scheduler as individual work items.
+- The CLI does not currently talk only to a single writer; it imports state operations directly.
+- The implemented lifecycle has nine declared states, not five, plus marker-driven transitions.
+- No general Git/GitHub/worker reconcile matches the old architecture description.
+- The previously described deterministic Small lane and runtime Settings surface are absent on main.
+- The React router has no Listen route, although older documentation and server plumbing mention it.
+- The trusted remote gate is frozen evidence, not a working landing authority.
 
 ## Restart boundary
 
-This documentation change does not restart Altitude. Keep the service stopped while the live task,
-session, rule, and worktree state is archived and removed from scheduling. Restart should be an
-explicit decision after reviewing this map and choosing the minimum implementation sequence; it
-must not happen merely because the old queue has been cleared.
+Keep Altitude stopped while the old task, session, rule, incident, and worktree state is archived
+and removed from live scheduling. Restart is a separate, explicit decision after the current
+implementation is reconciled with this architecture. Clearing the old queue alone is not sufficient
+evidence that the system is healthy.
