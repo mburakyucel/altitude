@@ -15,23 +15,18 @@ from altitude import config, dispatch, tasks  # noqa: E402
 PROJECT = "brief-render-template-test"
 REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
-    "approval_note",
     "branch",
-    "class",
     "engine_line",
-    "l1_in_flight",
     "leases",
-    "max_turns",
     "merge_policy",
     "model",
     "never_list",
     "paths",
     "project",
-    "proposal",
+    "request",
     "repo",
     "report_schema",
     "slug",
-    "subagent_launches",
     "task_dir",
     "title",
 }
@@ -50,13 +45,11 @@ class TestBriefRender(unittest.TestCase):
         default_task = tasks.new(
             PROJECT,
             "Brief render default policy fixture",
-            "S",
             "Render a dispatch brief from a safe request.",
         )
         held_task = tasks.new(
             PROJECT,
             "Brief render held policy fixture",
-            "S",
             "Render a held dispatch brief from a safe request.",
             hold_merge="requires a maintainer release",
         )
@@ -101,7 +94,7 @@ class TestBriefRender(unittest.TestCase):
         rendered = self.default_rendered
         self.assertIn("implement directly", rendered)
         self.assertIn("zero, one, or several L1s", rendered)
-        self.assertIn("`subagent_launches: 0` are normal", rendered)
+        self.assertIn("Direct implementation is normal", rendered)
         self.assertIn("Review is optional", rendered)
         self.assertIn("alt task reply", rendered)
 

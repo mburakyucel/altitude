@@ -50,7 +50,7 @@ class TestResumeHold(unittest.TestCase):
         return {"agent": {"id": f"new-{slug}"}, "stdout": ""}
 
     def _task(self, title, state, path, created):
-        task = T.new(self.project, title, "S", "request", actor="l3", paths=[path])
+        task = T.new(self.project, title, "request", actor="l3", paths=[path])
         task.update({
             "state": state,
             "created": created,
@@ -82,11 +82,11 @@ class TestResumeHold(unittest.TestCase):
     def test_due_resume_uses_stored_answer_after_holder_finishes(self):
         holder = self._task("active lease", "running", "bin/alt", "2026-01-01T00:00:00+00:00")
         blocked = self._task("waiting resume", "blocked", "bin/alt", "2026-01-02T00:00:00+00:00")
-        blocked["blocked_reason"] = "Which envelope should I use?"
+        blocked["blocked_reason"] = "Which retry strategy should I use?"
         S.save_task(self.project, blocked)
-        dispatch.resume_blocked(self.project, blocked["slug"], "Keep the raised envelope.", prefix="Altitude: ")
+        dispatch.resume_blocked(self.project, blocked["slug"], "Use the focused retry.", prefix="Altitude: ")
         self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_question"],
-                         "Which envelope should I use?")
+                         "Which retry strategy should I use?")
         holder["state"] = "done"
         S.save_task(self.project, holder)
 
@@ -96,8 +96,8 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(resumed, [blocked["slug"]])
         self.assertEqual(task["state"], "running")
         self.assertEqual(self.resumed[0]["text"],
-                         "Altitude: Keep the raised envelope.\nContinue from your progress file; finish to *done* and rewrite the report.")
-        self.assertEqual(task["blocked_question"], "Which envelope should I use?")
+                         "Altitude: Use the focused retry.\nContinue from your progress file; finish to *done* and rewrite the report.")
+        self.assertEqual(task["blocked_question"], "Which retry strategy should I use?")
         self.assertNotIn("resume_after", task)
         self.assertNotIn("resume_answer", task)
         self.assertNotIn("resume_prefix", task)

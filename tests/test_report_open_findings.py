@@ -27,11 +27,8 @@ class TestReportOpenFindings(unittest.TestCase):
         task = {
             "slug": slug,
             "title": slug,
-            "class": "S",
             "state": "blocked" if blocked else "reported",
             "created": S.now(),
-            "envelope": {},
-            "estimate": {},
         }
         S.save_task(PROJECT, task)
         directory = S.task_dir(PROJECT, slug)

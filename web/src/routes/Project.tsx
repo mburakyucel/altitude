@@ -9,7 +9,6 @@ import {
   useTaskAction,
 } from "../data/api";
 import type { ProjectDecision, TaskRow } from "../data/api";
-import { launchLabel } from "../data/launches";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
 function age(value: unknown): string {
@@ -24,7 +23,7 @@ function age(value: unknown): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-/** The payload's loose corners (live, envelope, l3, config, log rows) arrive as `unknown`. */
+/** The payload's loose corners (live, l3, config, log rows) arrive as `unknown`. */
 function dict(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -46,9 +45,6 @@ function arr(value: unknown): unknown[] {
 /** Actions offered for a task in this state, in the 0.1 app's order. */
 function actionsFor(state: string): { action: string; label: string; primary?: boolean }[] {
   const out: { action: string; label: string; primary?: boolean }[] = [];
-  if (state === "requested") out.push({ action: "propose", label: "Propose" });
-  if (["requested", "parked", "proposed"].includes(state))
-    out.push({ action: "build", label: "Build now", primary: true });
   if (state === "approved") out.push({ action: "dispatch", label: "Dispatch" });
   if (state === "parked") out.push({ action: "unpark", label: "Unpark" });
   return out;
@@ -64,7 +60,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
   const raw = dict(task);
   const live = dict(task.live);
   const agent = dict(live.agent);
-  const envelope = dict(raw.envelope);
 
   const meta: string[] = [];
   if (state === "running") {
@@ -72,8 +67,7 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
     const agentState = str(agent.state);
     meta.push(`L2 ${status}${agentState ? `/${agentState}` : ""}`);
     meta.push(`ctx ${num(live.context_percent) ?? "?"}%`);
-    const cap = num(live.cap) ?? num(envelope.subagent_launches);
-    meta.push(launchLabel(live.subagent_launches, cap));
+    meta.push(`L1 runs ${num(live.l1_runs) ?? 0}`);
     meta.push(`edits ${num(live.edits) ?? 0}`);
   }
   const prs = arr(raw.prs);
@@ -92,12 +86,11 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
 
   const progress = str(task.progress_tail);
   const canMessage = ["running", "blocked"].includes(state);
-  const canPark = ["requested", "proposed", "approved", "blocked", "reported"].includes(state);
+  const canPark = ["approved", "running", "blocked"].includes(state);
 
   return (
     <article className={`card space-y-3 ${state === "blocked" && !held ? "border-danger/40" : ""}`}>
       <div className="flex flex-wrap items-center gap-2">
-        {task.class ? <span className="pill">{task.class}</span> : null}
         <span className="pill">{state}</span>
         <Link
           className="text-card-title font-semibold"
@@ -182,13 +175,8 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
 }
 
 /**
- * The project page's own copy of a Decision card — same POST as the Inbox, scoped to this project,
- * and the same executive shape (decision 46): context above the question, the reasoning behind it
- * in a closed "Why" disclosure. A card without context/detail renders exactly as it did before.
+ * A task blocked on user input. Task-specific discussion stays in the L2 conversation.
  */
-/** Decision 50: any option that starts with "revise" is the feedback path and needs the note. */
-const isRevise = (label: string) => /^revise/i.test(label);
-
 function DecisionCard({ project, row }: { project: string; row: ProjectDecision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
@@ -196,14 +184,12 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
   const slug = str(row.slug);
   const title = str(row.title) || slug;
   const options = arr(row.options).map(String);
-  const fallback = row.kind === "blocked" ? ["Resume", "Park", "Reject"] : ["Approve", "Revise", "Reject"];
+  const fallback = ["Resume", "Park", "Reject"];
   const labels = options.length > 0 ? options : fallback;
-  const blocked = row.kind === "blocked";
   const onSettled = () => queryClient.invalidateQueries({ queryKey: ["project", project] });
   return (
     <article className="card space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {str(row.class) ? <span className="pill">{str(row.class)}</span> : null}
         <h3 className="text-card-title font-semibold">{title}</h3>
         <span className="ml-auto text-meta text-muted">{age(row.asked)}</span>
       </div>
@@ -214,7 +200,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
       <textarea
         className="field w-full"
         rows={2}
-        placeholder={blocked ? "Note (optional)" : "Feedback — required for Revise, optional otherwise"}
+        placeholder="Answer or steering note (optional)"
         aria-label={`Note for ${title}`}
         value={note}
         onChange={(event) => setNote(event.target.value)}
@@ -225,9 +211,7 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
             key={label}
             type="button"
             className={index === 0 ? "btn btn-primary" : "btn"}
-            // Decision 50: a revision carries feedback — the button waits for it.
-            disabled={decide.isPending || (isRevise(label) && note.trim().length === 0)}
-            title={isRevise(label) && note.trim().length === 0 ? "Type what should change first" : undefined}
+            disabled={decide.isPending}
             onClick={() =>
               decide.mutate({ project, slug, option: index, note: note || undefined }, { onSettled })
             }
@@ -235,17 +219,6 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
             {label}
           </button>
         ))}
-        {!blocked && !labels.some(isRevise) ? (
-          <button
-            type="button"
-            className="btn"
-            disabled={decide.isPending || note.trim().length === 0}
-            title={note.trim().length === 0 ? "Type what should change first" : undefined}
-            onClick={() => decide.mutate({ project, slug, revise: true, note }, { onSettled })}
-          >
-            Revise
-          </button>
-        ) : null}
       </div>
       {row.detail ? (
         <details>
@@ -259,7 +232,6 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
 
 function NewTask({ project }: { project: string }) {
   const [title, setTitle] = useState("");
-  const [taskClass, setTaskClass] = useState("auto");
   const act = useTaskAction(project);
   return (
     <form
@@ -273,7 +245,6 @@ function NewTask({ project }: { project: string }) {
           slug: "",
           action: "new",
           title: request,
-          class: taskClass,
           request,
         });
         setTitle("");
@@ -286,17 +257,6 @@ function NewTask({ project }: { project: string }) {
         value={title}
         onChange={(event) => setTitle(event.target.value)}
       />
-      <select
-        className="field w-auto"
-        aria-label="Task class"
-        value={taskClass}
-        onChange={(event) => setTaskClass(event.target.value)}
-      >
-        <option value="auto">Auto</option>
-        <option value="S">S</option>
-        <option value="M">M</option>
-        <option value="L">L</option>
-      </select>
       <button type="submit" className="btn btn-primary" disabled={act.isPending || !title.trim()}>
         Add
       </button>
@@ -435,7 +395,7 @@ export default function Project() {
         <ul className="mt-2 space-y-1 text-meta text-muted">
           {[...archive].reverse().map((task) => (
             <li key={task.slug}>
-              {task.slug} [{task.class}] {task.state} — {task.title}
+              {task.slug} {task.state} — {task.title}
             </li>
           ))}
         </ul>

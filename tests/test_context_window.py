@@ -32,7 +32,7 @@ class TestContextWindow(unittest.TestCase):
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
         p = engines.claude_settings()
         self.assertEqual(json.loads(p.read_text()), {"autoCompactWindow": 300_000})
-        T.new("altitude", "ctx-task", "S", "req")
+        T.new("altitude", "ctx-task", "req")
         sp = dispatch.session_settings("altitude", "ctx-task", "key")
         st = json.loads(sp.read_text())
         self.assertEqual(st["autoCompactWindow"], 300_000)

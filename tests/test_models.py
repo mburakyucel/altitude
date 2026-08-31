@@ -16,16 +16,16 @@ class TestModels(unittest.TestCase):
         self.assertEqual(config.MODELS["l3"], "fable")            # judgement at the top
         self.assertEqual(config.MODELS["l1"], "opus")             # coding at least Opus
         self.assertEqual(config.MODELS["l1_hard"], "fable")       # dynamic per sub-brief
-        for k in ("proposal", "research"):
+        for k in ("research",):
             self.assertNotEqual(config.MODELS[k], "fable")        # research/docs never Fable
 
     def test_task_carries_explicit_model_only(self):
-        t = T.new("p", "plain", "S", "r", actor="burak")
+        t = T.new("p", "plain", "r", actor="burak")
         self.assertIsNone(t.get("model"))
-        t2 = T.new("p", "hard", "L", "r", actor="burak", model="fable")
+        t2 = T.new("p", "hard", "r", actor="burak", model="fable")
         self.assertEqual(t2["model"], "fable")
         with self.assertRaises(T.TransitionError):
-            T.new("p", "bad", "S", "r", actor="burak", model="gpt")
+            T.new("p", "bad", "r", actor="burak", model="gpt")
 
 
 if __name__ == "__main__":

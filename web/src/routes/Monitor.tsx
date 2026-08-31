@@ -1,12 +1,11 @@
 import type { CSSProperties } from "react";
 import { useMonitor } from "../data/api";
 import type { Quota, Session } from "../data/api";
-import { launchLabel } from "../data/launches";
 
 /**
  * The 0.1 monitor view: seat quota, one card per live session, and the raw list of
  * Claude worker processes. `/api/monitor` rows are passthrough, so the columns that
- * only some kinds carry (cwd, subagent_launches, cap, edits, agent, rotate_next)
+ * only some kinds carry (cwd, l1_runs, edits, agent, rotate_next)
  * arrive typed `unknown` and are narrowed here rather than in api.ts.
  */
 function str(value: unknown): string {
@@ -85,9 +84,8 @@ function SessionCard({ session }: { session: Session }) {
   const when = age(session.at);
 
   const meta: string[] = [`context ${context ?? "?"}%`];
-  // The counter is spelled "launches N · cap M" everywhere. "N/M" read as a plan to launch M.
-  if (session["subagent_launches"] != null) {
-    meta.push(launchLabel(session["subagent_launches"], session["cap"]));
+  if (session["l1_runs"] != null) {
+    meta.push(`L1 runs ${num(session["l1_runs"]) ?? 0}`);
     meta.push(`edits ${num(session["edits"]) ?? 0}`);
   }
   const status = [str(agent["status"]), str(agent["state"])].filter(Boolean).join(" ");

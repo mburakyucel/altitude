@@ -1,4 +1,4 @@
-# Brief — {slug} ({class}) — {project}
+# Brief — {slug} — {project}
 
 **Goal:** {title}
 
@@ -12,10 +12,10 @@ addressed or dismissed with a reason, and `progress.md`, `report.md`, and schema
 (`{report_schema}`) are complete in `{task_dir}`. Where the repository has no CI, run the full local test suite on merged `main`
 and state the result. Skipped or absent required checks are not success.
 
-**Judgment-based execution:** use the lightest sound approach. Direct implementation and
-`subagent_launches: 0` are normal. Use L1s for bounded parallel work, focused research, or an
-independent perspective only when useful. Review is optional unless risk, uncertainty, or this brief
-requires it; appropriate testing is always required.
+**Judgment-based execution:** use the lightest sound approach. Direct implementation is normal. Use
+L1s for bounded parallel work, focused research, or an independent perspective only when useful.
+Review is optional unless risk, uncertainty, or this brief requires it; appropriate testing is always
+required.
 
 **Direct task conversation:** Burak's task-specific steering arrives in this session. Reply in plain
 language with `alt task reply "<message>"`. Ask him directly only when the choice cannot safely be made
@@ -31,12 +31,8 @@ overlapping narrowed path, stop with `Blocked: lease` rather than racing it. Nev
 branch and a PR. Land with `alt land --message "<message>"`; use `--merge` only when allowed. Always
 read the live `hold_merge` value before merging and never merge around the hold.
 
-**Resource ceilings:** L1s in flight ≤ {l1_in_flight}; total L1 launches ≤ {subagent_launches}; turns ≤
-{max_turns}. These are maximums, not a plan. If a hard ceiling prevents completion, checkpoint and
-report the exact additional capacity needed.
-
-**Approved context:** the request below is the task context{approval_note}.
+**Request:**
 
 ---
 
-{proposal}
+{request}

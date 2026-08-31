@@ -16,25 +16,14 @@ function age(iso: string | null | undefined): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-/**
- * Decision 46 — the card is executive: the situation on top in plain words, then the one question,
- * then the short options. The reasoning (ids, file names, the critic's conditions) goes behind the
- * question in a closed "Why" disclosure, never in front of it. A card without context/detail
- * renders exactly as it did before them.
- */
-/** Decision 50: any option that starts with "revise" is the feedback path and needs the note. */
-const isRevise = (label: string) => /^revise/i.test(label);
-
 function DecisionCard({ d }: { d: Decision }) {
   const [note, setNote] = useState("");
   const decide = useDecide();
-  const options =
-    d.options ?? (d.kind === "blocked" ? ["Resume", "Park", "Reject"] : ["Approve", "Revise", "Reject"]);
+  const options = d.options ?? ["Resume", "Park", "Reject"];
   const blocked = d.kind === "blocked";
   return (
     <article className={`card space-y-3 ${blocked ? "border-danger/40" : ""}`}>
       <div className="flex items-center gap-2">
-        {d.class ? <span className="pill">{d.class}</span> : null}
         <h3 className="text-card-title font-semibold">{d.title || d.slug}</h3>
         <span className="ml-auto text-meta text-muted">
           {d.project}
@@ -46,7 +35,7 @@ function DecisionCard({ d }: { d: Decision }) {
       <textarea
         className="field w-full"
         rows={2}
-        placeholder={blocked ? "Note (optional)" : "Feedback — required for Revise, optional otherwise"}
+        placeholder="Answer or steering note (optional)"
         value={note}
         onChange={(e) => setNote(e.target.value)}
         aria-label={`Note for ${d.title || d.slug}`}
@@ -57,9 +46,7 @@ function DecisionCard({ d }: { d: Decision }) {
             key={label}
             type="button"
             className={i === 0 ? "btn btn-primary" : "btn"}
-            // Decision 50: a revision carries feedback — the button waits for it.
-            disabled={decide.isPending || (isRevise(label) && note.trim().length === 0)}
-            title={isRevise(label) && note.trim().length === 0 ? "Type what should change first" : undefined}
+            disabled={decide.isPending}
             onClick={() =>
               decide.mutate({ project: d.project, slug: d.slug, option: i, note: note || undefined })
             }
@@ -67,17 +54,6 @@ function DecisionCard({ d }: { d: Decision }) {
             {label}
           </button>
         ))}
-        {!blocked && !options.some(isRevise) ? (
-          <button
-            type="button"
-            className="btn"
-            disabled={decide.isPending || note.trim().length === 0}
-            title={note.trim().length === 0 ? "Type what should change first" : undefined}
-            onClick={() => decide.mutate({ project: d.project, slug: d.slug, revise: true, note })}
-          >
-            Revise
-          </button>
-        ) : null}
         <Link className="ml-auto text-meta" to={`/projects/${d.project}/tasks/${d.slug}`}>
           Details
         </Link>
@@ -150,7 +126,7 @@ export default function Inbox() {
         </span>
       </header>
       <section className="space-y-3">
-        <h2 className="label">Decisions ({queue.length})</h2>
+        <h2 className="label">Needs you ({queue.length})</h2>
         {queue.length === 0 ? (
           <p className="text-muted">Nothing needs you.</p>
         ) : (

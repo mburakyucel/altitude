@@ -1,6 +1,4 @@
-"""Lifecycle self-test: one linear, state-mutating scenario against a throwaway ALTITUDE_HOME,
-covering new -> propose -> approve -> brief -> dispatch -> block -> resume -> report -> fyi ->
-done, then a second task exercising auto_approve and the STATE.md digest."""
+"""Lifecycle self-test: a queued task runs directly through one L2 to done."""
 import importlib
 import os
 import sys
@@ -32,26 +30,16 @@ class TestLifecycle(unittest.TestCase):
         P["demo"] = {"path": os.environ["ALTITUDE_HOME"], "stacks": ["python"]}
         config.save_projects(P)
 
-        t = T.new("demo", "Add beta stage with alarm rollback", "L", "Add a beta pipeline stage…")
-        self.assertEqual(t["state"], "requested")
-        self.assertEqual(t["envelope"]["subagent_launches"], 20)
-
-        T.propose(
-            "demo", t["slug"], "# Proposal\n…", {"estimate": {"turns": 90}},
-            question="Ship beta stage with CloudWatch alarm rollback (~$3/mo)?",
-            options=["Approve: alarm rollback", "Approve: manual rollback", "Revise", "Park"],
-        )
-
-        with self.assertRaises(T.TransitionError):
-            T.approve("demo", t["slug"], 0, actor="l3")
-        self.assertEqual(len(T.decisions("demo")), 1)
-
-        T.approve("demo", t["slug"], 0)
+        t = T.new("demo", "Add beta stage with alarm rollback", "Add a beta pipeline stage…")
+        self.assertEqual(t["state"], "approved")
+        self.assertNotIn("class", t)
+        self.assertNotIn("envelope", t)
+        self.assertEqual(T.decisions("demo"), [])
         T.brief("demo", t["slug"], "# Brief\n…")
         T.dispatch("demo", t["slug"], dispatch_id=f"{t['slug']}-1", session_id="sid", agent_id="aid", worktree="/wt", branch="b")
         self.assertEqual(S.load_task("demo", t["slug"])["attempt"], 1)
 
-        T.block("demo", t["slug"], "envelope reached")
+        T.block("demo", t["slug"], "Which rollback signal should I use?")
         self.assertEqual(T.decisions("demo")[0]["kind"], "blocked")
 
         T.resume("demo", t["slug"])
@@ -60,11 +48,11 @@ class TestLifecycle(unittest.TestCase):
         T.done("demo", t["slug"], digest="Done.")
 
         self.assertEqual(S.task_dir("demo", t["slug"]).parent.name, "archive")
-        self.assertGreaterEqual(len(S.read_events("demo", t["slug"])), 9)
+        self.assertGreaterEqual(len(S.read_events("demo", t["slug"])), 8)
 
-        t2 = T.new("demo", "Add beta stage with alarm rollback", "S", "again")
+        t2 = T.new("demo", "Add beta stage with alarm rollback", "again")
         self.assertTrue(t2["slug"].endswith("-2"))
-        T.auto_approve("demo", t2["slug"], "docs-only")
+        self.assertEqual(t2["state"], "approved")
         self.assertIn("Recently finished", (config.project_dir("demo") / "STATE.md").read_text())
 
         self.assertIsInstance(T.inbox("demo"), list)

@@ -83,7 +83,7 @@ class TestPollAndResume(unittest.TestCase):
 
     def test_resume_due_is_oldest_first_and_wip_throttled(self):
         past = "2026-01-01T00:00:00+00:00"
-        base = {"class": "S", "state": "blocked", "resume_after": past, "updated": S.now()}
+        base = {"state": "blocked", "resume_after": past, "updated": S.now()}
         for i, slug in enumerate(("c-newest", "a-oldest", "b-middle")):
             S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
             S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})

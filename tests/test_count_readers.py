@@ -55,9 +55,9 @@ class CountReaders(unittest.TestCase):
             rows = {row["slug"]: row for row in monitor.sessions() if row.get("kind") == "l2"}
         finally:
             config.load_projects, S.list_tasks, monitor.transcript_context_percent = originals
-        self.assertEqual((rows["keyed"]["subagent_launches"], rows["keyed"]["edits"]), (2, 3))
-        self.assertEqual((rows["unkeyed"]["subagent_launches"], rows["unkeyed"]["edits"]), (4, 5))
-        self.assertEqual((rows["legacy"]["subagent_launches"], rows["legacy"]["edits"]), (6, 7))
+        self.assertEqual((rows["keyed"]["l1_runs"], rows["keyed"]["edits"]), (0, 3))
+        self.assertEqual((rows["unkeyed"]["l1_runs"], rows["unkeyed"]["edits"]), (0, 5))
+        self.assertEqual((rows["legacy"]["l1_runs"], rows["legacy"]["edits"]), (0, 7))
 
 
 if __name__ == "__main__":

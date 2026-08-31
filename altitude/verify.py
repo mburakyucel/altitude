@@ -89,12 +89,9 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"{sp['reverts']} revert(s)")
     if int(sp.get("retries", 0) or 0) > 1:
         out["signals"].append(f"{sp['retries']} retries")
-    env = task.get("envelope") or {}
     est = task.get("estimate") or {}
     if est.get("turns") and int(sp.get("turns", 0) or 0) > 2 * int(est["turns"]):
         out["signals"].append(f"turns {sp['turns']} > 2× estimate {est['turns']}")
-    if env.get("subagent_launches") and int(sp.get("subagent_launches", 0) or 0) >= int(env["subagent_launches"]):
-        out["signals"].append(f"subagent launches {sp['subagent_launches']} hit the cap {env['subagent_launches']}")
     tags = [r.get("tag") for r in review if r.get("tag")]
     seen = _seen_tags(project, slug)
     rep_tags = sorted(set(t for t in tags if t in seen))
@@ -117,7 +114,7 @@ def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None)
     hook = S.read_json(counts_p, {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
                     "subagent_launches_hook": hook.get("subagent_launches"), "edits_hook": hook.get("edits"),
-                    "retries": (sp or {}).get("retries"), "cap": (task.get("envelope") or {}).get("subagent_launches")}
+                    "retries": (sp or {}).get("retries")}
     return out
 
 

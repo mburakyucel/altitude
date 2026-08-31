@@ -44,7 +44,7 @@ class TestCleanClose(unittest.TestCase):
             "roadmap_complete": True,
         }
 
-    def _task_and_verdict(self, slug: str, *, cls: str = "S", change=None, hold_merge=False,
+    def _task_and_verdict(self, slug: str, *, change=None, hold_merge=False,
                           live_state: str | None = None) -> tuple[dict, dict]:
         report = self._report()
         verdict = {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [47]}
@@ -54,7 +54,7 @@ class TestCleanClose(unittest.TestCase):
         directory = S.task_dir(PROJECT, slug)
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "report.json", report)
-        task = {"slug": slug, "title": slug, "class": cls, "state": "reported", "created": S.now(),
+        task = {"slug": slug, "title": slug, "state": "reported", "created": S.now(),
                 "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47]}
         if hold_merge:
             task["hold_merge"] = "always-list: release"
@@ -92,7 +92,7 @@ class TestCleanClose(unittest.TestCase):
         self.assertEqual(items[0]["by"], "altd")
         text = items[0]["text"]
         for expected in ("closed by altd without an L3 turn", "verifier verdict ok",
-                         "task class S", "hold_merge unset", "PRs merged: PR #47 (Clean close)",
+                         "hold_merge unset", "PRs merged: PR #47 (Clean close)",
                          "main runs: run-47: success", "deploy: healthy",
                          "no decisions, blocked items, FYIs, follow-ups, or post-mortem signals"):
             self.assertIn(expected, text)
@@ -109,7 +109,6 @@ class TestCleanClose(unittest.TestCase):
             "blocked": ("S", lambda report, verdict: report.update(blocked="waiting"), {}),
             "fyi": ("S", lambda report, verdict: report["fyi"].append("route this"), {}),
             "signals": ("S", lambda report, verdict: verdict["signals"].append("one deviation"), {}),
-            "class-l": ("L", None, {}),
             "deploy": ("S", lambda report, verdict: report["landed"].update(deploy="failed: unhealthy"), {}),
             "deploy-missing": ("S", lambda report, verdict: report["landed"].pop("deploy"), {}),
             "deploy-empty": ("S", lambda report, verdict: report["landed"].update(deploy=""), {}),
@@ -120,7 +119,7 @@ class TestCleanClose(unittest.TestCase):
         }
         for name, (cls, change, task_options) in cases.items():
             with self.subTest(name=name):
-                task, verdict = self._task_and_verdict(f"dirty-{name}", cls=cls, change=change, **task_options)
+                task, verdict = self._task_and_verdict(f"dirty-{name}", change=change, **task_options)
                 expected_state = S.load_task(PROJECT, task["slug"])["state"]
                 before = len(T.inbox(PROJECT, limit=1000))
 

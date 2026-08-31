@@ -109,12 +109,10 @@ class TestTaskStatus(unittest.TestCase):
         self._setenv("CLAUDE_BIN", str(claude))
 
         task = {
-            "slug": "task-one", "state": "running", "class": "S", "title": "One status",
+            "slug": "task-one", "state": "running", "title": "One status",
             "attempt": 1, "dispatch_id": "task-one-1", "session_id": "sid-1", "agent_id": "aid-1",
             "source": "chat", "hold_merge": None, "blocked_reason": None,
             "updated": "2026-08-29T00:00:00+00:00", "worktree": "/tmp/worktree", "branch": "worktree-task-one",
-            "envelope": {"l1_in_flight": 1, "subagent_launches": 3, "max_turns": 40,
-                         "verification": "reviewer"},
             "paths": ["altitude/status.py", "bin/alt"], "prs": [17],
         }
         task_dir = S.tasks_dir("demo") / "task-one"
@@ -131,9 +129,6 @@ class TestTaskStatus(unittest.TestCase):
             "slug": "other-task", "state": "running", "paths": ["altitude/server.py"]})
         S.write_json(config.MONITOR_DIR / "counts-sid-1.json", {
             "subagent_launches": 2, "edits": 7, "files": ["altitude/status.py"]})
-        self.enforced = {"project": "demo", "slug": "task-one", "dispatch_id": "task-one-1",
-                         **task["envelope"]}
-        S.write_json(config.MONITOR_DIR / "envelope-demo--task-one-1.json", self.enforced)
         S.write_json(config.MONITOR_DIR / "statusline-test.json", {
             "_at": time.time(), "rate_limits": {"five_hour": {"used_percentage": 10}}})
 
@@ -149,15 +144,14 @@ class TestTaskStatus(unittest.TestCase):
         result = task_status.status("demo", "task-one")
 
         expected_fields = {
-            "project", "slug", "state", "class", "title", "attempt", "dispatch_id", "session_id",
+            "project", "slug", "state", "title", "attempt", "dispatch_id", "session_id",
             "agent_id", "source", "hold_merge", "blocked_reason", "updated", "worktree", "branch",
-            "envelope", "counts", "envelope_file", "l1_runs", "lease", "other_leases", "hold",
+            "counts", "l1_runs", "lease", "other_leases", "hold",
             "wip_hold", "gate", "repository", "report_json", "prs", "main_run", "errors",
         }
         self.assertTrue(expected_fields.issubset(result))
         self.assertEqual(result["errors"], [])
-        self.assertEqual(result["counts"], {"subagent_launches": 2, "edits": 7})
-        self.assertEqual(result["envelope_file"], self.enforced)
+        self.assertEqual(result["counts"], {"edits": 7})
         self.assertEqual(result["l1_runs"]["in_flight"], 1)
         self.assertEqual(result["lease"], ["altitude/status.py", "bin/alt"])
         self.assertEqual(result["other_leases"], [{
@@ -319,7 +313,7 @@ class TestTaskStatus(unittest.TestCase):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
                      {"subagent_launches": 4, "edits": 11})
         result = task_status.status("demo", "task-one")
-        self.assertEqual(result["counts"], {"subagent_launches": 4, "edits": 11})
+        self.assertEqual(result["counts"], {"edits": 11})
         self.assertEqual(result["errors"], [])
 
     def test_missing_main_run_names_the_merge_sha(self):

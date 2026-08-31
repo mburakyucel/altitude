@@ -17,7 +17,7 @@ class TestStrandedReports(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
-        base = {"class": "S", "created": S.now(), "updated": S.now(), "verified": {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [], "report": {}}}
+        base = {"created": S.now(), "updated": S.now(), "verified": {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [], "report": {}}}
         for slug, state, handled, report in (("stranded", "reported", None, True), ("stranded-blocked", "blocked", None, True),
                                              ("handled", "reported", S.now(), True), ("no-report", "blocked", None, False),
                                              ("still-running", "running", None, True)):
@@ -40,7 +40,7 @@ class TestStrandedReports(unittest.TestCase):
         d = S.task_dir(project, slug)
         d.mkdir(parents=True, exist_ok=True)
         (d / "report.json").write_text(report_text)
-        S.save_task(project, {"slug": slug, "title": slug, "class": "S", "state": "blocked", "created": S.now(),
+        S.save_task(project, {"slug": slug, "title": slug, "state": "blocked", "created": S.now(),
                               "updated": S.now(), "attempt": attempt, "verified": verified, "l3_handled": None,
                               "blocked_reason": "stale block reason"})
         S.append_event(project, slug, "state", frm=block_from, to="blocked", by="test")
@@ -76,7 +76,7 @@ class TestStrandedReports(unittest.TestCase):
     def test_report_stamps_the_current_attempt(self):
         project, slug = "altitude-stamp", "stamp"
         S.task_dir(project, slug).mkdir(parents=True, exist_ok=True)
-        S.save_task(project, {"slug": slug, "title": slug, "class": "S", "state": "running", "created": S.now(),
+        S.save_task(project, {"slug": slug, "title": slug, "state": "running", "created": S.now(),
                               "updated": S.now(), "attempt": 3, "blocked_reason": None})
         reported = T.report(project, slug, {"verdict": "ok", "prs": []})
         self.assertEqual(reported["verified"]["attempt"], 3)
@@ -169,7 +169,7 @@ class TestStrandedReports(unittest.TestCase):
         slug = "illegal-done"
         d = S.task_dir(project, slug)
         d.mkdir(parents=True, exist_ok=True)
-        S.save_task(project, {"slug": slug, "title": slug, "class": "S", "state": "blocked", "created": S.now(),
+        S.save_task(project, {"slug": slug, "title": slug, "state": "blocked", "created": S.now(),
                               "updated": S.now()})
         with self.assertRaises(T.TransitionError):
             T.done(project, slug, digest="must not be written")

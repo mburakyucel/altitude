@@ -26,7 +26,6 @@ class TestPickEngine(unittest.TestCase):
         self.assertEqual(route.pick_engine("l1", task={"slug": "x", "engine": "codex"})["engine"], "codex")
         self.assertEqual(route.pick_engine("l1", forced="claude", task={"slug": "x", "engine": "codex"})["engine"], "claude", "command line beats task")
         self.assertEqual(route.pick_engine("l3")["engine"], "claude")
-        self.assertEqual(route.pick_engine("critic")["engine"], "codex")
         with self.assertRaises(ValueError):
             route.pick_engine("l1", forced="gemini")
 

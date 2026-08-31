@@ -1,4 +1,4 @@
-"""Decision 45: `alt l1 run` — detached run on either engine, own worktree, cap enforced, record closed with the result."""
+"""Optional `alt l1 run` workers are isolated, detached, and leave durable results."""
 import json
 import os
 import stat
@@ -62,8 +62,8 @@ class TestL1Runs(unittest.TestCase):
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
 
-    def _task(self, slug, cls="S", engine=None):
-        T.new("altitude", slug, cls, "req", actor="l3", engine=engine)
+    def _task(self, slug, engine=None):
+        T.new("altitude", slug, "req", actor="l3", engine=engine)
         worktree = REPO / ".claude" / "worktrees" / slug
         subprocess.run(
             ["git", "worktree", "add", "-q", "-b", f"worktree-{slug}", str(worktree), "origin/main"],
@@ -98,16 +98,9 @@ class TestL1Runs(unittest.TestCase):
         done = _wait_done("altitude", slug, rec["name"])
         self.assertEqual(done["result"]["pr"], 42)
 
-    def test_in_flight_cap_and_reviewer_on_the_other_engine(self):
-        slug, brief = self._task("l1-cap")  # S: one implementer in flight
+    def test_reviewer_can_run_on_the_other_engine(self):
+        slug, brief = self._task("l1-review")
         first = l1.start("altitude", slug, brief)
-        # a second implementer while the first is (possibly) still running must be refused by the cap
-        with S.project_lock("altitude"):
-            pass
-        rec = l1.load("altitude", slug, first["name"])
-        if not rec.get("done"):
-            with self.assertRaises(T.TransitionError):
-                l1.start("altitude", slug, brief)
         _wait_done("altitude", slug, first["name"])
         rev = l1.start("altitude", slug, brief, role="reviewer")
         self.assertEqual(rev["engine"], "claude", "author was codex → reviewer takes claude")
@@ -119,18 +112,6 @@ class TestL1Runs(unittest.TestCase):
         self.assertIsNone(done["result"]["error"])
         st = l1.status("altitude", slug)
         self.assertEqual([r["role"] for r in st], ["implementer", "reviewer"])
-
-    def test_cli_counts_as_a_launch_for_the_cap_hook(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("cap", Path(__file__).resolve().parent.parent / "hooks" / "subagent_cap.py")
-        src = (Path(__file__).resolve().parent.parent / "hooks" / "subagent_cap.py").read_text()
-        ns = {}
-        exec(src.split("\ninp = json.load")[0], ns)  # the regex + is_launch, without the hook's stdin main
-        self.assertTrue(ns["is_launch"]("bin/alt l1 run --brief x.md"))
-        self.assertTrue(ns["is_launch"]("alt l1 run --role reviewer --brief r.md"))
-        self.assertFalse(ns["is_launch"]("alt l1 wait implementer-1"))
-        self.assertFalse(ns["is_launch"]("alt l1 status"))
 
     def test_immutable_parent_sha_is_used_if_l2_head_moves_after_validation(self):
         slug, brief = self._task("l1-parent-race")

@@ -4,7 +4,6 @@ import json
 import mimetypes
 import os
 import ssl
-import ssl
 import subprocess
 import threading
 import time
@@ -14,15 +13,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, monitor, propose, quota_codex, recovery, refs, state as S, tasks as T, verify
+from . import config, digest, dispatch, engines, git_policy, improve, l3, monitor, quota_codex, recovery, refs, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
-PROPOSAL_MAX_ATTEMPTS = 3
-STALE_PROPOSAL_FAILURE = (
-    "proposal attempt ended before validation completed (the proposal engine or server process stopped)"
-)
 
 
 def log(msg: str) -> None:
@@ -56,253 +51,14 @@ def spawn(key: str, fn, *a) -> bool:
         return True
 
 
-def _pid_alive(pid) -> bool:
-    """Is a recorded subprocess still running? An unknown or unsignalable pid counts as alive.
-
-    Fails towards waiting (I-011): a false "alive" costs one tick of patience, a false "dead" costs a second
-    L3 turn on a task that already has one.
-    """
-    if not pid:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except (TypeError, ValueError, ProcessLookupError):
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _turn_in_flight(task: dict) -> bool:
-    """Is the L3 turn recorded on this task still running (possibly from a previous altd)?
-
-    Bounded by the engine's own turn timeout: the kill timer lives in the process that started the turn, so
-    after a restart nothing else bounds it, and a recycled pid must never strand the task for good.
-    """
-    rec = task.get("proposal_turn") or {}
-    if not _pid_alive(rec.get("pid")):
-        return False
-    return dispatch._seconds_since(rec.get("started") or "") <= config.L3_TURN_TIMEOUT
-
-
-def _record_l3_turn(project: str, slug: str, pid: int | None) -> None:
-    """Note (pid) or clear (None) the proposal-ready L3 turn's subprocess in the task's status.json.
-
-    Same idea as the session_id/agent_id dispatch records for L2 workers (ce856bb): the child survives altd,
-    so the record on disk — not a thread in this process — is what says whether it is still running.
-    """
-    with S.project_lock(project):
-        t = S.load_task(project, slug)
-        t["proposal_turn"] = {"pid": int(pid), "started": S.now()} if pid else None
-        S.save_task(project, t)
-
-
-def _current_proposal_error(task: dict) -> str | None:
-    """Return the failure recorded by this proposal attempt, not one carried from an earlier retry."""
-    failure = task.get("proposal_error") or {}
-    message = str(failure.get("message") or "").strip()
-    started = str(task.get("proposal_started") or "")
-    recorded = str(failure.get("at") or "")
-    return message if message and started and recorded >= started else None
-
-
-def _begin_proposal_attempt(project: str, slug: str) -> int:
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        task["proposal_attempts"] = int(task.get("proposal_attempts", 0)) + 1
-        S.save_task(project, task)
-        return task["proposal_attempts"]
-
-
-def _park_exhausted_proposal(project: str, slug: str) -> bool:
-    task = S.load_task(project, slug)
-    if int(task.get("proposal_attempts", 0)) < PROPOSAL_MAX_ATTEMPTS or not _current_proposal_error(task):
-        return False
-    parked = T.park_failed_proposal(project, slug, PROPOSAL_MAX_ATTEMPTS, actor="altd")
-    if parked:
-        log(f"[{project}/{slug}] proposal failed after {parked['proposal_attempts']} attempts → parked")
-    return bool(parked)
-
-
-def _resume_stale_proposal(project: str, slug: str, key: str) -> bool:
-    """Resume one dead proposal flow, unless its third failed attempt is terminal."""
-    has_proposal = (S.task_dir(project, slug) / "proposal.json").exists()
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task["state"] != "requested":
-            return False
-        # A dead engine/process still spent the attempt. Give the retry (or terminal park) useful context instead of
-        # letting an attempt with no validation record disappear from the cap. A completed on-disk proposal is reused.
-        if not has_proposal and not _current_proposal_error(task):
-            task["proposal_error"] = {"message": STALE_PROPOSAL_FAILURE, "at": S.now()}
-        exhausted = (int(task.get("proposal_attempts", 0)) >= PROPOSAL_MAX_ATTEMPTS
-                     and bool(_current_proposal_error(task)))
-        if not exhausted:
-            task["proposal_started"] = None
-        task["proposal_turn"] = None  # its turn is dead; the resume below is the only one
-        S.save_task(project, task)
-    if exhausted:
-        _park_exhausted_proposal(project, slug)
-        return False
-    log(f"[{project}/{slug}] proposal flow resumed (previous run did not finish)")
-    return spawn(key, run_proposal_flow, project, slug)
-
-
 # ---- workflows the timers and buttons trigger --------------------------------
 
 def start_l3(project: str) -> None:
     # [R-007] The start reply is a conversation with Burak, not a turn log.
     l3.turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
                      "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
-                     "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
-                     "the digest, the FYI, or the task folder — not in the reply text. Run no other commands.",
+                     "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
             trigger="start")
-
-
-def _l3_parked_during_turn(project: str, slug: str, turn_start: str) -> bool:
-    """Did the L3 park this task during the turn that started at `turn_start` (incident I-008)?
-
-    The last `state → parked` event in the task's log decides it: a park by Burak (or any actor
-    other than the L3), or an L3 park that predates the turn, must never queue an auto-revision.
-    """
-    last = None
-    for ev in S.read_events(project, slug):
-        if ev.get("kind") == "state" and ev.get("to") == "parked":
-            last = ev
-    return bool(last and last.get("by") == "l3" and str(last.get("at") or "") >= turn_start)
-
-
-def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_proposed: bool = False) -> None:
-    """Clear the in-flight marker and log a proposal-ready turn skipped after a state change."""
-    with S.project_lock(project):
-        latest = S.load_task(project, slug)
-        latest["proposal_started"] = None
-        S.save_task(project, latest)
-    if task["state"] == "proposed" and keep_fyi_proposed:
-        log(f"[{project}/{slug}] proposed outside this flow — skipping the proposal-ready L3 turn; still checked for FYI-only auto-approve")
-        return
-    log(f"[{project}/{slug}] no longer requested (state={task['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
-
-
-def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
-    """Apply proposal-state policy after either a completed or skipped proposal-ready turn."""
-    if task["state"] != "proposed":
-        return
-    hits = p.get("always_list_hits")
-    if hits and not task.get("hold_merge"):  # decision 48: always-list → Burak merges
-        hits = hits if isinstance(hits, list) else [hits]
-        T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
-    # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
-    if not task.get("decision") and task["class"] in ("S", "M") and not p.get("always_list_hits"):
-        T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
-        T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
-
-
-def size_task(project: str, slug: str) -> None:
-    try:
-        res = intake.size(project, slug)
-        log(f"[{project}/{slug}] sized: {res}")
-    except Exception as e:  # noqa: BLE001 — the fault is already filed by intake.size
-        log(f"[{project}/{slug}] sizer failed: {e}")
-
-
-def run_proposal_flow(project: str, slug: str) -> None:
-    task = S.load_task(project, slug)
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task.get("proposal_started"):
-            return
-        task["proposal_started"] = S.now()
-        S.save_task(project, task)
-    tdir = S.task_dir(project, slug)
-    if (tdir / "proposal.json").exists():  # resuming after a server restart: reuse what is already on disk
-        p = S.read_json(tdir / "proposal.json")
-        log(f"[{project}/{slug}] proposal reused from disk")
-    else:
-        _begin_proposal_attempt(project, slug)
-        log(f"[{project}/{slug}] proposal agent")
-        try:
-            p = propose.run_proposal(project, slug)
-        except Exception:
-            _park_exhausted_proposal(project, slug)
-            raise
-    T.clear_proposal_failure(project, slug)
-    crit = None
-    if task["class"] == "L" or (p.get("always_list_hits") and task["class"] == "M"):
-        cj, pj = tdir / "critique.json", tdir / "proposal.json"
-        if cj.exists() and pj.exists() and cj.stat().st_mtime >= pj.stat().st_mtime:  # a critique of *this* proposal
-            crit = S.read_json(cj)
-        else:
-            tcrit = S.load_task(project, slug)
-            if tcrit["state"] != "requested":
-                _skip_proposal_ready_turn(project, slug, tcrit)
-                _finish_proposal(project, slug, p, tcrit)
-                return
-            log(f"[{project}/{slug}] critic")
-            crit = propose.run_critic(project, slug)
-    # [R-007] The proposal-ready output belongs in the card or task record, not a turn-log reply.
-    header = (f"Proposal ready for `{slug}` ({task['class']}). Files: proposal.md / proposal.json / critique.json in the task folder. "
-              f"Proposal says decision_needed={p.get('decision_needed')}, always-list hits={p.get('always_list_hits')}, "
-              f"estimate={p.get('estimate')}."
-              + ((f" CRITIC UNAVAILABLE — Altitude fault raised (see inbox/incidents); this task needs the other-engine critique, so park it with that reason until the fault is fixed."
-                  if crit.get("verdict") == "unavailable" else
-                  f" Critic verdict: {crit.get('verdict')} with {len(crit.get('issues') or [])} issue(s) — read critique.json.") if crit else "")
-              + "\n\nApply the Decision rule. Then run exactly one of: "
-              f"`alt task propose {slug} --file <task_dir>/proposal.md --question \"…\" --option \"…\" --option \"…\" --context \"…\" --detail \"…\"` "
-              "(card for Burak — decision 46: --context is the situation in ≤ 2 plain sentences (what is wrong, what the proposal does), --question is "
-              "the one question in plain words, options ≤ 8 words each with the recommended first, and everything else — reasoning, the critic's conditions, ids, file names, spend — goes in --detail; the CLI rejects the rest), "
-              f"`alt task propose {slug} --file <task_dir>/proposal.md` followed by nothing (FYI-only M task — the server dispatches when a slot is free) "
-              f"or `alt task auto-approve {slug} --reason \"…\"` (S only), or `alt task park {slug} --reason \"…\"`. "
-              "If the critic says revise and you agree, `alt task park` with the reason and say what should change. "
-              "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
-              "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
-              "and whether anything waits on Burak.")
-    # Burak (or the L3 in a chat turn) may have parked, approved, rejected or proposed the task while the proposal and
-    # the critic ran (incident I-008): re-read the state and skip the turn rather than talk to the L3 about a task that
-    # has already been decided. proposal.json stays on disk; clearing proposal_started lets tick() re-run the flow
-    # (requested only) if it comes back to requested later.
-    t1 = S.load_task(project, slug)
-    if t1["state"] != "requested":
-        _skip_proposal_ready_turn(project, slug, t1, keep_fyi_proposed=True)
-        _finish_proposal(project, slug, p, t1)
-        return
-    else:
-        task_at_turn = None
-
-        def still_requested() -> bool:
-            nonlocal task_at_turn
-            task_at_turn = S.load_task(project, slug)
-            return task_at_turn["state"] == "requested"
-
-        try:
-            res = l3.turn(project, header, trigger="proposal-ready",
-                          on_start=lambda pid: _record_l3_turn(project, slug, pid), precheck=still_requested)
-        finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
-            _record_l3_turn(project, slug, None)
-        if res.get("skipped"):
-            skipped_task = task_at_turn or S.load_task(project, slug)
-            _skip_proposal_ready_turn(project, slug, skipped_task)
-            _finish_proposal(project, slug, p, skipped_task)
-            return
-        turn_start = res.get("_turn_started_at")
-        if turn_start is None:  # fails closed (decision 36): an unknown turn start must never override a park
-            log(f"[{project}/{slug}] l3.turn returned no start timestamp — cannot date the turn, so any park stands")
-        t2 = S.load_task(project, slug)
-        # critic said revise and the L3 parked with a revision brief *in this turn*: re-propose, at most twice, then it
-        # waits for Burak. A park by Burak, or one the L3 made for him in an earlier turn (I-008), must stand.
-        if (t2["state"] == "parked" and crit and crit.get("verdict") == "revise" and turn_start is not None
-                and _l3_parked_during_turn(project, slug, turn_start)):
-            n = int(t2.get("revisions", 0))
-            if n < 2:
-                with S.project_lock(project):
-                    t3 = S.load_task(project, slug); t3["revisions"] = n + 1; t3["proposal_started"] = None; S.save_task(project, t3)
-                T.archive_proposal(S.task_dir(project, slug))  # history as -vN; the reviser reads the latest critique-vN
-                T.unpark(project, slug, actor="altd")
-                log(f"[{project}/{slug}] critic revise → revision {n + 1} queued (bounded at 2)")
-                return
-            T.fyi(project, slug, f"{slug}: parked after {n} revisions — the proposal and critic keep disagreeing; needs your read (task folder has proposal-v*.md / critique-v*.json).")
-            return
-    _finish_proposal(project, slug, p, t2)
 
 
 def on_l2_finished(project: str, item: dict) -> None:
@@ -315,7 +71,7 @@ def on_l2_finished(project: str, item: dict) -> None:
             t0 = S.load_task(project, slug); t0["resume_after"] = until; S.save_task(project, t0)
         T.block(project, slug, f"usage limit: the subscription window is exhausted, resets {until} — Altitude resumes this L2 itself after that")
         if news:
-            T.fyi(project, slug, f"Usage limit hit (5-hour window). Dispatch, proposals and L3 turns are held until {until}; "
+            T.fyi(project, slug, f"Usage limit hit (5-hour window). Dispatch and L3 turns are held until {until}; "
                                  f"blocked L2s resume automatically, WIP-throttled, oldest first.", actor="altd")
         log(f"[{project}/{slug}] L2 hit the usage limit → blocked until {until}")
         return
@@ -323,7 +79,7 @@ def on_l2_finished(project: str, item: dict) -> None:
         t0 = S.load_task(project, slug); t0["l3_handled"] = None; S.save_task(project, t0)
     if item.get("needs_input"):
         a = item.get("agent") or {}
-        reason = f"L2 is idle without a report — probably waiting for a permission or a question. Attach: `claude attach {a.get('id', '')}`; or answer via the card (Resume sends your note into the session)."
+        reason = f"L2 is idle without a report — probably waiting for permission or an answer. Attach: `claude attach {a.get('id', '')}` or message the L2 directly."
         T.block(project, slug, reason)
         T.fyi(project, slug, f"{slug}: L2 idle {dispatch.IDLE_NEEDS_INPUT_SECONDS}s without finishing — needs input? attach {a.get('id', '')}")
         log(f"[{project}/{slug}] L2 idle → blocked (needs input)")
@@ -354,7 +110,7 @@ def on_l2_finished(project: str, item: dict) -> None:
 
 
 def report_turn(project: str, t: dict, v: dict) -> None:
-    """Close a mechanically clean S/M report, otherwise run the L3's report-landed turn.
+    """Close a mechanically clean report, otherwise run the L3's report-landed turn.
 
     The clean-close gate uses the on-disk report and live task state. It requires an ok verifier with no problems or
     signals, no merge hold, only merged PRs, at least one well-shaped successful main run, a healthy or not-applicable
@@ -364,8 +120,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
     slug = t["slug"]
-    if (v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals")
-            and t.get("class") != "L"):
+    if v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals"):
         report_error = task_error = None
         try:
             with S.project_lock(project):
@@ -418,7 +173,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                     log(f"[{project}/{slug}] clean close lost the state race → L3 turn")
                 else:
                     T.fyi(project, slug, f"{slug}: closed by altd without an L3 turn — nothing to judge: verifier verdict ok; "
-                          f"task class {t.get('class')}; hold_merge unset; PRs merged: {pr_text}; "
+                          f"hold_merge unset; PRs merged: {pr_text}; "
                           f"main runs: {run_text}; deploy: {deploy}; no decisions, blocked items, FYIs, follow-ups, or "
                           "post-mortem signals.", actor="altd")
                     with S.project_lock(project):
@@ -426,7 +181,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                     log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                     return
     # [R-007] The report-landed substance belongs in the task record, not a turn-log reply.
-    header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
+    header = (f"Report landed for `{slug}`: verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
               "Read <task_dir>/report.md if you need more.\n\n"
@@ -532,27 +287,6 @@ def tick() -> None:
             resume_stranded_reports(project)
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
-            for t in S.list_tasks(project):
-                if t["state"] == "requested" and not t.get("class") and not t.get("size_error"):  # sizer is Codex (decision 56)
-                    spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
-                    continue
-                if t["state"] == "requested" and t["class"] in ("M", "L"):  # proposal is Codex, L3 turn falls to Codex when held (decision 56)
-                    started = t.get("proposal_started")
-                    key = f"propose:{project}:{t['slug']}"
-                    alive = (_bg.get(key) or threading.Thread()).is_alive()
-                    # the L3 turn a previous altd started outlives it, so "no thread in this process" is not proof
-                    # the flow is over: while its recorded pid is alive the turn is still in flight, and resuming
-                    # would run a second one on the same task (incident I-011)
-                    if not alive and _turn_in_flight(t):
-                        continue
-                    has_proposal = (S.task_dir(project, t["slug"]) / "proposal.json").exists()
-                    # a flow that is not running in this process died with the previous server: resume at once if the
-                    # proposal is on disk, otherwise wait 30 min in case an orphaned proposal agent is still writing it
-                    stale = started and not alive and (has_proposal or dispatch._seconds_since(started) > 1800)
-                    if stale:
-                        _resume_stale_proposal(project, t["slug"], key)
-                    elif not started:
-                        spawn(key, run_proposal_flow, project, t["slug"])
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
@@ -788,59 +522,38 @@ class Handler(BaseHTTPRequestHandler):
             if api == "decide":
                 project, slug, opt = o["project"], o["slug"], o.get("option")
                 t = S.load_task(project, slug)
-                if t["state"] == "blocked":
-                    choice = ["Resume", "Park", "Reject"][int(opt)]
-                    if choice == "Resume":
-                        if t.get("session_id"):
-                            spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
-                        else:
-                            T.resume(project, slug, actor="burak"); T.approve  # noqa: B018
-                    elif choice == "Park":
-                        T.park(project, slug, o.get("note") or "parked by Burak", actor="burak")
+                if t["state"] != "blocked":
+                    return self._json({"error": "only blocked tasks need a user decision"}, 409)
+                choice = ["Resume", "Park", "Reject"][int(opt)]
+                if choice == "Resume":
+                    if t.get("session_id"):
+                        spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
                     else:
-                        T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
-                    return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
-                if o.get("revise"):  # decision 50: feedback on the card → the proposal is redone around it
-                    t = T.revise(project, slug, o.get("note") or "", actor="burak")
-                    return self._json({"ok": True, "state": t["state"]})
-                t = T.approve(project, slug, int(opt) if opt is not None else None, actor="burak", note=o.get("note") or "")
-                if t["state"] == "approved":
-                    spawn(f"dispatch:{project}", dispatch_waiting, project)
-                return self._json({"ok": True, "state": t["state"]})
+                        T.resume(project, slug, actor="burak")
+                elif choice == "Park":
+                    T.park(project, slug, o.get("note") or "parked by Burak", actor="burak")
+                else:
+                    T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
+                return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by Burak"
                 if action == "park":
                     T.park(project, slug, reason, actor="burak")
-                elif action == "build":  # executive override (Burak): approve as requested and dispatch now, skipping proposal/critic
-                    t = S.load_task(project, slug)
-                    if t["state"] == "parked":
-                        T.unpark(project, slug, actor="burak")
-                    t = S.load_task(project, slug)
-                    opt = 0 if (t.get("decision") or {}).get("options") else None
-                    res = T.approve(project, slug, opt, actor="burak", note="build now: Burak skipped the proposal loop (executive override)")
-                    log(f"[{project}/{slug}] build now (override) → {res['state']}")
-                    spawn(f"dispatch:{project}", dispatch_waiting, project)
                 elif action == "unpark":
                     T.unpark(project, slug, actor="burak")
+                    spawn(f"dispatch:{project}", dispatch_waiting, project)
                 elif action == "reject":
                     T.reject(project, slug, reason, actor="burak")
                 elif action == "done":
                     T.done(project, slug, actor="burak")
                 elif action == "dispatch":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
-                elif action == "propose":
-                    with S.project_lock(project):
-                        t = S.load_task(project, slug)
-                        t["proposal_started"] = None
-                        t.pop("proposal_error", None)
-                        t["proposal_attempts"] = 0
-                        S.save_task(project, t)
-                    spawn(f"propose:{project}:{slug}", run_proposal_flow, project, slug)
                 elif action == "verify":
                     return self._json(verify.verify(project, slug))
                 elif action == "new":
-                    t = T.new(project, o["title"], o.get("class") or "auto", o.get("request") or o["title"], actor="burak")
+                    t = T.new(project, o["title"], o.get("request") or o["title"], actor="burak")
+                    spawn(f"dispatch:{project}", dispatch_waiting, project)
                     return self._json({"ok": True, "slug": t["slug"]})
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
@@ -865,12 +578,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "L3 is busy; try again in a moment"}, 409)
                 self._stream_open()
                 send = lambda t: self._stream_send({"t": t})  # noqa: E731
-                if text.startswith("/idea"):
-                    res = intake.idea(project, text[5:].strip(), on_text=send)
-                elif text.startswith("/backlog"):
-                    res = intake.backlog(project, on_text=send)
-                else:
-                    res = l3.turn(project, text, trigger="chat", on_text=send)
+                res = l3.turn(project, text, trigger="chat", on_text=send)
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}})
                 self._stream_close()
                 return
@@ -909,11 +617,11 @@ def project_view(name: str) -> dict:
     for t in S.list_tasks(name):
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
-        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "proposal", "brief", "report", "digest", "progress")}})
-    order = {"blocked": 0, "running": 1, "reported": 2, "proposed": 3, "approved": 4, "requested": 5, "parked": 6}
+        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
+    order = {"blocked": 0, "running": 1, "reported": 2, "approved": 3, "parked": 4}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
-            "archive": [{k: t.get(k) for k in ("slug", "class", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
+            "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in improve.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
@@ -922,9 +630,9 @@ def project_view(name: str) -> dict:
 def task_view(project: str, slug: str) -> dict:
     t = S.load_task(project, slug)
     d = S.task_dir(project, slug)
-    files = {f: (d / f"{f}.md").read_text() for f in ("request", "proposal", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+    files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
     return {**t, "files": files, "messages": T.task_messages(project, slug),
-            "events": S.read_events(project, slug), "critique": S.read_json(d / "critique.json"),
+            "events": S.read_events(project, slug),
             "report_json": S.read_json(d / "report.json"), "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 

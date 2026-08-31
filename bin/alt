@@ -36,7 +36,7 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    l1p = sub.add_parser("l1", help="L1 runs on either engine (decision 45): run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
+    l1p = sub.add_parser("l1", help="optional L1 runs on either engine: run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
     lr = l1s.add_parser("run"); lr.add_argument("--brief", required=True); lr.add_argument("--role", default="implementer", choices=("implementer", "reviewer"))
     lr.add_argument("--engine", choices=("claude", "codex")); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
     lw = l1s.add_parser("wait"); lw.add_argument("name", nargs="?"); lw.add_argument("--timeout", type=int, default=540)
@@ -50,19 +50,15 @@ def main(argv=None) -> None:
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--class", dest="cls", default="auto", choices=list(S.CLASSES) + ["auto"], help="S|M|L, or auto (default): the intake sizer picks (decision 53)"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override (decision 38); default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch (file lease, decision 39)")
-    pr = ts.add_parser("propose"); pr.add_argument("slug"); pr.add_argument("--file"); pr.add_argument("text", nargs="?"); pr.add_argument("--question"); pr.add_argument("--context"); pr.add_argument("--detail"); pr.add_argument("--option", action="append")
-    ap_ = ts.add_parser("approve"); ap_.add_argument("slug"); ap_.add_argument("--option", type=int); ap_.add_argument("--note", default="")
-    aa = ts.add_parser("auto-approve"); aa.add_argument("slug"); aa.add_argument("--reason", required=True)
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--engine", choices=("claude", "codex")); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "park", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("unpark", "show", "events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
-    rs = ts.add_parser("resume", help="decision 52: re-attach a blocked L2 (its transcript, its worktree); raise the envelope first when the block was the cap")
-    rs.add_argument("slug"); rs.add_argument("--launches", type=int); rs.add_argument("--turns", type=int)
-    rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or the granted cap")
-    sz = ts.add_parser("size", help="decision 53: set (or override) a requested task's class"); sz.add_argument("slug"); sz.add_argument("cls", choices=list(S.CLASSES)); sz.add_argument("--why", required=True); sz.add_argument("--paths")
+    rs = ts.add_parser("resume", help="re-attach a blocked L2 with its transcript and worktree")
+    rs.add_argument("slug")
+    rs.add_argument("--answer", default="", help="what the L2 reads first; one sentence with the missing step or answer")
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="decision 48: Burak merges this task's PRs himself (--why), or release it (--off)")
@@ -75,7 +71,6 @@ def main(argv=None) -> None:
 
     f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
     sub.add_parser("decisions"); sub.add_parser("agents"); sub.add_parser("digest"); sub.add_parser("monitor")
-    pp = sub.add_parser("propose"); pp.add_argument("slug"); pp.add_argument("--critic", action="store_true"); pp.add_argument("--model")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -90,8 +85,6 @@ def main(argv=None) -> None:
     rcs.add_parser("status")
     rh = rcs.add_parser("hold"); rh.add_argument("--reason", required=True)
     rr = rcs.add_parser("clear"); rr.add_argument("--reason", required=True)
-    ideas = sub.add_parser("idea"); ideas.add_argument("text")
-    sub.add_parser("backlog")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
     sub.add_parser("install-git-guards")
@@ -135,13 +128,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, args.cls, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine, hold_merge=args.hold_merge))
-        elif tc == "propose":
-            out(T.propose(p, args.slug, _stdin_or_file(args), None, question=args.question, options=args.option, actor=ACTOR, detail=args.detail, context=args.context))
-        elif tc == "approve":
-            out(T.approve(p, args.slug, args.option, actor=ACTOR, note=args.note))
-        elif tc == "auto-approve":
-            out(T.auto_approve(p, args.slug, args.reason))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, engine=args.engine, hold_merge=args.hold_merge))
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "park":
@@ -149,28 +136,22 @@ def main(argv=None) -> None:
         elif tc == "block":
             out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
-            if args.launches or args.turns:
-                T.raise_envelope(p, args.slug, launches=args.launches, turns=args.turns, actor=ACTOR)
             t = S.load_task(p, args.slug)
             if t["state"] == "blocked" and t.get("session_id"):
                 answer = args.answer or "Continue from your progress file; finish to *done* and rewrite the report."
-                if args.launches:
-                    answer = f"Envelope raised to {args.launches} subagent launches. " + answer
                 from altitude import dispatch
                 res = dispatch.resume_blocked(p, args.slug, answer, prefix="Altitude: ")
                 resumed = S.load_task(p, args.slug)
                 if res.get("deferred"):
                     out({"slug": args.slug, "state": "blocked", "deferred": True,
-                         "waiting": resumed.get("blocked_reason"), "envelope": resumed["envelope"]})
+                         "waiting": resumed.get("blocked_reason")})
                 else:
                     out({"slug": args.slug, "state": "running", "deferred": False,
-                         "agent": (res.get("agent") or {}).get("id"), "envelope": resumed["envelope"]})
+                         "agent": (res.get("agent") or {}).get("id")})
             else:
                 out(T.resume(p, args.slug, actor=ACTOR))
         elif tc == "unpark":
             out(T.unpark(p, args.slug, actor=ACTOR))
-        elif tc == "size":
-            out(T.set_class(p, args.slug, args.cls, args.why, paths=[x for x in (args.paths or "").split(",") if x.strip()], actor=ACTOR))
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
             if not declared:
@@ -213,7 +194,7 @@ def main(argv=None) -> None:
         elif tc == "messages":
             out(T.task_messages(p, args.slug))
         elif tc == "list":
-            out([{k: t.get(k) for k in ("slug", "class", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
+            out([{k: t.get(k) for k in ("slug", "state", "title", "dispatch_id", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
         return
     if c == "fyi":
         out(T.fyi(_project(args), args.slug, args.text, actor=ACTOR)); return
@@ -225,12 +206,6 @@ def main(argv=None) -> None:
         from altitude import engines; out(engines.claude_agents()); return
     if c == "monitor":
         from altitude import monitor; out({"quota": monitor.quota(), "sessions": monitor.sessions()}); return
-    if c == "propose":
-        from altitude import propose; p = _project(args)
-        res = propose.run_proposal(p, args.slug, model=args.model)
-        if args.critic or S.load_task(p, args.slug)["class"] == "L":
-            res["critique"] = propose.run_critic(p, args.slug)
-        out(res); return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return
     if c == "verify":
@@ -280,10 +255,6 @@ def main(argv=None) -> None:
         else:
             out(recovery.status() or {"active": False})
         return
-    if c == "idea":
-        from altitude import intake; res = intake.idea(_project(args), args.text, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
-    if c == "backlog":
-        from altitude import intake; res = intake.backlog(_project(args), on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush())); print(); return
     if c == "serve":
         from altitude import server; server.main(host=args.host, port=args.port); return
     if c == "install-statusline":

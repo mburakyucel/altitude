@@ -43,17 +43,17 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(S.list_tasks("altitude"), [], "fault evidence must not recursively create repair work")
         self.assertEqual(recovery.status()["faults"][-1]["kind"], "test-health")
 
-        ordinary = T.new("altitude", "ordinary work", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "ordinary work", "request", actor="l3", source="chat")
         self.assertIn("recovery hold", dispatch.wip_hold("altitude", ordinary))
 
     def test_one_explicit_repair_is_allowed_until_l3_clears(self):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")
-        repair = T.new("altitude", "repair ownership", "S", "diagnose and repair", actor="l3", source="recovery")
+        repair = T.new("altitude", "repair ownership", "diagnose and repair", actor="l3", source="recovery")
 
         self.assertEqual(repair["state"], "approved", "recovery delegation bypasses proposal and user approval")
         self.assertIsNone(recovery.dispatch_hold("altitude", repair))
         with self.assertRaisesRegex(T.TransitionError, "already has active repair task"):
-            T.new("altitude", "second repair", "S", "another repair", actor="l3", source="recovery")
+            T.new("altitude", "second repair", "another repair", actor="l3", source="recovery")
         with self.assertRaisesRegex(ValueError, "only L3 or Burak"):
             recovery.clear("looks fine", actor="altd")
 
@@ -71,7 +71,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertNotIn("runtime ownership is uncertain", history_text,
                          "clearance history keeps evidence references, not raw fault details")
         self.assertEqual(recovery.clearance_history_path().stat().st_mode & 0o777, 0o600)
-        ordinary = T.new("altitude", "ordinary after recovery", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "ordinary after recovery", "request", actor="l3", source="chat")
         self.assertIsNone(recovery.dispatch_hold("altitude", ordinary))
 
     def test_concurrent_same_kind_faults_coalesce_incident_fyi_and_hold(self):
@@ -222,25 +222,25 @@ class TestRecoveryFuse(unittest.TestCase):
 
     def test_recovery_task_requires_an_active_hold_and_explicit_actor(self):
         with self.assertRaisesRegex(T.TransitionError, "requires an active recovery hold"):
-            T.new("altitude", "unheld repair", "S", "request", actor="l3", source="recovery")
+            T.new("altitude", "unheld repair", "request", actor="l3", source="recovery")
         recovery.hold("manual hold", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "explicitly delegated"):
-            T.new("altitude", "agent invented repair", "S", "request", actor="altd", source="recovery")
+            T.new("altitude", "agent invented repair", "request", actor="altd", source="recovery")
 
-    def test_recovery_task_rejects_automatic_sizing_before_claim(self):
+    def test_recovery_task_needs_no_size_metadata(self):
         recovery.hold("manual hold", actor="l3")
-        for cls in ("auto", None):
-            with self.subTest(cls=cls), self.assertRaisesRegex(T.TransitionError, "explicit S, M, or L class"):
-                T.new("altitude", "unsized repair", cls, "request", actor="l3", source="recovery")
-        self.assertIsNone(recovery.status()["repair"])
-        self.assertFalse(S.task_dir("altitude", "unsized-repair").exists())
+        repair = T.new("altitude", "direct repair", "request", actor="l3", source="recovery")
+        self.assertEqual(repair["state"], "approved")
+        self.assertNotIn("class", repair)
+        self.assertNotIn("envelope", repair)
+        self.assertEqual(recovery.status()["repair"]["slug"], repair["slug"])
 
     def test_dispatch_skips_ordinary_work_and_reaches_claimed_repair(self):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")
-        ordinary = T.new("altitude", "ordinary first", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "ordinary first", "request", actor="l3", source="chat")
         ordinary["state"] = "approved"
         S.save_task("altitude", ordinary)
-        repair = T.new("altitude", "repair second", "S", "request", actor="l3", source="recovery")
+        repair = T.new("altitude", "repair second", "request", actor="l3", source="recovery")
         started = []
         with mock.patch.object(dispatch, "run", side_effect=lambda project, slug: started.append(slug) or {
             "dispatch_id": slug, "agent": None
@@ -253,7 +253,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertTrue(project_hold["reason"].startswith("recovery hold"))
 
     def test_quota_fault_holds_the_same_ordinary_dispatch_attempt(self):
-        ordinary = T.new("altitude", "ordinary quota work", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "ordinary quota work", "request", actor="l3", source="chat")
         with mock.patch.object(engines, "claude_agents", return_value=[]), \
                 mock.patch.object(monitor, "quota", return_value={"known": False}), \
                 mock.patch.object(monitor, "quota_hold", return_value=None):
@@ -264,11 +264,11 @@ class TestRecoveryFuse(unittest.TestCase):
         recovery.hold("manual hold", actor="l3")
         with mock.patch.object(S, "save_task", side_effect=OSError("state store unavailable")):
             with self.assertRaisesRegex(OSError, "state store unavailable"):
-                T.new("altitude", "unwritten repair", "S", "request", actor="l3", source="recovery")
+                T.new("altitude", "unwritten repair", "request", actor="l3", source="recovery")
         self.assertIsNone(recovery.status()["repair"])
 
     def test_fault_during_git_prep_prevents_fresh_worker_launch(self):
-        ordinary = T.new("altitude", "racy ordinary launch", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "racy ordinary launch", "request", actor="l3", source="chat")
         ordinary["state"] = "approved"
         S.save_task("altitude", ordinary)
 
@@ -298,7 +298,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(recovery.status()["faults"][-1]["kind"], "fetch-race")
 
     def test_resume_launch_obeys_hold_but_claimed_repair_can_resume(self):
-        ordinary = T.new("altitude", "ordinary resume", "S", "request", actor="l3", source="chat")
+        ordinary = T.new("altitude", "ordinary resume", "request", actor="l3", source="chat")
         ordinary.update({"state": "running", "worktree": str(self.repo), "dispatch_id": "ordinary-resume-1",
                          "session_id": "ordinary-session"})
         S.save_task("altitude", ordinary)
@@ -311,7 +311,7 @@ class TestRecoveryFuse(unittest.TestCase):
                 dispatch.resume_session("altitude", ordinary["slug"], "steer")
         resume.assert_not_called()
 
-        repair = T.new("altitude", "claimed repair resume", "S", "request", actor="l3", source="recovery")
+        repair = T.new("altitude", "claimed repair resume", "request", actor="l3", source="recovery")
         repair.update({"state": "blocked", "worktree": str(self.repo), "dispatch_id": "claimed-repair-resume-1",
                        "session_id": "repair-session"})
         S.save_task("altitude", repair)

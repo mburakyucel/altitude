@@ -213,7 +213,7 @@ export default function Chat() {
         <textarea
           className="field w-full"
           aria-label="Message L3"
-          placeholder="Talk to L3 — or /idea … , /backlog"
+          placeholder="Talk to L3 about roadmap, architecture, or what to build"
           rows={3}
           value={draft}
           disabled={disabled}

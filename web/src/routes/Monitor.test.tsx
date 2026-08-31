@@ -29,8 +29,7 @@ const monitor = {
       slug: "fix-timer",
       state: "running",
       context_percent: 44,
-      subagent_launches: 2,
-      cap: 3,
+      l1_runs: 2,
       edits: 7,
       agent: { status: "active", state: "tool" },
       at: ago(3),
@@ -75,14 +74,12 @@ describe("Monitor", () => {
     expect(screen.getByText(/aaaaaaaa worker-one active tool/)).toBeInTheDocument();
   });
 
-  it("spells the launch counter 'launches N · cap M', never 'N/M' and never 'agents'", async () => {
+  it("shows optional L1 activity without a target or cap", async () => {
     mockFetch();
     renderApp({ route: "/monitor" });
 
-    await screen.findByText(/launches 2 · cap 3 · edits 7 · active tool/);
-    // Burak read "0/3" as a plan to launch three agents; both spellings are banned.
-    expect(document.body.textContent).not.toMatch(/\d+\/\d+/);
-    expect(document.body.textContent).not.toMatch(/agents/i);
+    await screen.findByText(/L1 runs 2 · edits 7 · active tool/);
+    expect(document.body.textContent).not.toMatch(/cap/i);
   });
 
   it("explains an unknown quota and an empty session list", async () => {

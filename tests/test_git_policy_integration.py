@@ -75,7 +75,6 @@ class TestDispatchBoundaryOrdering(unittest.TestCase):
     def test_unsafe_main_refuses_before_task_or_agent_mutation(self):
         task = {
             "slug": "blocked", "state": "approved", "dispatching": None,
-            "envelope": {"max_turns": 5},
         }
         with mock.patch.object(dispatch.S, "project_lock", side_effect=lambda _project: contextlib.nullcontext()), \
              mock.patch.object(dispatch.S, "load_task", return_value=task), \

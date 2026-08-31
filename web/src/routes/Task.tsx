@@ -3,10 +3,9 @@ import { Link, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
 import type { TaskMessage, TaskView } from "../data/api";
-import { launchLabel } from "../data/launches";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
-// fields (dispatch_id, session_id, worktree, envelope, spend, live, ...) arrives typed
+// fields (dispatch_id, session_id, worktree, spend, live, ...) arrives typed
 // `unknown`, so narrow it here rather than widening the schema in api.ts.
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -28,28 +27,19 @@ interface ActionSpec {
 }
 
 const ACTIONS: ActionSpec[] = [
-  { action: "propose", label: "Propose", states: ["requested"] },
-  {
-    action: "build",
-    label: "Build now",
-    states: ["requested", "parked", "proposed"],
-    primary: true,
-    title:
-      "Executive override: approve as requested and dispatch now, skipping the proposal/critic loop",
-  },
   { action: "dispatch", label: "Dispatch", states: ["approved"] },
   { action: "unpark", label: "Unpark", states: ["parked"] },
   { action: "done", label: "Mark done", states: ["reported"] },
   {
     action: "park",
     label: "Park",
-    states: ["requested", "proposed", "approved", "blocked", "reported"],
+    states: ["approved", "running", "blocked"],
     reason: true,
   },
   {
     action: "reject",
     label: "Reject",
-    states: ["requested", "proposed", "approved", "blocked", "reported", "parked"],
+    states: ["approved", "blocked", "parked"],
     reason: true,
   },
 ];
@@ -110,7 +100,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
 
   const slug = task.slug;
   const state = task.state ?? "";
-  const envelope = rec(task["envelope"]);
   const spend = rec(task["spend"]);
   const live = rec(task["live"]);
   const files = Object.entries(task.files ?? {});
@@ -126,9 +115,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   // it gets the sentence and the neutral colour, never the danger line.
   const held = state === "blocked" && Boolean(task.resume_after);
   const model = str(task["model"]);
-  const spendUsed = spend["subagent_launches_hook"] ?? spend["subagent_launches_reported"];
-  const cap = envelope["subagent_launches"] ?? spend["cap"];
-  const hasEnvelope = Object.keys(envelope).length > 0 || Object.keys(spend).length > 0;
+  const hasActivity = Object.keys(spend).length > 0;
   const liveState = rec(live["agent"]);
 
   const refreshTask = () => {
@@ -155,7 +142,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          {task.class ? <span className="pill">{task.class}</span> : null}
           {state ? <span className="pill">{state}</span> : null}
           <h1 className="text-page-title font-semibold">{task.title || slug}</h1>
         </div>
@@ -176,15 +162,12 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         ) : null}
       </header>
 
-      {hasEnvelope ? (
+      {hasActivity ? (
         <section className="card space-y-1">
-          <h2 className="label">Envelope</h2>
-          <p className="text-body text-ink-2">{launchLabel(spendUsed, cap)}</p>
+          <h2 className="label">Activity</h2>
           <p className="text-meta text-muted">
-            turns {num(spend["turns"]) ?? 0} · max turns {num(envelope["max_turns"]) ?? "?"} · L1 in
-            flight {num(envelope["l1_in_flight"]) ?? "?"} · edits {num(spend["edits_hook"]) ?? 0} ·
-            retries {num(spend["retries"]) ?? 0}
-            {str(envelope["verification"]) ? ` · verification ${str(envelope["verification"])}` : ""}
+            turns {num(spend["turns"]) ?? 0} · L1 runs {num(spend["subagent_launches_reported"]) ?? 0}
+            {" · "}edits {num(spend["edits_hook"]) ?? 0} · retries {num(spend["retries"]) ?? 0}
           </p>
         </section>
       ) : null}
@@ -193,8 +176,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <section className="card space-y-1">
           <h2 className="label">Live</h2>
           <p className="text-body text-ink-2">
-            {str(liveState["status"]) || str(live["state"]) || "running"} ·{" "}
-            {launchLabel(live["subagent_launches"], live["cap"])}
+            {str(liveState["status"]) || str(live["state"]) || "running"} · L1 runs {num(live["l1_runs"]) ?? 0}
           </p>
           <p className="text-meta text-muted">
             edits {num(live["edits"]) ?? 0}
@@ -276,15 +258,6 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         </div>
       </section>
 
-      {task.critique != null ? (
-        <details className="card">
-          <summary className="cursor-pointer text-card-title">
-            critique{str(rec(task.critique)["verdict"]) ? ` (${str(rec(task.critique)["verdict"])})` : ""}
-          </summary>
-          <Json value={task.critique} />
-        </details>
-      ) : null}
-
       {task.report_json != null ? (
         <details className="card">
           <summary className="cursor-pointer text-card-title">report.json</summary>
@@ -293,7 +266,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
       ) : null}
 
       {files.map(([name, body]) => (
-        <details key={name} className="card" open={name === "report" || name === "proposal"}>
+        <details key={name} className="card" open={name === "report"}>
           <summary className="cursor-pointer text-card-title">{name}</summary>
           <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-meta text-ink-2">{body}</pre>
         </details>

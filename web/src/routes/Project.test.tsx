@@ -20,30 +20,27 @@ const project = {
     {
       slug: "fix-timer",
       state: "running",
-      class: "M",
       title: "Fix the timer",
       updated: ago(2),
       live: {
         agent: { status: "active", state: "tool" },
         context_percent: 44,
-        subagent_launches: 1,
-        cap: 3,
+        l1_runs: 1,
         edits: 7,
       },
     },
-    { slug: "add-badge", state: "approved", class: "S", title: "Add the badge", updated: ago(30) },
+    { slug: "add-badge", state: "approved", title: "Add the badge", updated: ago(30) },
   ],
-  archive: [{ slug: "old-thing", state: "done", class: "S", title: "Old thing" }],
+  archive: [{ slug: "old-thing", state: "done", title: "Old thing" }],
   inbox: [{ at: ago(9), slug: "fix-timer", text: "L2 picked it up" }],
   decisions: [
     {
       slug: "add-badge",
-      class: "S",
       title: "Add the badge",
-      question: "Proposal ready — approve?",
+      question: "Stopped mid-task: Which badge color should be used?",
       asked: ago(4),
-      options: ["Approve", "Revise", "Reject"],
-      kind: "decision",
+      options: ["Resume", "Park", "Reject"],
+      kind: "blocked",
     },
   ],
   incidents: [{ id: "INC-1", title: "altd restarted", tags: ["restart"], rule: "R-002" }],
@@ -81,7 +78,7 @@ function cardFor(title: HTMLElement): HTMLElement {
 }
 
 describe("Project", () => {
-  it("renders the L3 card, the task list and the launch counter as 'launches N · cap M'", async () => {
+  it("renders the L3 card, the task list and optional L1 activity", async () => {
     mockFetch();
     renderApp({ route: "/projects/altitude" });
 
@@ -89,11 +86,8 @@ describe("Project", () => {
     expect(screen.getByText("Tasks (2)")).toBeInTheDocument();
     expect(screen.getByText(/session abcdef12 · 12 turns · context 33% · last 7m/)).toBeInTheDocument();
     expect(screen.getByText(/stacks: python, web · approval: ask · WIP 2/)).toBeInTheDocument();
-    expect(screen.getByText(/launches 1 · cap 3/)).toBeInTheDocument();
+    expect(screen.getByText(/L1 runs 1/)).toBeInTheDocument();
     expect(screen.getByText(/L2 active\/tool · ctx 44%/)).toBeInTheDocument();
-    // The wording is load-bearing: "1/3" and "agents" both read as "three agents planned".
-    expect(document.body.textContent).not.toContain("1/3");
-    expect(document.body.textContent).not.toMatch(/agents/i);
     expect(screen.getByText("Needs you (1)")).toBeInTheDocument();
     expect(screen.getByText("L2 picked it up")).toBeInTheDocument();
     expect(screen.getByText(/INC-1/)).toBeInTheDocument();
@@ -143,7 +137,6 @@ describe("Project", () => {
     const held = {
       slug: "held-task",
       state: "blocked",
-      class: "M",
       title: "Held task",
       updated: ago(3),
       blocked_reason: "usage limit: the subscription window is exhausted, resets 2026-08-30T02:00",
@@ -152,7 +145,6 @@ describe("Project", () => {
     const stuck = {
       slug: "stuck-task",
       state: "blocked",
-      class: "M",
       title: "Stuck task",
       updated: ago(4),
       blocked_reason: "the test suite will not run",
@@ -185,12 +177,11 @@ describe("Project", () => {
     expect(stuckCard).toHaveClass("border-danger/40");
   });
 
-  it("creates a new task with the chosen class", async () => {
+  it("creates a new task without a class selector", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
     await user.type(await screen.findByLabelText("New request"), "Ship the badge");
-    await user.selectOptions(screen.getByLabelText("Task class"), "L");
     await user.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() => {
@@ -202,78 +193,7 @@ describe("Project", () => {
       slug: "",
       action: "new",
       title: "Ship the badge",
-      class: "L",
       request: "Ship the badge",
     });
-  });
-});
-
-// The project page keeps its own copy of the decision card; decision 46 applies to it too, so the
-// same three things hold here: situation above, one question, reasoning behind it.
-describe("Project decision card (executive shape)", () => {
-  const executive = {
-    slug: "quota-reader",
-    class: "M",
-    title: "Quota reader",
-    context:
-      "Altitude only learns your window usage from an interactive session. Overnight it dispatches blind.",
-    question: "When no fresh reading can be had, should Altitude stop dispatching or carry on?",
-    asked: ago(6),
-    options: ["Stop until a reading returns", "Carry on and warn"],
-    detail: "Reserve line comes from decision 31; the headless reader is I-007 in altitude/quota.py.",
-    kind: "decision",
-  };
-
-  function stubDecisions(decisions: unknown[]) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/api/overview")) return jsonResponse(overview);
-        if (url.includes("/api/project/altitude")) return jsonResponse({ ...project, decisions });
-        return jsonResponse({ error: "not found" }, 404);
-      }),
-    );
-  }
-
-  /** True when `first` precedes `second` in document order — "above" as the reader sees it. */
-  function precedes(first: Element, second: Element): boolean {
-    return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
-  }
-
-  it("puts the context line above the question and the reasoning behind it", async () => {
-    stubDecisions([executive]);
-    const { user } = renderApp({ route: "/projects/altitude" });
-
-    const question = await screen.findByText(
-      "When no fresh reading can be had, should Altitude stop dispatching or carry on?",
-    );
-    const card = cardFor(question);
-    const context = within(card).getByText(/Altitude only learns your window usage/);
-    expect(precedes(context, question)).toBe(true);
-
-    const reasoning = within(card).getByText(/Reserve line comes from decision 31/);
-    expect(reasoning).not.toBeVisible();
-    expect(precedes(question, reasoning)).toBe(true);
-
-    await user.click(within(card).getByText("Why"));
-    expect(reasoning).toBeVisible();
-  });
-
-  it("renders a card with no context or reasoning exactly as before", async () => {
-    stubDecisions([executive, ...project.decisions]);
-    renderApp({ route: "/projects/altitude" });
-
-    const plain = cardFor(await screen.findByText("Proposal ready — approve?"));
-    expect(within(plain).queryByText("Why")).toBeNull();
-    expect(
-      within(plain)
-        .getAllByRole("button")
-        .map((b) => b.textContent),
-    ).toEqual(["Approve", "Revise", "Reject"]);
-
-    const rich = cardFor(screen.getByText(/Altitude only learns your window usage/));
-    expect(within(rich).getByText("Why")).toBeVisible();
-    expect(within(rich).getByText(/Altitude only learns your window usage/)).toBeVisible();
   });
 });

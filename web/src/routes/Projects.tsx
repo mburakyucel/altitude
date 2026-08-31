@@ -8,9 +8,7 @@ const STATES = [
   "blocked",
   "running",
   "reported",
-  "proposed",
   "approved",
-  "requested",
   "parked",
 ] as const;
 

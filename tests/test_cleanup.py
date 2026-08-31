@@ -34,7 +34,7 @@ class TestCleanupScope(unittest.TestCase):
             git("worktree", "add", "-q", "-b", f"worktree-{name}", f".claude/worktrees/{name}", "origin/main", cwd=cls.repo)
         git("worktree", "lock", ".claude/worktrees/locked-one", cwd=cls.repo)
         S.task_dir("altitude", "running-one").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "running-one", "title": "running-one", "created": S.now(), "updated": S.now(), "state": "running", "worktree": str(cls.repo / ".claude/worktrees/running-one"), "class": "S"})
+        S.save_task("altitude", {"slug": "running-one", "title": "running-one", "created": S.now(), "updated": S.now(), "state": "running", "worktree": str(cls.repo / ".claude/worktrees/running-one")})
 
     def test_only_unowned_merged_worktrees_go(self):
         engines.claude_rm, engines.claude_agents = (lambda aid: "removed"), (lambda: [])
@@ -50,7 +50,7 @@ class TestCleanupScope(unittest.TestCase):
         git("worktree", "add", "-q", "-b", "worktree-orphan", ".claude/worktrees/orphan", "origin/main", cwd=self.repo)
         def boom(): raise RuntimeError("claude agents down")
         engines.claude_rm, engines.claude_agents = (lambda aid: "removed"), boom
-        notes = dispatch.cleanup_after_done("altitude", {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "class": "S", "updated": S.now()})
+        notes = dispatch.cleanup_after_done("altitude", {"slug": "z", "title": "z", "state": "done", "agent_id": "x", "updated": S.now()})
         self.assertIn("orphan", git("worktree", "list", "--porcelain", cwd=self.repo))
         self.assertTrue(any("skipped worktree cleanup" in n for n in notes), notes)
 
@@ -64,7 +64,7 @@ class TestSelfDeploy(unittest.TestCase):
         (other / "hooks").mkdir(exist_ok=True); (other / "hooks" / "h.py").write_text("# hook\n")
         git("add", "-A", cwd=other); git("commit", "-qm", "code + hook", cwd=other); git("push", "-q", "origin", "main", cwd=other)
         S.task_dir("altitude", "landed").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "landed", "title": "landed", "class": "S", "state": "done", "created": S.now(), "updated": S.now()})
+        S.save_task("altitude", {"slug": "landed", "title": "landed", "state": "done", "created": S.now(), "updated": S.now()})
         notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
         self.assertTrue((repo / "hooks" / "h.py").exists(), notes)          # hooks deploy by the pull itself
         pend = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {})

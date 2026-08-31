@@ -12,9 +12,8 @@ from pathlib import Path
 
 from . import config
 
-STATES = ("requested", "proposed", "approved", "running", "reported", "done", "rejected", "parked", "blocked")
-OPEN_STATES = ("requested", "proposed", "approved", "running", "reported", "blocked")
-CLASSES = ("S", "M", "L")
+STATES = ("approved", "running", "reported", "done", "rejected", "parked", "blocked")
+OPEN_STATES = ("approved", "running", "reported", "blocked")
 
 
 def now() -> str:
@@ -184,11 +183,12 @@ def regen_state_md(project: str) -> str:
     by = {s: [t for t in tasks if t["state"] == s] for s in STATES}
     lines = [f"# STATE — {project}", "",
              f"*Regenerated {now()} from `status.json` files. Never edit by hand; never trust memory over this file.*", ""]
-    pending = [t for t in by["proposed"] if t.get("decision")]
-    lines += ["## Decisions waiting on Burak", ""]
-    lines += [f"- **{t['slug']}** ({t['class']}, {age(t['updated'])}): {t['decision'].get('question', '')[:200]}" for t in pending] or ["- none"]
+    pending = [t for t in by["blocked"] if not t.get("resume_after")]
+    lines += ["## Needs user input", ""]
+    lines += [f"- **{t['slug']}** ({age(t['updated'])}): {short[:200]}"
+              for t in pending if (short := str(t.get("blocked_reason") or "blocked"))] or ["- none"]
     lines += ["", "## Tasks", ""]
-    for s in ("blocked", "running", "reported", "approved", "proposed", "requested", "parked"):
+    for s in ("blocked", "running", "reported", "approved", "parked"):
         ts = by[s]
         if not ts:
             continue
@@ -203,11 +203,11 @@ def regen_state_md(project: str) -> str:
                 extra.append("blocked: " + t["blocked_reason"][:120])
             sp = t.get("spend") or {}
             if sp.get("turns"):
-                extra.append(f"turns {sp['turns']}/{(t.get('envelope') or {}).get('max_turns', '?')}")
-            lines.append(f"- **{t['slug']}** [{t['class']}] {t['title']} — {age(t['updated'])}" + (" — " + "; ".join(extra) if extra else ""))
+                extra.append(f"turns {sp['turns']}")
+            lines.append(f"- **{t['slug']}** {t['title']} — {age(t['updated'])}" + (" — " + "; ".join(extra) if extra else ""))
         lines.append("")
     done = [t for t in list_tasks(project, include_archive=True) if t["state"] in ("done", "rejected")][-10:]
-    lines += ["## Recently finished", ""] + ([f"- {t['slug']} [{t['class']}] {t['state']} — {t['title']}" for t in done] or ["- none"])
+    lines += ["## Recently finished", ""] + ([f"- {t['slug']} {t['state']} — {t['title']}" for t in done] or ["- none"])
     inc = config.project_dir(project) / "incidents.jsonl"
     if inc.exists():
         recent = [json.loads(l) for l in inc.read_text().splitlines()[-5:] if l.strip()]

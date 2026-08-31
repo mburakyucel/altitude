@@ -126,7 +126,7 @@ def note_usage_limit(until: str, detail: str = "") -> bool:
 
 
 def usage_hold() -> str | None:
-    """The reset time while the window is exhausted, else None. Dispatch, proposals and L3 turns check this first."""
+    """The reset time while the window is exhausted, else None. Dispatch and L3 turns check this first."""
     p = usage_limit_path()
     try:
         until = json.loads(p.read_text()).get("until") if p.exists() else None
@@ -485,7 +485,7 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
                effort: str | None = None, extra_env: dict | None = None,
                fault_context: dict[str, str] | None = None) -> dict:
-    """Codex headless (critic, and L1 implementers/reviewers since decision 45) — verified: needs stdin closed, -o for
+    """Codex headless (optional L1 implementers/reviewers) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
     `turn.completed` events on stdout."""
     if sandbox == "workspace-write":

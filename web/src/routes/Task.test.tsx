@@ -21,28 +21,24 @@ const overview = {
 const running = {
   slug: "fix-timer",
   state: "running",
-  class: "S",
   title: "Fix the timer",
   dispatch_id: "d-1",
   session_id: "0123456789abcdef",
   agent_id: "a-9",
   worktree: ".claude/worktrees/fix-timer",
-  envelope: { l1_in_flight: 1, subagent_launches: 3, max_turns: 40, verification: "reviewer" },
-  spend: { turns: 12, subagent_launches_hook: 2, edits_hook: 7, retries: 0, cap: 3 },
+  spend: { turns: 12, subagent_launches_reported: 2, edits_hook: 7, retries: 0 },
   live: {
     state: "running",
-    subagent_launches: 2,
-    cap: 3,
+    l1_runs: 2,
     edits: 7,
     context_percent: 34,
     agent: { status: "working" },
   },
-  files: { proposal: "PROPOSAL BODY", report: "REPORT BODY" },
+  files: { request: "REQUEST BODY", report: "REPORT BODY" },
   events: [
     { at: "2026-08-29T12:00:00", kind: "dispatched", detail: "worker up" },
     { at: "2026-08-29T12:05:00", kind: "progress" },
   ],
-  critique: { verdict: "revise", notes: ["tighten the brief"] },
   report_json: { ok: true },
   messages: [
     { id: "m-1", at: "2026-08-29T12:01:00Z", role: "burak", text: "Keep the change focused." },
@@ -50,7 +46,7 @@ const running = {
   ],
 };
 
-const proposed = { ...running, state: "proposed", live: null };
+const queued = { ...running, state: "approved", live: null };
 
 const held = {
   ...running,
@@ -85,21 +81,18 @@ function stub(task: unknown) {
 const route = "/projects/altitude/tasks/fix-timer";
 
 describe("Task", () => {
-  it("renders the task detail and spells subagent launches as 'launches N · cap M'", async () => {
+  it("renders the task detail and optional L1 activity", async () => {
     stub(running);
     renderApp({ route });
 
     await screen.findByText("Fix the timer");
-    expect(screen.getByText("S")).toBeInTheDocument();
     expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getAllByText("launches 2 · cap 3").length).toBeGreaterThan(0);
-    expect(document.body.textContent).not.toContain("2/3");
+    expect(screen.getAllByText(/L1 runs 2/).length).toBeGreaterThan(0);
     expect(screen.getByText(/dispatch d-1/)).toBeInTheDocument();
     expect(screen.getByText(/session 01234567 /)).toBeInTheDocument();
     expect(screen.getByText(/attach: claude attach a-9/)).toBeInTheDocument();
-    expect(screen.getByText("PROPOSAL BODY")).toBeInTheDocument();
+    expect(screen.getByText("REQUEST BODY")).toBeInTheDocument();
     expect(screen.getByText("REPORT BODY")).toBeInTheDocument();
-    expect(screen.getByText("critique (revise)")).toBeInTheDocument();
     expect(screen.getByText("Events (2)")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
     expect(screen.getByText("Keep the change focused.")).toBeInTheDocument();
@@ -113,12 +106,12 @@ describe("Task", () => {
     );
   });
 
-  it("posts the build-now override for a proposed task", async () => {
-    const fetchMock = stub(proposed);
+  it("dispatches a queued task", async () => {
+    const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
-    await user.click(screen.getByRole("button", { name: "Build now" }));
+    await user.click(screen.getByRole("button", { name: "Dispatch" }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
@@ -128,12 +121,12 @@ describe("Task", () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({
       project: "altitude",
       slug: "fix-timer",
-      action: "build",
+      action: "dispatch",
     });
   });
 
   it("sends the typed reason with a park", async () => {
-    const fetchMock = stub(proposed);
+    const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
@@ -155,7 +148,7 @@ describe("Task", () => {
   // Park and Reject are irreversible from here and used to fire on one unconfirmed click with an
   // optional reason; they now stay disabled until a reason is typed.
   it("refuses park and reject until a reason is typed", async () => {
-    const fetchMock = stub(proposed);
+    const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
@@ -164,7 +157,7 @@ describe("Task", () => {
     expect(park).toBeDisabled();
     expect(reject).toBeDisabled();
     // a non-destructive action in the same row is unaffected
-    expect(screen.getByRole("button", { name: "Build now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Dispatch" })).toBeEnabled();
 
     await user.click(park);
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(false);
@@ -207,7 +200,7 @@ describe("Task", () => {
     const { user } = renderApp({ route });
 
     await screen.findByText("Fix the timer");
-    expect(screen.queryByRole("button", { name: "Build now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dispatch" })).toBeNull();
 
     await user.type(screen.getByLabelText("Message the L2"), "prefer the smaller diff");
     await user.click(screen.getByRole("button", { name: "Send" }));

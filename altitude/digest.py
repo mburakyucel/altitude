@@ -6,14 +6,11 @@ from pathlib import Path
 
 from . import config, state as S, tasks as T
 
-CLASS_RANK = {"L": 0, "M": 1, "S": 2}
-
-
 def queue() -> list[dict]:
     items = []
     for p in config.load_projects():
         items += T.decisions(p)
-    items.sort(key=lambda i: (0 if i["kind"] == "blocked" else 1, CLASS_RANK.get(i["class"], 3), i.get("asked") or ""))
+    items.sort(key=lambda i: i.get("asked") or "")
     return items
 
 
@@ -37,7 +34,7 @@ def text() -> str:
     q = queue()
     lines = ["# Altitude digest", ""]
     if q:
-        lines += [f"{len(q)} decision(s) waiting:"] + [f"- [{i['project']}] {i['slug']} ({i['class']}): {i['question'][:200]}" for i in q]
+        lines += [f"{len(q)} task(s) need input:"] + [f"- [{i['project']}] {i['slug']}: {i['question'][:200]}" for i in q]
     else:
         lines.append("No decisions waiting.")
     w = wip()

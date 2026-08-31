@@ -52,13 +52,13 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Model tiers (decision 38, Burak 2026-08-30): judgement at the top (L3 = Fable, low volume), coding at least Opus,
 # Fable for the hard coding (L2 per task, L1 per sub-brief — dynamic), research/docs on Sonnet or Opus, never Fable.
 MODELS = {"l3": "fable", "l2": "opus", "l2_hard": "fable", "l1": "opus", "l1_hard": "fable",
-          "reviewer": "opus", "proposal": "opus", "research": "sonnet",
+          "reviewer": "opus", "research": "sonnet",
           "l1_codex": None, "reviewer_codex": None}   # None = the Codex CLI's configured default model
 ENGINES = ("claude", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
-CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None}
+CODEX_EFFORT = {"implementer": None, "reviewer": None, "l3": None}
 L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
 L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
@@ -67,7 +67,7 @@ CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex":
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
 WIP_PER_PROJECT = 3               # decision 21
 WIP_PER_MACHINE = 10              # Burak 2026-08-30: 10 concurrent tasks (decision 51 addendum)
-SESSIONS_PER_MACHINE = 24         # decision 39: live Claude sessions (L2s + their L1s) across all projects; 10 L2s + their L1s + L3/critic turns
+SESSIONS_PER_MACHINE = 24         # live Claude sessions (L2s + optional L1s) across all projects
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
 L3_TURN_TIMEOUT = 900             # seconds
 AGENT_POLL_SECONDS = 30

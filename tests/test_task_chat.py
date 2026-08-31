@@ -31,7 +31,7 @@ class TestTaskConversation(unittest.TestCase):
         projects = config.load_projects()
         projects[self.project] = {"name": self.project, "path": str(self.repo), "stacks": []}
         config.save_projects(projects)
-        task = T.new(self.project, "Direct conversation", "S", "Build the focused change.")
+        task = T.new(self.project, "Direct conversation", "Build the focused change.")
         self.slug = task["slug"]
         self.worktree = self.repo / ".claude" / "worktrees" / self.slug
         self.worktree.mkdir(parents=True)
@@ -165,9 +165,9 @@ class TestResumeGenerationFence(unittest.TestCase):
         projects[project] = {"name": project, "path": str(repo), "stacks": []}
         config.save_projects(projects)
         S.save_task(project, {
-            "slug": "resume-race", "title": "race", "class": "S", "state": "running",
+            "slug": "resume-race", "title": "race", "state": "running",
             "dispatch_id": "resume-race-1", "session_id": "session-old", "agent_id": "agent-old",
-            "worktree": str(worktree), "envelope": {"max_turns": 20}, "created": S.now(),
+            "worktree": str(worktree), "created": S.now(),
         })
 
         def launch(*_args, **_kwargs):

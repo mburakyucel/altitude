@@ -17,7 +17,7 @@ def project_never_list(repo: Path) -> str:
         lines = [l.strip("- ").strip() for l in md.read_text().splitlines() if re.match(r"^\s*-\s*\*\*?never", l, re.I) or "never" in l.lower()[:40]]
         if lines:
             return "; ".join(l[:160] for l in lines[:8])
-    return "no changes outside the brief; no weakened guardrails; high-impact classes: open the PR and stop"
+    return "no changes outside the brief; no weakened guardrails; honor any recorded merge hold"
 
 
 JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
@@ -120,14 +120,7 @@ def build_brief(project: str, slug: str) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
-    proposal = (d / "proposal.md").read_text() if (d / "proposal.md").exists() else (d / "request.md").read_text()
-    env = task["envelope"]
-    dec = task.get("decision") or {}
-    approval_note = f" — Burak chose: {dec['chosen']}" if dec.get("chosen") else ""
-    if dec.get("chosen") and dec.get("detail"):  # decision 46: the card is short; the conditions behind it travel with the brief
-        approval_note += f"\n\nBehind the card (the L3's reasoning and conditions — binding where they say so):\n{dec['detail']}"
-    if dec.get("chosen") and dec.get("note"):  # decision 50: Burak's own words with the answer are binding too
-        approval_note += f"\n\nBurak's note with that answer (binding): {dec['note']}"
+    request = (d / "request.md").read_text()
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # decision 48: the hold is the exception, and it says why
         merge_policy = f"**Held for Burak** — open the PR, make it ready for any required review, get its checks green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
@@ -135,25 +128,23 @@ def build_brief(project: str, slug: str) -> str:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     text = (config.TEMPLATES / "brief.md").read_text().format(
-        slug=slug, cls=task["class"], project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
+        slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         model=task.get("model") or config.MODELS["l2"],
         engine_line=(f"the engine is forced to **{task['engine']}** for this task." if task.get("engine") else "the engine is Altitude's choice."),
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
-        paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the proposal's file list)",
+        paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
-        l1_in_flight=env["l1_in_flight"], subagent_launches=env["subagent_launches"], max_turns=env["max_turns"],
-        verification=env.get("verification", "reviewer"), approval_note=approval_note, repo=config.project_path(project),
+        repo=config.project_path(project),
         branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
-        proposal=proposal, **{"class": task["class"]})
+        request=request)
     return text
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-dispatch settings passed with --settings: hooks that enforce the envelope, nothing global."""
+    """Per-dispatch settings: repository guardrails and passive edit telemetry."""
     hooks = config.HOOKS
     settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Agent|Task|Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'subagent_cap.py'}", "timeout": 10}]},
-                       {"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
@@ -203,15 +194,12 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     d = S.task_dir(project, slug)
     brief_md = build_brief(project, slug)
     T.brief(project, slug, brief_md, actor="altd")
-    # envelope file the hooks read (keyed by dispatch id; session id is learned after launch)
-    env_file = config.MONITOR_DIR / f"envelope-{project}--{dispatch_id}.json"
-    S.write_json(env_file, {"project": project, "slug": slug, "dispatch_id": dispatch_id, **task["envelope"]})
     settings = session_settings(project, slug, f"{project}--{dispatch_id}")
     persona = config.PERSONAS / "l2.md"
     proj = config.project(project)
     try:
         res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
-                                permission_mode="auto", max_turns=task["envelope"]["max_turns"],
+                                permission_mode="auto",
                                 model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
                                 extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}),
                                 spawn_guard=recovery.launch_permission(project, task))
@@ -238,7 +226,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
 
 
 def l2_env(project: str, task: dict) -> dict:
-    """The env every L2 session (fresh or resumed) needs: the hooks read the session key to find their envelope."""
+    """The ownership identity every fresh or resumed L2 session needs."""
     return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": task["slug"],
             "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}",
             "ALTITUDE_DISPATCH_ID": str(task["dispatch_id"])}
@@ -318,7 +306,7 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         if held:
             raise recovery.LaunchHeld(held)
         res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
-                                       max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
+                                       settings=S.task_dir(project, slug) / "settings.json",
                                        extra_env=l2_env(project, task),
                                        spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
@@ -601,12 +589,8 @@ def _expand_entry(entry: str) -> list[str]:
 
 
 def task_paths(project: str, task: dict) -> list[str]:
-    """The paths a task has declared: `--paths` on the task, else the proposal's `files`. This is the *staging* lease
-    (`alt land` refuses changes outside it); the *hold* lease is `narrow()` of it — see wip_hold."""
-    entries = task.get("paths")
-    if not entries:
-        p = S.read_json(S.task_dir(project, task["slug"]) / "proposal.json", {}) or {}
-        entries = p.get("files") or []
+    """The task's declared staging lease; `alt land` refuses changes outside it."""
+    entries = task.get("paths") or []
     return [path for entry in entries for path in _expand_entry(str(entry))]
 
 

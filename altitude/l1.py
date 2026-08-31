@@ -1,8 +1,8 @@
-"""L1 runs (decisions 45, 47): `alt l1 run` starts an implementer or a reviewer on either engine, detached, in its own
-worktree; `alt l1 wait` collects the result. The L2 no longer spawns L1s through Claude Code's Agent tool, so the
-engine is Altitude's choice (by quota), the in-flight cap is enforced here, and every run leaves a record. Raw stream
+"""Optional L1 runs: `alt l1 run` starts an implementer or reviewer on either engine, detached, in its own
+worktree; `alt l1 wait` collects the result. The L2 decides when L1 help is useful and owns every result. Raw stream
 artifacts are local diagnostic evidence: cite their paths, never paste their contents into a PR, issue, or report."""
 from __future__ import annotations
+import fcntl
 import os
 import re
 import subprocess
@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 
 from . import config, engines, git_policy, improve, route, state as S, tasks as T
-from hooks import launch_counter as LC
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
@@ -27,9 +26,6 @@ FOOTER = ("\n\n---\nWhen you are finished, print exactly one final line `RESULT:
 POLL = 5
 # Raw engine artifacts are capped at 2 MiB per stream. Truncated files retain both ends and state the exact byte drop.
 RAW_OUTPUT_CAP = engines.RAW_CAPTURE_CAP
-# A launch is billed only once the engine process itself ran: an exec that never happened raises, and a wrapper that
-# started and then failed to find the engine leaves 127 behind. Neither is a session, so neither is charged.
-_EXIT_127 = re.compile(r"\bexit(?:\s+code)?\s+127\b")
 _CODEX_SANDBOX_MARKERS = ("uid map", "loopback", "RTM_NEWADDR", "Operation not permitted")
 _SANDBOX_WORDS = ("bwrap", "bubblewrap", "sandbox", "landlock", "seccomp")
 _DENIAL_WORDS = ("denied", "not permitted", "permission", "blocked", "refused", "could not create", "cannot create")
@@ -102,55 +98,25 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     if not Path(brief).exists():
         raise T.TransitionError(f"brief not found: {brief}")
     task = S.load_task(project, slug)
-    launch_cap = int(task["envelope"]["subagent_launches"])
-    # The cap check and the slot it takes are one atomic step under this task's own launch lock; routing,
-    # `git worktree add`, the prompt write and the spawn all happen after it is released, so a launch never
-    # serialises the project's writers. A run that has not started yet counts through its reservation, not a bill.
-    with LC.launch_lock(config.ROOT, project, slug):
-        ledger = LC.launch_ledger(config.ROOT, project, slug)
-        if ledger is None:  # decision 36: an unreadable count is a fault, never "no launches yet"
-            raise T.TransitionError(f"L1 launch count for {project}/{slug} cannot be read — refusing to launch "
-                                    f"against an unknown envelope; fix the task folder or report blocked")
-        launches, started = ledger
-        held = LC.reservations(config.ROOT, project, slug)
-        if held is None:
-            raise T.TransitionError(f"L1 launch reservations for {project}/{slug} cannot be read — refusing to "
-                                    f"launch against an unknown envelope; fix the task folder or report blocked")
-        committed = launches + len(held)
-        if committed >= launch_cap:
-            raise T.TransitionError(f"L1 launch cap: {committed} run(s) already started (cap {launch_cap}) — raise the envelope or report blocked")
+    lock_path = runs_dir(project, slug) / ".lock"
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
         runs = list_runs(project, slug)
-        held_names = {str(r.get("name")) for r in held if r.get("name")}
-        counted = started | held_names
-        if role == "implementer":
-            cap = int(task["envelope"]["l1_in_flight"])
-            live = {r["name"] for r in runs
-                    if r["name"] in counted and r["role"] == "implementer" and not r.get("done")}
-            live.update(str(r.get("name")) for r in held
-                        if r.get("name") and (r.get("role") == "implementer" or
-                                              str(r.get("name")).startswith("implementer-")))
-            if len(live) >= cap:
-                raise T.TransitionError(f"L1 cap: {len(live)} implementer(s) in flight (cap {cap}) — `alt l1 wait` for one before starting another")
-        author = next((r["engine"] for r in reversed(runs) if r["name"] in counted and r["role"] == "implementer"), None)
-        used_names = {str(r["name"]) for r in runs} | held_names
+        author = next((r["engine"] for r in reversed(runs) if r["role"] == "implementer"), None)
+        used_names = {str(r["name"]) for r in runs}
         sequences = [int(r.get("n") or 0) for r in runs]
         sequences.extend(int(m.group(1)) for used in used_names if (m := re.search(r"-(\d+)$", used)))
         n = max(sequences, default=0) + 1
         name = name or f"{role}-{n}"
         if name in used_names:
             raise T.TransitionError(f"run {name!r} already exists")
-        token = LC.reserve(config.ROOT, project, slug, name=name, role=role)
-    try:
         return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
-                      n=n, author=author, token=token, runs=runs)
-    except BaseException:
-        LC.release(config.ROOT, project, slug, token)  # refused, unroutable or unspawnable: no slot, no event, no bill
-        raise
+                      n=n, author=author, runs=runs)
 
 
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
-           name: str, cwd: str | None, n: int, author: str | None, token: str | None, runs: list[dict]) -> dict:
-    """Everything after the reservation: route, make the worktree, write the prompt, start the detached wrapper."""
+           name: str, cwd: str | None, n: int, author: str | None, runs: list[dict]) -> dict:
+    """Route, make the worktree, write the prompt, and start the detached wrapper."""
     choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine, task=task,
                                other_than=author if role == "reviewer" else None)
     base = Path(cwd) if cwd else Path(task.get("worktree") or config.project_path(project))
@@ -225,7 +191,7 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
             )
     rec = {"n": n, "name": name, "role": role, "engine": choice["engine"], "why": choice["why"], "model": model,
            "worktree": str(workdir), "branch": branch, "brief": str(brief), "started": S.now(), "pid": None,
-           "done": None, "result": None, "reservation": token}
+           "done": None, "result": None}
     save(project, slug, rec)
     # <name>.log remains the detached wrapper's own stdout/stderr; engine pipes are the separate raw artifacts.
     log = open(runs_dir(project, slug) / f"{name}.log", "ab")
@@ -242,56 +208,9 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
         log.close()
     rec["pid"] = child.pid
     save(project, slug, rec)
-    # The slot moves to the wrapper: `alt l1 run` exits now, and the reservation must outlive it or die with the run.
-    LC.hand_over(config.ROOT, project, slug, token, child.pid)
+    S.append_event(project, slug, "l1-started", name=name, role=role, engine=choice["engine"],
+                   why=choice["why"], model=model, actor="l2")
     return rec
-
-
-def engine_started(rec: dict, res: dict, exc: BaseException | None, pid: int | None) -> bool:
-    """Whether the engine process itself ran — the handshake a launch has to pass before it is billed.
-
-    Claude hands back its child's pid the moment `Popen` returns, so there the evidence is that the callback fired
-    at all: a closed subscription window short-circuits before it, and a failed exec raises instead. Codex exposes
-    no such callback, so the evidence is the exit status it came back with. Common to both: an exec that never
-    happened raises `FileNotFoundError`/`PermissionError`, and a wrapper that could not find the engine exits 127."""
-    if res.get("limited"):
-        return False  # a confirmed quota/engine refusal is not a started L1, even when the CLI emitted diagnostics
-    if res.get("engine_started") is False:
-        return False  # a caller-side preflight failed before the engine process existed
-    if rec["engine"] == "claude":
-        return pid is not None and not _EXIT_127.search(str(res.get("error") or exc or ""))
-    if exc is not None:
-        # TimeoutExpired is raised only after subprocess.run successfully spawned the engine. Every other
-        # exception defaults to not-started: ENOEXEC and future pre-spawn OSErrors carry no positive handshake.
-        return isinstance(exc, subprocess.TimeoutExpired)
-    returncode = res.get("returncode")
-    if not isinstance(returncode, int) or returncode == 127:
-        return False
-    return not _EXIT_127.search(str(res.get("error") or exc or ""))
-
-
-def _settle_launch(project: str, slug: str, rec: dict, started: bool) -> None:
-    """Turn the reservation into the authoritative bill, or give it back.
-
-    The `l1-started` event is the bill and the run name is its identity, so this is idempotent: a re-run of the
-    same name appends nothing and settles the same number. Nothing else writes `subagent_launches` for a task."""
-    token = rec.get("reservation")
-    if not started:
-        LC.release(config.ROOT, project, slug, token)
-        return
-    cap = int((S.load_task(project, slug).get("envelope") or {}).get("subagent_launches", 0))
-    with LC.launch_lock(config.ROOT, project, slug):
-        ledger = LC.launch_ledger(config.ROOT, project, slug)
-        if ledger is None:
-            LC.note_fault(config.ROOT, f"{project}/{slug}: cannot read l1-started events, {rec['name']} not settled")
-            return
-        if rec["name"] not in ledger[1]:
-            S.append_event(project, slug, "l1-started", name=rec["name"], role=rec["role"], engine=rec["engine"],
-                           why=rec.get("why"), model=rec.get("model"), actor="l2")
-        LC.release(config.ROOT, project, slug, token, locked=True)
-        key = os.environ.get("ALTITUDE_SESSION_KEY")
-        if key:
-            LC.settle_counts(config.ROOT, LC.counts_path(config.ROOT, key), project, slug, cap)
 
 
 def exec_run(project: str, slug: str, name: str) -> dict:
@@ -306,8 +225,6 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     raw_stdout: str | bytes | None = ""
     raw_stderr: str | bytes | None = ""
     raw_stdout_truncated = raw_stderr_truncated = False
-    engine_pid: list[int] = []  # claude_print's `on_start`: the child's pid, the moment it exists
-    failure: BaseException | None = None
     try:
         if rec["engine"] == "codex":
             common = _git(wt, "rev-parse", "--git-common-dir").stdout.strip()
@@ -321,24 +238,17 @@ def exec_run(project: str, slug: str, name: str) -> dict:
         else:
             res = engines.claude_print(prompt, cwd=wt, model=rec["model"], permission_mode="plan" if rec["role"] == "reviewer" else "auto",
                                        max_turns=config.L1_MAX_TURNS, timeout=config.L1_TIMEOUT, schema=schema,
-                                       extra_env={"ALTITUDE_ACTOR": "l1", "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug},
-                                       on_start=engine_pid.append)
+                                       extra_env={"ALTITUDE_ACTOR": "l1", "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug})
         text, err = res.get("text") or "", res.get("error")
         raw_stdout, raw_stderr = res.get("raw_stdout") or "", res.get("raw_stderr") or ""
         raw_stdout_truncated = bool(res.get("raw_stdout_truncated"))
         raw_stderr_truncated = bool(res.get("raw_stderr_truncated"))
     except Exception as e:  # noqa: BLE001 — the record must close with the reason (decision 36)
-        failure = e
         text, err = "", f"{type(e).__name__}: {e}"
         raw_stdout = getattr(e, "raw_stdout", getattr(e, "stdout", "")) or ""
         raw_stderr = getattr(e, "raw_stderr", getattr(e, "stderr", "")) or ""
         raw_stdout_truncated = bool(getattr(e, "raw_stdout_truncated", False))
         raw_stderr_truncated = bool(getattr(e, "raw_stderr_truncated", False))
-    # The handshake: only now is it known whether an engine ran, so only now is the launch billed or given back.
-    try:
-        _settle_launch(project, slug, rec, engine_started(rec, res, failure, engine_pid[0] if engine_pid else None))
-    except Exception as e:  # noqa: BLE001 — a settlement that breaks must not also lose the run's result
-        LC.note_fault(config.ROOT, f"{project}/{slug}: settling {name} failed: {type(e).__name__}: {e}")
     stdout_data, stdout_capped = _cap_raw_output(raw_stdout)
     stderr_data, stderr_capped = _cap_raw_output(raw_stderr)
     run_dir = runs_dir(project, slug)

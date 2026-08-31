@@ -77,17 +77,12 @@ export const QuotaSchema = z
   })
   .passthrough();
 
-// Decision 46 — the card is executive. `question` is the dilemma in plain words and `options` are
-// short labels; `context` is the situation in ≤2 plain sentences that goes *above* it, and `detail`
-// holds the reasoning, ids and file names that must stay *behind* it. Both are optional: older
-// cards (and blocked cards before altitude/tasks.py started attaching the block reason) carry
-// neither, and such a card must still render exactly as it did before.
+// Rows for tasks blocked on user input.
 export const DecisionSchema = z
   .object({
     project: z.string(),
     slug: z.string(),
     kind: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     question: z.string().nullish(),
     context: z.string().nullish(),
@@ -154,7 +149,6 @@ export const TaskRowSchema = z
   .object({
     slug: z.string(),
     state: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     updated: z.string().nullish(),
     // Set to the usage-limit reset timestamp when Altitude holds a blocked L2 to resume it
@@ -196,13 +190,11 @@ export const TaskViewSchema = z
   .object({
     slug: z.string(),
     state: z.string().nullish(),
-    class: z.string().nullish(),
     title: z.string().nullish(),
     resume_after: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
-    critique: z.unknown().nullish(),
     report_json: z.unknown().nullish(),
     live: z.unknown().nullish(),
   })
@@ -331,8 +323,6 @@ export interface DecideInput {
   slug: string;
   /** Index into the decision's options list (the server does int(option)). */
   option?: number;
-  /** Decision 50: feedback on a proposal → the proposal is redone around `note` (required). */
-  revise?: boolean;
   note?: string;
 }
 
@@ -355,7 +345,6 @@ export interface TaskActionInput {
   action: string;
   reason?: string;
   title?: string;
-  class?: string;
   request?: string;
 }
 

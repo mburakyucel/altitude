@@ -60,7 +60,7 @@ class TestSystemFault(unittest.TestCase):
         verify.gh = lambda *a, **k: (_ for _ in ()).throw(verify.VerifierFault("gh: network down"))
         try:
             from altitude import tasks as T
-            task = T.new("altitude", "verifier fault test", "S", "request", actor="burak")
+            task = T.new("altitude", "verifier fault test", "request", actor="burak")
             task["state"] = "running"; S.save_task("altitude", task)
             d = S.task_dir("altitude", task["slug"])
             S.write_json(d / "report.json", {"landed": {"prs": [{"number": 1, "merged": True}], "main_runs": [], "deploy": "not-applicable"},
