@@ -24,9 +24,9 @@
           .annotated .row { position: relative; }
           .annotated .row > .note { position: absolute; right: calc(100% + 24px); top: 0; width: 236px; text-align: right; white-space: nowrap; }
           .callouts { display: flex; gap: 8px; padding: 6px 16px 0; }
-          .rule { padding: 4px 0; border-top: 1px solid #f1f5f9; font-size: 13px; line-height: 18px; color: #475569; }
-          .rule:last-of-type { padding-bottom: 0; }
-          .rule b { font-weight: 600; color: #0f172a; }
+          .guideline { padding: 4px 0; border-top: 1px solid #f1f5f9; font-size: 13px; line-height: 18px; color: #475569; }
+          .guideline:last-of-type { padding-bottom: 0; }
+          .guideline b { font-weight: 600; color: #0f172a; }
           .tip { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); padding: 6px 10px; border-radius: 6px; background: #0f172a; color: #ffffff; font-size: 13px; line-height: 18px; font-weight: 400; white-space: nowrap; z-index: 1; }
           /* atoms — identical to Inbox.dc.html */
           .pill { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid #e2e8f0; border-radius: 999px; background: #ffffff; font-size: 11px; font-weight: 500; letter-spacing: 0.05em; color: #475569; white-space: nowrap; line-height: 14px; }
@@ -49,9 +49,9 @@
       </helmet>
       <div style="width: 1440px; height: 900px; background: #f8fafc; overflow: hidden; padding: 24px 32px; box-sizing: border-box;">
         <div class="board-h">
-          <h1>Decision card — anatomy and states</h1>
+          <h1>Task card — ownership, chat, and states</h1>
           <span class="draft">draft</span>
-          <span class="cap">One card at 700px: at rest with its parts called out, with Why open, and the Revise pair. Callouts in the mono face are wireframe notes, not UI.</span>
+          <span class="cap">One directly owned L2 task at 700px: summary, readable chat, blocked input, and delivery status. Mono callouts are wireframe notes.</span>
         </div>
 
         <!-- Row 1: the annotated card (rail on the left) and what the card must obey -->
@@ -59,113 +59,114 @@
           <div style="width: 960px; flex: none; padding-left: 260px;">
             <article class="card annotated" style="width: 700px;">
               <div class="row eyebrow">
-                <span class="note">class · title · project · age</span>
-                <span class="pill">M</span>
-                <span class="title">Codex quota reader</span>
+                <span class="note">owner · title · project · age</span>
+                <span class="pill">L2 Maya</span>
+                <span class="title">Usage guard</span>
                 <span>· altitude · 2h</span>
-                <a class="right" href="#">Details</a>
+                <a class="right" href="#">Open task</a>
               </div>
               <div class="row">
                 <span class="note">context — ≤ 320 chars, plain</span>
-                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
+                <p class="ctx">Maya owns this task end-to-end. The local usage reader works; a live probe would add cost and another failure path.</p>
               </div>
               <div class="row">
-                <span class="note">the one question — ≤ 280 chars</span>
-                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                <span class="note">current question, only when needed</span>
+                <p class="q">Ship the local reader now, or include the live probe in this PR?</p>
               </div>
               <div class="row strip">
-                <span class="note">Why · feedback · options</span>
-                <span class="why">Why ▸</span>
-                <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
-                <span class="btn primary">Approve</span>
-                <span class="btn">Revise</span>
-                <span class="btn">Reject</span>
+                <span class="note">context · direct reply · options</span>
+                <span class="why">Context ▸</span>
+                <div class="field"><span>Reply directly to Maya (optional)</span></div>
+                <span class="btn primary">Ship reader</span>
+                <span class="btn">Add probe</span>
+                <span class="btn">Send reply</span>
               </div>
             </article>
             <div class="callouts note">
-              <span style="width: 40px; flex: none;">↑ Why</span>
-              <span style="flex: 1;">↑ feedback — one line at rest</span>
-              <span style="flex: none;">↑ options — the first is recommended</span>
+              <span style="width: 60px; flex: none;">↑ context</span>
+              <span style="flex: 1;">↑ steer the L2 without an L3 relay</span>
+              <span style="flex: none;">↑ answer or send a free-form reply</span>
             </div>
-            <div class="note" style="padding: 2px 16px 0;">Why opens the reasoning under the strip · Details (top right) opens the task page</div>
+            <div class="note" style="padding: 2px 16px 0;">Open task shows the readable conversation, work status, PR, and checks</div>
           </div>
 
           <section class="card" style="flex: 1; min-width: 0;">
-            <h2 style="font-size: 14px; font-weight: 600; line-height: 18px; margin-bottom: 6px;">What every card obeys</h2>
-            <div class="rule"><span><b>Context</b> — the situation, ≤ 2 plain sentences, ≤ 320 chars.</span></div>
-            <div class="rule"><span><b>Question</b> — one sentence, ≤ 280 chars, saying what each answer does.</span></div>
-            <div class="rule"><span><b>Options</b> — short verbs, ≤ 80 chars; the recommended one first, drawn primary.</span></div>
-            <div class="rule"><span><b>In front of the question</b> — no ids, file names or code; those live behind Why, where ids open the ledger.</span></div>
-            <div class="rule"><span><b>Revise</b> waits for feedback; a note with Approve travels with the answer, binding. Blocked cards are on the Inbox board.</span></div>
+            <h2 style="font-size: 14px; font-weight: 600; line-height: 18px; margin-bottom: 6px;">What every task card shows</h2>
+            <div class="guideline"><span><b>Owner</b> — exactly one named L2 who owns the task end-to-end.</span></div>
+            <div class="guideline"><span><b>Conversation</b> — plain human messages between Burak and that L2.</span></div>
+            <div class="guideline"><span><b>Question</b> — one sentence only when the L2 needs a user choice.</span></div>
+            <div class="guideline"><span><b>Delivery</b> — branch or PR, current checks, and the next concrete action.</span></div>
+            <div class="guideline"><span><b>Help</b> — optional L1 help or independent review is shown only when the L2 chose it.</span></div>
           </section>
         </div>
 
-        <!-- Row 2: Why open, and the Revise pair -->
+        <!-- Row 2: readable task chat, a blocked task, and a running task -->
         <div style="display: flex; gap: 24px; margin-top: 24px; align-items: flex-start;">
           <div style="width: 700px; flex: none;">
             <article class="card">
               <div class="eyebrow">
-                <span class="pill">M</span>
-                <span class="title">Codex quota reader</span>
+                <span class="pill">L2 Maya</span>
+                <span class="title">Usage guard</span>
                 <span>· altitude · 2h</span>
-                <a class="right" href="#">Details</a>
+                <a class="right" href="#">PR #124</a>
               </div>
-              <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
-              <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+              <p class="ctx">Maya owns this task end-to-end. One optional L1 is testing failure cases; independent review was requested for the final PR.</p>
+              <p class="q">Ship the local reader now, or include the live probe in this PR?</p>
               <div class="strip">
-                <span class="why">Why ▾</span>
-                <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
-                <span class="btn primary">Approve</span>
-                <span class="btn">Revise</span>
-                <span class="btn">Reject</span>
+                <span class="why">Chat ▾</span>
+                <div class="field"><span>Reply directly to Maya</span></div>
+                <span class="btn primary">Ship reader</span>
+                <span class="btn">Add probe</span>
+                <span class="btn">Send reply</span>
               </div>
-              <div class="detail">Reader: harvest the rate-limit event from every headless Claude stream (altitude/quota.py); a reading older than 600 s is stale and does not count. Probe: one Haiku turn, about 0.1% of the window, skipped while a reading is under 10 minutes old.
-Critic's conditions: (a) stale never counts as fresh; (b) a probe failure is an incident, never a silent fallback (<a href="#">decision 36</a>); (c) the reader writes monitor/quota-codex.json and nothing else.
-Refs: <a href="#">I-007</a> · <a href="#">decision 31</a> · <a href="#">decision 45</a> · <a href="#">R-003</a> — spend: M envelope, ≤ 8 launches, about 1% of today's window.</div>
+              <div class="detail"><b>Burak · 10:12</b> Keep this simple. Can the local reader ship without another moving part?
+<b>Maya · 10:18</b> Yes. The reader and its failure tests pass locally. The live probe is separable, so I recommend shipping the reader now.
+
+<b>Delivery</b> · PR #124 · 6/8 checks passed · Linux and optional independent review in progress</div>
             </article>
-            <div class="note" style="padding: 8px 16px 0;">Why open — reasoning, the critic's conditions, file names and ids; ids are links to the ledger. Nothing here is needed to answer.</div>
+            <div class="note" style="padding: 8px 16px 0;">Chat open — human-readable steering and the L2 response; delivery evidence stays concise</div>
           </div>
 
           <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 24px;">
             <div>
               <article class="card">
                 <div class="eyebrow">
-                  <span class="pill">M</span>
-                  <span class="title">Codex quota reader</span>
-                  <span>· altitude · 2h</span>
-                  <a class="right" href="#">Details</a>
+                  <span class="pill">L2 Jules</span>
+                  <span class="title">Lesson replay</span>
+                  <span>· tutor · blocked 45m</span>
+                  <a class="right" href="#">Open task</a>
                 </div>
-                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
-                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                <p class="ctx">Jules stopped safely because the replay test needs a microphone and the build machine has none.</p>
+                <p class="q">Use a fake audio device, park the task, or close it?</p>
                 <div class="strip">
-                  <span class="why">Why ▸</span>
-                  <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
-                  <span class="btn primary">Approve</span>
-                  <span class="btn disabled">Revise<span class="tip">Type what should change first</span></span>
-                  <span class="btn">Reject</span>
+                  <span class="why">Context ▸</span>
+                  <div class="field"><span>Reply directly to Jules</span></div>
+                  <span class="btn primary">Use fake audio</span>
+                  <span class="btn">Park</span>
+                  <span class="btn">Close</span>
                 </div>
               </article>
-              <div class="note" style="padding: 24px 16px 0;">Revise, empty field — disabled; hovering shows the tooltip. Approve and Reject stay live.</div>
+              <div class="note" style="padding: 8px 16px 0;">Blocked — one explicit user choice; Jules remains the owner after the answer</div>
             </div>
             <div>
               <article class="card">
                 <div class="eyebrow">
-                  <span class="pill">M</span>
-                  <span class="title">Codex quota reader</span>
-                  <span>· altitude · 2h</span>
-                  <a class="right" href="#">Details</a>
+                  <span class="pill">L2 Maya</span>
+                  <span class="title">Usage guard</span>
+                  <span>· altitude · running</span>
+                  <a class="right" href="#">PR #124</a>
                 </div>
-                <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
-                <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                <p class="ctx">Maya is integrating the failure tests. PR #124 is open; 6 of 8 checks have passed.</p>
+                <p class="q">Next: finish checks, review if useful, then merge.</p>
                 <div class="strip">
-                  <span class="why">Why ▸</span>
-                  <div class="field typed"><span>Skip the probe for now; the reader alone is enough.</span></div>
-                  <span class="btn primary">Approve</span>
-                  <span class="btn">Revise</span>
-                  <span class="btn">Reject</span>
+                  <span class="why">Chat ▸</span>
+                  <div class="field typed"><span>Keep the probe out of this PR.</span></div>
+                  <span class="btn primary">Send to Maya</span>
+                  <span class="btn">View PR</span>
+                  <span class="btn disabled">Merge<span class="tip">Two checks are still running</span></span>
                 </div>
               </article>
-              <div class="note" style="padding: 8px 16px 0;">Revise, feedback typed — live; the note travels with the answer. With Approve it travels too, as binding.</div>
+              <div class="note" style="padding: 24px 16px 0;">Running — direct steering remains available; merge waits for the appropriate checks</div>
             </div>
           </div>
         </div>

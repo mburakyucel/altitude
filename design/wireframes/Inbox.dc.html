@@ -54,7 +54,7 @@
         <div class="board-h">
           <h1>Inbox — desktop</h1>
           <span class="draft">draft</span>
-          <span class="cap">The screen Burak lives on, inside the 232px shell: three decisions ranked by their question, then what is running, then FYIs.</span>
+          <span class="cap">L3's high-level overview: decisions that need Burak, directly owned L2 tasks, checks, and concise FYIs.</span>
         </div>
 
         <div style="display: flex; flex: 1; min-height: 0;">
@@ -64,7 +64,7 @@
             <div style="padding: 0 12px; margin-bottom: 16px; font-size: 13px; line-height: 18px; color: #64748b;">5h 12% · 7d 40%</div>
             <div class="nav active">Inbox <span class="pill">3</span></div>
             <div class="nav">Projects</div>
-            <div class="nav">Chat</div>
+            <div class="nav">Tasks</div>
             <div class="nav">Monitor</div>
             <div style="margin-top: auto; padding: 16px 4px 0;">
               <div class="toggle"><span>Light</span><span class="on">System</span><span>Dark</span></div>
@@ -78,63 +78,62 @@
                 <span style="font-size: 13px; color: #64748b;">5h 12% · 7d 40%</span>
               </div>
 
-              <div class="label" style="margin-top: 16px;">Decisions (3)</div>
+              <div class="label" style="margin-top: 16px;">Needs your input (3)</div>
               <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
 
-                <!-- 1. an ordinary proposal -->
+                <!-- 1. a task-specific question from the directly reachable L2 owner -->
                 <article class="card">
                   <div class="eyebrow">
-                    <span class="pill">M</span>
-                    <span class="title">Codex quota reader</span>
+                    <span class="pill">L2 Maya</span>
+                    <span class="title">Usage guard</span>
                     <span>· altitude · 2h</span>
-                    <a class="right" href="#">Details</a>
+                    <a class="right" href="#">Open task chat</a>
                   </div>
-                  <p class="ctx">Altitude only sees how full the 5-hour window is from your interactive sessions, so it cannot hold work back before the limit. The proposal adds a headless reader plus a cheap probe.</p>
-                  <p class="q">Build the reader and probe now, so the queue can pause itself in time?</p>
+                  <p class="ctx">Maya owns this task end-to-end. The local usage reader works; a live probe would add cost and another failure path.</p>
+                  <p class="q">Ship the local reader now, or include the live probe in this PR?</p>
                   <div class="strip">
-                    <span class="why">Why ▸</span>
-                    <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
-                    <span class="btn primary">Approve</span>
-                    <span class="btn">Revise</span>
-                    <span class="btn">Reject</span>
+                    <span class="why">Context ▸</span>
+                    <div class="field"><span>Reply directly to Maya (optional)</span></div>
+                    <span class="btn primary">Ship reader</span>
+                    <span class="btn">Add probe</span>
+                    <span class="btn">Send reply</span>
                   </div>
                 </article>
 
                 <!-- 2. blocked: danger-tinted border, "Stopped mid-task:" context, Resume / Park / Reject -->
                 <article class="card blocked">
                   <div class="eyebrow">
-                    <span class="pill">M</span>
+                    <span class="pill">L2 Jules</span>
                     <span class="title">Lesson replay</span>
-                    <span>· tutor · 45m</span>
-                    <a class="right" href="#">Details</a>
+                    <span>· tutor · blocked 45m</span>
+                    <a class="right" href="#">Open task chat</a>
                   </div>
-                  <p class="ctx">Stopped mid-task: the replay test needs a microphone and the build machine has none.</p>
-                  <p class="q">Resume with a fake audio device, park it until you are back, or drop it?</p>
+                  <p class="ctx">Jules stopped safely because the replay test needs a microphone and the build machine has none.</p>
+                  <p class="q">Use a fake audio device, park the task, or close it?</p>
                   <div class="strip">
-                    <span class="why">Why ▸</span>
-                    <div class="field"><span>Note (optional)</span></div>
-                    <span class="btn primary">Resume</span>
+                    <span class="why">Context ▸</span>
+                    <div class="field"><span>Reply directly to Jules (optional)</span></div>
+                    <span class="btn primary">Use fake audio</span>
                     <span class="btn">Park</span>
-                    <span class="btn">Reject</span>
+                    <span class="btn">Close</span>
                   </div>
                 </article>
 
                 <!-- 3. a different project, with named options -->
                 <article class="card">
                   <div class="eyebrow">
-                    <span class="pill">L</span>
+                    <span class="pill">L2 Arun</span>
                     <span class="title">Observability</span>
                     <span>· career-platform · 1d</span>
-                    <a class="right" href="#">Details</a>
+                    <a class="right" href="#">Open task chat</a>
                   </div>
-                  <p class="ctx">Production has no traces, so slow requests and model spend are found by hand. The proposal ships traces and four metrics to CloudWatch for about $40 a month; Datadog would be about $190.</p>
+                  <p class="ctx">Arun owns the implementation. Production needs traces; CloudWatch is about $40 a month and Datadog about $190.</p>
                   <p class="q">Go with CloudWatch, or pay for Datadog and get its dashboards?</p>
                   <div class="strip">
-                    <span class="why">Why ▸</span>
-                    <div class="field"><span>Feedback — required for Revise, optional otherwise</span></div>
+                    <span class="why">Context ▸</span>
+                    <div class="field"><span>Reply directly to Arun (optional)</span></div>
                     <span class="btn primary">Go with CloudWatch</span>
                     <span class="btn">Use Datadog</span>
-                    <span class="btn">Revise</span>
                     <span class="btn">Park</span>
                   </div>
                 </article>
@@ -143,12 +142,12 @@
               <div style="display: flex; gap: 24px; margin-top: 24px;">
                 <section class="running" style="width: 260px; flex: none;">
                   <div class="label">Running</div>
-                  <p style="margin-top: 8px;">2 tasks on the machine (limit 3)</p>
+                  <p style="margin-top: 8px;">2 tasks · one L2 owner each</p>
                   <ul style="margin-top: 4px;">
-                    <li>altitude: 1</li>
-                    <li>career-platform: 1</li>
+                    <li>altitude: Maya · PR #124 · checks running</li>
+                    <li>career-platform: Arun · implementing</li>
                   </ul>
-                  <p class="meta" style="margin-top: 4px;">Waiting: tutor/pronunciation-scores (resume)</p>
+                  <p class="meta" style="margin-top: 4px;">Optional help: 1 L1 · optional review: requested</p>
                 </section>
 
                 <section class="fyi" style="flex: 1; min-width: 0;">
@@ -156,15 +155,15 @@
                   <ul style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
                     <li>
                       <div class="meta"><span>[career-platform · study-index-tiers]</span><span class="age">3h</span></div>
-                      <div class="text">Tier labels and chips match the wireframe; PR #119 merged, main green.</div>
+                      <div class="text">L2 shipped the tier labels in PR #119; checks passed and main is green.</div>
                     </li>
                     <li>
                       <div class="meta"><span>[tutor]</span><span class="age">5h</span></div>
-                      <div class="text">Coordinator rotated to a fresh session in time; nothing lost.</div>
+                      <div class="text">L3 paused new work after a system fault; operational recovery is contained.</div>
                     </li>
                     <li>
                       <div class="meta"><span>[tutor · pronunciation-scores]</span><span class="age">1d</span></div>
-                      <div class="text">Scores now round to whole numbers; PR #27 merged, main green.</div>
+                      <div class="text">L2 shipped whole-number scores in PR #27; checks passed and the task is closed.</div>
                     </li>
                   </ul>
                 </section>
