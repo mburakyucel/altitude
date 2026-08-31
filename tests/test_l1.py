@@ -31,7 +31,7 @@ for f in ("codex", "claude"):
 os.environ["CODEX_BIN"] = str(FAKE / "codex")
 os.environ["CLAUDE_BIN"] = str(FAKE / "claude")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, l1, route, monitor  # noqa: E402
+from altitude import config, state as S, tasks as T, l1, route, monitor, recovery  # noqa: E402
 
 REPO = _TMP / "repo"
 
@@ -61,6 +61,11 @@ class TestL1Runs(unittest.TestCase):
         config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
+
+    def tearDown(self):
+        # A sandbox-denial case intentionally trips the production recovery fuse. Keep that
+        # evidence from leaking into unrelated resume tests in the same discovery process.
+        recovery.hold_path().unlink(missing_ok=True)
 
     def _task(self, slug, engine=None):
         T.new("altitude", slug, "req", actor="l3", engine=engine)
