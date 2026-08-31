@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-server-head-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -65,12 +66,15 @@ class TestHead(unittest.TestCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def _request(self, method, path):
+    def _request(self, method, path, *, headers=None, body=b""):
         host, port = self.httpd.server_address
+        request_headers = {"Host": host, "Connection": "close", **(headers or {})}
+        if body:
+            request_headers["Content-Length"] = str(len(body))
+            request_headers.setdefault("Content-Type", "application/json")
+        encoded_headers = "".join(f"{name}: {value}\r\n" for name, value in request_headers.items())
         with socket.create_connection((host, port), timeout=2) as sock:
-            sock.sendall(
-                f"{method} {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
-            )
+            sock.sendall(f"{method} {path} HTTP/1.0\r\n{encoded_headers}\r\n".encode() + body)
             chunks = []
             while True:
                 chunk = sock.recv(65536)
@@ -102,6 +106,42 @@ class TestHead(unittest.TestCase):
 
     def test_static_head_matches_get_without_body(self):
         self._assert_head_matches_get("/", 200)
+
+    def test_spa_issues_secure_http_only_operator_cookie(self):
+        status, headers, _ = self._request("GET", "/")
+
+        self.assertEqual(status, 200)
+        cookie = headers.get("set-cookie", "")
+        self.assertIn(f"{server._CONTROL_COOKIE}=", cookie)
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("Secure", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+
+    def test_breaker_reset_requires_exact_origin_host_cookie_and_generation(self):
+        body = b'{"generation": 7, "reason": "operator inspected the fault"}'
+        with mock.patch.object(server.recovery_breaker, "reset", return_value={"mode": "closed"}) as reset:
+            status, _, _ = self._request("POST", "/api/recovery-breaker/reset", body=body)
+            self.assertEqual(status, 403)
+            reset.assert_not_called()
+
+            host, _ = self.httpd.server_address
+            control_headers = {
+                "Origin": f"https://{host}",
+                "Cookie": f"{server._CONTROL_COOKIE}={server._CONTROL_TOKEN}",
+            }
+            status, _, _ = self._request(
+                "POST", "/api/recovery-breaker/reset", body=body, headers=control_headers,
+            )
+            self.assertEqual(status, 403, "a local engine process must not impersonate the remote UI")
+            reset.assert_not_called()
+
+            with mock.patch.object(server.Handler, "_remote_operator", return_value=True):
+                status, _, response = self._request(
+                    "POST", "/api/recovery-breaker/reset", body=body,
+                    headers=control_headers,
+                )
+            self.assertEqual(status, 200, response)
+            reset.assert_called_once_with(7, "operator inspected the fault")
 
     def test_file_head_matches_get_without_body(self):
         self._assert_head_matches_get("/digest.wav", 200)

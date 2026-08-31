@@ -381,7 +381,8 @@ def propose_rule(project: str, *, incident: str, title: str, text: str, mechanis
                    "instruction": f"add the instruction to the section/skill that owns that step, tagged `[{rid}]`.",
                    "skill": f"create `.claude/skills/<name>/SKILL.md` implementing the procedure, tagged `[{rid}]`, and reference it from the step that needs it.",
                    "incident-only": "nothing else — the incident file is the record."}[mechanism]
-               + "\n\n4. Open the PR titled `rules: " + rid + " from " + incident + "` and merge it if the project policy allows docs-only merges. No other changes.")
+               + "\n\n4. Open the PR titled `rules: " + rid + " from " + incident + "`, bind a clean reviewer to its exact head, "
+                 "then submit the daemon merge request if project policy allows docs-only merges. No other changes.")
     task = T.new(target_project, f"apply {rid} ({incident})", "S", request, actor=actor, source="improve",
                  paths=_application_paths(target_project, ledger, incident, applies_where, mechanism))
     T.auto_approve(target_project, task["slug"], f"rule application from {incident}; veto = revert the PR")

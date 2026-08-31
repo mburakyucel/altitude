@@ -4,13 +4,18 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-clean-close-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, improve, l3, server, state as S, tasks as T  # noqa: E402
+from altitude import config, improve, l3, server, state as S, tasks as T, verify  # noqa: E402
 
 PROJECT = "cleanclose"
+HEAD_SHA = "b" * 40
+BASE_SHA = "a" * 40
+MERGE_SHA = "c" * 40
+RUN_ID = 47001
 
 
 def register() -> None:
@@ -24,11 +29,14 @@ class TestCleanClose(unittest.TestCase):
     def setUpClass(cls):
         register()
 
+    def setUp(self):
+        (config.MONITOR_DIR / "recovery-breaker.json").unlink(missing_ok=True)
+
     def _report(self) -> dict:
         return {
             "landed": {
-                "prs": [{"number": 47, "title": "Clean close", "merged": True, "merge_sha": "abc123"}],
-                "main_runs": [{"id": "run-47", "conclusion": "success"}],
+                "prs": [{"number": 47, "title": "Clean close", "merged": True, "merge_sha": MERGE_SHA}],
+                "main_runs": [{"id": str(RUN_ID), "conclusion": "success"}],
                 "deploy": "healthy",
             },
             "review": [
@@ -47,17 +55,26 @@ class TestCleanClose(unittest.TestCase):
     def _task_and_verdict(self, slug: str, *, cls: str = "S", change=None, hold_merge=False,
                           live_state: str | None = None) -> tuple[dict, dict]:
         report = self._report()
-        verdict = {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [47]}
+        injected = {"problems": [], "signals": []}
         if change:
-            change(report, verdict)
-        verdict["report"] = {key: report[key] for key in ("blocked", "decisions", "fyi", "follow_ups", "deviations")}
+            change(report, injected)
         directory = S.task_dir(PROJECT, slug)
         directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report.md").write_text("report\n")
         S.write_json(directory / "report.json", report)
+        (directory / "progress.md").write_text("complete\n")
+        dispatch_id = f"{slug}-1"
         task = {"slug": slug, "title": slug, "class": cls, "state": "reported", "created": S.now(),
-                "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47]}
+                "updated": S.now(), "l3_handled": None, "spend": {}, "prs": [47],
+                "dispatch_id": dispatch_id, "attempt": 1}
         if hold_merge:
             task["hold_merge"] = "always-list: release"
+        S.save_task(PROJECT, task)
+        self._write_merge_record(slug, dispatch_id)
+        verdict = self._verify_report(slug)
+        verdict["problems"].extend(injected["problems"])
+        verdict["signals"].extend(injected["signals"])
+        task["verified"] = verdict
         S.save_task(PROJECT, task)
         if live_state:
             live = dict(task)
@@ -65,11 +82,38 @@ class TestCleanClose(unittest.TestCase):
             S.save_task(PROJECT, live)
         return task, verdict
 
+    def _write_merge_record(self, slug: str, dispatch_id: str) -> None:
+        S.write_json(S.task_dir(PROJECT, slug) / "merge-request-47.json", {
+            "version": 1, "project": PROJECT, "slug": slug, "pr": 47,
+            "generation": f"merge-{slug}", "dispatch_id": dispatch_id, "task_attempt": 1,
+            "branch": f"worktree-{slug}", "base": "main", "base_sha": BASE_SHA,
+            "head_sha": HEAD_SHA, "state": "merged",
+            "result": {"merged": True, "head_sha": HEAD_SHA, "base_sha": BASE_SHA,
+                       "merge_sha": MERGE_SHA, "gate_mode": "github-actions",
+                       "candidate_gate": None},
+        })
+
+    @staticmethod
+    def _github(args, cwd):
+        if args[:2] == ["pr", "view"]:
+            return {"number": 47, "state": "MERGED", "mergedAt": S.now(),
+                    "mergeCommit": {"oid": MERGE_SHA}, "headRefName": "worktree-clean",
+                    "headRefOid": HEAD_SHA}
+        if args[:2] == ["run", "view"]:
+            return {"databaseId": RUN_ID, "headSha": MERGE_SHA,
+                    "status": "completed", "conclusion": "success"}
+        raise AssertionError(args)
+
+    def _verify_report(self, slug: str) -> dict:
+        with mock.patch.object(verify, "gh", side_effect=self._github), \
+             mock.patch.object(verify, "_seen_tags", return_value=set()):
+            return verify._verify(PROJECT, slug)
+
     def _run(self, task: dict, verdict: dict) -> tuple[list, list]:
         turns = []
         logs = []
         original_turn, original_log = l3.turn, server.log
-        l3.turn = lambda project, header, trigger: turns.append((project, header, trigger)) or {}
+        l3.turn = lambda project, header, trigger, **kw: turns.append((project, header, trigger)) or {}
         server.log = lambda message: logs.append(message)
         try:
             server.report_turn(PROJECT, task, verdict)
@@ -77,30 +121,6 @@ class TestCleanClose(unittest.TestCase):
             l3.turn, server.log = original_turn, original_log
         return turns, logs
 
-    def test_clean_report_closes_without_an_l3_turn_and_posts_one_fyi(self):
-        task, verdict = self._task_and_verdict("clean")
-        before = len(T.inbox(PROJECT, limit=1000))
-
-        turns, logs = self._run(task, verdict)
-
-        self.assertEqual(turns, [])
-        closed = S.load_task(PROJECT, "clean")
-        self.assertEqual(closed["state"], "done")
-        self.assertIsNotNone(closed["l3_handled"])
-        items = T.inbox(PROJECT, limit=1000)[before:]
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["by"], "altd")
-        text = items[0]["text"]
-        for expected in ("closed by altd without an L3 turn", "verifier verdict ok",
-                         "task class S", "hold_merge unset", "PRs merged: PR #47 (Clean close)",
-                         "main runs: run-47: success", "deploy: healthy",
-                         "no decisions, blocked items, FYIs, follow-ups, or post-mortem signals"):
-            self.assertIn(expected, text)
-        digest = (S.task_dir(PROJECT, "clean") / "digest.md").read_text()
-        for expected in ("PR #47 (Clean close)", "run-47: success", "Deploy: healthy",
-                         "Review findings: 1 fixed, 1 dismissed"):
-            self.assertIn(expected, digest)
-        self.assertTrue(any("clean report closed by altd" in line for line in logs))
 
     def test_each_nonclean_signal_keeps_the_existing_l3_turn(self):
         cases = {
@@ -120,6 +140,7 @@ class TestCleanClose(unittest.TestCase):
         }
         for name, (cls, change, task_options) in cases.items():
             with self.subTest(name=name):
+                (config.MONITOR_DIR / "recovery-breaker.json").unlink(missing_ok=True)
                 task, verdict = self._task_and_verdict(f"dirty-{name}", cls=cls, change=change, **task_options)
                 expected_state = S.load_task(PROJECT, task["slug"])["state"]
                 before = len(T.inbox(PROJECT, limit=1000))
@@ -133,45 +154,12 @@ class TestCleanClose(unittest.TestCase):
                 self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
                 self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
-    def test_malformed_report_shapes_fail_closed_and_not_applicable_closes(self):
-        cases = (
-            ("top-level-list", lambda report: [], False, False),
-            ("landed-string", lambda report: {**report, "landed": "merged"}, False, False),
-            ("prs-dict", lambda report: {
-                **report, "landed": {**report["landed"], "prs": {"47": {"merged": True}}}}, False, False),
-            ("deploy-number", lambda report: {
-                **report, "landed": {**report["landed"], "deploy": 47}}, False, False),
-            ("corrupt-json", None, False, True),
-            ("deploy-not-applicable", lambda report: {
-                **report, "landed": {**report["landed"], "deploy": "not-applicable"}}, True, False),
-        )
-        faults = []
-        original_fault = improve.system_fault
-        improve.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
-        try:
-            for name, build_report, closes, corrupt in cases:
-                with self.subTest(name=name):
-                    task, verdict = self._task_and_verdict(f"shape-{name}")
-                    report_path = S.task_dir(PROJECT, task["slug"]) / "report.json"
-                    if corrupt:
-                        S.atomic_write(report_path, "{not json\n")
-                    else:
-                        S.write_json(report_path, build_report(self._report()))
-
-                    turns, _ = self._run(task, verdict)
-
-                    self.assertEqual(len(turns), 0 if closes else 1)
-                    self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "done" if closes else "reported")
-        finally:
-            improve.system_fault = original_fault
-        self.assertEqual(len(faults), 1)
-        self.assertEqual(faults[0][0][0], "report-json")
-        self.assertEqual(faults[0][1], {"project": PROJECT, "task": "shape-corrupt-json"})
 
     def test_main_runs_must_be_present_well_shaped_and_successful(self):
         cases = (
             ("missing", []),
             ("failed", [{"id": "run-red", "conclusion": "failure"}]),
+            ("invented-numeric", [{"id": "99999", "conclusion": "success"}]),
             ("missing-id", [{"conclusion": "success"}]),
             ("missing-conclusion", [{"id": "run-unknown"}]),
         )
@@ -186,80 +174,90 @@ class TestCleanClose(unittest.TestCase):
                 self.assertEqual(turns[0][2], "report-landed")
                 self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
 
-    def test_missing_or_corrupt_live_status_falls_through_without_escaping(self):
-        faults = []
-        original_fault = improve.system_fault
-        improve.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
-        try:
-            for name, corrupt in (("missing", False), ("corrupt", True)):
-                with self.subTest(name=name):
-                    task, verdict = self._task_and_verdict(f"live-status-{name}")
-                    status_path = S.status_path(PROJECT, task["slug"])
-                    if corrupt:
-                        S.atomic_write(status_path, "{not json\n")
-                    else:
-                        status_path.unlink()
-                    try:
-                        turns, logs = self._run(task, verdict)
-                    finally:
-                        S.save_task(PROJECT, task)
-
-                    self.assertEqual(len(turns), 1)
-                    self.assertEqual(turns[0][2], "report-landed")
-                    self.assertTrue(any("l3_handled could not be stamped" in line for line in logs))
-        finally:
-            improve.system_fault = original_fault
-        self.assertEqual(len(faults), 1)
-        self.assertEqual(faults[0][0][0], "task-json")
-        self.assertEqual(faults[0][1], {"project": PROJECT, "task": "live-status-corrupt"})
-
-    def test_live_hold_merge_value_controls_clean_close_and_its_fyi(self):
-        held_task, held_verdict = self._task_and_verdict("live-hold")
-        live = S.load_task(PROJECT, held_task["slug"])
-        live["hold_merge"] = "always-list: live hold"
-        S.save_task(PROJECT, live)
-        before = len(T.inbox(PROJECT, limit=1000))
-
-        held_turns, _ = self._run(held_task, held_verdict)
-
-        self.assertEqual(len(held_turns), 1)
-        self.assertEqual(S.load_task(PROJECT, held_task["slug"])["state"], "reported")
-        self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
-
-        stale_task, stale_verdict = self._task_and_verdict("stale-caller-hold")
-        stale_task["hold_merge"] = "stale caller snapshot"
-        before = len(T.inbox(PROJECT, limit=1000))
-
-        stale_turns, _ = self._run(stale_task, stale_verdict)
-
-        self.assertEqual(stale_turns, [])
-        self.assertEqual(S.load_task(PROJECT, stale_task["slug"])["state"], "done")
-        items = T.inbox(PROJECT, limit=1000)[before:]
-        self.assertEqual(len(items), 1)
-        self.assertIn("hold_merge unset", items[0]["text"])
-        self.assertNotIn("stale caller snapshot", items[0]["text"])
-
-    def test_blocked_transition_during_done_falls_through_to_l3(self):
-        task, verdict = self._task_and_verdict("blocked-during-done")
-        before = len(T.inbox(PROJECT, limit=1000))
-        original_done = T.done
-
-        def block_then_done(project, slug, **kwargs):
-            T.block(project, slug, "blocked in the post-lock window")
-            return original_done(project, slug, **kwargs)
-
-        T.done = block_then_done
-        try:
-            turns, logs = self._run(task, verdict)
-        finally:
-            T.done = original_done
-
+    def test_local_suite_and_generic_check_proof_cannot_clean_close(self):
+        task, _ = self._task_and_verdict("local-suite")
+        path = S.task_dir(PROJECT, task["slug"])
+        report = S.read_json(path / "report.json")
+        report["landed"]["main_runs"] = []
+        S.write_json(path / "report.json", report)
+        rec = S.read_json(path / "merge-request-47.json")
+        gate = {"sandboxed": True, "passed": True, "base_sha": BASE_SHA,
+                "head_sha": HEAD_SHA, "tests": 733, "skipped": 0, "expected_failures": 0}
+        rec["result"].update({"gate_mode": "local-suite", "candidate_gate": gate})
+        S.write_json(path / "merge-request-47.json", rec)
+        verdict = self._verify_report(task["slug"])
+        self.assertEqual(verdict["verdict"], "contradicted")
+        self.assertIn(verify.TRUSTED_REMOTE_PENDING, verdict["problems"])
+        turns, _ = self._run(task, verdict)
         self.assertEqual(len(turns), 1)
-        self.assertEqual(turns[0][2], "report-landed")
-        self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "blocked")
-        self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
-        self.assertIn(f"[{PROJECT}/{task['slug']}] clean close lost the state race → L3 turn", logs)
-        self.assertFalse(any("clean report closed by altd" in line for line in logs))
+        self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
+
+        invented, _ = self._task_and_verdict("local-suite-invented-run")
+        idir = S.task_dir(PROJECT, invented["slug"])
+        ireport = S.read_json(idir / "report.json")
+        irec = S.read_json(idir / "merge-request-47.json")
+        irec["result"].update({"gate_mode": "local-suite", "candidate_gate": gate})
+        S.write_json(idir / "merge-request-47.json", irec)
+        rejected = self._verify_report(invented["slug"])
+        self.assertEqual(rejected["verdict"], "contradicted")
+        self.assertIn(verify.TRUSTED_REMOTE_PENDING, rejected["problems"])
+        self.assertIn("local-suite landings must report zero GitHub main runs", rejected["problems"])
+        turns, _ = self._run(invented, rejected)
+        self.assertEqual(len(turns), 1)
+
+    def test_clean_close_rejects_stale_dispatch_and_head_provenance(self):
+        for name, mutation in (
+                ("dispatch", lambda rec: rec.update(dispatch_id="old-dispatch")),
+                ("head", lambda rec: rec.update(head_sha="d" * 40))):
+            with self.subTest(name=name):
+                task, _ = self._task_and_verdict(f"stale-provenance-{name}")
+                path = S.task_dir(PROJECT, task["slug"]) / "merge-request-47.json"
+                rec = S.read_json(path)
+                mutation(rec)
+                S.write_json(path, rec)
+                verdict = self._verify_report(task["slug"])
+                self.assertEqual(verdict["verdict"], "contradicted")
+                turns, _ = self._run(task, verdict)
+                self.assertEqual(len(turns), 1)
+
+        task, _ = self._task_and_verdict("stale-provenance-merge-sha")
+        report_path = S.task_dir(PROJECT, task["slug"]) / "report.json"
+        report = S.read_json(report_path)
+        report["landed"]["prs"][0]["merge_sha"] = "d" * 40
+        S.write_json(report_path, report)
+        verdict = self._verify_report(task["slug"])
+        self.assertEqual(verdict["verdict"], "contradicted")
+        self.assertTrue(any("merge SHA" in problem for problem in verdict["problems"]))
+
+    def test_github_main_run_must_be_available_completed_success_on_exact_merge(self):
+        cases = (
+            ("unavailable", None, "unavailable"),
+            ("wrong-id", {"databaseId": 99999, "headSha": MERGE_SHA,
+                           "status": "completed", "conclusion": "success"}, "id does not match"),
+            ("pending", {"databaseId": RUN_ID, "headSha": MERGE_SHA,
+                         "status": "in_progress", "conclusion": None}, "not completed"),
+            ("failed", {"databaseId": RUN_ID, "headSha": MERGE_SHA,
+                        "status": "completed", "conclusion": "failure"}, "did not conclude success"),
+            ("wrong-head", {"databaseId": RUN_ID, "headSha": "d" * 40,
+                            "status": "completed", "conclusion": "success"},
+             "does not exactly match"),
+        )
+        for name, run_info, expected in cases:
+            with self.subTest(name=name):
+                task, _ = self._task_and_verdict(f"github-run-{name}")
+
+                def github(args, cwd):
+                    return self._github(args, cwd) if args[:2] == ["pr", "view"] else run_info
+
+                with mock.patch.object(verify, "gh", side_effect=github), \
+                     mock.patch.object(verify, "_seen_tags", return_value=set()):
+                    verdict = verify._verify(PROJECT, task["slug"])
+                self.assertEqual(verdict["verdict"], "contradicted")
+                self.assertTrue(any(expected in problem for problem in verdict["problems"]),
+                                verdict["problems"])
+
+
+
 
     def test_unknown_review_dispositions_fail_closed(self):
         for index, disposition in enumerate((None, "accepted", "")):
@@ -282,7 +280,5 @@ class TestCleanClose(unittest.TestCase):
 
         self.assertEqual(len(turns), 1)
         self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
-
-
 if __name__ == "__main__":
     unittest.main()

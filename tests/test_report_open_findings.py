@@ -13,6 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, l3, server, state as S, verify  # noqa: E402
 
 PROJECT = "open-findings"
+HEAD_SHA = "b" * 40
+BASE_SHA = "a" * 40
+MERGE_SHA = "c" * 40
+RUN_ID = 47001
 
 
 class TestReportOpenFindings(unittest.TestCase):
@@ -32,14 +36,16 @@ class TestReportOpenFindings(unittest.TestCase):
             "created": S.now(),
             "envelope": {},
             "estimate": {},
+            "dispatch_id": f"{slug}-1",
+            "attempt": 1,
         }
         S.save_task(PROJECT, task)
         directory = S.task_dir(PROJECT, slug)
         (directory / "progress.md").write_text("complete\n")
         report = {
             "landed": {
-                "prs": [{"number": 47, "title": "Open findings", "merged": True, "merge_sha": "abc123"}],
-                "main_runs": [],
+                "prs": [{"number": 47, "title": "Open findings", "merged": True, "merge_sha": MERGE_SHA}],
+                "main_runs": [{"id": str(RUN_ID), "conclusion": "success"}],
                 "deploy": "not-applicable",
             },
             "review": review,
@@ -51,8 +57,27 @@ class TestReportOpenFindings(unittest.TestCase):
             "spend": {"turns": 3, "subagent_launches": 1, "retries": 0, "model_tiers": "coding", "reverts": 0},
             "roadmap_complete": True,
         }
+        (directory / "report.md").write_text("report\n")
         S.write_json(directory / "report.json", report)
-        with mock.patch.object(verify, "gh", return_value={"state": "MERGED"}):
+        S.write_json(directory / "merge-request-47.json", {
+            "version": 1, "project": PROJECT, "slug": slug, "pr": 47,
+            "generation": f"merge-{slug}", "dispatch_id": task["dispatch_id"], "task_attempt": 1,
+            "base_sha": BASE_SHA, "head_sha": HEAD_SHA, "state": "merged",
+            "result": {"merged": True, "base_sha": BASE_SHA, "head_sha": HEAD_SHA,
+                       "merge_sha": MERGE_SHA, "gate_mode": "github-actions", "candidate_gate": None},
+        })
+
+        def github(args, cwd):
+            if args[:2] == ["pr", "view"]:
+                return {"number": 47, "state": "MERGED", "mergedAt": S.now(),
+                        "mergeCommit": {"oid": MERGE_SHA}, "headRefName": f"worktree-{slug}",
+                        "headRefOid": HEAD_SHA}
+            if args[:2] == ["run", "view"]:
+                return {"databaseId": RUN_ID, "headSha": MERGE_SHA,
+                        "status": "completed", "conclusion": "success"}
+            raise AssertionError(args)
+
+        with mock.patch.object(verify, "gh", side_effect=github):
             return task, verify._verify(PROJECT, slug)
 
     def test_blocked_report_accepts_open_finding_and_surfaces_it_in_the_header(self):
@@ -86,7 +111,7 @@ class TestReportOpenFindings(unittest.TestCase):
         self.assertIn("open finding on an unblocked report", verdict["problems"])
         self.assertIn("1 open review findings", verdict["signals"])
 
-    def test_fixed_and_dismissed_findings_remain_clean(self):
+    def test_fixed_and_dismissed_findings_add_no_review_problem(self):
         _, verdict = self._report(
             "resolved-findings",
             [
@@ -98,8 +123,9 @@ class TestReportOpenFindings(unittest.TestCase):
             "",
         )
 
-        self.assertEqual(verdict["verdict"], "ok")
-        self.assertEqual(verdict["problems"], [])
+        self.assertEqual(verdict["verdict"], "contradicted")
+        self.assertIn(verify.TRUSTED_REMOTE_PENDING, verdict["problems"])
+        self.assertFalse(any("open finding" in problem for problem in verdict["problems"]))
         self.assertFalse(any("open review findings" in signal for signal in verdict["signals"]))
 
     def test_schema_keeps_existing_dispositions_and_allows_open(self):

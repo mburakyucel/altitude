@@ -20,15 +20,15 @@
 - status: probation
 - text: Issue one plain command per Bash call. No &&, ;, pipes, cd, or $ inside heredocs - the Safety Net hooks and auto mode's command classifier reject those as unverifiable against the worktree boundary, and every refusal costs a turn. When you need composition, write a short script file and run it, or use the file tools instead.
 
-## R-004 — Staged L tasks land stage by stage: stage 1 is its own PR, checkpoint until it merges
+## R-004 — Staged L tasks stop at a reviewed stage-1 PR while R-014 blocks landing
 - scope: project
 - where: L2 persona: the stage plan and merge-policy step for L tasks
 - origin: I-018 (altitude)
 - prevents: long-lived L branches that chase main and double-port files the branch retires (I-018)
 - effect: one short-lived branch per stage instead of one branch chasing main (I-018: 2 of 10 launches and about 40 of 220 turns spent on chases).
-- revised: 2026-08-30, I-025 (the original text assumed the L merge policy that decision 48 retired)
+- revised: 2026-08-30, R-014 recovery (the earlier text assumed an available landing authority)
 - status: probation
-- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, get it reviewed, and merge it under decision 48 before any fan-out, then start every later stage from merged main in its own PR, each reviewable in one pass. Never stack stages on one branch: main drifts under it and every upstream edit to a file the branch retires must be ported twice. Only when the brief marks the task held do you stop at the open stage-1 PR, as the hold mechanism says, and continue after Burak merges it.
+- text: For an L task, stage 1 (the skeleton or riskiest slice) is its own PR: open it, obtain a fresh exact-head review, record the trusted-remote integration blocker, and stop before fan-out. Later stages start only after a future trusted landing integration has authoritatively landed the prior stage. Never stack stages on one branch.
 
 ## R-005 — A mechanism named in a request or brief is a suggestion the implementer verifies at the call sites
 - scope: project
@@ -64,7 +64,8 @@
 - prevents:
 - effect:
 - status: probation
-- text: Before a Codex L2 task starts, dispatch must verify that the session can write and remove a probe in both its assigned worktree and task folder. A failed probe raises one system fault and holds the task without consuming the task's retry or turn envelope.
+- revised: 2026-08-30, model-isolation recovery
+- text: Before any L2 task starts, dispatch verifies its exact worktree capability and generation-fenced checkpoint broker without granting raw task-folder access. A failed probe raises one system fault and holds the task without consuming the task's retry or turn envelope.
 
 ## R-012 — A resumed worker needs a fresh report generation
 - scope: project
@@ -100,7 +101,7 @@
 - prevents: a fix-round launch spent on an L1 that cannot reach the PR branch, followed by the L2 patching the PR itself with no re-review
 - effect: one sentence in the L2 persona and one in the brief template
 - status: probation
-- text: alt l1 run cuts a fresh worktree from origin/main, so a sub-brief that asks an L1 to push to an existing PR branch cannot be satisfied and the launch is lost. A fix round on an open PR is launched as alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>: with --cwd the launcher skips worktree and branch creation and the L1 amends the PR in place. The fix brief names the PR number and the findings to address, and the L2 checks the amended PR with git diff --stat origin/main <head> before merging.
+- text: alt l1 run cuts a fresh worktree from immutable origin/main, so a sub-brief that asks an L1 to push to an existing PR branch cannot be satisfied and the launch is lost. A fix round on an open PR is launched as alt l1 run --cwd <the task worktree that holds the PR branch> --brief <fix brief>: with --cwd the launcher skips worktree and branch creation and the L1 amends the PR in place. The fix brief names the PR number and findings, and the L2 checks git diff --stat origin/main <head> before requesting a fresh exact-head review; R-014 still stops before landing.
 
 ## R-017 — A post-fix review converges: it checks the previous findings and the fix diff; new findings block only when they defeat the definition of done
 - scope: project

@@ -60,6 +60,7 @@ class TestSystemFault(unittest.TestCase):
             task = T.new("altitude", "verifier fault test", "S", "request", actor="burak")
             task["state"] = "running"; S.save_task("altitude", task)
             d = S.task_dir("altitude", task["slug"])
+            (d / "report.md").write_text("report\n")
             S.write_json(d / "report.json", {"landed": {"prs": [{"number": 1, "merged": True}], "main_runs": [], "deploy": "not-applicable"},
                                              "review": [], "deviations": [], "decisions": [], "fyi": [], "blocked": "", "follow_ups": [],
                                              "spend": {"turns": 1, "subagent_launches": 0, "retries": 0, "reverts": 0}})

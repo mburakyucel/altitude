@@ -68,26 +68,66 @@ def project_lock(project: str):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+# New slugs remain compact for branch/UI readability. A small number of
+# Altitude-generated historical collision slugs are 41-42 characters because
+# the old allocator appended ``-2`` after truncating the base to 40. Keep a
+# separately bounded compatibility ceiling for those persisted directories;
+# the same strict alphabet and containment checks still reject path syntax.
+NEW_TASK_SLUG_MAX = 40
+PERSISTED_TASK_SLUG_MAX = 80
+
+
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-    return s[:40].rstrip("-") or "task"
+    return s[:NEW_TASK_SLUG_MAX].rstrip("-") or "task"
+
+
+def collision_slug(base: str, sequence: int) -> str:
+    """Append a collision suffix while keeping every newly allocated slug <=40."""
+    suffix = f"-{int(sequence)}"
+    if sequence < 2 or len(suffix) >= NEW_TASK_SLUG_MAX:
+        raise ValueError(f"invalid task slug collision sequence {sequence!r}")
+    stem = base[:NEW_TASK_SLUG_MAX - len(suffix)].rstrip("-")
+    return f"{stem or 'task'}{suffix}"
 
 
 # ---- task folders -----------------------------------------------------------
 
+def _task_bucket(project: str, name: str) -> Path:
+    """Return an exact task bucket without following a state-root alias."""
+    project_root = config.project_dir(project).resolve(strict=False)
+    candidate = project_root / name
+    if candidate.is_symlink():
+        raise ValueError(f"project {name} directory may not be a symlink: {project!r}")
+    if candidate.resolve(strict=False).parent != project_root:
+        raise ValueError(f"project {name} directory escapes its project: {project!r}")
+    return candidate
+
+
 def tasks_dir(project: str) -> Path:
-    return config.project_dir(project) / "tasks"
+    return _task_bucket(project, "tasks")
 
 
 def archive_dir(project: str) -> Path:
-    return config.project_dir(project) / "archive"
+    return _task_bucket(project, "archive")
+
+
+def _task_child(parent: Path, slug: str) -> Path:
+    slug = config.require_identifier(slug, kind="task slug", max_length=PERSISTED_TASK_SLUG_MAX)
+    parent = parent.resolve(strict=False)
+    candidate = parent / slug
+    if candidate.is_symlink():
+        raise ValueError(f"task directory may not be a symlink: {slug!r}")
+    if candidate.resolve(strict=False).parent != parent:
+        raise ValueError(f"task directory escapes its project: {slug!r}")
+    return candidate
 
 
 def task_dir(project: str, slug: str) -> Path:
-    d = tasks_dir(project) / slug
+    d = _task_child(tasks_dir(project), slug)
     if d.is_dir():
         return d
-    a = archive_dir(project) / slug
+    a = _task_child(archive_dir(project), slug)
     return a if a.is_dir() else d
 
 
@@ -99,10 +139,13 @@ def load_task(project: str, slug: str) -> dict:
     t = read_json(status_path(project, slug))
     if not t:
         raise KeyError(f"no task {slug!r} in {project!r}")
+    if not isinstance(t, dict) or t.get("slug") != slug:
+        raise ValueError(f"task record slug does not match requested task {project!r}/{slug!r}")
     return t
 
 
 def save_task(project: str, task: dict) -> None:
+    config.require_identifier(task.get("slug"), kind="task slug", max_length=PERSISTED_TASK_SLUG_MAX)
     task["updated"] = now()
     write_json(status_path(project, task["slug"]), task)
 
@@ -114,8 +157,13 @@ def list_tasks(project: str, include_archive: bool = False) -> list[dict]:
         if not d.is_dir():
             continue
         for td in sorted(d.iterdir()):
+            expected = _task_child(d, td.name)
+            if td.resolve(strict=False) != expected.resolve(strict=False):
+                raise ValueError(f"task directory escapes its project: {td}")
             t = read_json(td / "status.json")
             if t:
+                if not isinstance(t, dict) or t.get("slug") != td.name:
+                    raise ValueError(f"task record slug does not match its directory: {td}")
                 out.append(t)
     return out
 

@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+_TEST_HOME = tempfile.mkdtemp(prefix="altitude-git-policy-integration-")
+os.environ["ALTITUDE_HOME"] = _TEST_HOME
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, git_policy, server  # noqa: E402
 from altitude import tasks as T  # noqa: E402

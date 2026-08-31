@@ -18,6 +18,25 @@ from altitude import monitor  # noqa: E402
 
 class TestResumeHold(unittest.TestCase):
     _number = 0
+    @classmethod
+    def setUpClass(cls):
+        cls._config_paths = {
+            name: getattr(config, name)
+            for name in ("ROOT", "PROJECTS_FILE", "MONITOR_DIR", "INCIDENT_INDEX", "DIGEST_FILE")
+        }
+        config.ROOT = _TMP
+        config.PROJECTS_FILE = _TMP / "projects.json"
+        config.MONITOR_DIR = _TMP / "monitor"
+        config.INCIDENT_INDEX = _TMP / "incidents.jsonl"
+        config.DIGEST_FILE = _TMP / "DIGEST.md"
+        cls.addClassCleanup(cls._restore_config_paths)
+        config.ensure_root()
+
+    @classmethod
+    def _restore_config_paths(cls):
+        for name, value in cls._config_paths.items():
+            setattr(config, name, value)
+
 
     def setUp(self):
         type(self)._number += 1
@@ -119,7 +138,9 @@ class TestResumeHold(unittest.TestCase):
         self.assertFalse(result["deferred"])
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
         self.assertEqual([call["slug"] for call in self.resumed], [blocked["slug"]])
-        self.assertEqual(self.stopped, [blocked["agent_id"]])
+        # The real resume_session owns stop-before-replace; this test replaces
+        # that function with a recorder, so resume_blocked must not double-stop.
+        self.assertEqual(self.stopped, [])
 
     def test_only_blocked_task_with_pending_resume_holds_its_files(self):
         pending = self._task("pending lease", "blocked", "altitude/pending.py", "2026-01-01T00:00:00+00:00")
@@ -162,6 +183,211 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(S.load_task(self.project, oldest["slug"])["state"], "running")
         self.assertEqual(S.load_task(self.project, youngest["slug"])["state"], "blocked")
         self.assertTrue(S.load_task(self.project, youngest["slug"])["resume_after"])
+
+    def test_failed_recovery_never_adopts_unclaimed_terminal_report_and_caps(self):
+        blocked = self._task("failed automatic recovery", "blocked", "altitude/recover.py",
+                             "2026-01-01T00:00:00+00:00")
+        blocked["blocked_reason"] = "lease: the prior holder is gone"
+        blocked["l2_engine"] = "codex"
+        S.save_task(self.project, blocked)
+        S.write_json(S.task_dir(self.project, blocked["slug"]) / "report.json", {"blocked": "old report"})
+        S.write_json(dispatch.codex_run_path(self.project, blocked["slug"]), {
+            "project": self.project, "slug": blocked["slug"],
+            "dispatch_id": blocked["dispatch_id"], "generation": "old-generation",
+            "state": "done", "pid": None, "pid_start": None,
+        })
+        original = dispatch.resume_blocked
+        calls = []
+
+        def fail_before_pending(project, slug, answer, prefix=""):
+            calls.append(slug)
+            raise T.TransitionError("resume refused by Git provenance gate")
+
+        dispatch.resume_blocked = fail_before_pending
+        try:
+            self.assertFalse(dispatch._claimed_worker_live(self.project, blocked))
+            self.assertEqual(dispatch.resume_recoverable(self.project), [])
+            self.assertEqual(dispatch.resume_recoverable(self.project), [])
+            self.assertEqual(dispatch.resume_recoverable(self.project), [])
+        finally:
+            dispatch.resume_blocked = original
+
+        current = S.load_task(self.project, blocked["slug"])
+        self.assertEqual(current["state"], "blocked")
+        self.assertEqual(calls, [blocked["slug"], blocked["slug"]])
+        self.assertEqual(current["auto_recovery"]["attempts"], dispatch.AUTO_RECOVERY_LIMIT)
+        self.assertFalse(current["auto_recovery"]["in_flight"])
+        self.assertTrue(current["auto_recovery"]["finished"])
+        self.assertIn("Git provenance gate", current["auto_recovery"]["error"])
+        recovered = [event for event in S.read_events(self.project, blocked["slug"])
+                     if event.get("recovered_terminal")]
+        self.assertEqual(recovered, [])
+
+    def test_recoverable_blockers_never_launch_past_project_wip(self):
+        config.save_projects({self.project: {
+            "name": self.project, "path": str(self.repo), "stacks": ["python"], "wip": 3,
+        }})
+        blocked = []
+        for number in range(7):
+            task = self._task(f"recoverable {number}", "blocked", f"altitude/free-{number}.py",
+                              f"2026-01-0{number + 1}T00:00:00+00:00")
+            task["blocked_reason"] = "lease: the prior holder is gone"
+            S.save_task(self.project, task)
+            blocked.append(task)
+
+        resumed = dispatch.resume_recoverable(self.project)
+
+        states = [S.load_task(self.project, task["slug"])["state"] for task in blocked]
+        self.assertEqual(len(resumed), 3)
+        self.assertEqual(states.count("running"), 3)
+        self.assertEqual(states.count("blocked"), 4)
+        self.assertEqual(len(self.resumed), 3)
+        self.assertEqual(dispatch.resume_recoverable(self.project), [])
+        self.assertEqual(len(self.resumed), 3)
+
+    def test_deferred_recovery_attempt_is_durably_settled(self):
+        blocked = self._task("deferred automatic recovery", "blocked", "altitude/deferred.py",
+                             "2026-01-01T00:00:00+00:00")
+        blocked["blocked_reason"] = "lease: the prior holder is gone"
+        S.save_task(self.project, blocked)
+        original = dispatch.resume_blocked
+        dispatch.resume_blocked = lambda *args, **kwargs: {"deferred": True, "hold": "test hold"}
+        try:
+            self.assertEqual(dispatch.resume_recoverable(self.project), [])
+        finally:
+            dispatch.resume_blocked = original
+
+        rec = S.load_task(self.project, blocked["slug"])["auto_recovery"]
+        self.assertEqual((rec["category"], rec["attempts"]), ("lease-clear", 1))
+        self.assertFalse(rec["in_flight"])
+        self.assertTrue(rec["finished"])
+        self.assertTrue(rec["deferred"])
+        self.assertIsNone(rec["error"])
+
+    def test_exact_pending_terminal_adoption_is_once_and_settles_attempt(self):
+        blocked = self._task("exact pending adoption", "blocked", "altitude/adopt.py",
+                             "2026-01-01T00:00:00+00:00")
+        blocked.update({
+            "blocked_reason": "lease: the prior holder is gone",
+            "l2_engine": "codex",
+            "report_not_before": "2000-01-01T00:00:00+00:00",
+            "pending_resume": {"dispatch_id": blocked["dispatch_id"], "generation": "resume-g",
+                               "engine": "codex", "started": S.now()},
+            "auto_recovery": {"category": "lease-clear", "attempts": 2, "token": "attempt-token",
+                              "in_flight": True, "started": S.now()},
+        })
+        S.save_task(self.project, blocked)
+        (S.task_dir(self.project, blocked["slug"]) / "report.md").write_text("new report\n")
+        S.write_json(S.task_dir(self.project, blocked["slug"]) / "report.json", {"blocked": "new report"})
+        S.write_json(dispatch.codex_run_path(self.project, blocked["slug"]), {
+            "project": self.project, "slug": blocked["slug"],
+            "dispatch_id": blocked["dispatch_id"], "generation": "resume-g",
+            "state": "done", "pid": None, "pid_start": None,
+        })
+        self.assertTrue(dispatch.recovery_pending(self.project, blocked))
+
+        self.assertEqual(dispatch.resume_recoverable(self.project), [blocked["slug"]])
+        self.assertEqual(dispatch.resume_recoverable(self.project), [])
+
+        current = S.load_task(self.project, blocked["slug"])
+        self.assertEqual(current["state"], "running")
+        self.assertNotIn("pending_resume", current)
+        self.assertEqual(current["auto_recovery"]["attempts"], 2)
+        self.assertFalse(current["auto_recovery"]["in_flight"])
+        self.assertTrue(current["auto_recovery"]["finished"])
+        recovered = [event for event in S.read_events(self.project, blocked["slug"])
+                     if event.get("recovered_terminal")]
+        self.assertEqual(len(recovered), 1)
+
+    def test_fresh_final_attempt_remains_recovery_owned_until_settled(self):
+        blocked = self._task("final claimed attempt", "blocked", "altitude/final.py",
+                             "2026-01-01T00:00:00+00:00")
+        blocked.update({
+            "blocked_reason": "lease: the prior holder is gone",
+            "auto_recovery": {"category": "lease-clear", "attempts": dispatch.AUTO_RECOVERY_LIMIT,
+                              "token": "final-token", "in_flight": True, "started": S.now()},
+        })
+        S.save_task(self.project, blocked)
+        self.assertTrue(dispatch.recovery_pending(self.project, blocked))
+        blocked["auto_recovery"]["in_flight"] = False
+        blocked["auto_recovery"]["finished"] = S.now()
+        S.save_task(self.project, blocked)
+        self.assertFalse(dispatch.recovery_pending(self.project, blocked))
+
+    def test_terminal_pending_adoption_requires_persisted_report_boundary(self):
+        blocked = self._task("boundaryless pending adoption", "blocked", "altitude/boundaryless.py",
+                             "2026-01-01T00:00:00+00:00")
+        blocked.update({
+            "blocked_reason": "lease: the prior holder is gone", "l2_engine": "codex",
+            "pending_resume": {"dispatch_id": blocked["dispatch_id"], "generation": "resume-g",
+                               "engine": "codex", "started": S.now()},
+        })
+        S.save_task(self.project, blocked)
+        S.write_json(S.task_dir(self.project, blocked["slug"]) / "report.json", {"blocked": "old report"})
+        S.write_json(dispatch.codex_run_path(self.project, blocked["slug"]), {
+            "project": self.project, "slug": blocked["slug"],
+            "dispatch_id": blocked["dispatch_id"], "generation": "resume-g",
+            "state": "done", "pid": None, "pid_start": None,
+        })
+
+        self.assertFalse(dispatch._claimed_worker_live(self.project, blocked))
+        current = S.load_task(self.project, blocked["slug"])
+        self.assertEqual(current["state"], "blocked")
+        self.assertEqual(current["pending_resume"]["generation"], "resume-g")
+
+    def test_stale_pending_cleanup_cannot_remove_replacement_generation(self):
+        blocked = self._task("replacement pending generation", "blocked", "altitude/replacement.py",
+                             "2026-01-01T00:00:00+00:00")
+        old_pending = {"dispatch_id": blocked["dispatch_id"], "generation": "old-generation",
+                       "engine": "codex", "started": "2000-01-01T00:00:00+00:00"}
+        blocked.update({"blocked_reason": "lease: the prior holder is gone", "l2_engine": "codex",
+                        "pending_resume": old_pending})
+        S.save_task(self.project, blocked)
+        original = dispatch._claimed_worker_live
+
+        def replace_generation(project, snapshot):
+            live = S.load_task(project, snapshot["slug"])
+            live["pending_resume"] = {
+                "dispatch_id": live["dispatch_id"], "generation": "replacement-generation",
+                "engine": "codex", "started": S.now(),
+            }
+            S.save_task(project, live)
+            return False
+
+        dispatch._claimed_worker_live = replace_generation
+        try:
+            self.assertEqual(dispatch.resume_recoverable(self.project), [])
+        finally:
+            dispatch._claimed_worker_live = original
+
+        current = S.load_task(self.project, blocked["slug"])
+        self.assertEqual(current["state"], "blocked")
+        self.assertEqual(current["pending_resume"]["generation"], "replacement-generation")
+        self.assertNotIn("auto_recovery", current)
+        self.assertEqual(self.resumed, [])
+
+    def test_invalid_missing_and_future_recovery_claim_times_are_stale(self):
+        for number, started in enumerate((None, "not-an-iso-time", "2999-01-01T00:00:00+00:00")):
+            blocked = self._task(f"stale recovery timestamp {number}", "blocked",
+                                 f"altitude/stale-{number}.py", f"2026-01-0{number + 1}T00:00:00+00:00")
+            pending = {"dispatch_id": blocked["dispatch_id"], "generation": f"stale-{number}",
+                       "engine": "claude"}
+            recovery = {"category": "lease-clear", "attempts": 1, "token": f"old-{number}",
+                        "in_flight": True}
+            if started is not None:
+                pending["started"] = started
+                recovery["started"] = started
+            blocked.update({"blocked_reason": "lease: the prior holder is gone",
+                            "pending_resume": pending, "auto_recovery": recovery})
+            S.save_task(self.project, blocked)
+
+            self.assertEqual(dispatch._seconds_since(started or ""), float("inf"))
+            self.assertEqual(dispatch.resume_recoverable(self.project), [blocked["slug"]])
+            current = S.load_task(self.project, blocked["slug"])
+            self.assertEqual(current["state"], "running")
+            self.assertNotIn("pending_resume", current)
+            self.assertEqual(current["auto_recovery"]["attempts"], 2)
+            self.assertFalse(current["auto_recovery"]["in_flight"])
 
     def test_cli_resume_payloads_for_deferred_and_running(self):
         main = runpy.run_path(str(Path(__file__).resolve().parent.parent / "bin" / "alt"))["main"]

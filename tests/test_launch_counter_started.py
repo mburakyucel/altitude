@@ -6,7 +6,6 @@ defect these cover was precisely that the old code billed the wrapper and never 
 """
 import json
 import os
-import stat
 import subprocess
 import sys
 import tempfile
@@ -48,7 +47,10 @@ print(json.dumps({"type": "result", "is_error": True, "result": message}))
 print("synthetic quota rejection from Claude CLI", file=sys.stderr)
 ''')
 for f in ("codex", "claude", "exit127", "invalid-format", "quota-refusal"):
-    (FAKE / f).chmod((FAKE / f).stat().st_mode | stat.S_IEXEC)
+    # Model executables are a security boundary. Use an explicit owner-only
+    # executable fixture instead of inheriting a permissive CI umask (0764 is
+    # correctly rejected by production's trusted-Codex check).
+    (FAKE / f).chmod(0o700)
 sys.path.insert(0, str(ROOT))
 from hooks import launch_counter as LC  # noqa: E402  — the same module object `altitude.l1` imports
 from altitude import config, l1, monitor, route, state as S, tasks as T  # noqa: E402
@@ -74,7 +76,11 @@ def _only_the_wrapper(exc):
     real = subprocess.Popen
 
     def spawn(args, *a, **kw):
-        if args and str(args[0]) == sys.executable:
+        # The production wrapper now sits below a trusted bwrap PID namespace,
+        # so Python is intentionally not argv[0]. Match the exact nested Altitude
+        # wrapper instead of accidentally allowing a real launch in this test.
+        words = [str(value) for value in (args or [])]
+        if (sys.executable in words and "l1" in words and "_exec" in words):
             raise exc
         return real(args, *a, **kw)
     return spawn
@@ -393,6 +399,8 @@ class LauncherTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls._real_monitor_quota = monitor.quota
+        cls._real_route_quota_codex = route.quota_codex
         config.ensure_root()
         REPO.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=REPO, check=True)
@@ -401,6 +409,11 @@ class LauncherTests(unittest.TestCase):
         config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
+
+    @classmethod
+    def tearDownClass(cls):
+        monitor.quota = cls._real_monitor_quota
+        route.quota_codex = cls._real_route_quota_codex
 
     def setUp(self):
         self.addCleanup(os.environ.pop, "ALTITUDE_SESSION_KEY", None)

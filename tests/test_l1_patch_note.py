@@ -1,7 +1,7 @@
 """I-055: Codex L1s know the host patch constraint and surface sandbox setup failures."""
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -38,23 +38,31 @@ class TestL1PatchNote(unittest.TestCase):
                 with ExitStack() as stack:
                     stack.enter_context(mock.patch.object(config, "ROOT", state_root))
                     stack.enter_context(mock.patch.object(route, "pick_engine", pick_engine))
-                    stack.enter_context(mock.patch.object(
-                        S, "load_task", return_value={
-                            "envelope": {"l1_in_flight": 1, "subagent_launches": 3}, "worktree": str(root)
-                        }
-                    ))
+                    task = {"envelope": {"l1_in_flight": 1, "subagent_launches": 3}, "worktree": str(root),
+                            "state": "running", "dispatch_id": "task-1"}
+                    records = {}
+                    stack.enter_context(mock.patch.object(S, "load_task", return_value=task))
+                    stack.enter_context(mock.patch.object(S, "project_lock", side_effect=lambda *_a, **_k: nullcontext()))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
                     stack.enter_context(mock.patch.object(l1, "list_runs", return_value=[]))
                     stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
-                    stack.enter_context(mock.patch.object(l1, "save", return_value=None))
+                    stack.enter_context(mock.patch.object(l1, "load", side_effect=lambda _p, _s, n: records.get(n)))
+                    stack.enter_context(mock.patch.object(l1, "save", side_effect=lambda _p, _s, r: records.update({r["name"]: dict(r)})))
+                    stack.enter_context(mock.patch.object(l1, "_task_generation_current", return_value=True))
+                    stack.enter_context(mock.patch.object(l1, "_prepare_isolated_clone",
+                                                          return_value=(root, root / "gitdir", "l1/test", "a" * 40, "a" * 40, "https://example.invalid/repo")))
+                    stack.enter_context(mock.patch.object(l1, "_proc_start_time", return_value=1))
                     stack.enter_context(mock.patch.object(
                         l1, "_git", return_value=SimpleNamespace(stdout="test-branch\n", stderr="", returncode=0)
                     ))
                     stack.enter_context(mock.patch.object(l1.git_policy, "capture_origin_sha", return_value="a" * 40))
                     stack.enter_context(mock.patch.object(l1.git_policy, "commits_missing_task_trailer", return_value=[]))
                     stack.enter_context(mock.patch.object(config, "project_path", return_value=root))
-                    stack.enter_context(mock.patch.object(l1.subprocess, "Popen", return_value=SimpleNamespace(pid=123)))
-                    rec = l1.start("project", slug, brief, role=role, engine=engine, cwd=str(root))
+                    stack.enter_context(mock.patch.object(
+                        l1.subprocess, "Popen",
+                        return_value=SimpleNamespace(pid=123, poll=lambda: None, wait=lambda **_kw: 0)))
+                    rec = l1.start("project", slug, brief, role=role, engine=engine,
+                                   cwd=str(root) if role == "reviewer" else None)
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])
@@ -80,6 +88,9 @@ class TestL1PatchNote(unittest.TestCase):
             "engine": engine,
             "model": "test-model",
             "worktree": str(root),
+            "generation": "g1", "dispatch_id": "task-1", "state": "running", "isolated_clone": True,
+            "git_dir": str(root / "gitdir"), "hooks_path": str(root / "hooks"),
+            "origin_sha": "a" * 40, "origin_url": "https://example.invalid/repo", "branch": "l1/test",
         }
         faults = []
         settlements = []
@@ -90,6 +101,10 @@ class TestL1PatchNote(unittest.TestCase):
             stack.enter_context(mock.patch.object(l1, "load", return_value=rec))
             stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
             stack.enter_context(mock.patch.object(l1, "save", return_value=None))
+            stack.enter_context(mock.patch.object(S, "project_lock", side_effect=lambda *_a, **_k: nullcontext()))
+            stack.enter_context(mock.patch.object(l1, "_task_generation_current", return_value=True))
+            stack.enter_context(mock.patch.object(l1, "_engine_started", return_value=None))
+            stack.enter_context(mock.patch.object(l1.git_policy, "require_hooks_installed", return_value=root))
             stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="")))
             stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
             stack.enter_context(mock.patch.object(engines, "codex_exec", return_value=response))

@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class TestProposalFlowPark(unittest.TestCase):
 
     def setUp(self):
         config.ensure_root()
+        (config.MONITOR_DIR / "recovery-breaker.json").unlink(missing_ok=True)
         P = config.load_projects()
         P[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "stacks": ["python"]}
         config.save_projects(P)
@@ -222,7 +224,7 @@ class TestProposalFlowPark(unittest.TestCase):
             worker.start()
             reached_lock = entered.wait(5)
             if reached_lock:
-                T.propose(PROJECT, slug, "# Proposal\nBody.\n", dict(PROPOSAL))
+                T.propose(PROJECT, slug, "# Proposal\nBody.\n", dict(PROPOSAL, decision_needed=False))
         finally:
             project_l3_lock.release()
             worker.join(5)
@@ -294,9 +296,31 @@ class TestProposalFlowPark(unittest.TestCase):
 
         self.assertEqual(critic_calls, [], "a proposal after the proposal run must prevent the critic run")
         t = S.load_task(PROJECT, slug)
-        self.assertEqual(t["state"], "proposed")
+        self.assertEqual(t["state"], "requested")
         self.assertIsNone(t.get("proposal_started"))
         self.assertEqual(t.get("hold_merge"), "always-list: production auth")
+        self.assertEqual(t.get("proposal_reconcile_failures"), 1)
+        self.assertIn("always-list hits", t.get("proposal_reconcile_reason", ""))
+
+    def test_decision_required_without_a_card_is_requeued_and_faulted_if_repeated(self):
+        slug = self._task("decision-required proposal omitted its card", cls="M")
+        proposal = dict(PROPOSAL, decision_needed=True, always_list_hits=[])
+        T.propose(PROJECT, slug, "# Proposal\nBody.\n", proposal)
+
+        server._finish_proposal(PROJECT, slug, proposal, S.load_task(PROJECT, slug))
+        first = S.load_task(PROJECT, slug)
+        self.assertEqual(first["state"], "requested")
+        self.assertEqual(first.get("proposal_reconcile_failures"), 1)
+        self.assertNotIn("approved", [event.get("to") for event in self._state_events(slug)])
+
+        T.propose(PROJECT, slug, "# Proposal\nBody.\n", proposal)
+        with mock.patch.object(server.improve, "system_fault") as fault:
+            server._finish_proposal(PROJECT, slug, proposal, S.load_task(PROJECT, slug))
+        second = S.load_task(PROJECT, slug)
+        self.assertEqual(second["state"], "requested")
+        self.assertEqual(second.get("proposal_reconcile_failures"), 2)
+        self.assertTrue(second.get("proposal_reconcile_faulted"))
+        fault.assert_called_once()
 
     def test_park_by_l3_in_an_earlier_turn_is_not_overridden(self):
         """Finding 1: we stamp the queue time, then block on l3.lock behind a chat turn in which the
@@ -355,8 +379,8 @@ class TestProposalFlowPark(unittest.TestCase):
         slug = self._task("l3 proposes it while the proposal agent runs", cls="M", on_disk=False)
 
         def run_proposal(project, task_slug):
-            T.propose(project, task_slug, "# Proposal\nBody.\n", dict(PROPOSAL))  # no question: FYI-only
-            return dict(PROPOSAL)
+            T.propose(project, task_slug, "# Proposal\nBody.\n", dict(PROPOSAL, decision_needed=False))  # no question: FYI-only
+            return dict(PROPOSAL, decision_needed=False)
         propose.run_proposal = run_proposal
 
         server.run_proposal_flow(PROJECT, slug)   # the l3.turn stub fails the test if it is called

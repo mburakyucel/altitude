@@ -33,6 +33,23 @@ class TestGuardExecutedText(unittest.TestCase):
         self.assert_blocked("systemctl --user restart altitude")
         self.assert_blocked('systemctl --user restart "altitude"')
 
+    def test_model_merge_authority_is_structurally_denied(self):
+        for command in (
+            'alt land --message "ready" --merge',
+            'env ALTITUDE_ACTOR=burak alt land --message "ready" --merge',
+            'python3 bin/alt land --message "ready" --merge',
+            "gh pr merge 99 --squash",
+            "env gh pr merge 99 --squash",
+            "gh api repos/o/r/pulls/99/merge -X PUT",
+            "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}) { pullRequest { id } } }'",
+            "curl -X PUT https://api.github.com/repos/o/r/pulls/99/merge",
+            "curl -X POST https://10.88.0.1:8890/api/recovery-breaker/reset",
+            "wget --post-data='{}' https://10.88.0.1:8890/api/recovery-breaker/reset",
+        ):
+            self.assert_blocked(command)
+        self.assert_allowed('alt land --message "publish only"')
+        self.assert_allowed("alt task request-merge task --pr 99")
+
     def test_ignores_heredoc_body(self):
         self.assert_allowed(
             "cat > report.md <<'EOF'\n"
@@ -339,6 +356,44 @@ class TestGuardExecutedText(unittest.TestCase):
             "echo " + ("ordinary-text-" * 20) + "; systemctl --user restart altitude"
         )
         self.assertIn("Matched: systemctl --user restart altitude", result.stderr)
+
+    def test_wrapper_options_cannot_conceal_shell_code(self):
+        for command in (
+            'env -u X bash -c "systemctl --user restart altitude"',
+            'env --unset X bash -c "systemctl --user restart altitude"',
+            'env --unset=X bash -c "systemctl --user restart altitude"',
+            'timeout --signal KILL 5 bash -c "systemctl --user restart altitude"',
+            'timeout --signal=KILL 5 bash -c "systemctl --user restart altitude"',
+            'timeout --kill-after 2 5 bash -c "systemctl --user restart altitude"',
+        ):
+            self.assert_blocked(command)
+
+    def test_global_git_options_do_not_conceal_protected_push(self):
+        self.assert_blocked("git --git-dir=/tmp/repo.git push origin HEAD:main")
+        self.assert_blocked("git -C /tmp/repo push --force origin HEAD")
+
+    def test_per_command_hooks_path_overrides_are_blocked(self):
+        self.assert_blocked("git -c core.hooksPath=/dev/null commit -m nope")
+        self.assert_blocked("git --config-env=core.hooksPath=HOOKS push origin HEAD")
+        self.assert_blocked("git --config-env core.hooksPath=HOOKS push origin HEAD")
+        self.assert_allowed("git -c color.ui=false status")
+
+
+    def test_dynamic_git_common_dir_write_is_blocked(self):
+        self.assert_blocked(
+            'printf "[core]\\nhooksPath=/dev/null\\n" '
+            '>> "$(git rev-parse --git-common-dir)/config"'
+        )
+        self.assert_blocked(
+            'printf x | tee "$(git rev-parse --git-common-dir)/config"'
+        )
+        self.assert_allowed('echo "$(git rev-parse --git-common-dir)"')
+
+    def test_exact_hooks_bypass_chain_is_blocked(self):
+        self.assert_blocked(
+            'printf "[core]\\nhooksPath=/dev/null\\n" >> "$(git rev-parse --git-common-dir)/config"; '
+            'git --git-dir="$(git rev-parse --git-common-dir)" push origin HEAD:main'
+        )
 
 
 if __name__ == "__main__":

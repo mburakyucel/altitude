@@ -2,8 +2,9 @@
 remote stands in for GitHub's git side, and a fake `gh` first on PATH answers view/create/
 checks/merge/run-list from canned JSON while recording every argv it was called with. The no-CI
 merge gate also logs the exact candidate directory in which its fake test runner executes."""
-import contextlib, io, json, os, shutil, stat, subprocess, sys, tempfile, unittest
+import contextlib, io, json, os, runpy, shlex, shutil, stat, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
+from unittest import mock
 os.environ.setdefault("ALTITUDE_HOME", tempfile.mkdtemp(prefix="altitude-land-"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, land, state as S  # noqa: E402
@@ -94,6 +95,83 @@ class TestLand(unittest.TestCase):
         self._setenv("ALTITUDE_HOME", str(config.ROOT))
         self._setenv("ALTITUDE_PROJECT", "demo")
         self._setenv("ALTITUDE_TASK", "fix-x")
+        # Most test hosts (including locked-down CI) cannot create user namespaces. A small launcher exercises the
+        # production command/env contract while individual adversarial tests inspect the real bwrap boundary itself.
+        fake_bwrap = self.tmp / "bwrap"
+        fake_bwrap.write_text("""#!/usr/bin/env python3
+import os, shutil, subprocess, sys, tempfile
+args = sys.argv[1:]
+inside_env = {}
+candidate = None
+i = 0
+while i < len(args):
+    if args[i] == "--":
+        command = args[i + 1:]
+        break
+    if args[i] == "--setenv":
+        inside_env[args[i + 1]] = args[i + 2]
+        i += 3
+        continue
+    if args[i] in ("--bind", "--ro-bind"):
+        if args[i + 2] == "/source":
+            candidate = args[i + 1]
+        i += 3
+        continue
+    if args[i] == "--symlink":
+        i += 3
+        continue
+    if args[i] == "--size":
+        i += 2
+        continue
+    if args[i] in ("--dir", "--proc", "--dev", "--tmpfs", "--chdir", "--cap-drop"):
+        i += 2
+        continue
+    i += 1
+else:
+    raise SystemExit(125)
+if not candidate:
+    raise SystemExit(126)
+workspace = tempfile.mkdtemp(prefix="altitude-fake-bwrap-")
+try:
+    source = os.path.join(workspace, "source")
+    private_home = os.path.join(workspace, "home")
+    private_tmp = os.path.join(workspace, "tmp")
+    os.makedirs(source)
+    os.makedirs(private_home)
+    os.makedirs(private_tmp)
+    shutil.copytree(candidate, source, dirs_exist_ok=True, symlinks=True)
+    open(os.path.join(workspace, ".altitude-sandbox-workspace"), "x").close()
+    inside_env["HOME"] = private_home
+    inside_env["TMPDIR"] = private_tmp
+    inside_env["PATH"] = inside_env.get("PATH", "").replace("/workspace", workspace)
+    # Production uses a fixed trusted shell launcher to copy /source into the
+    # bounded tmpfs. The unit fake has already made that copy; execute only the
+    # opaque argv following the launcher's $0 marker.
+    marker = command.index("altitude-local-suite")
+    command = command[marker + 1:]
+    try:
+        run = subprocess.run(command, cwd=source, env=inside_env)
+    except FileNotFoundError as exc:
+        print("bwrap: execvp: " + str(exc), file=sys.stderr)
+        raise SystemExit(127)
+finally:
+    shutil.rmtree(workspace, ignore_errors=True)
+raise SystemExit(run.returncode)
+""")
+        fake_bwrap.chmod(0o755)
+        self._bwrap_patch = mock.patch.object(land, "BWRAP", fake_bwrap)
+        self._bwrap_patch.start()
+        self.addCleanup(self._bwrap_patch.stop)
+        real_suite = land._local_suite
+        self._suite_invocations = []
+
+        def recorded_suite(cwd, test_cmd):
+            self._suite_invocations.append({"argv": shlex.split(test_cmd), "cwd": str(cwd.resolve())})
+            return real_suite(cwd, test_cmd)
+
+        self._suite_patch = mock.patch.object(land, "_local_suite", side_effect=recorded_suite)
+        self._suite_patch.start()
+        self.addCleanup(self._suite_patch.stop)
         d = S.tasks_dir("demo") / "fix-x"
         d.mkdir(parents=True)
         (d / "status.json").write_text(json.dumps(
@@ -134,18 +212,21 @@ class TestLand(unittest.TestCase):
         p.write_text("changed\n")
 
     def fake_runner(self, name, exit_code=0, output="", script=None):
-        p = self.tmp / "ghbin" / name
+        # Candidate-local executables are deliberately allowed; they are the untrusted code Bubblewrap confines.
+        p = self.repo / (".altitude-test-runner" if name == "make" else name)
         p.write_text("#!/usr/bin/env python3\n"
                      "import json, os, sys\n"
-                     "with open(os.path.join(os.environ['FAKE_GH_DIR'], 'runner.jsonl'), 'a') as f:\n"
-                     "    f.write(json.dumps({'argv': [os.path.basename(sys.argv[0])] + sys.argv[1:],\n"
-                     "                        'cwd': os.path.realpath(os.getcwd())}) + '\\n')\n"
                      + (script or f"sys.stdout.write({output!r})\nsys.exit({exit_code})\n"))
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        paths = [p.name]
+        if name == "make":
+            (self.repo / "Makefile").write_text(".PHONY: test\ntest:\n\t@./.altitude-test-runner\n")
+            paths.append("Makefile")
+        self.git("add", *paths)
+        self.git("commit", "-q", "-m", f"test runner {name}", "-m", "Altitude-Task: demo/fix-x")
 
     def runner_calls(self):
-        log = self.ghdir / "runner.jsonl"
-        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+        return list(self._suite_invocations)
 
     def runner_log(self):
         return [call["argv"] for call in self.runner_calls()]
@@ -198,15 +279,14 @@ class TestLand(unittest.TestCase):
             land.land("msg", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 
-    def test_plain_and_merge_land_refuse_unprovenanced_history_before_mutation(self):
+    def test_plain_land_refuses_unprovenanced_history_before_mutation(self):
         (self.repo / "rogue-history.txt").write_text("direct commit\n")
         self.git("add", "rogue-history.txt")
         self.git("commit", "-q", "-m", "missing task trailer")
         self.leased_change()
 
-        for merge in (False, True):
-            with self.subTest(merge=merge), self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
-                land.land("must refuse", cwd=self.repo, wait=0, merge=merge)
+        with self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
+            land.land("must refuse", cwd=self.repo, wait=0)
 
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.gh_log(), [])
@@ -382,32 +462,6 @@ class TestLand(unittest.TestCase):
         self.assertFalse(res["merged"])
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "checks"]]), 1)
 
-    def test_merge_hold_refuses_before_any_mutation(self):
-        reason = "production migration is costly"
-        d = S.tasks_dir("demo") / "fix-x"
-        task = json.loads((d / "status.json").read_text())
-        task["hold_merge"] = reason
-        (d / "status.json").write_text(json.dumps(task))
-        self.leased_change()
-        commands = []
-        real = land._run
-
-        def record(args, cwd, timeout=120):
-            commands.append(args)
-            return real(args, cwd, timeout=timeout)
-
-        land._run = record
-        self.addCleanup(setattr, land, "_run", real)
-        with self.assertRaises(land.LandError) as cm:
-            land.land("fix: held", cwd=self.repo, wait=0, merge=True)
-        message = str(cm.exception)
-        self.assertIn(reason, message)
-        self.assertIn("alt task hold-merge fix-x --off", message)
-        self.assertEqual(commands, [
-            ["git", "rev-parse", "--show-toplevel"],
-            ["git", "rev-parse", "--git-dir"],
-            ["git", "symbolic-ref", "-q", "HEAD"],
-        ])
 
     def test_merge_hold_refuses_with_explicit_paths(self):
         d = S.tasks_dir("demo") / "fix-x"
@@ -419,14 +473,6 @@ class TestLand(unittest.TestCase):
             land.land("fix: held", cwd=self.repo, wait=0, merge=True, paths="src")
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_merge_without_resolved_task_refuses(self):
-        for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
-            old = os.environ.pop(key)
-            self.addCleanup(os.environ.__setitem__, key, old)
-        self.leased_change()
-        with self.assertRaisesRegex(land.LandError, "worktree-fix-x.*--project"):
-            land.land("fix: unresolved", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_merge_hold_refuses_dry_run(self):
         d = S.tasks_dir("demo") / "fix-x"
@@ -438,34 +484,7 @@ class TestLand(unittest.TestCase):
             land.land("fix: held", cwd=self.repo, merge=True, dry_run=True)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_merge_without_hold_after_checks_pass(self):
-        self.leased_change()
-        res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(res["merged"])
-        self.assertEqual(res["main_run"], {"databaseId": 7, "status": "completed", "conclusion": "success"})
-        merge = next(args for args in self.gh_log() if args[:2] == ["pr", "merge"])
-        self.assertEqual(merge[:5], ["pr", "merge", "101", "--squash", "--delete-branch"])
-        self.assertEqual(merge[merge.index("--match-head-commit") + 1], self.git("rev-parse", "HEAD").strip())
 
-    def test_changed_pr_head_is_refused_atomically(self):
-        self.leased_change()
-        commands = []
-        real = land._run
-
-        def changed(args, cwd, timeout=120):
-            if args[:3] == ["gh", "pr", "merge"]:
-                commands.append(args)
-                return subprocess.CompletedProcess(args, 1, "", "head branch was modified")
-            return real(args, cwd, timeout=timeout)
-
-        land._run = changed
-        self.addCleanup(setattr, land, "_run", real)
-        with self.assertRaisesRegex(land.LandError, "head branch was modified"):
-            land.land("fix: guarded merge", cwd=self.repo, wait=0, merge=True)
-
-        self.assertEqual(len(commands), 1)
-        self.assertIn("--match-head-commit", commands[0])
-        self.assertEqual(json.loads((self.ghdir / "pr.json").read_text())["state"], "OPEN")
 
     def test_merge_hold_without_merge_opens_pr_and_emits_notice(self):
         reason = "production migration is costly"
@@ -488,14 +507,6 @@ class TestLand(unittest.TestCase):
                        "fix: held", "--body-file"], [args[:-1] for args in self.gh_log()])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_no_merge_when_checks_fail(self):
-        self.leased_change()
-        (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}, {"bucket": "pass"}]')
-        res = land.land("fix: red", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(res["checks"], "fail")
-        self.assertFalse(res["merged"])
-        self.assertIsNone(res["main_run"])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def remote_heads(self):
         p = subprocess.run(["git", "-C", str(self.remote), "branch", "--format=%(refname:short)"],
@@ -631,396 +642,648 @@ class TestLand(unittest.TestCase):
         with self.assertRaisesRegex(land.LandError, "escaped.py"):
             land.land("msg", cwd=self.repo, wait=0)
 
-    def test_unknown_check_bucket_is_an_error_not_a_pass(self):
-        self.leased_change()
-        (self.ghdir / "checks.json").write_text('[{"bucket": "neutral"}]')
-        with self.assertRaisesRegex(land.LandError, "neutral"):
-            land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     # R-006 / I-020: where no workflow and no check exist, the exact merge candidate's local suite is the
     # gate. Absence, skipped checks, stale revisions, and unreadable test reports never become green.
 
-    def test_no_ci_merges_after_a_green_local_suite_and_records_the_count(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: no ci", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"], {
-            "command": "make test", "passed": True, "returncode": 0, "tests": 12, "skipped": 0,
-            "expected_failures": 0, "error": None,
-            "base": result["local_tests"]["base"], "head": result["local_tests"]["head"],
-        })
-        self.assertEqual(self.runner_log(), [["make", "test"]])
 
-    def test_the_suite_runs_on_the_merge_candidate_not_on_this_worktree(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        land.land("fix: candidate", cwd=self.repo, wait=0, merge=True)
-        candidate = Path(self.runner_calls()[0]["cwd"])
-        self.assertNotEqual(candidate, self.repo.resolve())
-        self.assertFalse(candidate.exists())
-        self.assertEqual([line for line in self.git("worktree", "list").splitlines() if "candidate" in line], [])
 
-    def test_a_base_change_that_breaks_the_head_fails_on_the_candidate(self):
-        runner = ("import os\n"
-                  "here = os.getcwd()\n"
-                  "both = all(os.path.exists(os.path.join(here, 'src', f))\n"
-                  "           for f in ('thing.py', 'integration.py'))\n"
-                  "sys.stdout.write('Ran 4 tests in 0.1s\\n\\n'\n"
-                  "                 + ('FAILED (failures=1)\\n' if both else 'OK\\n'))\n"
-                  "sys.exit(1 if both else 0)\n")
-        self.leased_change()
-        self.advance_base("src/integration.py")
-        self.no_checks()
-        self.fake_runner("make", script=runner)
-        result = land.land("fix: integration break", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertFalse(result["merged"])
-        self.assertFalse(result["local_tests"]["passed"])
-        self.assertEqual(result["local_tests"]["returncode"], 1)
-        self.assertNotEqual(Path(self.runner_calls()[0]["cwd"]), self.repo.resolve())
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_no_ci_merge_pins_the_tested_head_revision(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: pinned", cwd=self.repo, wait=0, merge=True)
+    def test_daemon_candidate_gate_returns_pair_bound_sandbox_evidence_and_fails_closed(self):
+        self.fake_runner("make", 0, "Ran 7 tests in 0.4s\n\nOK (skipped=2, expected failures=1)\n")
+        base = self.git("rev-parse", "origin/main").strip()
         head = self.git("rev-parse", "HEAD").strip()
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["head"], head)
-        self.assertEqual(result["local_tests"]["head"], head)
-        self.assertEqual(result["local_tests"]["base"], self.git("rev-parse", "origin/main").strip())
-        self.assertIn(["pr", "merge", "101", "--squash", "--delete-branch", "--match-head-commit", head],
-                      self.gh_log())
+        authority = {"worktree": str(self.repo.resolve()), "head_sha": head}
 
-    def test_a_base_that_moves_during_the_suite_is_not_merged(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        real = land._local_suite
+        result = land.daemon_candidate_gate("demo", "fix-x", 101, base, head, authority)
 
-        def moving(cwd, test_cmd):
-            output = real(cwd, test_cmd)
-            self.advance_base("src/late.py")
-            return output
+        self.assertEqual(result, {
+            "sandboxed": True, "passed": True, "base_sha": base, "head_sha": head,
+            "tests": 4, "skipped": 2, "expected_failures": 1,
+        })
+        self.assertNotEqual(Path(self.runner_calls()[-1]["cwd"]), self.repo.resolve())
+        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
 
-        land._local_suite = moving
-        self.addCleanup(setattr, land, "_local_suite", real)
-        result = land.land("fix: moving base", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertTrue(result["local_tests"]["passed"])
-        self.assertIn("moved", result["local_tests"]["error"])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+        with mock.patch.object(land, "_candidate") as candidate:
+            refused = land.daemon_candidate_gate(
+                "demo", "fix-x", 101, base, head,
+                {"worktree": str(self.repo.resolve()), "head_sha": "f" * 40},
+            )
+        candidate.assert_not_called()
+        self.assertTrue(refused["sandboxed"])
+        self.assertFalse(refused["passed"])
+        self.assertIsNone(refused["tests"])
+        self.assertIn("does not match", refused["error"])
 
-    def test_ci_added_after_no_checks_classification_is_not_merged(self):
-        """Regression: classification and candidate snapshot used to be separate, adopt-new-tip operations."""
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        real = land._checks_value
 
-        def classify_then_add_workflow(root, number, pair):
-            state = real(root, number, pair)
-            self.advance_base(".github/workflows/late.yml", "on: [pull_request]\n")
-            return state
 
-        land._checks_value = classify_then_add_workflow
-        self.addCleanup(setattr, land, "_checks_value", real)
-        result = land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertFalse(result["merged"])
-        self.assertIn("moved", result["local_tests"]["error"])
-        self.assertEqual(self.runner_log(), [])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_checks_appearing_during_the_local_suite_block_the_merge(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        real = land._local_suite
 
-        def suite_then_check(cwd, test_cmd):
-            result = real(cwd, test_cmd)
-            (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}]')
-            return result
 
-        land._local_suite = suite_then_check
-        self.addCleanup(setattr, land, "_local_suite", real)
-        result = land.land("fix: check race", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertIn("checks changed", result["local_tests"]["error"])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_candidate_has_the_single_parent_history_of_a_squash_merge(self):
-        runner = ("import subprocess\n"
-                  "parents = subprocess.check_output(['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], "
-                  "text=True).split()\n"
-                  "single_parent = len(parents) == 2\n"
-                  "sys.stdout.write('Ran 1 test in 0.1s\\n\\n' + ('OK\\n' if single_parent else "
-                  "'FAILED (failures=1)\\n'))\n"
-                  "sys.exit(0 if single_parent else 1)\n")
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", script=runner)
-        result = land.land("fix: squash candidate", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 1)
 
-    def test_zero_tests_is_not_a_green_local_gate(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 0 tests in 0.0s\n\nOK\n")
-        result = land.land("fix: zero tests", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 0)
-        self.assertIn("no passing tests", result["local_tests"]["error"])
 
-    def test_all_skipped_tests_is_not_a_green_local_gate(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.1s\n\nOK (skipped=12)\n")
-        result = land.land("fix: all skipped", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 0)
-        self.assertEqual(result["local_tests"]["skipped"], 12)
-        self.assertIn("no passing tests", result["local_tests"]["error"])
 
-    def test_unittest_expected_failures_are_not_reported_as_passes(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 5 tests in 0.1s\n\nOK (skipped=1, expected failures=2)\n")
-        result = land.land("fix: honest count", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 2)
-        self.assertEqual(result["local_tests"]["skipped"], 1)
-        self.assertEqual(result["local_tests"]["expected_failures"], 2)
 
-    def test_candidate_cleanup_continues_when_git_remove_raises(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
-        real = land._run
-        candidate_paths = []
+    def test_candidate_tree_limits_fail_before_checkout_materialization(self):
+        base = self.git("rev-parse", "HEAD").strip()
+        self.leased_change("src/one")
+        self.leased_change("src/two")
+        self.git("add", "src")
+        self.git("commit", "-q", "-m", "large candidate", "-m", "Altitude-Task: demo/fix-x")
+        head = self.git("rev-parse", "HEAD").strip()
+        with mock.patch.object(land, "SANDBOX_MAX_SOURCE_FILES", 2), \
+             mock.patch.object(land, "_materialize_tree") as materialize, \
+             self.assertRaisesRegex(land.LandError, "filesystem entries"):
+            with land._candidate(self.repo, base, head):
+                self.fail("an over-limit tree must not be materialized")
+        materialize.assert_not_called()
 
-        def fail_remove(args, cwd, timeout=120):
-            if args[:4] == ["git", "worktree", "remove", "--force"] and "alt-land-candidate-" in args[-1]:
-                candidate_paths.append(Path(args[-1]))
-                raise land.LandError("simulated worktree-remove timeout")
-            return real(args, cwd, timeout=timeout)
+    def test_candidate_blob_limit_fails_before_checkout_materialization(self):
+        base = self.git("rev-parse", "HEAD").strip()
+        self.leased_change("src/payload")
+        self.git("add", "src/payload")
+        self.git("commit", "-q", "-m", "large blobs", "-m", "Altitude-Task: demo/fix-x")
+        head = self.git("rev-parse", "HEAD").strip()
+        with mock.patch.object(land, "SANDBOX_MAX_SOURCE_BYTES", 8), \
+             mock.patch.object(land, "_materialize_tree") as materialize, \
+             self.assertRaisesRegex(land.LandError, "blob bytes"):
+            with land._candidate(self.repo, base, head):
+                self.fail("an over-limit tree must not be materialized")
+        materialize.assert_not_called()
 
-        land._run = fail_remove
-        self.addCleanup(setattr, land, "_run", real)
-        result = land.land("fix: cleanup", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertIn("candidate cleanup failed", result["local_tests"]["error"])
-        self.assertTrue(candidate_paths)
-        self.assertTrue(all(not path.exists() for path in candidate_paths))
-        self.assertNotIn("alt-land-candidate-", self.git("worktree", "list"))
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
-
-    def test_candidate_cleanup_does_not_mask_the_original_merge_error(self):
-        self.leased_change("src/collision.py")
-        self.advance_base("src/collision.py", "incompatible base\n")
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
-        real = land._run
-
-        def fail_remove(args, cwd, timeout=120):
-            if args[:4] == ["git", "worktree", "remove", "--force"] and "alt-land-candidate-" in args[-1]:
-                raise land.LandError("simulated cleanup failure")
-            return real(args, cwd, timeout=timeout)
-
-        land._run = fail_remove
-        self.addCleanup(setattr, land, "_run", real)
-        result = land.land("fix: conflict cleanup", cwd=self.repo, wait=0, merge=True,
-                           paths="src/collision.py")
-        self.assertFalse(result["merged"])
-        self.assertIn("does not merge cleanly", result["local_tests"]["error"])
-        self.assertNotIn("cleanup failed", result["local_tests"]["error"])
-
-    def test_no_ci_red_local_suite_blocks_the_merge(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 1, "Ran 12 tests in 0.4s\n\nFAILED (failures=1)\n")
-        result = land.land("fix: red suite", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertFalse(result["merged"])
-        self.assertFalse(result["local_tests"]["passed"])
-        self.assertEqual(result["local_tests"]["tests"], 12)
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
-
-    def test_a_local_suite_that_cannot_run_blocks_rather_than_passes(self):
-        self.leased_change()
-        self.no_checks()
-        result = land.land("fix: no runner", cwd=self.repo, wait=0, merge=True,
-                           test_cmd="definitely-not-a-real-command")
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertFalse(result["merged"])
-        self.assertFalse(result["local_tests"]["passed"])
-        self.assertIsNone(result["local_tests"]["returncode"])
-        self.assertTrue(result["local_tests"]["error"])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
-
-    def test_a_green_suite_with_an_unreadable_count_is_not_a_pass(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "everything is fine, trust me\n")
-        result = land.land("fix: uncountable", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertFalse(result["local_tests"]["passed"])
-        self.assertEqual(result["local_tests"]["returncode"], 0)
-        self.assertIsNone(result["local_tests"]["tests"])
-        self.assertIn("count", result["local_tests"]["error"])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
-
-    def test_skipped_tests_are_excluded_from_the_reported_count(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK (skipped=2)\n")
-        result = land.land("fix: some skips", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 10)
-        self.assertEqual(result["local_tests"]["skipped"], 2)
-
-    def test_gh_refusing_with_no_checks_reported_is_the_same_gate(self):
-        self.leased_change()
-        self.no_checks("")
-        self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
-        result = land.land("fix: nothing reported", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "none-configured")
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["tests"], 3)
-
-    def test_test_cmd_override_is_the_command_that_gates(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
-        result = land.land("fix: override", cwd=self.repo, wait=0, merge=True,
-                           test_cmd="otherrunner -q tests")
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["command"], "otherrunner -q tests")
-        self.assertEqual(result["local_tests"]["tests"], 5)
-        self.assertEqual(result["local_tests"]["skipped"], 2)
-        self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
-
-    def test_cli_exposes_the_test_command_override(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
-        cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        run = subprocess.run(
-            [sys.executable, str(cli), "land", "--message", "fix: cli override", "--wait", "0", "--merge",
-             "--test-cmd", "otherrunner -q tests"],
-            cwd=self.repo, capture_output=True, text=True, env=dict(os.environ),
+    def test_candidate_checkout_ignores_host_configured_smudge_filter(self):
+        sentinel = self.tmp / "host-filter-ran"
+        global_config = self.tmp / "hostile-gitconfig"
+        global_config.write_text(
+            '[filter "hostile"]\n'
+            f'\tsmudge = sh -c "echo ran > {sentinel}; cat"\n'
         )
-        self.assertEqual(run.returncode, 0, run.stderr)
-        result = json.loads(run.stdout)
-        self.assertTrue(result["merged"])
-        self.assertEqual(result["local_tests"]["command"], "otherrunner -q tests")
-        self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
+        base = self.git("rev-parse", "HEAD").strip()
+        (self.repo / ".gitattributes").write_text("victim filter=hostile\n")
+        (self.repo / "victim").write_text("raw\n")
+        self.git("add", ".gitattributes", "victim")
+        self.git("commit", "-q", "-m", "hostile attributes", "-m", "Altitude-Task: demo/fix-x")
+        head = self.git("rev-parse", "HEAD").strip()
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_config)}):
+            with land._candidate(self.repo, base, head) as candidate:
+                self.assertEqual((candidate / "victim").read_text(), "raw\n")
+        self.assertFalse(sentinel.exists())
 
-    def test_no_checks_but_workflows_configured_never_reaches_the_local_suite(self):
-        self.configure_ci()
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: unreported", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "skipped")
-        self.assertFalse(result["merged"])
-        self.assertIsNone(result["local_tests"])
-        self.assertEqual(self.runner_log(), [])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+    def test_publication_ignores_host_clean_filter_and_runs_only_trusted_hooks(self):
+        filter_sentinel = self.tmp / "host-clean-filter-ran"
+        hook_sentinel = self.tmp / "trusted-pre-commit-ran"
+        global_config = self.tmp / "hostile-publication-gitconfig"
+        global_config.write_text(
+            '[filter "hostile"]\n'
+            f'\tclean = sh -c "echo ran > {filter_sentinel}; cat"\n'
+            '\trequired = true\n'
+        )
+        hooks = self.tmp / "trusted-hooks"
+        hooks.mkdir()
+        for name in land.git_policy.REQUIRED_HOOKS:
+            hook = hooks / name
+            marker = (f"printf ran > {shlex.quote(str(hook_sentinel))}\n"
+                      if name == "pre-commit" else "")
+            hook.write_text("#!/bin/sh\n" + marker + "exit 0\n")
+            hook.chmod(0o755)
+        (self.repo / ".gitattributes").write_text("src/filtered.txt filter=hostile\n")
+        (self.repo / "src").mkdir(exist_ok=True)
+        (self.repo / "src" / "filtered.txt").write_text("raw candidate data\n")
 
-    def test_workflows_only_on_the_base_branch_still_count_as_ci(self):
-        self.git("checkout", "-q", "main")
-        self.configure_ci()
-        self.git("push", "-q", "origin", "main")
-        self.git("checkout", "-q", "worktree-fix-x")
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: base has ci", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "skipped")
-        self.assertFalse(result["merged"])
-        self.assertIsNone(result["local_tests"])
-        self.assertEqual(self.runner_log(), [])
+        with mock.patch.object(config, "HOOKS", hooks), \
+             mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_config)}):
+            result = land.land("fix: sanitized publication", cwd=self.repo, wait=0,
+                               paths=".gitattributes,src")
 
-    def test_a_base_that_cannot_be_refreshed_fails_closed(self):
-        self.leased_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        subprocess.run(["git", "-C", str(self.remote), "symbolic-ref", "HEAD", "refs/heads/gone"], check=True)
-        subprocess.run(["git", "-C", str(self.remote), "branch", "-D", "main"],
-                       check=True, capture_output=True)
-        with self.assertRaisesRegex(land.LandError, r"origin(?:/| )main"):
-            land.land("fix: unreadable base", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(self.runner_log(), [])
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+        self.assertEqual(result["commit"], self.git("rev-parse", "HEAD").strip())
+        self.assertFalse(filter_sentinel.exists(), "host global clean/process filters must never execute")
+        self.assertTrue(hook_sentinel.exists(), "the explicitly pinned trusted pre-commit hook must run")
+        self.assertEqual(self.git("show", "HEAD:src/filtered.txt"), "raw candidate data\n")
 
-    def test_skipped_checks_are_not_a_no_ci_repository(self):
-        self.leased_change()
-        (self.ghdir / "checks.json").write_text('[{"bucket": "skipping"}]')
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: skipping", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "skipped")
-        self.assertFalse(result["merged"])
-        self.assertIsNone(result["local_tests"])
-        self.assertEqual(self.runner_log(), [])
+    def test_candidate_merge_ignores_repository_custom_merge_driver(self):
+        sentinel = self.tmp / "host-merge-driver-ran"
+        start = self.git("rev-parse", "HEAD").strip()
+        (self.repo / ".gitattributes").write_text("collision.txt merge=hostile\n")
+        (self.repo / "collision.txt").write_text("base\n")
+        self.git("add", ".gitattributes", "collision.txt")
+        self.git("commit", "-q", "-m", "base collision")
+        base = self.git("rev-parse", "HEAD").strip()
+        self.git("checkout", "-q", "-b", "hostile-head", start)
+        (self.repo / ".gitattributes").write_text("collision.txt merge=hostile\n")
+        (self.repo / "collision.txt").write_text("head\n")
+        self.git("add", ".gitattributes", "collision.txt")
+        self.git("commit", "-q", "-m", "head collision")
+        head = self.git("rev-parse", "HEAD").strip()
+        self.git("config", "merge.hostile.driver", f"sh -c 'echo ran > {sentinel}; exit 0'")
+        with self.assertRaisesRegex(land.LandError, "does not merge cleanly"):
+            with land._candidate(self.repo, base, head):
+                self.fail("the built-in conflict must not be hidden by the host driver")
+        self.assertFalse(sentinel.exists())
 
-    def test_a_pass_mixed_with_a_skip_is_skipped_not_a_pass(self):
-        self.leased_change()
-        (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}, {"bucket": "skipping"}]')
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        result = land.land("fix: half skipped", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "skipped")
-        self.assertFalse(result["merged"])
-        self.assertIsNone(result["local_tests"])
-        self.assertEqual(self.runner_log(), [])
+    def test_raw_tree_dotgit_symlink_is_rejected_before_any_host_write(self):
+        sentinel = self.tmp / "dotgit-symlink-target"
+        sentinel.write_text("original\n")
+        base = self.git("rev-parse", "HEAD").strip()
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=self.repo,
+            input=str(sentinel), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        tree = subprocess.run(
+            ["git", "mktree"], cwd=self.repo,
+            input=f"120000 blob {blob}\t.git\n", capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        head = self.git("commit-tree", tree, "-p", base, "-m", "raw hostile tree").strip()
+        with self.assertRaisesRegex(land.LandError, "unsafe Git metadata path"):
+            with land._candidate(self.repo, base, head):
+                self.fail("a dotgit tree entry must never be materialized")
+        self.assertEqual(sentinel.read_text(), "original\n")
 
-    def test_configured_checks_that_pass_merge_without_the_local_suite(self):
-        self.configure_ci()
-        self.leased_change()
-        self.fake_runner("make", 1, "the local suite must not be consulted here\n")
-        result = land.land("fix: green ci", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "pass")
-        self.assertTrue(result["merged"])
-        self.assertIsNone(result["local_tests"])
-        self.assertEqual(self.runner_log(), [])
 
-    def test_rerun_after_merge_does_not_resurrect_the_branch(self):
-        self.leased_change()
-        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        # GitHub deletes the remote head branch on merge; mirror that on the bare remote
-        self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
-        res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        self.assertTrue(res["merged"])
-        self.assertEqual(res["pr"], 101)
-        self.assertIsNone(res["commit"])
-        self.assertEqual(res["staged"], [])
-        self.assertEqual(self.remote_heads(), ["main"])
 
-    def test_new_changes_after_merge_are_refused(self):
-        self.leased_change()
-        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        self.leased_change("src/late.py")
-        with self.assertRaisesRegex(land.LandError, "already merged"):
-            land.land("fix: late", cwd=self.repo, wait=0)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 
-    def test_merged_no_op_asks_for_no_checks(self):
-        self.leased_change()
-        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
-        (self.ghdir / "log.jsonl").unlink()  # only the second run's gh traffic is under test
-        res = land.land("fix: merge me", cwd=self.repo, wait=0)
-        self.assertTrue(res["merged"])
-        self.assertEqual(res["checks"], "merged")  # its own value — never reported as a pass
-        self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
+
+
+
+
+    def test_local_suite_sandbox_policy_exposes_only_candidate_and_system_toolchain(self):
+        # The production value is intentionally sampled from the live same-UID
+        # process table. Pin that sample here: parallel test/review processes
+        # may otherwise enter or exit between building the argv and asserting
+        # its value, making this policy-shape test race the host.
+        uid_tasks = 137
+        with mock.patch.object(land, "_uid_task_count", return_value=uid_tasks):
+            command = land._sandbox_argv(self.repo, ["python3", "probe.py"])
+        self.assertEqual(command[0], str(land.PRLIMIT))
+        for limit in (
+            f"--as={land.SANDBOX_RLIMIT_AS}:{land.SANDBOX_RLIMIT_AS}",
+            f"--cpu={land.SANDBOX_RLIMIT_CPU}:{land.SANDBOX_RLIMIT_CPU}",
+            f"--fsize={land.SANDBOX_RLIMIT_FSIZE}:{land.SANDBOX_RLIMIT_FSIZE}",
+            f"--nofile={land.SANDBOX_RLIMIT_NOFILE}:{land.SANDBOX_RLIMIT_NOFILE}",
+            "--core=0:0",
+        ):
+            self.assertIn(limit, command)
+        nproc = next(value for value in command if value.startswith("--nproc="))
+        soft, hard = map(int, nproc.removeprefix("--nproc=").split(":"))
+        self.assertEqual(soft, hard)
+        self.assertEqual(soft, uid_tasks + land.SANDBOX_RLIMIT_NPROC_BURST)
+        self.assertGreater(command.index(str(land.BWRAP)), command.index("--"))
+        for required in ("--die-with-parent", "--unshare-all", "--unshare-user", "--unshare-net",
+                         "--disable-userns", "--clearenv"):
+            self.assertIn(required, command)
+        self.assertNotIn("--new-session", command)
+        bind_pairs = [(command[index + 1], command[index + 2])
+                      for index, value in enumerate(command[:-2]) if value == "--bind"]
+        self.assertEqual(bind_pairs, [])
+        ro_bind_pairs = [(command[index + 1], command[index + 2])
+                         for index, value in enumerate(command[:-2]) if value == "--ro-bind"]
+        self.assertEqual(ro_bind_pairs, [
+            ("/usr", "/usr"), (str(self.repo.resolve()), land.SANDBOX_SOURCE),
+            (str((self.repo / ".git").resolve()), f"{land.SANDBOX_RUN_ROOT}/.git"),
+        ])
+        size_at = command.index("--size")
+        self.assertEqual(command[size_at + 1:size_at + 4],
+                         [str(land.SANDBOX_WORKSPACE_BYTES), "--tmpfs", land.SANDBOX_WORKSPACE])
+        chdir_at = command.index("--chdir")
+        for directory in (land.SANDBOX_RUN_ROOT, "/workspace/tmp", "/workspace/home"):
+            directory_at = next(i for i in range(len(command) - 1)
+                                if command[i:i + 2] == ["--dir", directory])
+            self.assertLess(directory_at, chdir_at)
+        self.assertNotIn(["--tmpfs", "/tmp"], [command[i:i + 2] for i in range(len(command) - 1)])
+        self.assertIn(["--remount-ro", "/"], [command[i:i + 2] for i in range(len(command) - 1)])
+        self.assertIn(["--remount-ro", "/dev"], [command[i:i + 2] for i in range(len(command) - 1)])
+        variables = {command[index + 1]: command[index + 2]
+                     for index, value in enumerate(command[:-2]) if value == "--setenv"}
+        self.assertEqual(set(variables), {"HOME", "TMPDIR", "PATH", "LANG", "LC_ALL"})
+        self.assertEqual(variables["HOME"], land.SANDBOX_HOME)
+        self.assertNotIn(str(config.ROOT), " ".join(command))
+        for secret in ("GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "ALTITUDE_HOME", "CODEX_HOME",
+                       "CLAUDE_CONFIG_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME"):
+            self.assertNotIn(secret, variables)
+
+
+    def test_unrelated_same_uid_load_does_not_consume_the_candidate_process_allowance(self):
+        """RLIMIT_NPROC is per UID: the absolute limit must include pre-existing workers."""
+        probe = self.repo / "green-probe"
+        probe.write_text("#!/bin/sh\nprintf 'Ran 1 test in 0.1s\\nOK\\n'\n")
+        probe.chmod(0o755)
+        current = land._uid_task_count()
+        unrelated = 500
+        with mock.patch.object(land, "_uid_task_count", return_value=current + unrelated):
+            command = land._sandbox_argv(self.repo, ["./green-probe"])
+            result = land._run_local_sandbox(self.repo, ["./green-probe"])
+        nproc = next(value for value in command if value.startswith("--nproc="))
+        expected = current + unrelated + land.SANDBOX_RLIMIT_NPROC_BURST
+        self.assertEqual(nproc, f"--nproc={expected}:{expected}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ran 1 test", result.stdout)
+
+    def test_local_suite_mutates_a_copy_not_the_host_candidate(self):
+        probe = self.repo / "copy-probe"
+        probe.write_text("#!/bin/sh\nprintf changed > sandbox-created\nprintf 'Ran 1 test\\nOK\\n'\n")
+        probe.chmod(0o755)
+        result = land._run_local_sandbox(self.repo, ["./copy-probe"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.repo / "sandbox-created").exists())
+
+    def test_local_suite_empty_file_flood_is_bounded_and_reaped(self):
+        probe = self.repo / "inode-flood.py"
+        probe.write_text(
+            "import pathlib, time\n"
+            "root = pathlib.Path('empty-files')\n"
+            "root.mkdir()\n"
+            "for number in range(10000):\n"
+            "    (root / str(number)).touch()\n"
+            "time.sleep(60)\n"
+        )
+        with mock.patch.object(land, "SANDBOX_FILE_BURST", 100), self.assertRaisesRegex(
+            land.LandError, "file count exceeded"
+        ):
+            land._run_local_sandbox(self.repo, ["/usr/bin/python3", "inode-flood.py"])
+        self.assertFalse((self.repo / "empty-files").exists())
+
+    def test_local_suite_timeout_reaps_sigterm_ignoring_descendant(self):
+        probe = self.repo / "hang-probe"
+        pid_file = self.repo / "descendant.pid"
+        probe.write_text(
+            "#!/usr/bin/env python3\n"
+            "import pathlib, subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', "
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])\n"
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+            "time.sleep(60)\n"
+        )
+        probe.chmod(0o755)
+        with mock.patch.object(land, "LOCAL_TEST_TIMEOUT", 0.2), self.assertRaisesRegex(
+            land.LandError, "timed out"
+        ):
+            land._run_local_sandbox(self.repo, ["./hang-probe"])
+        child = int(pid_file.read_text())
+        # The unit launcher has no real PID namespace, so init may briefly own
+        # the dead child's zombie after its parent is killed.  Production
+        # Bubblewrap owns and reaps that namespace; in either case no live
+        # descendant may survive.
+        self._assert_processes_gone([child])
+
+    def test_local_suite_output_flood_is_bounded_and_reaped(self):
+        probe = self.repo / "output-flood"
+        pid_file = self.repo / "output-flood.pid"
+        probe.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib\n"
+            f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+            "block = b'x' * 65536\n"
+            "while True:\n"
+            "    os.write(1, block)\n"
+        )
+        probe.chmod(0o755)
+        with mock.patch.object(land, "SANDBOX_OUTPUT_LIMIT", 128 * 1024), self.assertRaisesRegex(
+            land.LandError, "output exceeded 131072 bytes"
+        ):
+            land._run_local_sandbox(self.repo, ["./output-flood"])
+        self._assert_processes_gone([int(pid_file.read_text())])
+
+    def test_local_suite_process_flood_is_bounded_and_reaped(self):
+        probe = self.repo / "process-flood"
+        pid_file = self.repo / "process-flood.pids"
+        probe.write_text(
+            "#!/usr/bin/env python3\n"
+            "import pathlib, signal, subprocess, sys, time\n"
+            f"target = pathlib.Path({str(pid_file)!r})\n"
+            "children = []\n"
+            "target.write_text(str(__import__('os').getpid()))\n"
+            "for _ in range(20):\n"
+            "    child = subprocess.Popen([sys.executable, '-c', "
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])\n"
+            "    children.append(child.pid)\n"
+            "    with target.open('a') as record:\n"
+            "        record.write(' ' + str(child.pid))\n"
+            "        record.flush()\n"
+            "        __import__('os').fsync(record.fileno())\n"
+            "time.sleep(60)\n"
+        )
+        probe.chmod(0o755)
+        with mock.patch.object(land, "SANDBOX_MAX_PROCESSES", 5), self.assertRaisesRegex(
+            land.LandError, "process count exceeded 5"
+        ):
+            land._run_local_sandbox(self.repo, ["./process-flood"])
+        pids = [int(value) for value in pid_file.read_text().split()]
+        self.assertTrue(pids)
+        self._assert_processes_gone(pids)
+
+    def test_local_suite_setsid_process_flood_is_bounded_and_reaped(self):
+        probe = self.repo / "setsid-flood"
+        pid_file = self.repo / "setsid-flood.pids"
+        probe.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, pathlib, signal, subprocess, sys, time\n"
+            f"target = pathlib.Path({str(pid_file)!r})\n"
+            "target.write_text(str(os.getpid()))\n"
+            "for _ in range(20):\n"
+            "    child = subprocess.Popen([sys.executable, '-c', "
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], "
+            "start_new_session=True)\n"
+            "    with target.open('a') as record:\n"
+            "        record.write(' ' + str(child.pid))\n"
+            "        record.flush()\n"
+            "        os.fsync(record.fileno())\n"
+            "time.sleep(60)\n"
+        )
+        probe.chmod(0o755)
+        with mock.patch.object(land, "SANDBOX_MAX_PROCESSES", 5), self.assertRaisesRegex(
+            land.LandError, "process count exceeded 5"
+        ):
+            land._run_local_sandbox(self.repo, ["./setsid-flood"])
+        pids = [int(value) for value in pid_file.read_text().split()]
+        self.assertTrue(pids)
+        self._assert_processes_gone(pids)
+
+    def test_local_suite_memory_and_cpu_floods_fail_closed(self):
+        cases = (
+            ("memory", "blob = bytearray(96 * 1024 * 1024)\ntime.sleep(60)\n",
+             "SANDBOX_MAX_RSS_BYTES", 48 * 1024 * 1024, "resident memory exceeded"),
+            ("cpu", "while True:\n    pass\n",
+             "SANDBOX_MAX_CPU_SECONDS", 0.05, "aggregate CPU exceeded"),
+        )
+        for name, body, setting, limit, message in cases:
+            with self.subTest(resource=name):
+                probe = self.repo / f"{name}-flood"
+                pid_file = self.repo / f"{name}-flood.pid"
+                probe.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import os, pathlib, time\n"
+                    f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                    + body
+                )
+                probe.chmod(0o755)
+                with mock.patch.object(land, setting, limit), self.assertRaisesRegex(land.LandError, message):
+                    land._run_local_sandbox(self.repo, [f"./{name}-flood"])
+                self._assert_processes_gone([int(pid_file.read_text())])
+
+    def _assert_processes_gone(self, pids):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            live = []
+            for pid in pids:
+                try:
+                    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                except (OSError, IndexError):
+                    continue
+                if fields[0] != "Z":
+                    live.append(pid)
+            if not live:
+                return
+            time.sleep(0.05)
+        self.fail(f"sandbox process(es) survived cleanup: {live}")
+
+    def _skip_only_kernel_bwrap_denial(self, exc):
+        """Skip only a host policy/user-namespace refusal, never an argv defect."""
+        message = str(exc)
+        denial = (
+            "No permissions to create new namespace",
+            "kernel does not allow non-privileged user namespaces",
+            "unprivileged user namespace",
+            "user namespaces are not supported",
+        )
+        if "bwrap:" in message and any(marker in message for marker in denial):
+            self.skipTest(f"kernel/AppArmor denied Bubblewrap: {exc}")
+
+    def test_real_bwrap_hides_credentials_home_outside_paths_and_network(self):
+        """Exercise the kernel boundary when this host permits unprivileged Bubblewrap; denial is tested above."""
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "adversarial-candidate"
+        candidate.mkdir()
+        outside = self.tmp / "host-secret"
+        outside.write_text("do-not-read")
+        outside_write = self.tmp / "must-not-write"
+        probe = candidate / "probe.py"
+        probe.write_text(
+            "import os, pathlib, socket, sys\n"
+            f"outside = pathlib.Path({str(outside)!r})\n"
+            f"outside_write = pathlib.Path({str(outside_write)!r})\n"
+            "checks = [not any(k in os.environ for k in "
+            "('GH_TOKEN','GITHUB_TOKEN','SSH_AUTH_SOCK','ALTITUDE_HOME','CODEX_HOME','CLAUDE_CONFIG_DIR')),\n"
+            f"          not outside.exists(), os.environ.get('HOME') == {land.SANDBOX_HOME!r}]\n"
+            "try:\n"
+            "    outside_write.write_text('escape')\n"
+            "    checks.append(False)\n"
+            "except OSError:\n"
+            "    checks.append(True)\n"
+            "try:\n"
+            "    socket.create_connection(('1.1.1.1', 53), 0.2)\n"
+            "    checks.append(False)\n"
+            "except OSError:\n"
+            "    checks.append(True)\n"
+            "print('Ran 1 test in 0.1s')\n"
+            "print('OK' if all(checks) else 'FAILED')\n"
+            "sys.exit(0 if all(checks) else 1)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap):
+            try:
+                run = land._run_local_sandbox(candidate, ["/usr/bin/python3", "probe.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                raise
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+        self.assertFalse(outside_write.exists())
+
+    def test_real_bwrap_candidate_git_history_is_self_contained_and_read_only(self):
+        """The exact synthetic commit remains a usable repository after host /tmp disappears."""
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        base = self.git("rev-parse", "origin/main").strip()
+        probe = self.repo / "src" / "history_probe.py"
+        probe.parent.mkdir(exist_ok=True)
+        probe.write_text(
+            "import pathlib, subprocess, sys\n"
+            f"base = {base!r}\n"
+            "row = subprocess.check_output(['git', 'rev-list', '--parents', '-n1', 'HEAD'], "
+            "text=True).strip().split()\n"
+            "checks = [len(row) == 2, len(row) == 2 and row[1] == base]\n"
+            "checks.append(subprocess.run(['git', 'diff', '--exit-code', 'HEAD^', 'HEAD', "
+            "'--', 'README.md']).returncode == 0)\n"
+            "checks.append(subprocess.run(['git', 'fsck', '--full'], capture_output=True).returncode == 0)\n"
+            "try:\n"
+            "    pathlib.Path('.git/refs/heads/escape').write_text('escape\\n')\n"
+            "    checks.append(False)\n"
+            "except OSError:\n"
+            "    checks.append(True)\n"
+            "print('Ran 1 test in 0.1s')\n"
+            "print('OK' if all(checks) else 'FAILED')\n"
+            "sys.exit(0 if all(checks) else 1)\n"
+        )
+        self.git("add", "src/history_probe.py")
+        self.git("commit", "-q", "-m", "history probe", "-m", "Altitude-Task: demo/fix-x")
+        head = self.git("rev-parse", "HEAD").strip()
+
+        with land._candidate(self.repo, base, head) as candidate, \
+             mock.patch.object(land, "BWRAP", real_bwrap):
+            direct = subprocess.run(
+                ["git", "-C", str(candidate), "rev-list", "--parents", "-n1", "HEAD"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(direct.returncode, 0, direct.stderr)
+            self.assertEqual(direct.stdout.strip().split()[1:], [base])
+            fsck = subprocess.run(["git", "-C", str(candidate), "fsck", "--full"],
+                                  capture_output=True, text=True)
+            self.assertEqual(fsck.returncode, 0, fsck.stderr or fsck.stdout)
+            unchanged = subprocess.run(
+                ["git", "-C", str(candidate), "diff", "--exit-code", "HEAD^", "HEAD", "--", "README.md"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(unchanged.returncode, 0, unchanged.stderr or unchanged.stdout)
+            try:
+                run = land._run_local_sandbox(candidate, ["/usr/bin/python3", "src/history_probe.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                raise
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+
+    def test_real_bwrap_many_file_flood_hits_the_aggregate_workspace_cap(self):
+        """Many individually small files cannot exhaust the host filesystem."""
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "disk-flood-candidate"
+        candidate.mkdir()
+        probe = candidate / "disk-flood.py"
+        probe.write_text(
+            "import pathlib\n"
+            "root = pathlib.Path('many')\n"
+            "root.mkdir()\n"
+            "block = b'x' * 65536\n"
+            "for number in range(1024):\n"
+            "    (root / str(number)).write_bytes(block)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap), \
+             mock.patch.object(land, "SANDBOX_WORKSPACE_BYTES", 8 * 1024 * 1024):
+            try:
+                run = land._run_local_sandbox(candidate, ["/usr/bin/python3", "disk-flood.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                raise
+        self.assertNotEqual(run.returncode, 0, "the many-file flood escaped the tmpfs size cap")
+        self.assertIn("No space left on device", run.stderr)
+        self.assertFalse((candidate / "many").exists(), "the host candidate must remain read-only")
+
+    def test_real_bwrap_empty_file_flood_hits_the_file_count_cap(self):
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "inode-flood-candidate"
+        candidate.mkdir()
+        probe = candidate / "inode-flood.py"
+        probe.write_text(
+            "import pathlib, time\n"
+            "root = pathlib.Path('empty-files')\n"
+            "root.mkdir()\n"
+            "for number in range(100000):\n"
+            "    (root / str(number)).touch()\n"
+            "time.sleep(60)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap), \
+             mock.patch.object(land, "SANDBOX_FILE_BURST", 200):
+            try:
+                land._run_local_sandbox(candidate, ["/usr/bin/python3", "inode-flood.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                self.assertIn("file count exceeded", str(exc))
+            else:
+                self.fail("the empty-file flood escaped the workspace file-count cap")
+        self.assertFalse((candidate / "empty-files").exists(), "the host candidate must remain read-only")
+
+    def test_real_bwrap_tmp_home_and_root_share_one_bounded_write_surface(self):
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "surface-candidate"
+        candidate.mkdir()
+        probe = candidate / "surface.py"
+        probe.write_text(
+            "import os, pathlib, sys\n"
+            "checks = []\n"
+            "for target in ('/escape', '/dev/escape'):\n"
+            "    try:\n"
+            "        pathlib.Path(target).write_text('escape')\n"
+            "        checks.append(False)\n"
+            "    except OSError:\n"
+            "        checks.append(True)\n"
+            "home = pathlib.Path(os.environ['HOME']) / 'allowed'\n"
+            "tmp = pathlib.Path('/tmp') / 'allowed'\n"
+            "home.write_text('home')\n"
+            "tmp.write_text('tmp')\n"
+            "checks += [home.is_file(), tmp.is_file()]\n"
+            "print('Ran 1 test in 0.1s')\n"
+            "print('OK' if all(checks) else 'FAILED')\n"
+            "sys.exit(0 if all(checks) else 1)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap):
+            try:
+                run = land._run_local_sandbox(candidate, ["/usr/bin/python3", "surface.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                raise
+        self.assertEqual(run.returncode, 0, run.stderr or run.stdout)
+        self.assertFalse(Path("/escape").exists())
+        self.assertFalse(Path("/dev/escape").exists())
+
+    def test_real_bwrap_tmp_byte_flood_hits_the_workspace_cap(self):
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "tmp-flood-candidate"
+        candidate.mkdir()
+        (candidate / "tmp-flood.py").write_text(
+            "import pathlib\n"
+            "block = b'x' * 65536\n"
+            "for number in range(1024):\n"
+            "    (pathlib.Path('/tmp') / str(number)).write_bytes(block)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap), \
+             mock.patch.object(land, "SANDBOX_WORKSPACE_BYTES", 8 * 1024 * 1024):
+            try:
+                run = land._run_local_sandbox(candidate, ["/usr/bin/python3", "tmp-flood.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                raise
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("No space left on device", run.stderr)
+
+    def test_real_bwrap_home_empty_file_flood_hits_the_file_count_cap(self):
+        real_bwrap = Path("/usr/bin/bwrap")
+        if not real_bwrap.exists():
+            self.skipTest("/usr/bin/bwrap is unavailable")
+        candidate = self.tmp / "home-flood-candidate"
+        candidate.mkdir()
+        (candidate / "home-flood.py").write_text(
+            "import os, pathlib, time\n"
+            "root = pathlib.Path(os.environ['HOME']) / 'many'\n"
+            "root.mkdir()\n"
+            "for number in range(100000):\n"
+            "    (root / str(number)).touch()\n"
+            "time.sleep(60)\n"
+        )
+        with mock.patch.object(land, "BWRAP", real_bwrap), \
+             mock.patch.object(land, "SANDBOX_FILE_BURST", 200):
+            try:
+                land._run_local_sandbox(candidate, ["/usr/bin/python3", "home-flood.py"])
+            except land.LandError as exc:
+                self._skip_only_kernel_bwrap_denial(exc)
+                self.assertIn("file count exceeded", str(exc))
+            else:
+                self.fail("the HOME inode flood escaped the workspace file-count cap")
+
+
+
+
+
+
+
+
+
 
     def test_closed_unmerged_pr_refuses_before_any_mutation(self):
         self.leased_change()
@@ -1078,6 +1341,32 @@ class TestLand(unittest.TestCase):
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.gh_log(), [])
 
+    def test_r014_merge_refuses_before_repo_checks_local_suite_or_merge(self):
+        with mock.patch.object(land, "_git") as git, \
+             mock.patch.object(land, "_checks_value") as checks, \
+             mock.patch.object(land, "_run_local_sandbox") as local, \
+             mock.patch.object(land, "_merge") as merge:
+            with self.assertRaisesRegex(land.LandError, "trusted remote landing integration is pending"):
+                land.land("fix: must only publish", cwd=self.repo, merge=True)
+        git.assert_not_called()
+        checks.assert_not_called()
+        local.assert_not_called()
+        merge.assert_not_called()
+
+    def test_ignored_checkpoint_files_never_enter_land_lease_changes(self):
+        (self.repo / ".gitignore").write_text(".altitude-checkpoints/\n")
+        self.git("add", ".gitignore")
+        self.git("commit", "-q", "-m", "ignore worker checkpoints",
+                 "-m", "Altitude-Task: demo/fix-x")
+        checkpoint = self.repo / ".altitude-checkpoints" / "progress.md"
+        checkpoint.parent.mkdir()
+        checkpoint.write_text("durable through the broker\n")
+        self.leased_change()
+
+        changed = sorted(path for _xy, paths in land._changes(self.repo) for path in paths)
+
+        self.assertEqual(changed, ["src/thing.py"])
+
     def test_unresolved_task_is_refused_before_staging(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
             old = os.environ.pop(key)
@@ -1088,7 +1377,5 @@ class TestLand(unittest.TestCase):
             land.land("fix: undeclared", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.gh_log(), [])
-
-
 if __name__ == "__main__":
     unittest.main()

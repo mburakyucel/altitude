@@ -19,6 +19,13 @@ OPERATOR_HOME = Path.home()
 SUITE_HOME = Path(tempfile.mkdtemp(prefix="altitude-test-suite-"))
 SUITE_OS_HOME = SUITE_HOME / "home"
 SUITE_OS_HOME.mkdir()
+(SUITE_OS_HOME / ".codex").mkdir(mode=0o700)
+(SUITE_OS_HOME / ".codex" / "auth.json").write_text("{}\n")
+(SUITE_OS_HOME / ".codex" / "config.toml").write_text(
+    'model = "gpt-test"\nmodel_reasoning_effort = "high"\n'
+)
+for _private in (SUITE_OS_HOME / ".codex" / "auth.json", SUITE_OS_HOME / ".codex" / "config.toml"):
+    _private.chmod(0o600)
 
 # ALTITUDE_HOME protects Altitude's own state.  HOME must also be isolated before the first Altitude import:
 # dispatch, monitor, mechanize and server intentionally use ~/.claude in production, and a test that exercises one

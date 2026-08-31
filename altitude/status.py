@@ -4,6 +4,7 @@
 ``dispatch.wip_hold``, which is the dispatcher's state-advancing check.
 """
 from __future__ import annotations
+import hashlib
 
 from . import config, dispatch, git_policy, l1, state as S, verify
 
@@ -12,10 +13,12 @@ _TASK_FIELDS = (
     "state", "class", "title", "attempt", "dispatch_id", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch",
 )
-_PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup"
+_PR_FIELDS = ("number,state,mergedAt,mergeCommit,headRefName,headRefOid,baseRefOid,mergeable,"
+              "mergeStateStatus,reviewDecision,statusCheckRollup")
 _RUN_FIELDS = "databaseId,headSha,conclusion,status,workflowName"
-_PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+_PASSED = {"SUCCESS"}
 _FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
+_REJECTED = {"NEUTRAL", "SKIPPED"}
 
 
 def _error(errors: list[str], source: str, exc: object) -> None:
@@ -24,15 +27,22 @@ def _error(errors: list[str], source: str, exc: object) -> None:
 
 def _check_summary(rollup: object) -> dict:
     checks = rollup if isinstance(rollup, list) else []
-    summary = {"total": len(checks), "passed": 0, "failed": 0, "pending": 0, "failing": []}
+    summary = {
+        "total": len(checks), "passed": 0, "failed": 0, "rejected": 0, "pending": 0,
+        "failing": [], "rejecting": [],
+    }
     for check in checks:
         check = check if isinstance(check, dict) else {}
         result = str(check.get("conclusion") or check.get("state") or "").upper()
+        name = str(check.get("name") or check.get("context") or "unknown")
         if result in _PASSED:
             summary["passed"] += 1
         elif result in _FAILED:
             summary["failed"] += 1
-            summary["failing"].append(str(check.get("name") or check.get("context") or "unknown"))
+            summary["failing"].append(name)
+        elif result in _REJECTED:
+            summary["rejected"] += 1
+            summary["rejecting"].append(name)
         else:
             summary["pending"] += 1
     return summary
@@ -72,7 +82,8 @@ def status(project: str, slug: str) -> dict:
         **{field: None for field in _TASK_FIELDS},
         "envelope": None, "counts": None, "envelope_file": None, "l1_runs": None,
         "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
-        "repository": None, "report_json": None, "prs": [], "main_run": None, "errors": errors,
+        "repository": None, "report_json": None, "prs": [], "merge_requests": [],
+        "main_run": None, "errors": errors,
     }
 
     try:
@@ -130,8 +141,13 @@ def status(project: str, slug: str) -> dict:
             raw_runs = l1.list_runs(project, slug) if l1_dir.is_dir() else []
             for run in raw_runs:
                 result = run.get("result") or {}
-                compact = {key: run.get(key) for key in ("name", "role", "engine", "done")}
+                compact = {key: run.get(key) for key in (
+                    "name", "role", "engine", "done", "review_pr", "review_head_at_start",
+                )}
                 compact["pr"] = result.get("pr") if isinstance(result, dict) else None
+                compact["reviewed_head_sha"] = (
+                    result.get("reviewed_head_sha") if isinstance(result, dict) else None
+                )
                 if not compact["done"] and not l1._alive(run.get("pid")):
                     compact["stale"] = True
                 runs.append(compact)
@@ -162,8 +178,7 @@ def status(project: str, slug: str) -> dict:
         _error(errors, "hold", e)
 
     try:
-        out["gate"] = ("github-actions" if (config.project_path(project) / ".github" / "workflows").is_dir()
-                       else "local-suite")
+        out["gate"] = "trusted-remote-pending"
     except Exception as e:
         _error(errors, "gate", e)
 
@@ -176,12 +191,27 @@ def status(project: str, slug: str) -> dict:
     report = None
     try:
         report_path = S.task_dir(project, slug) / "report.json"
-        out["report_json"] = {"exists": report_path.exists(), "path": str(report_path)}
+        exists = report_path.exists()
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest() if exists else None
+        out["report_json"] = {"exists": exists, "path": str(report_path), "sha256": digest}
         report = S.read_json(report_path, None)
     except Exception as e:
         _error(errors, "report_json", e)
 
     numbers = _pr_numbers(task, runs, report, errors)
+    try:
+        for path in S.task_dir(project, slug).glob("merge-request-*.json"):
+            rec = S.read_json(path, None)
+            if isinstance(rec, dict):
+                out["merge_requests"].append({
+                    key: rec.get(key) for key in (
+                        "pr", "state", "generation", "head_sha", "attempts", "retry_after",
+                        "last_error", "result", "updated_at",
+                    )
+                })
+        out["merge_requests"].sort(key=lambda rec: int(rec.get("pr") or 0))
+    except Exception as e:
+        _error(errors, "merge_requests", e)
     branch = task.get("branch")
     if not numbers and not branch:
         return out
@@ -221,6 +251,9 @@ def status(project: str, slug: str) -> dict:
         merged = info.get("state") == "MERGED"
         prs.append({"number": info.get("number", number), "state": info.get("state"),
                     "head_ref": info.get("headRefName"), "head_sha": info.get("headRefOid"),
+                    "base_sha": info.get("baseRefOid"), "mergeable": info.get("mergeable"),
+                    "merge_state_status": info.get("mergeStateStatus"),
+                    "review_decision": info.get("reviewDecision"),
                     "merged": merged, "merge_sha": merge_sha,
                     "checks": _check_summary(info.get("statusCheckRollup"))})
         if merged and merge_sha:
@@ -229,7 +262,7 @@ def status(project: str, slug: str) -> dict:
 
     if not merge_candidates:
         return out
-    if out["gate"] == "local-suite":
+    if out["gate"] == "trusted-remote-pending":
         return out
     newest_sha = max(merge_candidates)[2]
     try:

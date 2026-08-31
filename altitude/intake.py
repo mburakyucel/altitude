@@ -27,15 +27,22 @@ def size(project: str, slug: str) -> dict:
         return {"skipped": f"state {task['state']}, class {task.get('class')}"}
     request = (S.task_dir(project, slug) / "request.md").read_text()
     prompt = f"Request `{slug}` for project `{project}`:\n\n{request}\n\nPick the class and the paths as JSON per the schema."
-    choice = route.pick_engine("sizer", task=task)
+    choice = route.pick_engine("sizer")
     try:
         if choice["engine"] == "codex":  # decision 56
             res = engines.codex_exec((config.PERSONAS / "size.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
-                                     schema=config.SCHEMAS / "size.json", timeout=600, effort=config.CODEX_EFFORT.get("sizer"))
+                                     schema=config.SCHEMAS / "size.json", timeout=600,
+                                     effort=config.CODEX_EFFORT.get("sizer"), permission_role="sizer",
+                                     permission_id=f"{project}/{slug}")
         else:
+            settings = engines.claude_worker_settings(
+                S.task_dir(project, slug) / "claude-sizer-settings.json",
+                cwd=config.project_path(project), writable=False,
+            )
             res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "size.md",
                                        permission_mode="plan", schema=config.SCHEMAS / "size.json", model=config.MODELS["research"],
-                                       max_turns=20, timeout=600)
+                                       max_turns=20, timeout=600, settings=settings,
+                                       tools="Read,Grep,Glob", restricted=True)
         out = res.get("structured") or {}
         if res.get("error") and not out:
             raise RuntimeError(res["error"])

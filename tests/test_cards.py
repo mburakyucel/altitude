@@ -1,14 +1,16 @@
 """Decision 46: the card is executive — plain dilemma, short options, reasoning and ids behind it, ledger one tap away."""
 import os
 import sys
+import time
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _TMP = tempfile.mkdtemp(prefix="altitude-cards-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, refs  # noqa: E402
+from altitude import config, monitor, state as S, tasks as T, refs  # noqa: E402
 
 REPO = Path(_TMP) / "repo"
 JARGON = ("Decision-31 reserve line has no headless source (I-007). v3: harvest rate_limit_event from every claude -p stream, "
@@ -54,12 +56,37 @@ class TestCardContract(unittest.TestCase):
 
     def test_blocked_card_is_one_sentence_with_the_reason_behind_it(self):
         slug = self._task("blocked-card")
+        reason = "L2 is idle without a report — probably waiting for a permission or a question. Attach: `claude attach abc`; or answer via message L2."
         with S.project_lock("altitude"):
-            t = S.load_task("altitude", slug); t["state"] = "blocked"; t["blocked_reason"] = "L2 is idle without a report — probably waiting for a permission or a question. Attach: `claude attach abc`; or answer via message L2."; S.save_task("altitude", t)
+            t = S.load_task("altitude", slug); t["state"] = "blocked"; t["blocked_reason"] = reason; S.save_task("altitude", t)
+        self.assertNotIn(slug, [d["slug"] for d in T.decisions("altitude")])
+        T.needs_user("altitude", slug, reason)
         card = next(d for d in T.decisions("altitude") if d["slug"] == slug)
         self.assertEqual(card["question"], "Stopped mid-task: L2 is idle without a report")
         self.assertIn("claude attach abc", card["detail"])
         self.assertEqual(card["options"], ["Resume", "Park", "Reject"])
+
+
+class TestMonitorSnapshotFreshness(unittest.TestCase):
+    def test_sessions_omits_statusline_snapshots_older_than_thirty_minutes(self):
+        with tempfile.TemporaryDirectory(prefix="altitude-monitor-freshness-") as tmp:
+            monitor_dir = Path(tmp)
+            S.write_json(monitor_dir / "statusline-fresh.json", {
+                "_at": time.time() - 60, "context_window": {"used_percentage": 12},
+            })
+            S.write_json(monitor_dir / "statusline-stale.json", {
+                "_at": time.time() - 1801, "context_window": {"used_percentage": 98},
+            })
+            S.write_json(monitor_dir / "statusline-future.json", {
+                "_at": time.time() + 301, "context_window": {"used_percentage": 88},
+            })
+            with patch.object(config, "MONITOR_DIR", monitor_dir), \
+                 patch.object(config, "load_projects", return_value={}):
+                session_ids = {row["session_id"] for row in monitor.sessions()}
+        self.assertIn("fresh", session_ids)
+        self.assertNotIn("stale", session_ids)
+        self.assertNotIn("future", session_ids)
+
 
 
 class TestRefs(unittest.TestCase):

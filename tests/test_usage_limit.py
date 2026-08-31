@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-limit-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -54,21 +55,34 @@ class TestPollAndResume(unittest.TestCase):
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
 
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
-        orig = engines.claude_agents, S.list_tasks, dispatch.job_detail
-        engines.claude_agents = lambda: [{"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}]
+        orig = engines.claude_agents, engines.claude_stop, S.list_tasks, dispatch.job_detail
+        live = {"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}
+        rows = iter([[live], []])  # initial inventory, then stop+requery proof
+        engines.claude_agents = lambda: next(rows)
+        engines.claude_stop = lambda agent_id: "stopped"
         S.list_tasks = lambda project: [{"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"}]
         dispatch.job_detail = lambda aid: (LIMIT, datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc))
         try:
-            out = dispatch.poll("altitude")
+            # This fixture exercises quota classification, not the legacy-worker migration.
+            # Current Claude workers always have a generation-fenced broker; unbrokered
+            # pre-deploy workers are deliberately stopped and recovered.
+            with mock.patch.object(dispatch, "_adopt_claude_broker_for_task"):
+                out = dispatch.poll("altitude")
         finally:
-            engines.claude_agents, S.list_tasks, dispatch.job_detail = orig
+            engines.claude_agents, engines.claude_stop, S.list_tasks, dispatch.job_detail = orig
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
 
     def test_job_detail_reads_the_file_and_its_time(self):
-        d = dispatch.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
-        (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
-        text, at = dispatch.job_detail("t-detail")
+        with tempfile.TemporaryDirectory(prefix="altitude-jobs-") as tmp:
+            original = dispatch.JOBS_DIR
+            dispatch.JOBS_DIR = Path(tmp)
+            try:
+                d = dispatch.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
+                (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
+                text, at = dispatch.job_detail("t-detail")
+            finally:
+                dispatch.JOBS_DIR = original
         self.assertEqual(text, LIMIT)
         self.assertLess((datetime.now(timezone.utc) - at).total_seconds(), 60)
         self.assertEqual(dispatch.job_detail("no-such-job"), ("", None))

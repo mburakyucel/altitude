@@ -19,7 +19,7 @@ class TestL1ReviewView(unittest.TestCase):
             "started": "2026-08-30T00:00:00Z",
             "done": done,
             "result": {"pr": 42, "summary": summary, "error": error, "usage": {"input_tokens": 1},
-                       "structured": structured},
+                       "structured": structured, "reviewed_base_sha": "a" * 40},
         }
         with patch.object(l1, "list_runs", return_value=[record]):
             return l1.status("altitude", "review-view")[0]
@@ -53,6 +53,7 @@ class TestL1ReviewView(unittest.TestCase):
         self.assertEqual(status["findings"], [])
         self.assertEqual(status["summary"], "no findings")
         self.assertIsNone(status["error"])
+        self.assertEqual(status["reviewed_base_sha"], "a" * 40)
 
     def test_implementer_compact_record_is_unchanged(self):
         status = self._status(role="implementer", summary="persisted summary", structured={"findings": []})

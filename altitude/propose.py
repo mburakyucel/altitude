@@ -90,15 +90,20 @@ def run_proposal(project: str, slug: str, model: str | None = None) -> dict:
         prior += "\n\n## Previous proposal run rejected by validation\n" + failure["message"] + "\n\n" + fix
     prompt = (f"Task `{slug}` (class {task['class']}) for project `{project}`.\n\n## Request\n{request}{prior}\n\n"
               "Research the repository and produce the proposal as JSON per the schema. Cite the docs you relied on.")
-    choice = route.pick_engine("proposal", forced="claude" if model else None, task=task)
+    choice = route.pick_engine("proposal", forced="claude" if model else None)
     if choice["engine"] == "codex":  # decision 56: the proposal is Codex work — persona inline, read-only sandbox, strict schema
         res = engines.codex_exec((config.PERSONAS / "proposal.md").read_text() + "\n\n" + prompt, cwd=config.project_path(project),
-                                 schema=config.SCHEMAS / "proposal.json", timeout=1200, effort=config.CODEX_EFFORT.get("proposal"))
+                                 schema=config.SCHEMAS / "proposal.json", timeout=1200,
+                                 effort=config.CODEX_EFFORT.get("proposal"), permission_role="proposal",
+                                 permission_id=f"{project}/{slug}")
         res.setdefault("turns", 1); res.setdefault("cost", 0.0)
     else:
+        settings = engines.claude_worker_settings(
+            d / "claude-proposal-settings.json", cwd=config.project_path(project), writable=False)
         res = engines.claude_print(prompt, cwd=config.project_path(project), persona=config.PERSONAS / "proposal.md",
                                    permission_mode="plan", schema=config.SCHEMAS / "proposal.json", model=model or config.MODELS["proposal"],
-                                   max_turns=60, timeout=1200)
+                                   max_turns=60, timeout=1200, settings=settings,
+                                   tools="Read,Grep,Glob", restricted=True)
     try:
         if res["error"] and not res["structured"]:
             raise RuntimeError(res["error"])
@@ -150,10 +155,15 @@ def run_critic(project: str, slug: str) -> dict:
     if eng == "claude" and engines.usage_hold():
         eng, degraded = "codex", f"same-engine critique: the Claude window is exhausted until {engines.usage_hold()}"
     if eng == "codex":
-        res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json", effort=config.CODEX_EFFORT.get("critic"))
+        res = engines.codex_exec(prompt, cwd=config.project_path(project), schema=config.SCHEMAS / "critic.json",
+                                 effort=config.CODEX_EFFORT.get("critic"), permission_role="critic",
+                                 permission_id=f"{project}/{slug}")
     else:
+        settings = engines.claude_worker_settings(
+            d / "claude-critic-settings.json", cwd=config.project_path(project), writable=False)
         res = engines.claude_print(prompt, cwd=config.project_path(project), permission_mode="plan", schema=config.SCHEMAS / "critic.json",
-                                   model=config.MODELS["research"], max_turns=30, timeout=900)
+                                   model=config.MODELS["research"], max_turns=30, timeout=900,
+                                   settings=settings, tools="Read,Grep,Glob", restricted=True)
     res["engine"] = eng
     if res["structured"] is None:
         # decision 36: no silent fallback to the same engine — the other-engine critique is the point. Raise it.

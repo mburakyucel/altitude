@@ -31,13 +31,15 @@ if args[:2] == ["pr", "view"]:
     prs = {
         17: {"number": 17, "state": "MERGED", "mergedAt": "2026-08-28T10:00:00Z",
              "mergeCommit": {"oid": "merge-old"}, "headRefName": "worktree-old",
-             "headRefOid": "head-old", "statusCheckRollup": [
+             "headRefOid": "head-old", "baseRefOid": "base-old", "mergeable": "MERGEABLE",
+             "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED", "statusCheckRollup": [
                  {"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
                  {"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
                  {"context": "deploy", "state": "PENDING"}]},
         18: {"number": 18, "state": "MERGED", "mergedAt": "2026-08-29T10:00:00Z",
              "mergeCommit": {"oid": "merge-new"}, "headRefName": "worktree-new",
-             "headRefOid": "head-new", "statusCheckRollup": []}}
+             "headRefOid": "head-new", "baseRefOid": "base-new", "mergeable": "UNKNOWN",
+             "mergeStateStatus": "UNKNOWN", "reviewDecision": "", "statusCheckRollup": []}}
     print(json.dumps(prs[number]))
 elif args[:2] == ["pr", "list"]:
     number = os.environ.get("FAKE_GH_BRANCH_PR")
@@ -160,17 +162,36 @@ class TestTaskStatus(unittest.TestCase):
             "hold_paths": ["altitude/server.py"],
         }])
         self.assertTrue(result["report_json"]["exists"])
-        self.assertEqual(result["gate"], "github-actions")
+        self.assertEqual(result["gate"], "trusted-remote-pending")
         self.assertEqual([pr["number"] for pr in result["prs"]], [17, 18])
         self.assertEqual(result["prs"][0]["merge_sha"], "merge-old")
+        self.assertEqual({key: result["prs"][0][key] for key in (
+            "base_sha", "mergeable", "merge_state_status", "review_decision",
+        )}, {"base_sha": "base-old", "mergeable": "MERGEABLE",
+             "merge_state_status": "CLEAN", "review_decision": "APPROVED"})
         self.assertEqual(result["prs"][0]["checks"], {
-            "total": 3, "passed": 1, "failed": 1, "pending": 1, "failing": ["lint"]})
-        self.assertEqual(result["main_run"], {
-            "id": 9, "workflow": "CI", "status": "completed", "conclusion": "success",
-            "head_sha": "merge-new"})
-        self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
-        run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
-        self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
+            "total": 3, "passed": 1, "failed": 1, "rejected": 0, "pending": 1,
+            "failing": ["lint"], "rejecting": []})
+        self.assertIsNone(result["main_run"])
+        self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
+        pr_call = next(call for call in self.calls() if call[:2] == ["pr", "view"])
+        self.assertEqual(pr_call[pr_call.index("--json") + 1], task_status._PR_FIELDS)
+        self.assertTrue({"baseRefOid", "mergeable", "mergeStateStatus", "reviewDecision"}.issubset(
+            set(task_status._PR_FIELDS.split(","))))
+
+    def test_check_summary_distinguishes_terminal_nonpass_from_success_and_pending(self):
+        summary = task_status._check_summary([
+            {"name": "tests", "conclusion": "SUCCESS"},
+            {"name": "optional", "conclusion": "SKIPPED"},
+            {"context": "advisory", "conclusion": "NEUTRAL"},
+            {"name": "lint", "conclusion": "FAILURE"},
+            {"name": "deploy", "state": "PENDING"},
+        ])
+
+        self.assertEqual(summary, {
+            "total": 5, "passed": 1, "failed": 1, "rejected": 2, "pending": 1,
+            "failing": ["lint"], "rejecting": ["optional", "advisory"],
+        })
 
     def test_repository_status_is_serialized_from_the_read_only_inspector(self):
         repository = {
@@ -297,18 +318,19 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(result["other_leases"], [])
         self.assertTrue(any(error.startswith("other_leases:") for error in result["errors"]))
 
-    def test_record_slug_is_excluded_from_other_leases(self):
+    def test_record_slug_mismatch_fails_closed(self):
         task_path = S.task_dir("demo", "task-one") / "status.json"
         task = S.read_json(task_path)
         task["slug"] = "record-slug"
         S.write_json(task_path, task)
 
         result = task_status.status("demo", "task-one")
-
-        self.assertEqual(result["slug"], "record-slug")
-        self.assertNotIn("record-slug", [lease["slug"] for lease in result["other_leases"]])
-        self.assertIsNone(result["wip_hold"])
-        self.assertEqual(result["wip_hold"], dispatch.wip_hold("demo", task))
+        self.assertEqual(result["slug"], "task-one")
+        self.assertIsNone(result["state"])
+        self.assertTrue(any(error.startswith("task:") and "requested task" in error
+                            for error in result["errors"]))
+        with self.assertRaisesRegex(ValueError, "does not match its directory"):
+            dispatch.wip_hold("demo", task)
 
     def test_dispatch_keyed_counts_win_over_the_legacy_session_file(self):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
@@ -321,8 +343,8 @@ class TestTaskStatus(unittest.TestCase):
         self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
         result = task_status.status("demo", "task-one")
         self.assertIsNone(result["main_run"])
-        self.assertEqual(result["gate"], "github-actions")
-        self.assertIn("no main run found for merge-new", result["errors"])
+        self.assertEqual(result["gate"], "trusted-remote-pending")
+        self.assertEqual(result["errors"], [])
 
     def test_repo_without_workflows_uses_local_suite_without_main_run_error(self):
         shutil.rmtree(self.repo / ".github")
@@ -332,7 +354,7 @@ class TestTaskStatus(unittest.TestCase):
 
         self.assertEqual(result["errors"], [])
         self.assertIsNone(result["main_run"])
-        self.assertEqual(result["gate"], "local-suite")
+        self.assertEqual(result["gate"], "trusted-remote-pending")
         self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
 
     def test_one_pr_fault_keeps_other_summaries_and_checks_main(self):
@@ -340,8 +362,8 @@ class TestTaskStatus(unittest.TestCase):
         result = task_status.status("demo", "task-one")
         self.assertEqual([pr["number"] for pr in result["prs"]], [17])
         self.assertTrue(any("fake gh PR failure" in error for error in result["errors"]))
-        self.assertEqual(result["main_run"]["head_sha"], "merge-old")
-        self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
+        self.assertIsNone(result["main_run"])
+        self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
 
     def test_report_prs_are_reused_before_branch_fallback(self):
         task_path = S.task_dir("demo", "task-one") / "status.json"
@@ -408,7 +430,8 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
         self.assertEqual(result["slug"], "task-one")
-        self.assertEqual(result["main_run"]["head_sha"], "merge-new")
+        self.assertEqual(result["gate"], "trusted-remote-pending")
+        self.assertIsNone(result["main_run"])
 
     def test_cli_defaults_slug_from_altitude_task(self):
         self._setenv("ALTITUDE_TASK", "task-one")

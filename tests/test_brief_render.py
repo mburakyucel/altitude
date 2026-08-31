@@ -17,6 +17,7 @@ REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
     "approval_note",
     "branch",
+    "checkpoint_guidance",
     "class",
     "engine_line",
     "l1_in_flight",
@@ -86,18 +87,19 @@ class TestBriefRender(unittest.TestCase):
         self.assert_no_unformatted_field(self.default_rendered)
 
     def test_both_merge_policy_branches_render(self):
-        self.assertNotIn("Held for Burak", self.default_rendered)
-        self.assertIn("Held for Burak", self.held_rendered)
+        self.assertNotIn("R-014 landing block plus a Burak hold", self.default_rendered)
+        self.assertIn("R-014 landing block plus a Burak hold", self.held_rendered)
         self.assertIn("requires a maintainer release", self.held_rendered)
         self.assert_no_unformatted_field(self.default_rendered)
         self.assert_no_unformatted_field(self.held_rendered)
 
     def test_ledger_guarantees_survive_rendering(self):
-        # R-014's test-command sentence is not in the template yet; assert it here when it lands.
         for rendered in (self.default_rendered, self.held_rendered):
-            with self.subTest(held="Held for Burak" in rendered):
-                self.assertIn("never merge around the hold", rendered)
-                self.assertIn("full local test suite on merged `main`", rendered)
+            with self.subTest(held="R-014 landing block plus a Burak hold" in rendered):
+                self.assertIn("forbids every merge path", rendered)
+                self.assertIn("trusted remote landing integration pending", rendered)
+                self.assertIn("Local tests and generic GitHub check success", rendered)
+                self.assertIn(str(config.SCHEMAS / "report.json"), rendered)
 
 
 if __name__ == "__main__":

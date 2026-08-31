@@ -52,12 +52,20 @@ class TestLifecycle(unittest.TestCase):
         self.assertEqual(S.load_task("demo", t["slug"])["attempt"], 1)
 
         T.block("demo", t["slug"], "envelope reached")
+        self.assertEqual(T.decisions("demo"), [], "operational blockers stay with Altitude")
+        T.needs_user("demo", t["slug"], "Approve more than twice the class envelope")
+        with self.assertRaisesRegex(T.TransitionError, "L3-only"):
+            T.needs_user("demo", t["slug"], "bypass", actor="l2")
         self.assertEqual(T.decisions("demo")[0]["kind"], "blocked")
 
         T.resume("demo", t["slug"])
         T.report("demo", t["slug"], {"verdict": "ok", "prs": [140]})
         T.fyi("demo", t["slug"], "landed")
-        T.done("demo", t["slug"], digest="Done.")
+        with self.assertRaisesRegex(T.TransitionError, "trusted remote landing integration"):
+            T.done("demo", t["slug"], actor="l3", digest="must not archive")
+        with self.assertRaisesRegex(T.TransitionError, "trusted remote landing integration"):
+            T.done("demo", t["slug"], actor="altd", digest="must not archive")
+        T.done("demo", t["slug"], actor="burak", digest="Done.")
 
         self.assertEqual(S.task_dir("demo", t["slug"]).parent.name, "archive")
         self.assertGreaterEqual(len(S.read_events("demo", t["slug"])), 9)

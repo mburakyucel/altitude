@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -54,29 +55,66 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Fable for the hard coding (L2 per task, L1 per sub-brief — dynamic), research/docs on Sonnet or Opus, never Fable.
 MODELS = {"l3": "fable", "l2": "opus", "l2_hard": "fable", "l1": "opus", "l1_hard": "fable",
           "reviewer": "opus", "proposal": "opus", "research": "sonnet",
-          "l1_codex": None, "reviewer_codex": None}   # None = the Codex CLI's configured default model
+          "l1_codex": None, "reviewer_codex": None, "l2_codex": None}   # None = the Codex CLI's configured default model
 ENGINES = ("claude", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
-CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None}
+CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None, "l2": None}
 L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
 L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
+L3_CODEX_ENTER_RATIO = 1.50       # choose Codex when weekly remaining capacity is at least 1.5x Claude
+L3_CODEX_EXIT_RATIO = 1.25        # hysteresis: stay on Codex until the advantage clearly narrows
 WIP_PER_PROJECT = 3               # decision 21
 WIP_PER_MACHINE = 10              # Burak 2026-08-30: 10 concurrent tasks (decision 51 addendum)
 SESSIONS_PER_MACHINE = 24         # decision 39: live Claude sessions (L2s + their L1s) across all projects; 10 L2s + their L1s + L3/critic turns
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
-L3_TURN_TIMEOUT = 900             # seconds
+L3_TURN_TIMEOUT = 1260            # Codex 1200s timeout plus orphan/restart grace
 AGENT_POLL_SECONDS = 30
+RECOVERY_BREAKER_TICK_LIMIT = WIP_PER_MACHINE
+RECOVERY_BREAKER_WINDOW_LIMIT = WIP_PER_MACHINE * 2
+RECOVERY_BREAKER_WINDOW_SECONDS = 15 * 60
+RECOVERY_BREAKER_FAILURE_LIMIT = 3
+BLOCKED_SCAN_SECONDS = 300         # refresh external PR/check/run/repository evidence every five minutes
+BLOCKED_BATCH_LIMIT = 8            # one L3 reconciliation turn handles a bounded project batch
+BLOCKED_MAX_FAILURES = 2           # unchanged evidence cannot cause unbounded L3 turns
+BLOCKED_RETRY_SECONDS = (60, 300)  # per-fingerprint backoff after L3 errors or no disposition
+REPORT_MAX_FAILURES = 2            # unchanged report evidence cannot cause unbounded L3 turns
+REPORT_RETRY_SECONDS = (60, 300)   # per-report-evidence backoff after errors or no disposition
+BLOCKED_SCAN_CLAIM_TIMEOUT = 300   # a status scan has no engine turn and must never wedge for 21 minutes
+BLOCKED_CLAIM_TIMEOUT = 1260       # batch claim: longer than the 1200-second Codex L3 timeout
 
 PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
+
+_IDENTIFIER = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
+_PROJECT_IDENTIFIER = re.compile(r"^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$")
+
+
+def require_identifier(value: str, *, kind: str = "identifier", max_length: int = 80,
+                       allow_underscore: bool = False) -> str:
+    """Return one path-safe Altitude identifier or fail before any path join.
+
+    Project names and task slugs are persisted path components and also cross a
+    model-to-host broker boundary.  Accept only the canonical lowercase form;
+    absolute paths, traversal, separators and ambiguous trailing dashes never
+    become filesystem operands.
+    """
+    pattern = _PROJECT_IDENTIFIER if allow_underscore else _IDENTIFIER
+    if (not isinstance(value, str) or not value or len(value) > max_length
+            or pattern.fullmatch(value) is None):
+        alphabet = "lowercase letters, digits, internal dashes or underscores" if allow_underscore else \
+                   "lowercase letters, digits or internal dashes"
+        raise ValueError(
+            f"invalid {kind} {value!r}; expected 1-{max_length} {alphabet}"
+        )
+    return value
 
 
 def ensure_root() -> None:
@@ -96,10 +134,13 @@ def load_projects() -> dict:
 
 def save_projects(projects: dict) -> None:
     from .state import atomic_write
+    for name in projects:
+        require_identifier(name, kind="project name", allow_underscore=True)
     atomic_write(PROJECTS_FILE, json.dumps(projects, indent=2, sort_keys=True) + "\n")
 
 
 def project(name: str) -> dict:
+    name = require_identifier(name, kind="project name", allow_underscore=True)
     p = load_projects().get(name)
     if not p:
         raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
@@ -111,7 +152,16 @@ def project_path(name: str) -> Path:
 
 
 def project_dir(name: str) -> Path:
-    return ROOT / name
+    name = require_identifier(name, kind="project name", allow_underscore=True)
+    root = ROOT.expanduser().resolve()
+    candidate = root / name
+    # A pre-existing symlink must not turn a validated component into an
+    # alias for another project or an out-of-root state path.
+    if candidate.is_symlink():
+        raise ValueError(f"project state directory may not be a symlink: {name!r}")
+    if candidate.resolve(strict=False).parent != root:
+        raise ValueError(f"project state directory escapes ALTITUDE_HOME: {name!r}")
+    return candidate
 
 
 def discover_projects() -> list[dict]:
