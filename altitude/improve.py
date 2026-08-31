@@ -31,6 +31,22 @@ FAULTS = config.ROOT / "monitor" / "faults.json"
 FAULT_WINDOW_SECONDS = 24 * 3600
 
 
+def fault_lock_path() -> Path:
+    return FAULTS.with_suffix(".lock")
+
+
+@contextmanager
+def _fault_lock():
+    """Serialize fault evidence RMW and dedupe, independently of project dispatch locks."""
+    FAULTS.parent.mkdir(parents=True, exist_ok=True)
+    with open(fault_lock_path(), "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
     """Record a fault as evidence and an FYI, without creating repair or rule work.
 
@@ -40,28 +56,33 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     from . import tasks as T
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
-    FAULTS.parent.mkdir(parents=True, exist_ok=True)
-    faults = S.read_json(FAULTS, {}) or {}
-    rec = faults.get(kind) or {}
-    recent = bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS and rec.get("incident")
-    rec = {"first": rec.get("first") or S.now(), "last": S.now(), "count": int(rec.get("count", 0)) + 1,
-           "incident": rec.get("incident"), "detail": detail[:500], "project": project, "task": task}
-    faults[kind] = rec
-    S.write_json(FAULTS, faults)
-    from . import recovery
-    recovery.hold(detail or kind, kind=kind, incident=rec.get("incident"), actor="altd")
-    if recent:
-        return None
-    target = "altitude" if "altitude" in config.load_projects() else project
-    inc = None
-    if target:
-        inc = new_incident(target, title=f"system fault: {kind}", task=task,
-                           what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
-                           evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
-                           tags=["system-fault", kind], actor="altd")
-        rec["incident"] = inc["id"]; faults[kind] = rec; S.write_json(FAULTS, faults)
-        T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}. Evidence recorded; no recovery work was created automatically.", actor="altd")
-    return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
+    with _fault_lock():
+        faults = S.read_json(FAULTS, {}) or {}
+        rec = faults.get(kind) or {}
+        recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
+                  and rec.get("incident"))
+        rec = {"first": rec.get("first") or S.now(), "last": S.now(),
+               "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
+               "detail": detail[:500], "project": project, "task": task}
+        faults[kind] = rec
+        S.write_json(FAULTS, faults)
+        from . import recovery
+        recovery.hold(detail or kind, kind=kind, incident=rec.get("incident"), actor="altd")
+        if recent:
+            return None
+        target = "altitude" if "altitude" in config.load_projects() else project
+        inc = None
+        if target:
+            inc = new_incident(target, title=f"system fault: {kind}", task=task,
+                               what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
+                               evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
+                               tags=["system-fault", kind], actor="altd")
+            rec["incident"] = inc["id"]
+            faults[kind] = rec
+            S.write_json(FAULTS, faults)
+            recovery.attach_incident(kind, inc["id"])
+            T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}. Evidence recorded; no recovery work was created automatically.", actor="altd")
+        return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
 
 
 def index() -> list[dict]:

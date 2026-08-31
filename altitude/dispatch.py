@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, git_policy, state as S, tasks as T
+from . import config, engines, git_policy, recovery, state as S, tasks as T
 
 
 def project_never_list(repo: Path) -> str:
@@ -207,10 +207,19 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     settings = session_settings(project, slug, f"{project}--{dispatch_id}")
     persona = config.PERSONAS / "l2.md"
     proj = config.project(project)
-    res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
-                            permission_mode="auto", max_turns=task["envelope"]["max_turns"],
-                            model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
-                            extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
+    try:
+        with recovery.launch_permission(project, task):
+            res = engines.claude_bg(name, brief_md, cwd=worktree_path, worktree=None, persona=persona,
+                                    permission_mode="auto", max_turns=task["envelope"]["max_turns"],
+                                    model=model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"], settings=settings,
+                                    extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id}))
+    except recovery.LaunchHeld as exc:
+        with S.project_lock(project):
+            held_task = S.load_task(project, slug)
+            held_task["dispatching"] = None
+            S.save_task(project, held_task)
+        S.append_event(project, slug, "dispatch-held", reason=str(exc))
+        raise T.TransitionError(str(exc)) from exc
     agent = res.get("agent") or {}
     if res["returncode"] != 0 and not agent:
         with S.project_lock(project):
@@ -256,9 +265,14 @@ def resume_session(project: str, slug: str, text: str, session_id: str | None = 
         improve.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     name = f"{project}/{task['dispatch_id']}"
-    res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
-                                   max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
-                                   extra_env=l2_env(project, task))
+    try:
+        with recovery.launch_permission(project, task):
+            res = engines.claude_resume_bg(name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
+                                           max_turns=task["envelope"]["max_turns"], settings=S.task_dir(project, slug) / "settings.json",
+                                           extra_env=l2_env(project, task))
+    except recovery.LaunchHeld as exc:
+        S.append_event(project, slug, "resume-held", reason=str(exc), previous=sid)
+        raise T.TransitionError(str(exc)) from exc
     live = [a for a in engines.claude_agents() if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")]
     if not live:
         raise RuntimeError(f"resume of {name} produced no live worker: {res['stderr'][:200] or res['stdout'][:200]}")
@@ -509,7 +523,6 @@ def per_task_hold(hold: str | None) -> bool:
 
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
-    from . import recovery
     held = recovery.dispatch_hold(project, task)
     if held:
         return held

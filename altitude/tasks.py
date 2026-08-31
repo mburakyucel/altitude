@@ -81,7 +81,9 @@ def new(project: str, title: str, cls: str, request: str, actor: str = "l3", sou
         paths: list[str] | None = None, engine: str | None = None, hold_merge: str | None = None) -> dict:
     if cls == "auto":  # decision 53: the intake sizer picks the class (Burak does not have to)
         cls = None
-    elif cls not in S.CLASSES:
+    if source == "recovery" and cls is None:
+        raise TransitionError("recovery delegation requires an explicit S, M, or L class; it cannot wait for automatic sizing")
+    if cls not in S.CLASSES:
         raise TransitionError(f"class must be one of {S.CLASSES} or auto")
     if model and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
