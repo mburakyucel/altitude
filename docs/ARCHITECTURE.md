@@ -257,17 +257,23 @@ Incident handling follows this order:
 4. Decide whether it needs a narrow correction, a durable rule/mechanism, a proposal, or only
    historical evidence.
 
-L3 may proceed with a narrow corrective follow-up and report it as an FYI. Broad architecture,
-policy, permission, or system-wide changes become a proposal or GitHub issue for Burak. An incident
-never automatically creates another incident, rule task, or healing-task chain.
+L3 may complete bounded operational actions within the current recovery episode, and the one
+recovery L2 may finish a narrow corrective code change within its existing task and PR. Any
+additional code, rule, architecture, policy, permission, or system-wide follow-up becomes a GitHub
+issue that Burak may select later. Recovery does not start a second repair task automatically. An
+incident never automatically creates another incident, rule task, or healing-task chain.
 
 Important incident classes include quota/reset stalls, stale or abandoned sessions, ownership
 ambiguity, deadlocks, dispatch stalls, lost or stale reports, repeated collisions, and incomplete
 restart cleanup.
 
-## Hard boundaries and agent discretion
+## Target boundaries and agent discretion
 
-| Enforced by the system | Left to model judgment |
+The left column is the required pre-restart target, not a claim about current main. This
+documentation PR implements none of these runtime controls by itself. The implementation status of
+each boundary must be verified before it is relied upon operationally.
+
+| Must be enforced by the system | Left to model judgment |
 |---|---|
 | One active task owner and current generation | Whether L3 answers or delegates |
 | Isolated branch/worktree ownership | How much context, research, or planning is useful |
@@ -276,7 +282,7 @@ restart cleanup.
 | Direct task steering reaches the owning L2 | Proposal format and conversational depth |
 | Completed/deferred work leaves active context | Appropriate test and review depth above repository minimums |
 | Recovery pauses ordinary dispatch | Whether a design conversation should transition into a build |
-| Incidents cannot recursively create work | Whether a narrow follow-up is useful after recovery |
+| Incidents cannot recursively create work | Whether the current recovery L2 needs L1 help or review |
 
 Minimal durable metadata may include identity, owner/generation, lifecycle position, conversation,
 worktree/branch, PR, and audit links. Proposals and outcomes should remain human-readable; elaborate
@@ -305,11 +311,28 @@ or automatically resumed.
 - No general Git/GitHub/worker reconcile matches the old architecture description.
 - The previously described deterministic Small lane and runtime Settings surface are absent on main.
 - The React router has no Listen route, although older documentation and server plumbing mention it.
-- The trusted remote gate is frozen evidence, not a working landing authority.
+- The trusted remote workflow is active on PRs and main pushes, but its hosted runs currently fail
+  before candidate execution and it is not a landing authority. Further expansion is frozen pending
+  the keep/simplify/replace/revert review.
 
 ## Restart boundary
 
-Keep Altitude stopped while the old task, session, rule, incident, and worktree state is archived
-and removed from live scheduling. Restart is a separate, explicit decision after the current
-implementation is reconciled with this architecture. Clearing the old queue alone is not sufficient
-evidence that the system is healthy.
+This PR changes policy and documentation only. Keep Altitude stopped and masked while the old task,
+session, rule, incident, and worktree state is archived and removed from live scheduling. Human
+approval and archive completion are necessary but are not sufficient to restart the unchanged
+runtime.
+
+Before a healthy restart, the minimum implemented and verified subset is:
+
+- ordinary dispatch and automatic incident/rule/task fan-out can be paused or disabled;
+- one current owner/generation is authoritative for each active task and stale publishers are
+  fenced;
+- one bounded recovery L2 can be assigned without entering the ordinary multi-stage pipeline;
+- L3 can perform operational recovery while no second repair task is created automatically;
+- service and worker ownership/cleanup are verified so a restart does not leave ambiguous live
+  descendants;
+- the reconciled runtime starts with no archived task silently returned to scheduling.
+
+Restart remains a separate explicit decision after that subset passes an operational recovery
+check. Clearing the old queue or merging this document alone is not evidence that the system is
+healthy.
