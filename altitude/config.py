@@ -54,34 +54,24 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Fable for the hard coding (L2 per task, L1 per sub-brief — dynamic), research/docs on Sonnet or Opus, never Fable.
 MODELS = {"l3": "fable", "l2": "opus", "l2_hard": "fable", "l1": "opus", "l1_hard": "fable",
           "reviewer": "opus", "proposal": "opus", "research": "sonnet",
-          "l1_codex": None, "reviewer_codex": None, "l2_codex": None}   # None = the Codex CLI's configured default model
+          "l1_codex": None, "reviewer_codex": None}   # None = the Codex CLI's configured default model
 ENGINES = ("claude", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
-CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None, "l2": None}
+CODEX_EFFORT = {"implementer": None, "reviewer": None, "critic": None, "proposal": None, "sizer": None, "l3": None}
 L1_DEFAULT_ENGINE = os.environ.get("ALTITUDE_L1_ENGINE", "codex")   # decision 45: when neither quota is known, Codex carries coding (Burak 2026-08-30)
 L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
 QUOTA_RESERVE = 0.70              # decision 31: hold dispatch when the 5h window is past this
-L3_CODEX_ENTER_RATIO = 1.50       # choose Codex when weekly remaining capacity is at least 1.5x Claude
-L3_CODEX_EXIT_RATIO = 1.25        # hysteresis: stay on Codex until the advantage clearly narrows
 WIP_PER_PROJECT = 3               # decision 21
 WIP_PER_MACHINE = 10              # Burak 2026-08-30: 10 concurrent tasks (decision 51 addendum)
 SESSIONS_PER_MACHINE = 24         # decision 39: live Claude sessions (L2s + their L1s) across all projects; 10 L2s + their L1s + L3/critic turns
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
-L3_TURN_TIMEOUT = 1260            # Codex 1200s timeout plus orphan/restart grace
+L3_TURN_TIMEOUT = 900             # seconds
 AGENT_POLL_SECONDS = 30
-BLOCKED_SCAN_SECONDS = 300         # refresh external PR/check/run/repository evidence every five minutes
-BLOCKED_BATCH_LIMIT = 8            # one L3 reconciliation turn handles a bounded project batch
-BLOCKED_MAX_FAILURES = 2           # unchanged evidence cannot cause unbounded L3 turns
-BLOCKED_RETRY_SECONDS = (60, 300)  # per-fingerprint backoff after L3 errors or no disposition
-REPORT_MAX_FAILURES = 2            # unchanged report evidence cannot cause unbounded L3 turns
-REPORT_RETRY_SECONDS = (60, 300)   # per-report-evidence backoff after errors or no disposition
-BLOCKED_SCAN_CLAIM_TIMEOUT = 300   # a status scan has no engine turn and must never wedge for 21 minutes
-BLOCKED_CLAIM_TIMEOUT = 1260       # batch claim: longer than the 1200-second Codex L3 timeout
 
 PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"

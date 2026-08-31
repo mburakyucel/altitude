@@ -71,35 +71,6 @@ class TestResumeRebinds(unittest.TestCase):
         self.assertEqual((t["agent_id"], t["session_id"]), ("new", "new-sid"))
         self.assertEqual(res["agent"]["id"], "new")
 
-    def test_terminal_move_during_running_claude_resume_stops_the_new_worker(self):
-        wt = Path(_TMP) / "wt-running-resume"; wt.mkdir(exist_ok=True)
-        slug = "running-resume"
-        S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {
-            "slug": slug, "title": slug, "created": S.now(), "updated": S.now(), "state": "running",
-            "session_id": "old-sid", "agent_id": "old", "dispatch_id": f"{slug}-1",
-            "envelope": {"max_turns": 5}, "worktree": str(wt), "class": "S",
-        })
-
-        def terminal_resume(*_args, **_kwargs):
-            T.park("altitude", slug, "cancel during resume")
-            return {"stdout": "", "stderr": "", "returncode": 0}
-
-        old = [{"id": "old", "name": f"altitude/{slug}-1", "sessionId": "old-sid", "state": "failed"}]
-        new = [{"id": "new", "name": f"altitude/{slug}-1", "sessionId": "new-sid", "state": "working"}]
-        stopped = [{**new[0], "state": "stopped"}]
-        with mock.patch.object(engines, "claude_resume_bg", side_effect=terminal_resume), \
-             mock.patch.object(engines, "claude_agents", side_effect=[old, old, new, stopped]), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"):
-            with self.assertRaisesRegex(T.TransitionError, "replacement worker"):
-                dispatch.resume_session("altitude", slug, "go")
-        stop.assert_called_once_with("new")
-        task = S.load_task("altitude", slug)
-        self.assertEqual(task["state"], "parked")
-        self.assertNotIn("pending_resume", task)
-
     def test_resume_without_worktree_is_a_dispatch_again(self):
         S.task_dir("altitude", "no-wt").mkdir(parents=True, exist_ok=True)
         S.save_task("altitude", {"slug": "no-wt", "title": "no-wt", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "s", "agent_id": "a", "dispatch_id": "no-wt-1",
@@ -128,22 +99,7 @@ class TestResumeRebinds(unittest.TestCase):
 
         fault.assert_called_once()
         launch.assert_not_called()
-        self.assertNotIn("report_not_before", S.load_task("altitude", "refused-resume"))
 
 
 if __name__ == "__main__":
     unittest.main()
-    def test_terminal_task_message_is_rejected_before_engine_or_qa_side_effects(self):
-        wt = Path(_TMP) / "wt-terminal-message"; wt.mkdir(exist_ok=True)
-        slug = "terminal-message"
-        S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": slug, "title": slug, "created": S.now(), "updated": S.now(),
-                                 "state": "done", "dispatch_id": f"{slug}-1", "session_id": "old",
-                                 "agent_id": "old-agent", "worktree": str(wt), "class": "S"})
-
-        with mock.patch.object(engines, "claude_resume_bg") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "running or blocked"):
-                dispatch.resume_session("altitude", slug, "stale message")
-
-        launch.assert_not_called()
-        self.assertFalse((S.task_dir("altitude", slug) / "qa.md").exists())

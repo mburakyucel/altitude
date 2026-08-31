@@ -1,51 +1,30 @@
-"""Blocked work is programmatically reconciled; only explicit L3 escalations reach Burak."""
+"""A report whose L3 turn never finished (altd restarted under it) is handed to L3 again; handled ones are not."""
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 _TMP = tempfile.mkdtemp(prefix="altitude-stranded-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, server, tasks as T  # noqa: E402
 
-PROJECT = "stranded"
-
 
 class TestStrandedReports(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
-        projects = config.load_projects(); projects[PROJECT] = {"name": PROJECT, "path": _TMP, "stacks": ["python"]}
-        config.save_projects(projects)
-
-    def setUp(self):
-        p = server._blocked_recovery_path(PROJECT)
-        if p.exists():
-            p.unlink()
-
-    def _task(self, slug, state="blocked", report=False, handled=None):
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        if report:
-            (d / "report.json").write_text(json.dumps({"landed": {}}))
-        task = {"slug": slug, "title": slug, "class": "S", "state": state, "created": S.now(),
-                "updated": S.now(), "attempt": 1, "blocked_reason": "worker stopped", "l3_handled": handled,
-                "envelope": {}, "prs": []}
-        S.save_task(PROJECT, task)
-        def cleanup():
-            if not S.status_path(PROJECT, slug).exists():
-                return
-            state = S.load_task(PROJECT, slug).get("state")
-            if state == "reported":
-                T.block(PROJECT, slug, "test cleanup")
-                state = "blocked"
-            if state in ("running", "blocked"):
-                T.reject(PROJECT, slug, "test cleanup")
-        self.addCleanup(cleanup)
-        return task
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP, "stacks": ["python"]}})
+        base = {"class": "S", "created": S.now(), "updated": S.now(), "verified": {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [], "report": {}}}
+        for slug, state, handled, report in (("stranded", "reported", None, True), ("stranded-blocked", "blocked", None, True),
+                                             ("handled", "reported", S.now(), True), ("no-report", "blocked", None, False),
+                                             ("still-running", "running", None, True)):
+            S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
+            if report:
+                (S.task_dir("altitude", slug) / "report.json").write_text(json.dumps({"landed": {}}))
+            S.save_task("altitude", {**base, "slug": slug, "title": slug, "state": state, "l3_handled": handled})
 
     @staticmethod
     def clean_report(blocked=""):
@@ -66,155 +45,61 @@ class TestStrandedReports(unittest.TestCase):
                               "blocked_reason": "stale block reason"})
         S.append_event(project, slug, "state", frm=block_from, to="blocked", by="test")
 
-    def test_empty_or_nonblocked_project_does_not_spawn_a_sweep(self):
+    def test_only_unhandled_reports_are_resumed(self):
         calls = []
-        with patch.object(server, "spawn", side_effect=lambda *args: calls.append(args) or True):
-            with patch.object(S, "list_tasks", return_value=[]):
-                server.resume_stranded_blockers(PROJECT)
-            with patch.object(S, "list_tasks", return_value=[{"state": "requested"}, {"state": "running"}]):
-                server.resume_stranded_blockers(PROJECT)
-        self.assertEqual(calls, [])
+        orig = server.spawn
+        server.spawn = lambda key, fn, *a: calls.append((key, fn.__name__, a[2]["verdict"])) or True
+        try:
+            server.resume_stranded_reports("altitude")
+        finally:
+            server.spawn = orig
+        self.assertEqual(sorted(calls), [("finished:altitude:stranded", "report_turn", "ok"), ("finished:altitude:stranded-blocked", "report_turn", "ok")])
 
-    def test_durable_recovery_record_is_swept_without_a_live_blocker(self):
-        S.write_json(server._blocked_recovery_path(PROJECT), {
-            "version": 1,
-            "tasks": {"old-blocker": {"fingerprint": "old"}},
-        })
-        calls = []
-        with patch.object(S, "list_tasks", return_value=[]), \
-             patch.object(server, "spawn", side_effect=lambda *args: calls.append(args) or True):
-            server.resume_stranded_blockers(PROJECT)
-        self.assertEqual(calls, [(f"blocked-sweep:{PROJECT}", server.reconcile_blockers, PROJECT)])
-
-    def test_no_report_blockers_use_one_project_sweep(self):
-        self._task("no-report")
-        calls = []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *a: calls.append((key, fn.__name__)) or True):
-            server.resume_stranded_blockers(PROJECT)
-        self.assertEqual(calls, [(f"blocked-sweep:{PROJECT}", "reconcile_blockers")])
-
-    def test_blocked_reports_do_not_race_report_turn(self):
-        self._task("reported", state="reported", report=True)
-        self._task("blocked-report", state="blocked", report=True)
-        calls = []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *a: calls.append((key, fn.__name__)) or True):
-            server.resume_stranded_reports(PROJECT)
-        self.assertEqual(calls, [(f"finished:{PROJECT}:reported", "report_turn")])
-
-    def test_fresh_blocked_report_uses_coordinator_not_report_turn(self):
-        task = self._task("fresh-blocked-report", state="running", report=True)
-        verdict = {"verdict": "blocked", "problems": [], "signals": [], "spend": {}, "prs": [],
-                   "report": {"blocked": "PR needs remediation"}}
-        with patch.object(server.verify, "verify", return_value=verdict), \
-             patch.object(server, "report_turn", side_effect=AssertionError("blocked report must not take report-turn path")):
-            server.on_l2_finished(PROJECT, {"task": task, "agent": {}})
-        self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "blocked")
-
-
-    def _nonclean_verdict(self):
-        return {"verdict": "contradicted", "problems": ["report needs a disposition"], "signals": [],
-                "spend": {}, "prs": [], "report": {}}
-
-    def test_report_turn_noop_remains_unhandled_and_obeys_backoff(self):
-        task = self._task("report-noop-retry", state="reported", report=True)
-        with patch.object(server.improve, "index", return_value=[]), \
-             patch.object(server.l3, "turn", return_value={"text": "looked", "error": None}):
-            server.report_turn(PROJECT, task, self._nonclean_verdict())
-        live = S.load_task(PROJECT, task["slug"])
-        self.assertEqual(live["state"], "reported")
-        self.assertIsNone(live.get("l3_handled"))
-        calls = []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *a: calls.append(key) or True):
-            server.resume_stranded_reports(PROJECT)
-        self.assertNotIn("finished:{}:{}".format(PROJECT, task["slug"]), calls)
-        with S.project_lock(PROJECT):
-            live = S.load_task(PROJECT, task["slug"])
-            live["report_recovery"]["retry_after"] = "2000-01-01T00:00:00+00:00"
-            S.save_task(PROJECT, live)
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *a: calls.append(key) or True):
-            server.resume_stranded_reports(PROJECT)
-        self.assertIn("finished:{}:{}".format(PROJECT, task["slug"]), calls)
-
-    def test_report_turn_error_remains_unhandled_for_retry(self):
-        task = self._task("report-error-retry", state="reported", report=True)
-        with patch.object(server.improve, "index", return_value=[]), \
-             patch.object(server.l3, "turn", return_value={"text": "", "error": "engine failed"}):
-            server.report_turn(PROJECT, task, self._nonclean_verdict())
-        live = S.load_task(PROJECT, task["slug"])
-        self.assertEqual(live["state"], "reported")
-        self.assertIsNone(live.get("l3_handled"))
-
-    def test_report_turn_stamps_only_after_explicit_task_disposition(self):
-        task = self._task("report-explicit-block", state="reported", report=True)
-
-        def disposition(project, prompt, trigger, **kwargs):
-            T.block(project, task["slug"], "L2 must repair the report", actor="l3")
-            return {"text": "blocked for repair", "error": None}
-
-        with patch.object(server.improve, "index", return_value=[]), \
-             patch.object(server.l3, "turn", side_effect=disposition):
-            server.report_turn(PROJECT, task, self._nonclean_verdict())
-        live = S.load_task(PROJECT, task["slug"])
-        self.assertEqual(live["state"], "blocked")
-        self.assertIsNotNone(live.get("l3_handled"))
-
-    def test_new_block_clears_old_escalation_and_explicit_needs_user_only(self):
-        slug = "changed-blocker"
-        self._task(slug, state="running", handled=S.now())
-        with S.project_lock(PROJECT):
-            task = S.load_task(PROJECT, slug); task["needs_user"] = {"reason": "old", "asked": S.now()}; S.save_task(PROJECT, task)
-        T.block(PROJECT, slug, "new engine failure")
-        live = S.load_task(PROJECT, slug)
-        self.assertIsNone(live.get("l3_handled")); self.assertIsNone(live.get("needs_user"))
-        self.assertNotIn(slug, [row["slug"] for row in T.decisions(PROJECT)])
-        T.needs_user(PROJECT, slug, "Choose whether to grant the new permission")
-        self.assertIn(slug, [row["slug"] for row in T.decisions(PROJECT)])
-        T.resume(PROJECT, slug)
-        self.assertNotIn(slug, [row["slug"] for row in T.decisions(PROJECT)])
-        T.block(PROJECT, slug, "test cleanup"); T.reject(PROJECT, slug, "test cleanup")
-
-
-    def test_verifier_clean_blocked_report_is_atomically_promoted(self):
-        project, slug = "stranded-clean", "clean-blocked"
+    def test_verifier_clean_blocked_report_becomes_closable(self):
+        project = "altitude-clean"
+        slug = "clean-blocked"
         verified = self.verified()
         self.save_blocked(project, slug, json.dumps(self.clean_report()), verified)
         calls = []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *args: calls.append((key, args[1]["state"])) or True):
+        orig = server.spawn
+        server.spawn = lambda key, fn, *a: calls.append((key, fn.__name__, a[1]["state"])) or True
+        try:
             server.resume_stranded_reports(project)
+        finally:
+            server.spawn = orig
         promoted = S.load_task(project, slug)
         self.assertEqual(promoted["state"], "reported")
         self.assertIsNone(promoted["blocked_reason"])
-        self.assertEqual(calls, [(f"finished:{project}:{slug}", "reported")])
+        self.assertEqual(calls, [(f"finished:{project}:{slug}", "report_turn", "reported")])
         self.assertEqual(T.done(project, slug, digest="closed")["state"], "done")
 
     def test_report_stamps_the_current_attempt(self):
-        project, slug = "stranded-stamp", "stamp"
+        project, slug = "altitude-stamp", "stamp"
         S.task_dir(project, slug).mkdir(parents=True, exist_ok=True)
         S.save_task(project, {"slug": slug, "title": slug, "class": "S", "state": "running", "created": S.now(),
                               "updated": S.now(), "attempt": 3, "blocked_reason": None})
         reported = T.report(project, slug, {"verdict": "ok", "prs": []})
         self.assertEqual(reported["verified"]["attempt"], 3)
 
-    def test_blocked_report_requires_clean_current_attempt_and_running_provenance(self):
-        project = "stranded-exclusions"
-        cases = (
-            ("blocked-verdict", self.verified(verdict="blocked"), 1, "running", self.clean_report()),
-            ("blocked-field", self.verified(blocked="needs input"), 1, "running", self.clean_report("needs input")),
-            ("stale-attempt", self.verified(attempt=1), 2, "running", self.clean_report()),
-            ("l3-block", self.verified(attempt=1), 1, "reported", self.clean_report()),
-        )
-        for slug, verified, attempt, block_from, report in cases:
-            self.save_blocked(project, slug, json.dumps(report), verified,
-                              attempt=attempt, block_from=block_from)
+    def test_genuinely_blocked_reports_stay_blocked(self):
+        project = "altitude-genuine"
+        cases = (("blocked-verdict", "blocked", ""), ("blocked-field", "ok", "needs input"))
+        for slug, verdict, blocked in cases:
+            verified = self.verified(verdict=verdict, blocked=blocked)
+            self.save_blocked(project, slug, json.dumps(self.clean_report(blocked)), verified)
         calls = []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *args: calls.append(key) or True):
+        orig = server.spawn
+        server.spawn = lambda key, fn, *a: calls.append((key, fn.__name__, a[2]["verdict"])) or True
+        try:
             server.resume_stranded_reports(project)
-        self.assertEqual(calls, [])
-        for slug, *_ in cases:
+        finally:
+            server.spawn = orig
+        for slug, verdict, _ in cases:
             self.assertEqual(S.load_task(project, slug)["state"], "blocked")
+            self.assertIn((f"finished:{project}:{slug}", "report_turn", verdict), calls)
 
-    def test_invalid_or_unverified_blocked_report_stays_with_coordinator(self):
-        project = "stranded-invalid"
+    def test_invalid_and_unverified_reports_stay_blocked(self):
+        project = "altitude-invalid"
         clean = json.dumps(self.clean_report())
         cases = (("report-list", json.dumps([]), self.verified()),
                  ("report-empty", "", self.verified()),
@@ -224,35 +109,64 @@ class TestStrandedReports(unittest.TestCase):
         for slug, report_text, verified in cases:
             self.save_blocked(project, slug, report_text, verified)
         calls, logs = [], []
-        with patch.object(server, "spawn", side_effect=lambda key, fn, *args: calls.append(key) or True), \
-             patch.object(server, "log", side_effect=logs.append):
+        orig_spawn, orig_log = server.spawn, server.log
+        server.spawn = lambda key, fn, *a: calls.append((key, fn.__name__, a[2]["verdict"])) or True
+        server.log = logs.append
+        try:
             server.resume_stranded_reports(project)
-        self.assertEqual(calls, [])
-        for slug, *_ in cases:
+        finally:
+            server.spawn, server.log = orig_spawn, orig_log
+        for slug, _, verified in cases:
             self.assertEqual(S.load_task(project, slug)["state"], "blocked")
+            self.assertIn((f"finished:{project}:{slug}", "report_turn", (verified or {"verdict": "missing"})["verdict"]), calls)
         self.assertTrue(any("report-corrupt" in line and "cannot read stranded report" in line for line in logs))
 
-    def test_concurrent_promotion_change_skips_one_task_without_aborting_scan(self):
-        project = "stranded-race"
+    def test_stale_attempt_and_l3_block_stay_blocked(self):
+        project = "altitude-exclusions"
+        cases = (("stale-attempt", self.verified(attempt=1), 2, "running"),
+                 ("l3-block", self.verified(attempt=1), 1, "reported"))
+        for slug, verified, attempt, block_from in cases:
+            self.save_blocked(project, slug, json.dumps(self.clean_report()), verified,
+                              attempt=attempt, block_from=block_from)
+        calls = []
+        orig = server.spawn
+        server.spawn = lambda key, fn, *a: calls.append((key, fn.__name__, a[1]["state"])) or True
+        try:
+            server.resume_stranded_reports(project)
+        finally:
+            server.spawn = orig
+        for slug, _, _, _ in cases:
+            task = S.load_task(project, slug)
+            self.assertEqual(task["state"], "blocked")
+            self.assertNotEqual(task["state"], "done")
+            self.assertEqual(S.task_dir(project, slug).parent.name, "tasks")
+            self.assertIn((f"finished:{project}:{slug}", "report_turn", "blocked"), calls)
+
+    def test_concurrent_resume_skips_task_without_aborting_scan(self):
+        project = "altitude-race"
         for slug in ("race", "z-after"):
             self.save_blocked(project, slug, json.dumps(self.clean_report()), self.verified())
         calls = []
-        original_report = T.report
+        orig_report, orig_spawn = T.report, server.spawn
 
-        def raced_report(project_name, slug, verified, **expected):
+        def raced_report(project, slug, verified, **expected):
             if slug == "race":
-                T.resume(project_name, slug, actor="burak")
-            return original_report(project_name, slug, verified, **expected)
+                T.resume(project, slug, actor="burak")
+            return orig_report(project, slug, verified, **expected)
 
-        with patch.object(T, "report", side_effect=raced_report), \
-             patch.object(server, "spawn", side_effect=lambda key, fn, *args: calls.append((key, args[1]["state"])) or True):
+        T.report = raced_report
+        server.spawn = lambda key, fn, *a: calls.append((key, a[1]["state"])) or True
+        try:
             server.resume_stranded_reports(project)
+        finally:
+            T.report, server.spawn = orig_report, orig_spawn
         self.assertEqual(S.load_task(project, "race")["state"], "running")
         self.assertEqual(S.load_task(project, "z-after")["state"], "reported")
         self.assertEqual(calls, [(f"finished:{project}:z-after", "reported")])
 
     def test_done_rejects_before_writing_digest(self):
-        project, slug = "stranded-done", "illegal-done"
+        project = "altitude-done"
+        slug = "illegal-done"
         d = S.task_dir(project, slug)
         d.mkdir(parents=True, exist_ok=True)
         S.save_task(project, {"slug": slug, "title": slug, "class": "S", "state": "blocked", "created": S.now(),

@@ -14,7 +14,6 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -80,37 +79,27 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
                 gate.wait(10)                            # hold the thread open across the next tick
 
         orig = (config.load_projects, S.list_tasks, engines.usage_hold, dispatch.poll, dispatch.resume_due,
-                dispatch.resume_recoverable, server.log, server.drain_hook_faults, server.resume_stranded_reports,
-                server.resume_stranded_blockers, server.dispatch_waiting,
+                server.log, server.drain_hook_faults, server.resume_stranded_reports, server.dispatch_waiting,
                 server.weekly_audit, server.morning_digest, server.run_proposal_flow)
-        quota_refreshers = (server.quota_codex.refresh_if_due, server.quota_claude.refresh_if_due)
-
         config.load_projects = lambda: {PROJECT: {"name": PROJECT, "path": config.ROOT.as_posix(),
                                                   "stacks": ["python"]}}
         S.list_tasks = lambda project, **kw: [S.load_task(project, slug)]   # this test's task, not the module's
         engines.usage_hold = lambda: None
         dispatch.poll = lambda project: []
         dispatch.resume_due = lambda project: []
-        dispatch.resume_recoverable = lambda project: []
         server.log = lambda msg: logs.append(msg)
         server.drain_hook_faults = lambda: None
         server.resume_stranded_reports = lambda project: None
-        server.resume_stranded_blockers = lambda project: None
         server.dispatch_waiting = lambda project: None
         server.weekly_audit = lambda project: None
         server.morning_digest = lambda: None
         server.run_proposal_flow = flow
-        server.quota_codex.refresh_if_due = lambda: None
-        server.quota_claude.refresh_if_due = lambda: None
         try:
             server.tick()
         finally:
             (config.load_projects, S.list_tasks, engines.usage_hold, dispatch.poll, dispatch.resume_due,
-             dispatch.resume_recoverable, server.log, server.drain_hook_faults, server.resume_stranded_reports,
-             server.resume_stranded_blockers, server.dispatch_waiting,
+             server.log, server.drain_hook_faults, server.resume_stranded_reports, server.dispatch_waiting,
              server.weekly_audit, server.morning_digest, server.run_proposal_flow) = orig
-            (server.quota_codex.refresh_if_due,
-             server.quota_claude.refresh_if_due) = quota_refreshers
         self.assertFalse([m for m in logs if "tick failed" in m], f"the tick itself must not fault: {logs}")
         return logs
 
@@ -130,18 +119,6 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
         t = S.load_task(PROJECT, slug)
         self.assertEqual(t["proposal_turn"]["pid"], os.getpid(), "the record of a live turn must be left alone")
         self.assertIsNotNone(t["proposal_started"], "the flow is still claimed by the turn that is running")
-
-
-    def test_live_codex_turn_older_than_old_nine_hundred_second_limit_is_still_owned(self):
-        age = 960
-        self.assertLess(age, config.L3_TURN_TIMEOUT, "configured claim must cover the 1200-second Codex L3 turn")
-        slug = self._task("live-codex-after-old-limit", {"pid": os.getpid(), "started": ago(age)})
-        calls: list = []
-
-        self._tick(slug, calls)
-
-        self.assertEqual(calls, [], "a legitimate live Codex turn must not be duplicated after restart")
-        self.assertIsNotNone(S.load_task(PROJECT, slug).get("proposal_turn"))
 
     def test_a_dead_turn_pid_resumes_the_flow_exactly_once(self):
         slug = self._task("dead-turn", {"pid": reaped_pid(), "started": ago(60)})
@@ -183,96 +160,6 @@ class TestRestartDoesNotDuplicateTheTurn(unittest.TestCase):
             gate.set()
             self._join(slug)
         self.assertEqual(calls, [slug])
-
-
-    def test_tick_recovers_sized_s_left_requested_by_a_crash(self):
-        slug = "crash-after-size-s"
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        S.save_task(PROJECT, {"slug": slug, "title": slug, "class": "S", "state": "requested",
-                              "created": ago(60), "updated": ago(60), "decision": None})
-        calls = []
-
-        self._tick(slug, calls)
-        self.assertEqual(S.load_task(PROJECT, slug)["state"], "approved")
-        self.assertEqual(calls, [], "class-table recovery must not spend an L3 turn")
-        approvals = [event for event in S.read_events(PROJECT, slug)
-                     if event.get("kind") == "state" and event.get("to") == "approved"]
-        self.assertEqual(len(approvals), 1)
-
-        self._tick(slug, calls)
-        approvals = [event for event in S.read_events(PROJECT, slug)
-                     if event.get("kind") == "state" and event.get("to") == "approved"]
-        self.assertEqual(len(approvals), 1, "recovery is idempotent")
-
-    def test_tick_finishes_fyi_only_m_proposal_left_by_a_crash(self):
-        slug = "crash-after-fyi-proposal"
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        proposal = {"summary": "safe mechanical work", "decision_needed": False,
-                    "always_list_hits": [], "estimate": {"turns": 1}}
-        S.write_json(d / "proposal.json", proposal)
-        S.save_task(PROJECT, {"slug": slug, "title": slug, "class": "M", "state": "proposed",
-                              "created": ago(60), "updated": ago(60), "decision": None,
-                              "hold_merge": None, "proposal_started": ago(30)})
-        calls = []
-
-        self._tick(slug, calls)
-        self.assertEqual(S.load_task(PROJECT, slug)["state"], "approved")
-        self.assertEqual(calls, [], "FYI disposition is deterministic and must not spend an L3 turn")
-
-
-    def test_tick_requeues_always_list_proposal_for_bounded_l3_reconciliation(self):
-        slug = "crash-after-always-list-proposal"
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        proposal = {"summary": "sensitive work", "decision_needed": False,
-                    "always_list_hits": ["production auth"], "estimate": {"turns": 1}}
-        S.write_json(d / "proposal.json", proposal)
-        S.save_task(PROJECT, {"slug": slug, "title": slug, "class": "M", "state": "proposed",
-                              "created": ago(60), "updated": ago(60), "decision": None,
-                              "hold_merge": None, "proposal_started": ago(30)})
-        calls = []
-
-        self._tick(slug, calls)
-        recovered = S.load_task(PROJECT, slug)
-        self.assertEqual(recovered["state"], "requested")
-        self.assertEqual(recovered.get("proposal_reconcile_failures"), 1)
-        self.assertTrue(recovered.get("proposal_reconcile_after"))
-        self.assertEqual(recovered.get("hold_merge"), "always-list: production auth")
-        self.assertEqual(calls, [], "the retry is rate-limited before L3 is pinged")
-
-
-    def test_tick_requeues_proposed_task_with_missing_proposal_evidence(self):
-        slug = "crash-with-missing-proposal"
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        S.save_task(PROJECT, {"slug": slug, "title": slug, "class": "M", "state": "proposed",
-                              "created": ago(60), "updated": ago(60), "decision": None})
-        calls = []
-
-        with mock.patch.object(server.improve, "system_fault") as fault:
-            self._tick(slug, calls)
-        recovered = S.load_task(PROJECT, slug)
-        self.assertEqual(recovered["state"], "requested")
-        self.assertEqual(recovered.get("proposal_reconcile_failures"), 1)
-        self.assertIn("decision_needed", recovered.get("proposal_reconcile_reason", ""))
-        fault.assert_called_once()
-        self.assertEqual(calls, [])
-
-    def test_tick_archives_corrupt_proposal_before_rebuilding(self):
-        slug = "crash-with-corrupt-proposal"
-        d = S.task_dir(PROJECT, slug); d.mkdir(parents=True, exist_ok=True)
-        (d / "proposal.json").write_text("{not-json")
-        S.save_task(PROJECT, {"slug": slug, "title": slug, "class": "M", "state": "proposed",
-                              "created": ago(60), "updated": ago(60), "decision": None})
-        calls = []
-
-        with mock.patch.object(server.improve, "system_fault") as fault:
-            self._tick(slug, calls)
-        recovered = S.load_task(PROJECT, slug)
-        self.assertEqual(recovered["state"], "requested")
-        self.assertEqual(recovered.get("proposal_reconcile_failures"), 1)
-        self.assertFalse((d / "proposal.json").exists())
-        self.assertTrue((d / "proposal-v1.json").exists(), "corrupt evidence is preserved, never defaulted")
-        fault.assert_called_once()
-        self.assertEqual(calls, [])
 
 
 class TestRotationIsPersistedBeforeTheTurn(unittest.TestCase):

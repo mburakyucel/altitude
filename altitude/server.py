@@ -1,21 +1,20 @@
 """altd — the Altitude server: web app + JSON API + timers. Stdlib http.server, the pocketbook's shape (decision 29)."""
 from __future__ import annotations
-import hashlib
 import json
 import mimetypes
 import os
-import secrets
+import ssl
 import ssl
 import subprocess
 import threading
 import time
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, mechanize, monitor, propose, quota_claude, quota_codex, refs, route, rules, state as S, status as task_status, tasks as T, verify
+from . import config, digest, dispatch, engines, git_policy, improve, intake, l3, mechanize, monitor, propose, quota_codex, refs, rules, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -74,21 +73,19 @@ def _pid_alive(pid) -> bool:
     return True
 
 
-def _turn_in_flight(project: str, task: dict) -> bool:
-    """Scheduling hint for a proposal flow; the project L3 lease is the authority.
+def _turn_in_flight(task: dict) -> bool:
+    """Is the L3 turn recorded on this task still running (possibly from a previous altd)?
 
-    The legacy task-local marker is retained for a one-release migration and old flow diagnostics.
-    It may delay a proposal thread, but can no longer authorize or duplicate an engine turn.
+    Bounded by the engine's own turn timeout: the kill timer lives in the process that started the turn, so
+    after a restart nothing else bounds it, and a recycled pid must never strand the task for good.
     """
-    if l3.busy(project):
-        return True
     rec = task.get("proposal_turn") or {}
     if not _pid_alive(rec.get("pid")):
         return False
     return dispatch._seconds_since(rec.get("started") or "") <= config.L3_TURN_TIMEOUT
 
 
-def _record_l3_turn(project: str, slug: str, pid: int | None, generation: str | None = None) -> None:
+def _record_l3_turn(project: str, slug: str, pid: int | None) -> None:
     """Note (pid) or clear (None) the proposal-ready L3 turn's subprocess in the task's status.json.
 
     Same idea as the session_id/agent_id dispatch records for L2 workers (ce856bb): the child survives altd,
@@ -96,11 +93,7 @@ def _record_l3_turn(project: str, slug: str, pid: int | None, generation: str | 
     """
     with S.project_lock(project):
         t = S.load_task(project, slug)
-        if pid:
-            t["proposal_turn"] = {"pid": int(pid), "pid_start": l3._proc_start_time(pid),
-                                  "generation": generation, "started": S.now()}
-        elif generation is None or (t.get("proposal_turn") or {}).get("generation") == generation:
-            t["proposal_turn"] = None
+        t["proposal_turn"] = {"pid": int(pid), "started": S.now()} if pid else None
         S.save_task(project, t)
 
 
@@ -191,53 +184,18 @@ def _skip_proposal_ready_turn(project: str, slug: str, task: dict, *, keep_fyi_p
     log(f"[{project}/{slug}] no longer requested (state={task['state']}) — skipping the proposal-ready L3 turn; proposal kept on disk")
 
 
-def _requeue_invalid_proposal(project: str, slug: str, p: dict) -> None:
-    """Bound and surface a proposal that reached `proposed` without its required card/disposition."""
-    fault = False
-    with S.project_lock(project):
-        current = S.load_task(project, slug)
-        if current.get("state") != "proposed" or current.get("decision"):
-            return
-        failures = int(current.get("proposal_reconcile_failures") or 0) + 1
-        delay = (60, 300, 900)[min(failures - 1, 2)]
-        current["proposal_reconcile_failures"] = failures
-        current["proposal_reconcile_after"] = (
-            datetime.now(timezone.utc) + timedelta(seconds=delay)).replace(microsecond=0).isoformat()
-        current["proposal_reconcile_reason"] = (
-            "proposal has always-list hits and requires an L3 disposition"
-            if p.get("always_list_hits")
-            else "proposal requires an L3 disposition: decision_needed is not explicitly false")
-        current["proposal_started"] = None
-        if failures >= 2 and not current.get("proposal_reconcile_faulted"):
-            current["proposal_reconcile_faulted"] = S.now()
-            fault = True
-        T._move(project, current, "requested", "altd-recovery",
-                reason=current["proposal_reconcile_reason"], retry_after=current["proposal_reconcile_after"],
-                failures=failures)
-    if fault:
-        improve.system_fault(
-            "proposal-reconcile",
-            f"{project}/{slug}: L3 twice left a proposal without its required decision/disposition",
-            project=project, task=slug)
-
-
 def _finish_proposal(project: str, slug: str, p: dict, task: dict) -> None:
     """Apply proposal-state policy after either a completed or skipped proposal-ready turn."""
     if task["state"] != "proposed":
         return
-    persisted = S.read_json(S.task_dir(project, slug) / "proposal.json", {}) or {}
-    if isinstance(persisted, dict):
-        p = persisted
     hits = p.get("always_list_hits")
     if hits and not task.get("hold_merge"):  # decision 48: always-list → Burak merges
         hits = hits if isinstance(hits, list) else [hits]
         T.set_hold_merge(project, slug, "always-list: " + ", ".join(str(h) for h in hits)[:160], actor="altd")
     # an FYI-only proposal (no question) is auto-approved by the class table (M, no always-list hits)
-    if not task.get("decision") and task["class"] in ("S", "M") and p.get("decision_needed") is False and not p.get("always_list_hits"):
+    if not task.get("decision") and task["class"] in ("S", "M") and not p.get("always_list_hits"):
         T.approve(project, slug, None, actor="burak", note="auto: FYI-class proposal (decision 13)")  # recorded as auto in event note
         T.fyi(project, slug, f"{slug} ({task['class']}): proposal needs no decision — dispatching. Summary: {p.get('summary', '')[:300]}")
-    elif not task.get("decision"):
-        _requeue_invalid_proposal(project, slug, p)
 
 
 def size_task(project: str, slug: str) -> None:
@@ -316,29 +274,11 @@ def run_proposal_flow(project: str, slug: str) -> None:
             task_at_turn = S.load_task(project, slug)
             return task_at_turn["state"] == "requested"
 
-        turn_generation = [None]
-
-        def proposal_engine_started(pid: int) -> None:
-            lease = S.read_json(l3.lease_path(project), {}) or {}
-            turn_generation[0] = lease.get("generation")
-            _record_l3_turn(project, slug, pid, turn_generation[0])
-
         try:
             res = l3.turn(project, header, trigger="proposal-ready",
-                          on_start=proposal_engine_started, precheck=still_requested,
-                          evidence={"proposal_slug": slug})
+                          on_start=lambda pid: _record_l3_turn(project, slug, pid), precheck=still_requested)
         finally:  # the turn is over — unless this altd died first, and then the record is exactly the point
-            _record_l3_turn(project, slug, None, turn_generation[0])
-        if res.get("busy"):
-            # Another project-level L3 turn owns the engine. Leave the proposal reusable and
-            # re-arm this flow; the next tick will retry after the durable lease clears.
-            with S.project_lock(project):
-                latest = S.load_task(project, slug)
-                if latest.get("state") == "requested":
-                    latest["proposal_started"] = None
-                    S.save_task(project, latest)
-            log(f"[{project}/{slug}] proposal-ready turn deferred behind active L3 {res.get('busy_trigger')}")
-            return
+            _record_l3_turn(project, slug, None)
         if res.get("skipped"):
             skipped_task = task_at_turn or S.load_task(project, slug)
             _skip_proposal_ready_turn(project, slug, skipped_task)
@@ -390,17 +330,10 @@ def on_l2_finished(project: str, item: dict) -> None:
         return
     if item.get("died"):
         a = item.get("agent") or {}
-        engine = dispatch.task_l2_engine(project, t)
-        if engine == "codex":
-            detail = item.get("error") or f"Codex wrapper {a.get('id', '')} exited"
-            recovery = ("Resume restarts the durable Codex session, or starts fresh from progress.md if no thread id "
-                        "was emitted")
-        else:
-            detail = f"`claude agents` state=failed (agent {a.get('id', '')})"
-            recovery = f"Resume re-attaches its transcript (agent {a.get('id', '')})"
-        improve.system_fault("l2-died", f"{engine} L2 worker ({t.get('dispatch_id')}) died without a report: "
-                             f"{detail}", project=project, task=slug)
-        T.block(project, slug, f"L2 session died before reporting (Altitude fault, not the L2 worker) — {recovery}")
+        improve.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
+                             f"`claude agents` state=failed", project=project, task=slug)
+        T.block(project, slug, f"L2 session died before reporting (Altitude fault, not the L2's) — Resume from the card "
+                               f"re-attaches its transcript (agent {a.get('id', '')})")
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)
@@ -412,138 +345,12 @@ def on_l2_finished(project: str, item: dict) -> None:
         return
     if v["verdict"] == "missing":
         T.block(project, slug, "L2 session ended without a report (report.json missing)")
-        return
     elif v["verdict"] == "blocked":
         T.report(project, slug, v)
         T.block(project, slug, (v.get("report") or {}).get("blocked") or "blocked (see report)")
-        return  # blocked reports belong to the evidence coordinator, never a second report-landed turn
     else:
         T.report(project, slug, v)
     report_turn(project, t, v)
-
-
-def _report_evidence(project: str, slug: str, verdict: dict) -> str:
-    """Stable evidence key: report bytes plus the verifier result that prompted judgement."""
-    report = S.task_dir(project, slug) / "report.json"
-    try:
-        report_sha = hashlib.sha256(report.read_bytes()).hexdigest()
-    except OSError:
-        report_sha = "missing"
-    raw = json.dumps({"report": report_sha, "verified": verdict}, sort_keys=True,
-                     separators=(",", ":"), default=str)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _report_claim_live(claim: dict, lease: dict) -> bool:
-    if not claim.get("generation"):
-        return False
-    age = dispatch._seconds_since(claim.get("started") or "")
-    owner_live = (age <= config.L3_TURN_TIMEOUT
-                  and l3.process_live(claim.get("owner_pid"), claim.get("owner_pid_start")))
-    lease_matches = (lease.get("evidence") or {}).get("report_generation") == claim.get("generation")
-    return owner_live or lease_matches
-
-
-def _report_fail(rec: dict, detail: str) -> bool:
-    """Charge one unchanged-evidence failure; return True when its one fault is due."""
-    attempts = int(rec.get("attempts") or 0) + 1
-    rec["attempts"] = attempts
-    rec["last_error"] = detail[:500]
-    rec["last_attempt"] = S.now()
-    delay = config.REPORT_RETRY_SECONDS[min(attempts - 1, len(config.REPORT_RETRY_SECONDS) - 1)]
-    rec["retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=delay)).replace(microsecond=0).isoformat()
-    rec["claim"] = None
-    if attempts >= config.REPORT_MAX_FAILURES and not rec.get("faulted"):
-        rec["faulted"] = S.now()
-        return True
-    return False
-
-
-def _report_ready(project: str, task: dict, verdict: dict) -> bool:
-    """Read-only scheduling check; ``report_turn`` owns the atomic claim."""
-    fingerprint = _report_evidence(project, task["slug"], verdict)
-    rec = task.get("report_recovery") or {}
-    if rec.get("fingerprint") != fingerprint:
-        return True
-    lease = l3.lease_info(project)
-    if _report_claim_live(rec.get("claim") or {}, lease):
-        return False
-    if int(rec.get("attempts") or 0) >= config.REPORT_MAX_FAILURES:
-        return False
-    return not rec.get("retry_after") or str(rec["retry_after"]) <= S.now()
-
-
-def _claim_report_turn(project: str, slug: str, verdict: dict) -> tuple[str, str] | None:
-    """Claim one evidence generation, settling a dead prior claim before any retry."""
-    fingerprint = _report_evidence(project, slug, verdict)
-    lease = l3.lease_info(project)
-    fault = False
-    claimed = None
-    with S.project_lock(project):
-        live = S.load_task(project, slug)
-        # A newly blocked report normally belongs to the evidence coordinator, but an already
-        # queued report-landed caller is still valid. The generic L3 lease serializes the two;
-        # only `reported` tasks are programmatically requeued below.
-        if live.get("state") not in ("reported", "blocked") or live.get("l3_handled"):
-            return None
-        rec = live.get("report_recovery") or {}
-        if rec.get("fingerprint") != fingerprint:
-            rec = {"version": 1, "fingerprint": fingerprint, "attempts": 0,
-                   "verdict": verdict, "retry_after": None, "last_error": None,
-                   "faulted": None, "claim": None}
-        prior = rec.get("claim") or {}
-        if _report_claim_live(prior, lease):
-            return None
-        if prior.get("generation"):
-            fault = _report_fail(rec, "stale report-turn claim after daemon/engine exit")
-        if (int(rec.get("attempts") or 0) < config.REPORT_MAX_FAILURES
-                and (not rec.get("retry_after") or str(rec["retry_after"]) <= S.now())):
-            generation = secrets.token_hex(16)
-            rec["claim"] = {"generation": generation, "owner_pid": os.getpid(),
-                            "owner_pid_start": l3._proc_start_time(os.getpid()), "started": S.now()}
-            claimed = (generation, fingerprint)
-        live["report_recovery"] = rec
-        S.save_task(project, live)
-    if fault:
-        improve.system_fault("report-recovery",
-                             f"{project}/{slug}: L3 failed twice to disposition unchanged report evidence",
-                             project=project, task=slug)
-    return claimed
-
-
-def _settle_report_turn(project: str, slug: str, generation: str, fingerprint: str,
-                        before_state: str, result: dict) -> bool:
-    """Settle only this report generation. Return whether the task was dispositioned."""
-    fault = False
-    disposed = False
-    with S.project_lock(project):
-        live = S.load_task(project, slug)
-        rec = live.get("report_recovery") or {}
-        claim = rec.get("claim") or {}
-        if rec.get("fingerprint") != fingerprint or claim.get("generation") != generation:
-            return live.get("state") != before_state
-        if live.get("state") != before_state:
-            live["l3_handled"] = S.now()
-            live.pop("report_recovery", None)
-            disposed = True
-        elif result.get("busy") or result.get("limited"):
-            # Another generic turn or quota pressure is not a judgement failure.
-            rec["claim"] = None
-            rec["retry_after"] = (datetime.now(timezone.utc)
-                                  + timedelta(seconds=config.REPORT_RETRY_SECONDS[0])).replace(microsecond=0).isoformat()
-            rec["last_error"] = "L3 busy" if result.get("busy") else "L3 engine quota limited"
-            live["report_recovery"] = rec
-        else:
-            detail = (f"L3 error: {result.get('error')}" if result.get("error")
-                      else "L3 made no task disposition")
-            fault = _report_fail(rec, detail)
-            live["report_recovery"] = rec
-        S.save_task(project, live)
-    if fault:
-        improve.system_fault("report-recovery",
-                             f"{project}/{slug}: L3 failed twice to disposition unchanged report evidence",
-                             project=project, task=slug)
-    return disposed
 
 
 def report_turn(project: str, t: dict, v: dict) -> None:
@@ -553,8 +360,8 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     signals, no merge hold, only merged PRs, at least one well-shaped successful main run, a healthy or not-applicable
     deploy, only fixed or dismissed review findings, and no decisions, blocks, FYIs, follow-ups, or post-mortem work.
     Any malformed, corrupt, stale, or raced state fails closed to L3; corrupt JSON also raises a decision-36 system
-    fault. The durable evidence claim is settled only after a task-state disposition, so a killed, failed, or no-op
-    turn is retried by `resume_stranded_reports` instead of leaving the task waiting for nobody.
+    fault. `l3_handled` is stamped only when the turn returns, so a turn that altd's restart cut short is re-run by
+    `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
     slug = t["slug"]
     if (v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals")
@@ -564,14 +371,15 @@ def report_turn(project: str, t: dict, v: dict) -> None:
             with S.project_lock(project):
                 try:
                     live = S.load_task(project, slug)
-                except ValueError as exc:
-                    task_error = exc
-                    live, report = {}, None
+                except ValueError as e:
+                    task_error = e
+                    live = {}
+                    report = None
                 else:
                     try:
                         report = S.read_json(S.task_dir(project, slug) / "report.json", {})
-                    except ValueError as exc:
-                        report_error = exc
+                    except ValueError as e:
+                        report_error = e
                         report = None
         except (KeyError, OSError):
             live, report = {}, None
@@ -596,8 +404,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                     and all(isinstance(run, dict) and isinstance(run.get("id"), str) and run.get("id")
                             and run.get("conclusion") == "success" for run in runs)
                     and isinstance(review, list)
-                    and all(isinstance(item, dict) and item.get("disposition") in ("fixed", "dismissed")
-                            for item in review)
+                    and all(isinstance(item, dict) and item.get("disposition") in ("fixed", "dismissed") for item in review)
                     and live.get("state") == "reported" and not live_hold_merge):
                 pr_text = ", ".join("PR #{} ({})".format(pr.get("number"), pr.get("title") or "untitled") for pr in prs) or "No PRs recorded"
                 run_text = ", ".join("{}: {}".format(run.get("id"), run.get("conclusion")) for run in runs) or "none recorded"
@@ -615,22 +422,9 @@ def report_turn(project: str, t: dict, v: dict) -> None:
                           f"main runs: {run_text}; deploy: {deploy}; no decisions, blocked items, FYIs, follow-ups, or "
                           "post-mortem signals.", actor="altd")
                     with S.project_lock(project):
-                        t2 = S.load_task(project, slug); t2["l3_handled"] = S.now()
-                        t2.pop("report_recovery", None); S.save_task(project, t2)
+                        t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
                     log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                     return
-    claim_error = None
-    try:
-        claim = _claim_report_turn(project, slug, v)
-    except (KeyError, OSError, ValueError) as exc:
-        # A missing/corrupt live status already failed the clean-close gate. The generic project L3 lease
-        # still serializes this fault-path turn, but there is no valid task record in which to persist its
-        # evidence claim. Preserve the upstream fail-closed judgement path and make the durability loss visible.
-        claim_error = exc
-        claim = ("", "")
-    if claim is None:
-        return
-    report_generation, report_fingerprint = claim
     inc = improve.index()
     # [R-007] The report-landed substance belongs in the task record, not a turn-log reply.
     header = (f"Report landed for `{slug}` ({t['class']}): verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
@@ -643,30 +437,23 @@ def report_turn(project: str, t: dict, v: dict) -> None:
               "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
-    if claim_error is not None:
-        try:
-            l3.turn(project, header, trigger="report-landed")
-        finally:
-            log(f"[{project}/{slug}] L3 turn completed but l3_handled could not be stamped: {claim_error}")
+    res = l3.turn(project, header, trigger="report-landed")
+    if (res or {}).get("limited"):
+        log(f"[{project}/{slug}] report turn held: {res['error']}")  # not stamped: re-run when the window reopens
         return
-    before_state = S.load_task(project, slug).get("state")
     try:
-        res = l3.turn(project, header, trigger="report-landed",
-                      evidence={"report_slug": slug, "report_generation": report_generation,
-                                "report_fingerprint": report_fingerprint})
-    except Exception as exc:  # the retry record, not the thread table, must survive an engine/daemon failure
-        res = {"text": "", "error": f"{type(exc).__name__}: {exc}"}
-    disposed = _settle_report_turn(project, slug, report_generation, report_fingerprint,
-                                   before_state, res or {})
-    if not disposed:
-        detail = f"L3 error: {(res or {}).get('error')}" if (res or {}).get("error") else "L3 made no task disposition"
-        log(f"[{project}/{slug}] report turn not handled ({detail}); evidence-keyed retry policy retained it")
+        with S.project_lock(project):
+            t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+    except (KeyError, OSError, ValueError) as e:
+        log(f"[{project}/{slug}] L3 turn completed but l3_handled could not be stamped: {e}")
 
 
 def resume_stranded_reports(project: str) -> None:
-    """Retry reported work; atomically promote only a provenance-matched clean blocked report."""
+    """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    if engines.usage_hold():
+        return
     for t in S.list_tasks(project):
-        if t.get("state") not in ("reported", "blocked") or t.get("l3_handled"):
+        if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
         report_path = S.task_dir(project, t["slug"]) / "report.json"
         if not report_path.exists():
@@ -675,351 +462,26 @@ def resume_stranded_reports(project: str) -> None:
         with _bg_guard:
             if (_bg.get(key) or threading.Thread()).is_alive():
                 continue
-        v = t.get("verified") or (t.get("report_recovery") or {}).get("verdict") or {
-                                  "verdict": "missing", "problems": ["no verified report on the task"], "signals": [],
+        v = t.get("verified") or {"verdict": "missing", "problems": ["no verified report on the task"], "signals": [],
                                   "spend": {}, "prs": t.get("prs", []), "report": {}}
-        if t.get("state") == "blocked":
-            try:
-                report = S.read_json(report_path)
-            except (OSError, ValueError) as exc:
-                log(f"[{project}/{t['slug']}] cannot read stranded report: {exc}")
-                continue
-            last_block = next((event for event in reversed(S.read_events(project, t["slug"]))
-                               if event.get("kind") == "state" and event.get("to") == "blocked"), None)
-            if not (v.get("verdict") == "ok" and isinstance(report, dict) and not report.get("blocked")
-                    and "attempt" in v and v.get("attempt") == t.get("attempt")
-                    and last_block and last_block.get("frm") == "running"):
-                continue
+        try:
+            report = S.read_json(report_path)
+        except (OSError, ValueError) as e:
+            log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
+            report = None
+        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
+                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
+        if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
+                and not report.get("blocked") and "attempt" in v and v.get("attempt") == t.get("attempt")
+                and last_block and last_block.get("frm") == "running"):
             try:
                 t = T.report(project, t["slug"], v, expected_state="blocked",
                              expected_attempt=t.get("attempt"), expected_block_from="running")
-            except (T.TransitionError, KeyError) as exc:
-                log(f"[{project}/{t['slug']}] stranded report promotion skipped after a concurrent change: {exc}")
+            except (T.TransitionError, KeyError) as e:
+                log(f"[{project}/{t['slug']}] stranded report promotion skipped after a concurrent change: {e}")
                 continue
-        if not _report_ready(project, t, v):
-            continue
         log(f"[{project}/{t['slug']}] report turn resumed (previous run did not finish)")
         spawn(key, report_turn, project, t, v)
-
-
-def _blocked_recovery_path(project: str) -> Path:
-    return config.project_dir(project) / "blocked-recovery.json"
-
-
-def _blocked_record(project: str) -> dict:
-    return S.read_json(_blocked_recovery_path(project), {}) or {"version": 1, "tasks": {}}
-
-
-def _blocked_input_signature(project: str, tasks: list[dict]) -> str:
-    local = []
-    for task in tasks:
-        report = S.task_dir(project, task["slug"]) / "report.json"
-        try:
-            report_signal = [report.stat().st_mtime_ns, report.stat().st_size,
-                             hashlib.sha256(report.read_bytes()).hexdigest()]
-        except OSError:
-            report_signal = None
-        local.append({key: task.get(key) for key in ("slug", "state", "blocked_reason", "attempt", "dispatch_id",
-                                                      "session_id", "agent_id", "hold_merge", "worktree", "branch")})
-        local[-1]["envelope"] = task.get("envelope")
-        local[-1]["report"] = report_signal
-    running = []
-    for task in S.list_tasks(project):
-        if task.get("state") == "running":
-            try:
-                paths = dispatch.task_paths(project, task)
-            except Exception as exc:  # input signal is fault-tolerant; full status records the error
-                paths = [f"error:{type(exc).__name__}"]
-            running.append([task["slug"], sorted(paths)])
-    raw = json.dumps({"blocked": local, "running": sorted(running)}, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _blocked_evidence(raw: dict) -> dict:
-    def selected(source, names):
-        source = source if isinstance(source, dict) else {}
-        return {name: source.get(name) for name in names}
-    prs = []
-    for pr in raw.get("prs") or []:
-        checks = selected(pr.get("checks"), ("total", "passed", "failed", "pending"))
-        checks["failing"] = sorted((pr.get("checks") or {}).get("failing") or [])
-        prs.append({**selected(pr, ("number", "state", "merged", "head_sha", "merge_sha")), "checks": checks})
-    runs = []
-    for run in ((raw.get("l1_runs") or {}).get("runs") or []):
-        runs.append(selected(run, ("name", "role", "engine", "done", "stale", "pr")))
-    return {
-        "v": 2,
-        "gate": raw.get("gate"),
-        "repository": selected(raw.get("repository"), ("branch", "dirty", "head", "origin_sha", "ahead", "behind", "determinate", "error")),
-        "task": selected(raw, ("blocked_reason", "attempt", "dispatch_id", "session_id", "agent_id",
-                               "hold_merge", "worktree", "branch")),
-        "wip_hold": raw.get("wip_hold"),
-        "report": selected(raw.get("report_json"), ("exists", "sha256")),
-        "envelope": selected(raw.get("envelope"), ("l1_in_flight", "subagent_launches", "max_turns", "verification")),
-        "envelope_file": selected(raw.get("envelope_file"), ("l1_in_flight", "subagent_launches", "max_turns", "verification")),
-        "counts": selected(raw.get("counts"), ("subagent_launches", "edits")),
-        "l1": {"in_flight": (raw.get("l1_runs") or {}).get("in_flight"),
-               "runs": sorted(runs, key=lambda row: json.dumps(row, sort_keys=True, default=str))},
-        "prs": sorted(prs, key=lambda pr: int(pr.get("number") or 0)),
-        "main_run": selected(raw.get("main_run"), ("id", "head_sha", "status", "conclusion")),
-        "error_sources": sorted({str(error).split(":", 1)[0] for error in (raw.get("errors") or [])}),
-    }
-
-
-def _blocked_fingerprint(evidence: dict) -> str:
-    raw = json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _blocked_batch_precheck(project: str, batch_id: str, items: list[dict]) -> bool:
-    record = _blocked_record(project)
-    if (record.get("batch") or {}).get("id") != batch_id:
-        return False
-    for item in items:
-        try:
-            live = S.load_task(project, item["slug"])
-        except KeyError:
-            return False
-        if (live.get("state") != "blocked" or live.get("needs_user")
-                or str(live.get("blocked_reason") or "") != item["blocked_reason"]
-                or live.get("dispatch_id") != item["dispatch_id"]):
-            return False
-    return True
-
-
-def _blocked_item_disposed(project: str, batch_id: str, item: dict, batch_started: str) -> bool:
-    """Whether durable task/event state proves this exact recovery item was dispositioned.
-
-    The same predicate settles both a normally returning turn and an orphaned batch found after restart:
-    an ack written before altd died must not be charged as a no-op merely because its caller never returned.
-    """
-    try:
-        live = S.load_task(project, item["slug"])
-    except KeyError:
-        return True
-    explicit = str((live.get("needs_user") or {}).get("asked") or "") >= batch_started
-    acknowledged = False
-    if live.get("state") == "blocked":
-        acknowledged = any(
-            ev.get("kind") == "blocked-ack" and ev.get("by") == "l3"
-            and ev.get("recovery_batch") == batch_id
-            and ev.get("blocked_reason") == item["blocked_reason"]
-            and ev.get("dispatch_id") == item["dispatch_id"]
-            for ev in reversed(S.read_events(project, item["slug"]))
-        )
-    return live.get("state") != "blocked" or explicit or acknowledged
-
-
-def _blocked_fail(entry: dict, fingerprint: str, error: str) -> bool:
-    """Record one failure for this evidence. Return True only when a new system fault is due."""
-    if entry.get("fingerprint") != fingerprint:
-        return False
-    failures = int(entry.get("failures") or 0) + 1
-    entry["failures"] = failures
-    entry["last_error"] = error[:500]
-    delay = config.BLOCKED_RETRY_SECONDS[min(failures - 1, len(config.BLOCKED_RETRY_SECONDS) - 1)]
-    entry["retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
-    if failures >= config.BLOCKED_MAX_FAILURES and not entry.get("faulted"):
-        entry["faulted"] = S.now()
-        return True
-    return False
-
-
-def reconcile_blockers(project: str) -> None:
-    """Programmatically scan blocked evidence, then send one bounded changed-evidence batch to L3."""
-    snapshots = [t for t in S.list_tasks(project) if t.get("state") == "blocked" and not t.get("resume_after")]
-    signature = _blocked_input_signature(project, snapshots)
-    path = _blocked_recovery_path(project)
-    now = S.now()
-    stale_faults = []
-
-    with S.project_lock(project):
-        record = _blocked_record(project)
-        record.setdefault("version", 1); record.setdefault("tasks", {})
-        record_dirty = False
-        batch = record.get("batch") or {}
-        if batch:
-            age = dispatch._seconds_since(batch.get("started") or "")
-            if age <= config.BLOCKED_CLAIM_TIMEOUT and (_pid_alive(batch.get("owner_pid")) or _pid_alive(batch.get("engine_pid"))):
-                return
-            for item in batch.get("items") or []:
-                entry = record["tasks"].get(item["slug"]) or {}
-                if (_blocked_item_disposed(project, batch.get("id") or "", item, batch.get("started") or "")
-                        and entry.get("fingerprint") == item["fingerprint"]):
-                    entry["handled_fingerprint"] = item["fingerprint"]
-                    entry["failures"] = 0; entry["retry_after"] = None; entry["last_error"] = None
-                elif _blocked_fail(entry, item["fingerprint"],
-                                   "stale blocked-recovery claim after daemon/engine exit"):
-                    stale_faults.append(item["slug"])
-            record["batch"] = None
-            record_dirty = True
-        scan = record.get("scan") or {}
-        if scan.get("token") and not scan.get("completed"):
-            age = dispatch._seconds_since(scan.get("started") or "")
-            if age < config.BLOCKED_SCAN_CLAIM_TIMEOUT and _pid_alive(scan.get("owner_pid")):
-                if record_dirty:
-                    S.write_json(path, record)
-                return
-            scan = {"token": None, "owner_pid": None, "started": None, "completed": None,
-                    "input_signature": None, "last_error": "stale/incomplete scan claim cleared"}
-            record["scan"] = scan
-            record_dirty = True
-        scan_age = dispatch._seconds_since(scan.get("completed") or "")
-        scan_due = scan.get("input_signature") != signature or scan_age >= config.BLOCKED_SCAN_SECONDS
-        if scan_due:
-            token = f"{os.getpid()}:{datetime.now(timezone.utc).timestamp()}"
-            record["scan"] = {"token": token, "owner_pid": os.getpid(), "started": now,
-                              "completed": None, "input_signature": signature}
-            S.write_json(path, record)
-        else:
-            token = None
-            if record_dirty:
-                S.write_json(path, record)
-
-    for slug in stale_faults:
-        improve.system_fault("blocked-recovery", f"{project}/{slug}: two stale L3 recovery claims for unchanged evidence",
-                             project=project, task=slug)
-
-    if token:
-        try:
-            scanned = {}
-            for snapshot in snapshots:
-                if snapshot.get("needs_user"):
-                    continue
-                raw = task_status.status(project, snapshot["slug"])
-                evidence = _blocked_evidence(raw)
-                scanned[snapshot["slug"]] = {"fingerprint": _blocked_fingerprint(evidence), "evidence": evidence,
-                                              "created": snapshot.get("created") or ""}
-        except Exception as exc:  # a failed scan is closed and retried on schedule, never left claimed
-            with S.project_lock(project):
-                record = _blocked_record(project)
-                if (record.get("scan") or {}).get("token") == token:
-                    record["scan"] = {"token": None, "owner_pid": None, "started": None, "completed": S.now(),
-                                      "input_signature": signature,
-                                      "last_error": f"{type(exc).__name__}: {exc}"[:500]}
-                    S.write_json(path, record)
-            return
-        with S.project_lock(project):
-            record = _blocked_record(project)
-            if (record.get("scan") or {}).get("token") != token:
-                return
-            previous = record.setdefault("tasks", {})
-            merged = {}
-            for slug, fresh in scanned.items():
-                old = previous.get(slug) or {}
-                if old.get("fingerprint") == fresh["fingerprint"]:
-                    fresh.update({key: old.get(key) for key in ("handled_fingerprint", "failures", "retry_after",
-                                                                "last_error", "faulted") if old.get(key) is not None})
-                else:
-                    fresh.update({"failures": 0, "retry_after": None, "last_error": None, "faulted": None})
-                merged[slug] = fresh
-            record["tasks"] = merged
-            record["scan"] = {"token": None, "owner_pid": None, "started": None, "completed": S.now(),
-                              "input_signature": signature}
-            S.write_json(path, record)
-
-    with S.project_lock(project):
-        record = _blocked_record(project)
-        if record.get("batch"):
-            return
-        live_by_slug = {t["slug"]: t for t in S.list_tasks(project) if t.get("state") == "blocked"}
-        candidates = []
-        for slug, entry in record.get("tasks", {}).items():
-            task = live_by_slug.get(slug)
-            if not task or task.get("resume_after") or task.get("needs_user") or dispatch.recovery_pending(project, task):
-                continue
-            if entry.get("fingerprint") == entry.get("handled_fingerprint"):
-                continue
-            if int(entry.get("failures") or 0) >= config.BLOCKED_MAX_FAILURES:
-                continue
-            if entry.get("retry_after") and str(entry["retry_after"]) > now:
-                continue
-            candidates.append((0 if not task.get("l3_handled") else 1, entry.get("created") or "", slug, task, entry))
-        candidates.sort(key=lambda row: row[:3])
-        chosen = candidates[:config.BLOCKED_BATCH_LIMIT]
-        if not chosen:
-            return
-        batch_id = hashlib.sha256(f"{project}:{now}:{os.getpid()}".encode()).hexdigest()[:16]
-        items = [{"slug": slug, "fingerprint": entry["fingerprint"],
-                  "blocked_reason": str(task.get("blocked_reason") or ""), "dispatch_id": task.get("dispatch_id")}
-                 for _, _, slug, task, entry in chosen]
-        record["batch"] = {"id": batch_id, "owner_pid": os.getpid(), "engine_pid": None,
-                           "started": now, "items": items}
-        S.write_json(path, record)
-
-    def on_start(pid):
-        with S.project_lock(project):
-            record = _blocked_record(project)
-            if (record.get("batch") or {}).get("id") == batch_id:
-                record["batch"]["engine_pid"] = pid
-                S.write_json(path, record)
-
-    prompt_items = [{"slug": item["slug"], "status": record["tasks"][item["slug"]]["evidence"]} for item in items]
-    prompt = ("Altitude found blocked tasks whose programmatic lease/worker/report/PR/check/gate/repository evidence changed. "
-              "Process every item: run `alt task status <slug>`, then resume, finish/close, reject, or repair stale state. "
-              "A temporary operational prerequisite (lease, worker, sandbox repair, PR/check/main/repository state) must stay blocked: "
-              f"acknowledge this batch with `alt task block <slug> --recovery-batch {batch_id} "
-              "--reason \"the current concrete prerequisite\"`; never park it, "
-              "because blocking keeps it under automatic evidence watch. Never park from a reconciliation turn. Do not merely "
-              "restate the blocker without the command. Open/conflicting PRs are operational work, "
-              "but obey hold_merge and never merge a held PR. Only a genuine always-list or non-obvious executive choice may "
-              "reach Burak; mark it with `alt task needs-user <slug> --reason \"the concise decision needed\"`.\n\n"
-              + json.dumps(prompt_items, indent=2, sort_keys=True, default=str))
-    try:
-        res = l3.turn(project, prompt, trigger="reconcile", on_start=on_start,
-                      precheck=lambda: _blocked_batch_precheck(project, batch_id, items),
-                      evidence={"recovery_batch": batch_id,
-                                "blocked_fingerprints": [item["fingerprint"] for item in items]})
-    except Exception as exc:  # settle the durable claim immediately; do not wait 21 minutes on the live daemon PID
-        res = {"error": f"{type(exc).__name__}: {exc}", "text": ""}
-    busy = bool((res or {}).get("busy"))
-    skipped = bool((res or {}).get("skipped")) and not busy
-    limited = bool((res or {}).get("limited"))
-    engine_error = (res or {}).get("error")
-    faults = []
-    with S.project_lock(project):
-        record = _blocked_record(project)
-        if (record.get("batch") or {}).get("id") != batch_id:
-            return
-        for item in items:
-            entry = record.get("tasks", {}).get(item["slug"]) or {}
-            disposed = _blocked_item_disposed(project, batch_id, item, now)
-            if skipped:
-                pass
-            elif disposed:
-                entry["handled_fingerprint"] = item["fingerprint"]
-                entry["failures"] = 0; entry["retry_after"] = None; entry["last_error"] = None
-            elif limited or busy:
-                entry["retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=config.BLOCKED_RETRY_SECONDS[-1])).isoformat()
-                entry["last_error"] = "L3 busy" if busy else "L3 engine quota limited"
-            elif engine_error:
-                if _blocked_fail(entry, item["fingerprint"], f"L3 engine error: {engine_error}"):
-                    faults.append(item["slug"])
-            elif _blocked_fail(entry, item["fingerprint"], "L3 returned without changing task state or explicitly escalating it"):
-                faults.append(item["slug"])
-        record["batch"] = None
-        if skipped:  # local identity changed after the scan: rescan on the very next tick, not after claim timeout
-            record["scan"] = {"token": None, "owner_pid": None, "started": None, "completed": None,
-                              "input_signature": None, "last_error": "batch precheck changed"}
-        S.write_json(path, record)
-    for slug in faults:
-        improve.system_fault("blocked-recovery", f"{project}/{slug}: L3 failed twice to disposition unchanged blocked evidence",
-                             project=project, task=slug)
-
-
-def resume_stranded_blockers(project: str) -> None:
-    """Start one project sweep only when blocked work or durable recovery cleanup exists."""
-    relevant = any(task.get("state") == "blocked" and not task.get("resume_after")
-                   for task in S.list_tasks(project))
-    path = _blocked_recovery_path(project)
-    durable_cleanup = False
-    if path.exists():
-        record = _blocked_record(project)
-        scan = record.get("scan") or {}
-        durable_cleanup = bool(record.get("batch") or record.get("tasks")
-                               or (scan.get("token") and not scan.get("completed")))
-    if relevant or durable_cleanup:
-        spawn(f"blocked-sweep:{project}", reconcile_blockers, project)
 
 
 def dispatch_waiting(project: str) -> None:
@@ -1037,14 +499,6 @@ def dispatch_waiting(project: str) -> None:
             log(f"[{project}/{t['slug']}] dispatched {res['dispatch_id']} agent={res['agent'].get('id') if res.get('agent') else None}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}/{t['slug']}] dispatch failed: {e}")
-            current = S.load_task(project, t["slug"])
-            if current.get("state") == "approved" and current.get("pending_dispatch"):
-                # The launcher may have spawned before agent discovery or the
-                # lifecycle transition failed. Keep the exact durable claim
-                # approved, leased, and eligible for restart adoption.
-                S.append_event(project, t["slug"], "dispatch-awaiting-adoption",
-                               error=f"{type(e).__name__}: {e}"[:500])
-                continue
             T.block(project, t["slug"], f"dispatch failed: {e}"[:300])
     hp = config.project_dir(project) / "hold.json"
     if hp.exists():
@@ -1062,122 +516,31 @@ def drain_hook_faults() -> None:
         improve.system_fault("hook", ln[:400])
 
 
-DONE_CLEANUP_RETRY_SECONDS = 15 * 60
-
-
-def cleanup_done_task(project: str, task: dict) -> bool:
-    """Run one due done-cleanup attempt and durably record success or its retry claim."""
-    retry = task.get("cleanup_retry") or {}
-    try:
-        if retry.get("after") and datetime.fromisoformat(str(retry["after"])) > datetime.now(timezone.utc):
-            return False
-    except (TypeError, ValueError):
-        pass
-
-    notes = dispatch.cleanup_after_done(project, task)
-    complete = bool(getattr(notes, "complete", True))
-    pending = list(getattr(notes, "pending", []))
-    branches = list(getattr(notes, "branches", []))
-    retry_after = None
-    with S.project_lock(project):
-        live = S.load_task(project, task["slug"])
-        if live.get("state") != "done" or live.get("cleaned"):
-            return bool(live.get("cleaned"))
-        if complete:
-            live["cleaned"] = S.now()
-            live.pop("cleanup_retry", None)
-        else:
-            attempt = int((live.get("cleanup_retry") or {}).get("attempt") or 0) + 1
-            retry_after = (datetime.now(timezone.utc) + timedelta(seconds=DONE_CLEANUP_RETRY_SECONDS)).replace(
-                microsecond=0).isoformat()
-            live["cleanup_retry"] = {"after": retry_after, "attempt": attempt,
-                                     "pending": pending, "branches": branches, "last_attempt": S.now()}
-        S.save_task(project, live)
-    S.append_event(project, task["slug"], "cleanup", complete=complete, retry_after=retry_after,
-                   pending=pending, branches=branches, notes=list(notes))
-    if complete:
-        log(f"[{project}/{task['slug']}] cleanup complete: {list(notes)}")
-    else:
-        log(f"[{project}/{task['slug']}] cleanup deferred until {retry_after}: {pending}")
-    return complete
-
-
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
     except Exception as e:  # noqa: BLE001
         log(f"[quota-codex] refresh failed: {e}")
-    try:
-        quota_claude.refresh_if_due()
-    except Exception as e:  # noqa: BLE001
-        log(f"[quota-claude] refresh failed: {e}")
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
-            # Recover/fence an orphaned project-level turn before any workflow-specific
-            # claim inspects its own evidence. Codex loses its in-daemon broker on restart.
-            l3.lease_info(project)
-            for slug in T.migrate_operational_parks(project):
-                log(f"[{project}/{slug}] restored from a stale operational park")
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
             for slug in dispatch.resume_due(project):
                 log(f"[{project}/{slug}] resumed: the usage window reopened")
-            for slug in dispatch.resume_recoverable(project):
-                log(f"[{project}/{slug}] resumed: routine blocker cleared")
-            resume_stranded_blockers(project)
             for t in S.list_tasks(project):
-                if t["state"] == "requested" and t.get("class") == "S":
-                    # Crash recovery for the narrow window after set_class() persisted S but before
-                    # intake.size() could auto-approve it. This is class-table policy, not L3 inference.
-                    try:
-                        T.auto_approve(project, t["slug"], "recovered sized S task after interrupted intake (decision 13)")
-                    except T.TransitionError:
-                        if S.load_task(project, t["slug"]).get("state") == "requested":
-                            raise
-                    continue
-                if t["state"] == "proposed" and t.get("class") == "M" and not t.get("decision"):
-                    # Crash recovery for the window after an FYI-only proposal was persisted but before
-                    # run_proposal_flow() applied its deterministic class-table disposition.
-                    proposal_path = S.task_dir(project, t["slug"]) / "proposal.json"
-                    proposal = {}
-                    artifact_error = None
-                    if proposal_path.is_file():
-                        try:
-                            proposal = S.read_json(proposal_path)
-                            if not isinstance(proposal, dict):
-                                raise ValueError("proposal must be a JSON object")
-                        except (OSError, ValueError) as exc:
-                            artifact_error = f"corrupt proposal evidence archived: {type(exc).__name__}: {exc}"
-                            with S.project_lock(project):
-                                current = S.load_task(project, t["slug"])
-                                if current.get("state") == "proposed" and not current.get("decision"):
-                                    T.archive_proposal(S.task_dir(project, t["slug"]))
-                    else:
-                        artifact_error = "proposed task has no proposal.json evidence"
-                    if artifact_error:
-                        improve.system_fault("proposal-artifact", f"{project}/{t['slug']}: {artifact_error}",
-                                             project=project, task=t["slug"])
-                    try:
-                        _finish_proposal(project, t["slug"], proposal, S.load_task(project, t["slug"]))
-                    except T.TransitionError:
-                        if S.load_task(project, t["slug"]).get("state") == "proposed":
-                            raise
-                    continue
                 if t["state"] == "requested" and not t.get("class") and not t.get("size_error"):  # sizer is Codex (decision 56)
                     spawn(f"size:{project}:{t['slug']}", size_task, project, t["slug"])  # decision 53
                     continue
                 if t["state"] == "requested" and t["class"] in ("M", "L"):  # proposal is Codex, L3 turn falls to Codex when held (decision 56)
-                    if t.get("proposal_reconcile_after") and str(t["proposal_reconcile_after"]) > S.now():
-                        continue
                     started = t.get("proposal_started")
                     key = f"propose:{project}:{t['slug']}"
                     alive = (_bg.get(key) or threading.Thread()).is_alive()
                     # the L3 turn a previous altd started outlives it, so "no thread in this process" is not proof
                     # the flow is over: while its recorded pid is alive the turn is still in flight, and resuming
                     # would run a second one on the same task (incident I-011)
-                    if not alive and _turn_in_flight(project, t):
+                    if not alive and _turn_in_flight(t):
                         continue
                     has_proposal = (S.task_dir(project, t["slug"]) / "proposal.json").exists()
                     # a flow that is not running in this process died with the previous server: resume at once if the
@@ -1190,7 +553,11 @@ def tick() -> None:
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
-                    cleanup_done_task(project, t)
+                    notes = dispatch.cleanup_after_done(project, t)
+                    with S.project_lock(project):
+                        t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
+                    S.append_event(project, t["slug"], "cleanup", notes=notes)
+                    log(f"[{project}/{t['slug']}] cleanup: {notes}")
             try:
                 mechanize.run_due(project)
             except Exception as e:  # noqa: BLE001
@@ -1208,40 +575,20 @@ def weekly_audit(project: str) -> None:
     last = inf.get("last_audit")
     if last and time.time() - datetime.fromisoformat(last).timestamp() < 7 * 86400:
         return
-    if inf.get("audit_retry_after") and str(inf["audit_retry_after"]) > S.now():
+    if not inf.get("session_id"):
         return
-    if not (inf.get("session_id") or inf.get("codex_session_id")):
-        return
+    inf["last_audit"] = S.now()
+    l3.save_info(project, inf)
     data = improve.audit_input(project)
     # [R-007] The audit substance belongs in rule records and FYIs, not a turn-log reply.
-    prompt = ("Weekly rule audit. Input (rules with their incidents, recent incidents, cross-project promotion candidates):\n"
-              + json.dumps(data)[:12000] + "\n\nFor each probation/active rule: recurred? exercised? origin still true? Retire, tighten, or keep — "
-              "each retirement/tightening via `alt rule propose` (FYI-with-veto). Propose promotions only where two projects share a tag. "
-              "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
-              "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
-              "and whether anything waits on Burak.")
-    spawn(f"audit:{project}", _weekly_audit_turn, project, prompt,
-          hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest())
-
-
-def _weekly_audit_turn(project: str, prompt: str, evidence: str) -> None:
-    """Stamp the week only after a real turn; a durable busy result remains retryable."""
-    try:
-        res = l3.turn(project, prompt, trigger="audit", evidence={"audit_input": evidence})
-    except Exception:
-        inf = l3.info(project)
-        inf["audit_retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=300)).replace(microsecond=0).isoformat()
-        l3.save_info(project, inf)
-        raise
-    inf = l3.info(project)
-    if (res or {}).get("busy") or (res or {}).get("limited"):
-        inf["audit_retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=60)).replace(microsecond=0).isoformat()
-    elif (res or {}).get("error"):
-        inf["audit_retry_after"] = (datetime.now(timezone.utc) + timedelta(seconds=300)).replace(microsecond=0).isoformat()
-    else:
-        inf["last_audit"] = S.now()
-        inf.pop("audit_retry_after", None)
-    l3.save_info(project, inf)
+    spawn(f"audit:{project}", l3.turn, project,
+          "Weekly rule audit. Input (rules with their incidents, recent incidents, cross-project promotion candidates):\n"
+          + json.dumps(data)[:12000] + "\n\nFor each probation/active rule: recurred? exercised? origin still true? Retire, tighten, or keep — "
+          "each retirement/tightening via `alt rule propose` (FYI-with-veto). Propose promotions only where two projects share a tag. "
+          "Put ids, slugs, decision or rule numbers, file names, code, and spend figures in the task record — the card `--detail`, "
+          "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
+          "and whether anything waits on Burak.",
+          "audit")
 
 
 _last_digest_day = [None]
@@ -1409,11 +756,24 @@ class Handler(BaseHTTPRequestHandler):
             if api == "task" and len(parts) > 3:
                 return self._json(task_view(parts[2], parts[3]))
             if api == "monitor":
-                return self._json(monitor_view())
+                tool_shapes = {}
+                for project in config.load_projects():
+                    path = config.MONITOR_DIR / f"tool-shapes-{project}.json"
+                    if path.exists():
+                        try:
+                            histogram = S.read_json(path, {})
+                            if not isinstance(histogram, dict):
+                                raise TypeError(f"expected object in {path}")
+                            shapes = histogram.get("shapes", [])
+                            tool_shapes[project] = (shapes if isinstance(shapes, list) else [])[:10]
+                        except (ValueError, TypeError) as e:
+                            log(f"[{project}] warning: cannot display tool-shape histogram: {e}")
+                return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
+                                   "agents": engines.claude_agents(), "tool_shapes": tool_shapes})
             if api == "digest":
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:
-                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.public_info(parts[2])})
+                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
             if api == "ref" and len(parts) > 3:
                 try:
                     return self._json(refs.resolve(parts[2], unquote(parts[3])))
@@ -1460,10 +820,10 @@ class Handler(BaseHTTPRequestHandler):
                 if t["state"] == "blocked":
                     choice = ["Resume", "Park", "Reject"][int(opt)]
                     if choice == "Resume":
-                        queued = spawn(f"resume:{project}:{slug}", dispatch.resume_or_retry_blocked,
-                                       project, slug, o.get("note") or "continue")
-                        return self._json({"ok": True, "state": S.load_task(project, slug)["state"],
-                                           "resume_queued": queued})
+                        if t.get("session_id"):
+                            spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
+                        else:
+                            T.resume(project, slug, actor="burak"); T.approve  # noqa: B018
                     elif choice == "Park":
                         T.park(project, slug, o.get("note") or "parked by Burak", actor="burak")
                     else:
@@ -1514,20 +874,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
                 project, slug, text = o["project"], o["slug"], o["text"]
-                with S.project_lock(project):
-                    t = S.load_task(project, slug)
-                    if t.get("state") not in ("running", "blocked"):
-                        return self._json({"error": f"{slug}: cannot message L2 in {t.get('state')} state"}, 409)
-                    if not t.get("dispatch_id") or not t.get("worktree"):
-                        return self._json({"error": f"{slug}: no current L2 dispatch generation"}, 409)
-                    qa = S.task_dir(project, slug) / "qa.md"
-                    with open(qa, "a") as f:
-                        f.write(f"\n## Burak → L2 ({S.now()})\n{text}\n")
-                try:
-                    res = (dispatch.resume_blocked(project, slug, text) if t["state"] == "blocked"
-                           else dispatch.resume_session(project, slug, text))
-                except T.TransitionError as exc:
-                    return self._json({"error": str(exc)}, 409)
+                t = S.load_task(project, slug)
+                qa = S.task_dir(project, slug) / "qa.md"
+                with open(qa, "a") as f:
+                    f.write(f"\n## Burak → L2 ({S.now()})\n{text}\n")
+                res = dispatch.resume_blocked(project, slug, text) if t["state"] == "blocked" else dispatch.resume_session(project, slug, text)
                 return self._json({"ok": True, "stdout": res.get("stdout"), "stderr": res.get("stderr")})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
@@ -1564,31 +915,13 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
-def monitor_view() -> dict:
-    """Monitor payload with each engine seat named separately for routing observability."""
-    tool_shapes = {}
-    for project in config.load_projects():
-        path = config.MONITOR_DIR / f"tool-shapes-{project}.json"
-        if path.exists():
-            try:
-                histogram = S.read_json(path, {})
-                if not isinstance(histogram, dict):
-                    raise TypeError(f"expected object in {path}")
-                shapes = histogram.get("shapes", [])
-                tool_shapes[project] = (shapes if isinstance(shapes, list) else [])[:10]
-            except (ValueError, TypeError) as exc:
-                log(f"[{project}] warning: cannot display tool-shape histogram: {exc}")
-    return {"quota": monitor.quota(), "codex_quota": route.quota_codex(),
-            "sessions": monitor.sessions(), "agents": engines.claude_agents(), "tool_shapes": tool_shapes}
-
-
 def overview() -> dict:
     projects = config.discover_projects()
     for p in projects:
         if p["managed"]:
             ts = S.list_tasks(p["name"])
             p["counts"] = {s: sum(1 for t in ts if t["state"] == s) for s in S.STATES}
-            p["l3"] = l3.public_info(p["name"])
+            p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "fyis": digest.fyis(30), "wip": digest.wip(), "quota": monitor.quota(),
             "now": S.now()}
@@ -1604,7 +937,7 @@ def project_view(name: str) -> dict:
         tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "proposal", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "proposed": 3, "approved": 4, "requested": 5, "parked": 6}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
-    return {"name": name, "config": proj, "l3": l3.public_info(name), "busy": l3.busy(name), "tasks": tasks,
+    return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "archive": [{k: t.get(k) for k in ("slug", "class", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in improve.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),

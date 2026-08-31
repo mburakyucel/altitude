@@ -17,7 +17,6 @@ REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
     "approval_note",
     "branch",
-    "checkpoint_guidance",
     "class",
     "engine_line",
     "l1_in_flight",

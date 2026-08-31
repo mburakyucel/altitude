@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from altitude import config, quota_codex, route, server, state
+from altitude import config, quota_codex, route, state
 
 _route_quota_codex = route.quota_codex
 _default_primary = object()
@@ -116,8 +116,7 @@ class TestRead(unittest.TestCase):
 
 class TestRefresh(unittest.TestCase):
     def test_refresh_writes_the_router_file(self):
-        reading = {"known": True, "primary_used": 1.0,
-                   "read_at": datetime.now(timezone.utc).isoformat()}
+        reading = {"known": True, "primary_used": 1.0, "read_at": "2026-08-30T00:00:00+00:00"}
         with tempfile.TemporaryDirectory(prefix="altitude-codex-quota-") as tmp:
             with patch.object(config, "MONITOR_DIR", Path(tmp)):
                 with patch.object(quota_codex, "read", return_value=reading):
@@ -148,27 +147,6 @@ class TestRefresh(unittest.TestCase):
             quota_codex.refresh_if_due()
         self.assertEqual(calls, [True])
         quota_codex._last_refresh_at = None
-
-class TestMonitorPayload(unittest.TestCase):
-    def test_monitor_exposes_codex_weekly_routing_window_separately(self):
-        claude = {"known": True, "five_hour": 12, "seven_day": 74}
-        codex = {
-            "known": True,
-            "primary_used": 30,
-            "primary_window_minutes": 300,
-            "secondary_used": 10,
-            "secondary_window_minutes": 10080,
-        }
-        with patch.object(server.config, "load_projects", return_value={}), \
-             patch.object(server.monitor, "quota", return_value=claude), \
-             patch.object(server.monitor, "sessions", return_value=[]), \
-             patch.object(server.engines, "claude_agents", return_value=[]), \
-             patch.object(server.route, "quota_codex", return_value=codex):
-            payload = server.monitor_view()
-
-        self.assertEqual(payload["quota"], claude)
-        self.assertEqual(payload["codex_quota"], codex)
-        self.assertEqual(payload["codex_quota"]["secondary_window_minutes"], 10080)
 
 
 if __name__ == "__main__":

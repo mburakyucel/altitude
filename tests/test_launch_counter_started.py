@@ -393,8 +393,6 @@ class LauncherTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls._real_monitor_quota = monitor.quota
-        cls._real_route_quota_codex = route.quota_codex
         config.ensure_root()
         REPO.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=REPO, check=True)
@@ -403,11 +401,6 @@ class LauncherTests(unittest.TestCase):
         config.save_projects({"altitude": {"name": "altitude", "path": str(REPO), "stacks": ["python"]}})
         monitor.quota = lambda: {"known": False}
         route.quota_codex = lambda: {"known": False}
-
-    @classmethod
-    def tearDownClass(cls):
-        monitor.quota = cls._real_monitor_quota
-        route.quota_codex = cls._real_route_quota_codex
 
     def setUp(self):
         self.addCleanup(os.environ.pop, "ALTITUDE_SESSION_KEY", None)
