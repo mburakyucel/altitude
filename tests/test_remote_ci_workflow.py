@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "trusted-remote-tests.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "remote-tests.yml"
 
 
 class RemoteCIWorkflowTests(unittest.TestCase):
