@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import subprocess
 
@@ -123,6 +124,62 @@ def _worker_live(project: str, task: dict) -> bool:
             raise L3ActionError(f"cannot prove Codex L2 worker {worker_id} stopped: worker record is missing")
         return False
     return row.get("state") not in ("failed", "done", "stopped") and row.get("status") != "exited"
+
+
+def _resume_paths(project: str, task: dict, paths: object) -> tuple[list[str], list[str]]:
+    """Validate and persist an L3 lease for the exact blocked task generation."""
+    if not isinstance(paths, list):
+        raise L3ActionError("task_resume paths must be an array")
+    declared = []
+    for value in paths:
+        if not isinstance(value, str):
+            raise L3ActionError("task_resume paths must contain only strings")
+        path = value.strip().replace("\\", "/")
+        if (not path or path.startswith("/") or "\x00" in path
+                or any(part in ("", ".", "..") for part in path.split("/"))
+                or posixpath.normpath(path) != path):
+            raise L3ActionError(f"task_resume has invalid repo-relative path {value!r}")
+        declared.append(path)
+    if not declared:
+        raise L3ActionError("task_resume paths must contain a non-empty path")
+
+    declared = list(dict.fromkeys([*(str(path) for path in (task.get("paths") or [])), *declared]))
+    candidate = {**task, "paths": declared}
+    expanded = dispatch.task_paths(project, candidate)
+    if not expanded:
+        raise L3ActionError("task_resume paths do not declare a file lease")
+    with S.project_lock(project):
+        live = S.load_task(project, task["slug"])
+        for label, expected, actual in (
+            ("state", "blocked", live.get("state")),
+            ("dispatch", task.get("dispatch_id"), live.get("dispatch_id")),
+            ("session", task.get("session_id"), live.get("session_id")),
+            ("agent", task.get("agent_id"), live.get("agent_id")),
+        ):
+            if expected != actual:
+                raise L3ActionError(
+                    f"{task['slug']}: {label} changed before paths were persisted "
+                    f"({expected!r} → {actual!r})"
+                )
+        conflict = dispatch.hold_conflict(expanded, dispatch.leases(project, exclude=task["slug"]))
+        if conflict:
+            raise L3ActionError(f"{task['slug']}: {conflict}")
+        previous = list(live.get("paths") or [])
+        live["paths"] = declared
+        S.save_task(project, live)
+    return declared, previous
+
+
+def _rollback_resume_paths(project: str, task: dict, declared: list[str], previous: list[str]) -> None:
+    """Undo only our own lease write; never overwrite a newer task generation."""
+    with S.project_lock(project):
+        live = S.load_task(project, task["slug"])
+        if (live.get("state") == "blocked" and live.get("dispatch_id") == task.get("dispatch_id")
+                and live.get("session_id") == task.get("session_id")
+                and live.get("agent_id") == task.get("agent_id")
+                and live.get("paths") == declared):
+            live["paths"] = previous
+            S.save_task(project, live)
 
 
 def _issue_draft_path(project: str, key: str):
@@ -255,10 +312,19 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
         if task.get("state") != "blocked" or not task.get("session_id") or not task.get("agent_id"):
             raise L3ActionError(f"{slug}: task has no exact blocked L2 session to resume")
         answer = str(action.get("answer") or action.get("reason") or "Continue from the durable task state.")
-        result = dispatch.resume_blocked(project, slug, answer, prefix="L3: ",
-                                         expected_state="blocked", expected_dispatch_id=task.get("dispatch_id"),
-                                         expected_session_id=task.get("session_id"),
-                                         expected_agent_id=task.get("agent_id"))
+        paths = action.get("paths") or []
+        persisted = _resume_paths(project, task, paths) if paths else None
+        try:
+            result = dispatch.resume_blocked(project, slug, answer, prefix="L3: ",
+                                             expected_state="blocked",
+                                             expected_dispatch_id=task.get("dispatch_id"),
+                                             expected_session_id=task.get("session_id"),
+                                             expected_agent_id=task.get("agent_id"))
+        except Exception:
+            if persisted is not None:
+                declared_paths, previous_paths = persisted
+                _rollback_resume_paths(project, task, declared_paths, previous_paths)
+            raise
         return {"type": kind, "slug": slug, "deferred": bool(result.get("deferred"))}
     if kind == "task_fyi":
         T.fyi(project, _need(slug, "slug"), _need(action.get("text"), "text"), actor="l3")
