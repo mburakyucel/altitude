@@ -180,7 +180,7 @@ class TestDoneCleanupScope(CleanupHarness):
         by_path = {event["worktree"]: event for event in events}
         self.assertEqual(by_path[str(a_l2)]["action"], "removed")
         self.assertEqual(by_path[str(a_l2)]["reason"],
-                         "task-owned branch is merged into origin/main; L2 agent removed via claude rm")
+                         "task-owned branch is merged into origin/main; L2 worker removed")
         self.assertEqual(by_path[str(a_done)]["action"], "removed")
         self.assertEqual(by_path[str(a_flight)]["action"], "deferred")
         self.assertEqual(by_path[str(a_locked)]["reason"], "git worktree is locked")
@@ -284,8 +284,8 @@ class TestDoneCleanupScope(CleanupHarness):
 
         notes = self.cleanup(task)
 
-        self.assertTrue(any("live Claude session is using the worktree" in note for note in notes), notes)
-        self.assertEqual(self.cleanup_events(slug)[0]["reason"], "live Claude session is using the worktree")
+        self.assertTrue(any("live L2 worker is using the worktree" in note for note in notes), notes)
+        self.assertEqual(self.cleanup_events(slug)[0]["reason"], "live L2 worker is using the worktree")
         self.assertFalse(any(call[:3] == ("git", "merge-base", "--is-ancestor") for call in self.calls))
         self.assertNotIn(("claude_rm", "live-agent"), self.calls)
 
@@ -304,6 +304,20 @@ class TestDoneCleanupScope(CleanupHarness):
         self.fault.assert_called_once()
         self.assertEqual(self.fault.call_args.args[0], "cleanup-agents")
         dispatch.pull_after_done.assert_called_once_with(self.project, task)
+
+    def test_codex_cleanup_does_not_depend_on_claude_agent_enumeration(self):
+        slug = "codex-cleanup-with-claude-down"
+        l2 = self.worktree(slug)
+        task = self.make_task(slug, archive=True, worktree=str(l2), l2_engine="codex")
+        self.porcelain = self.row(l2, f"worktree-{slug}")
+        self.agents_error = RuntimeError("claude agents down")
+
+        notes = self.cleanup(task)
+
+        self.assertNotIn(("claude_agents",), self.calls)
+        self.assertIn(("git", "worktree", "remove", "--force", str(l2)), self.calls)
+        self.assertTrue(any(f"removed merged worktree {l2.name}" in note for note in notes), notes)
+        self.fault.assert_not_called()
 
     def test_fetch_failure_fails_closed_records_a_fault_and_still_pulls(self):
         slug = "fetch-failure"
@@ -351,11 +365,11 @@ class TestDoneCleanupScope(CleanupHarness):
 
         notes = self.cleanup(task)
 
-        self.assertTrue(any("claude rm failed: rm command failed" in note for note in notes), notes)
+        self.assertTrue(any("claude worker cleanup failed: rm command failed" in note for note in notes), notes)
         self.assertFalse(any(call[:4] == ("git", "worktree", "remove", "--force") for call in self.calls))
         self.assertEqual(self.cleanup_events(slug)[0]["action"], "skipped")
         self.fault.assert_called_once()
-        self.assertEqual(self.fault.call_args.args[0], "cleanup-claude-rm")
+        self.assertEqual(self.fault.call_args.args[0], "cleanup-worker")
 
     def test_post_claude_git_deregistration_failure_is_a_faulted_skip(self):
         slug = "deregister-after-claude"

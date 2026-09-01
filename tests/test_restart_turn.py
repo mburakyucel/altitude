@@ -16,7 +16,7 @@ PROJECT = "restartdup"
 def register() -> None:
     config.ensure_root()
     projects = config.load_projects()
-    projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix()}
+    projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "l3_engine": "claude"}
     config.save_projects(projects)
 
 

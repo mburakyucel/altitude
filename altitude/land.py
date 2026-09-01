@@ -28,7 +28,6 @@ from . import config, dispatch, git_policy, state as S
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
-TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>"
 UNDECLARED = "(undeclared — all changes staged)"
 EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
 #: `_ensure_pr(pr=...)` default: no lookup has happened yet. `None` means the caller already looked and the
@@ -82,27 +81,28 @@ def _resolve(branch: str, project: str | None) -> tuple[str | None, str | None, 
     return project, slug, task
 
 
-def _require_current_publisher(project: str, slug: str, task: dict) -> None:
-    """Fence automated landing to the exact currently-running L2 generation.
+def _require_current_publisher(project: str, slug: str, task: dict, authority: dict | None = None) -> None:
+    """Fence automated landing to the exact current L2 attempt.
 
     A hand-run command has no actor (or explicitly names Burak). Every automated
     caller must be the L2 that owns the task now: L1s and control-plane actors do
-    not publish, and a replaced L2's inherited environment cannot publish after
-    its generation token rotates.
+    not publish. Physical worker replacement first proves the old worker stopped;
+    the capability token remains stable only within this dispatch attempt.
     """
-    actor = os.environ.get("ALTITUDE_ACTOR")
+    actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     if actor is None or actor == "burak":
         return
     if actor != "l2":
         raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or Burak may land")
     if task.get("state") != "running":
         raise LandError(f"current L2 cannot land {project}/{slug}: task is not running")
-    dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
+    dispatch_id = authority.get("dispatch_id") if authority is not None else os.environ.get("ALTITUDE_DISPATCH_ID")
     if not dispatch_id or task.get("dispatch_id") != dispatch_id:
         raise LandError(f"current L2 cannot land {project}/{slug}: dispatch ownership changed")
-    l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+    l2_token = (authority.get("l2_token") if authority is not None
+                else os.environ.get("ALTITUDE_L2_TOKEN") or os.environ.get("ALTITUDE_L2_CAPABILITY"))
     if not l2_token or task.get("l2_token") != l2_token:
-        raise LandError(f"current L2 cannot land {project}/{slug}: session generation changed")
+        raise LandError(f"current L2 cannot land {project}/{slug}: ownership capability changed")
 
 
 def _changes(root: Path) -> list[tuple[str, list[str]]]:
@@ -129,10 +129,7 @@ def _changes(root: Path) -> list[tuple[str, list[str]]]:
 def _inside(path: str, lease: list[str]) -> bool:
     """A directory lease covers everything beneath it. Entries are
     repo-root-relative; a malformed absolute entry like `/src` is read as `src` rather than matching nothing."""
-    def norm(x: str) -> str:
-        return dispatch._norm(x).lstrip("/")
-    p = norm(path)
-    return any(p == l or p.startswith(l + "/") for l in map(norm, lease))
+    return dispatch.inside_lease(path, lease)
 
 
 def _fetch_remote_tip(root: Path, branch: str) -> str | None:
@@ -538,7 +535,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str) -> tuple[bool, 
 
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int = 600, paths: str | None = None, base: str = "main",
-         dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None) -> dict:
+         dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
+         authority: dict | None = None) -> dict:
     """Run the whole sequence from the current worktree; returns the JSON-ready result object."""
     if not message.strip():
         raise LandError("--message is empty")
@@ -580,7 +578,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     # This is deliberately before fetch, staging, or any GitHub call.  Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
-    _require_current_publisher(project, slug, task)
+    _require_current_publisher(project, slug, task, authority=authority)
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
@@ -657,7 +655,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         finally:
             Path(spec).unlink(missing_ok=True)
         if _git(root, "diff", "--cached", "--quiet").returncode != 0:
-            trailer = ([f"Altitude-Task: {project}/{slug}"] if project and slug else []) + [TRAILER]
+            trailer = [f"Altitude-Task: {project}/{slug}"] if project and slug else []
             _need(_git(root, "commit", "-m", message.rstrip("\n") + "\n\n" + "\n".join(trailer)), "git commit")
             commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
             staged = changed

@@ -26,8 +26,24 @@ import sys, json
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "RESULT: #42 — fake claude opened PR"}], "usage": {"input_tokens": 5, "output_tokens": 3}}}))
 print(json.dumps({"type": "result", "subtype": "success", "result": "RESULT: #42 — fake claude opened PR", "session_id": "fake-sid", "is_error": False}))
 ''')
-for f in ("codex", "claude"):
+(FAKE / "bwrap").write_text('''#!/bin/sh
+while [ "$1" != "/bin/sh" ]; do shift; done
+exec "$@"
+''')
+(FAKE / "systemd-run").write_text('''#!/bin/sh
+while [ "$1" != "--" ]; do shift; done
+shift
+exec "$@"
+''')
+(FAKE / "systemctl").write_text('''#!/bin/sh
+case " $* " in
+  *" show "*) printf '%s\n' 'LoadState=not-found' 'ActiveState=inactive' 'SubState=dead' 'ControlGroup=' ;;
+esac
+exit 0
+''')
+for f in ("codex", "claude", "bwrap", "systemd-run", "systemctl"):
     (FAKE / f).chmod((FAKE / f).stat().st_mode | stat.S_IEXEC)
+os.environ["PATH"] = str(FAKE) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")
 os.environ["CODEX_BIN"] = str(FAKE / "codex")
 os.environ["CLAUDE_BIN"] = str(FAKE / "claude")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -87,6 +103,7 @@ class TestL1Runs(unittest.TestCase):
         with S.project_lock("altitude"):
             t = S.load_task("altitude", slug)
             t.update({"worktree": str(worktree), "branch": f"worktree-{slug}", "state": "running",
+                      "paths": ["fixture.txt"],
                       "dispatch_id": f"{slug}-1", "session_id": f"session-{slug}",
                       "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}"})
             S.save_task("altitude", t)
@@ -102,6 +119,9 @@ class TestL1Runs(unittest.TestCase):
         self.assertEqual(rec["engine"], "codex"); self.assertIn("default policy", rec["why"])
         self.assertTrue(rec["branch"].startswith("l1/")); self.assertTrue(Path(rec["worktree"]).is_dir())
         self.assertNotEqual(Path(rec["worktree"]).resolve(), REPO.resolve(), "an implementer never works in the L2's checkout")
+        prompt = (l1.runs_dir("altitude", slug) / f"{rec['name']}.prompt.md").read_text()
+        self.assertIn("Your sublease is: ['fixture.txt']", prompt)
+        self.assertIn("Do not commit", prompt)
         done = _wait_done("altitude", slug, rec["name"])
         self.assertIsNone(done["result"]["error"]); self.assertIsNone(done["result"]["pr"])
         self.assertIn("fake codex finished build", done["result"]["summary"])
@@ -114,9 +134,19 @@ class TestL1Runs(unittest.TestCase):
     def test_run_engine_override_selects_claude_and_pr_is_parsed(self):
         slug, brief = self._task("l1-claude")
         rec = l1.start("altitude", slug, brief, engine="claude")
-        self.assertEqual(rec["engine"], "claude"); self.assertIn("command line", rec["why"])
+        self.assertEqual(rec["engine"], "claude"); self.assertIn("forced", rec["why"])
         done = _wait_done("altitude", slug, rec["name"])
         self.assertEqual(done["result"]["pr"], 42)
+
+    def test_no_available_engine_does_not_launch_or_fall_through_to_claude(self):
+        slug, brief = self._task("l1-engine-hold")
+        choice = {"engine": None, "why": "no engine available", "quota": {}}
+        with mock.patch.object(route, "pick_engine", return_value=choice), \
+             mock.patch.object(l1.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(T.TransitionError, "engine hold: no engine available"):
+                l1.start("altitude", slug, brief)
+        launch.assert_not_called()
+        self.assertEqual(l1.list_runs("altitude", slug), [])
 
     def test_reviewer_can_run_on_the_other_engine(self):
         slug, brief = self._task("l1-review")
@@ -132,7 +162,7 @@ class TestL1Runs(unittest.TestCase):
             "result": {"error": None, "pr": None, "summary": "synthetic completed author"},
         })
         rev = l1.start("altitude", slug, brief, role="reviewer")
-        self.assertEqual(rev["engine"], "claude", "author was codex → reviewer takes claude")
+        self.assertEqual(rev["engine"], "codex", "reviewer follows quota instead of forcing the scarcer seat")
         self.assertEqual(
             Path(rev["worktree"]).resolve(), (REPO / ".claude" / "worktrees" / slug).resolve(),
             "a reviewer reads in the L2 checkout, without another worktree",

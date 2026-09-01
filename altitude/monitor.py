@@ -21,7 +21,8 @@ def sessions() -> list[dict]:
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
             out.append({"kind": "l3", "project": name, "session_id": inf.get("session_id"), "context_percent": inf.get("context_percent"),
-                    "engine": "claude", "context_state": engines.context_state(inf.get("context_percent")),
+                    "engine": inf.get("engine_last") or "claude", "context_state": engines.context_state(
+                        inf.get("context_percent"), inf.get("engine_last") or "claude"),
                         "at": inf.get("last_turn"), "turns": inf.get("turns"), "rotate_next": inf.get("rotate_next")})
         for t in S.list_tasks(name):
             if t["state"] in ("running", "blocked", "reported"):
@@ -32,11 +33,19 @@ def sessions() -> list[dict]:
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 l1_dir = S.task_dir(name, t["slug"]) / "l1"
                 l1_runs = len(list(l1_dir.glob("*.json"))) if l1_dir.is_dir() else 0
+                engine = t.get("l2_engine") or "claude"
+                if engine == "codex":
+                    row = engines.codex_worker(t.get("agent_id"), job_root=S.task_dir(name, t["slug"]) / "l2-engine")
+                    usage = (row or {}).get("usage") or {}
+                    tokens = int(usage.get("input_tokens", 0) or 0)
+                    cp = engines.context_percent(tokens, "codex") if tokens else None
+                else:
+                    cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),
                             "l1_runs": l1_runs, "edits": counts.get("edits", 0),
-                            "context_percent": (cp := transcript_context_percent(t.get("session_id"), config.project_path(name))),
-                            "engine": "claude", "context_state": engines.context_state(cp)})
+                            "context_percent": cp, "engine": engine,
+                            "context_state": engines.context_state(cp, engine)})
     return out
 
 
@@ -61,10 +70,12 @@ def transcript_context_percent(session_id: str | None, cwd: Path | None) -> floa
             o = json.loads(line)
         except ValueError:
             continue
-        u = ((o.get("message") or {}).get("usage")) if o.get("type") == "assistant" else None
+        message = o.get("message") or {}
+        u = message.get("usage") if o.get("type") == "assistant" and message.get("model") != "<synthetic>" else None
         if u:
             tokens = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
-            return round(100.0 * tokens / config.CONTEXT_WINDOW, 1)
+            if tokens:
+                return round(100.0 * tokens / config.CONTEXT_WINDOW, 1)
     return None
 
 
@@ -82,12 +93,7 @@ def quota() -> dict:
     if not best or time.time() - best[0] > 1800:
         return {"known": False}
     rl = best[1]
-    return {"known": True, "five_hour": (rl.get("five_hour") or {}).get("used_percentage"),
-            "seven_day": (rl.get("seven_day") or {}).get("used_percentage"), "at": best[0]}
-
-
-def quota_hold() -> str | None:
-    q = quota()
-    if q.get("known") and q.get("five_hour") is not None and float(q["five_hour"]) >= config.QUOTA_RESERVE * 100:
-        return f"quota reserve: 5h window at {q['five_hour']}% ≥ {int(config.QUOTA_RESERVE * 100)}%"
-    return None
+    five, seven = rl.get("five_hour") or {}, rl.get("seven_day") or {}
+    return {"known": True, "five_hour": five.get("used_percentage"),
+            "seven_day": seven.get("used_percentage"), "five_hour_resets": five.get("resets_at"),
+            "seven_day_resets": seven.get("resets_at"), "at": best[0]}

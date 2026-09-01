@@ -21,12 +21,11 @@ class TestQueue(unittest.TestCase):
 
     def setUp(self):
         recovery.hold_path().unlink(missing_ok=True)
-        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
-        monitor.quota_hold = lambda: None
 
     def tearDown(self):
-        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        monitor.quota = self._quota
         recovery.hold_path().unlink(missing_ok=True)
 
     def test_top_level_directory_claims_do_not_lease(self):

@@ -10,7 +10,8 @@ from . import config, dispatch, git_policy, l1, state as S, verify
 
 _TASK_FIELDS = (
     "state", "title", "attempt", "dispatch_id", "session_id", "agent_id", "source",
-    "hold_merge", "blocked_reason", "updated", "worktree", "branch",
+    "hold_merge", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
+    "engine_model", "routing",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup"
 _RUN_FIELDS = "databaseId,headSha,conclusion,status,workflowName"

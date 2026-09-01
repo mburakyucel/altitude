@@ -10,7 +10,7 @@ from unittest import mock
 _TMP = tempfile.mkdtemp(prefix="altitude-liveness-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, engines, dispatch, tasks as T  # noqa: E402
+from altitude import config, state as S, engines, dispatch, server, tasks as T  # noqa: E402
 
 
 class TestDeadWorker(unittest.TestCase):
@@ -49,6 +49,25 @@ class TestDeadWorker(unittest.TestCase):
 
 
 class TestResumeRebinds(unittest.TestCase):
+    def test_finished_snapshot_cannot_block_a_replacement_worker(self):
+        slug = "stale-finished-worker"
+        S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
+        old = {"slug": slug, "title": slug, "created": S.now(), "state": "running",
+               "dispatch_id": f"{slug}-1", "session_id": "session-a", "agent_id": "agent-a",
+               "l2_engine": "claude"}
+        S.save_task("altitude", old)
+        replacement = {**old, "dispatch_id": f"{slug}-2", "session_id": "session-b", "agent_id": "agent-b"}
+        S.save_task("altitude", replacement)
+
+        with mock.patch.object(T, "block") as block, mock.patch.object(server.incidents, "system_fault") as fault:
+            server.on_l2_finished("altitude", {"task": old, "agent": {"state": "failed"}, "died": True})
+
+        block.assert_not_called()
+        fault.assert_not_called()
+        current = S.load_task("altitude", slug)
+        self.assertEqual((current["state"], current["dispatch_id"], current["agent_id"]),
+                         ("running", f"{slug}-2", "agent-b"))
+
     def test_resume_binds_task_to_the_new_worker_in_its_worktree(self):
         wt = Path(_TMP) / "wt-resume"; wt.mkdir(exist_ok=True)
         S.task_dir("altitude", "resume-me").mkdir(parents=True, exist_ok=True)
@@ -70,7 +89,7 @@ class TestResumeRebinds(unittest.TestCase):
         self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), "altitude--resume-me-1")
         t = S.load_task("altitude", "resume-me")
         self.assertEqual((t["agent_id"], t["session_id"]), ("new", "new-sid"))
-        self.assertNotEqual(t["l2_token"], "old-token")
+        self.assertEqual(t["l2_token"], "old-token", "logical L2 ownership survives a physical worker replacement")
         self.assertEqual(res["agent"]["id"], "new")
         stop.assert_called_once_with("old")
 

@@ -16,6 +16,9 @@ PROJECT = "brief-render-template-test"
 REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
     "branch",
+    "completion_contract",
+    "conversation_contract",
+    "engine",
     "leases",
     "merge_policy",
     "model",
@@ -24,7 +27,7 @@ EXPECTED_FIELDS = {
     "project",
     "request",
     "repo",
-    "report_schema",
+    "publication_contract",
     "slug",
     "task_dir",
     "title",
@@ -86,8 +89,8 @@ class TestBriefRender(unittest.TestCase):
     def test_merge_guarantees_survive_rendering(self):
         for rendered in (self.default_rendered, self.held_rendered):
             with self.subTest(held="Held for Burak" in rendered):
-                self.assertIn("never merge around the hold", rendered)
-                self.assertIn("full local test suite on merged `main`", rendered)
+                self.assertIn("never merge around it", rendered)
+                self.assertIn("full local test suite on the exact merge candidate", rendered)
 
     def test_direct_execution_and_optional_review_survive_rendering(self):
         rendered = self.default_rendered

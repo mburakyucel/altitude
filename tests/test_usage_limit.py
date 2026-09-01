@@ -35,13 +35,14 @@ class TestDetect(unittest.TestCase):
 class TestHold(unittest.TestCase):
     def setUp(self):
         recovery.hold_path().unlink(missing_ok=True)
-        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        config.ensure_root()
+        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
+        self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
-        monitor.quota_hold = lambda: None
 
     def tearDown(self):
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")  # never leave a live hold behind for other tests
-        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        monitor.quota = self._quota
         recovery.hold_path().unlink(missing_ok=True)
 
     def test_hold_until_reset_then_clear(self):
@@ -49,7 +50,8 @@ class TestHold(unittest.TestCase):
         self.assertTrue(engines.note_usage_limit(future, "x"))
         self.assertFalse(engines.note_usage_limit(future, "x"), "same reset time is not news twice")
         self.assertEqual(engines.usage_hold(), future)
-        self.assertTrue(dispatch.wip_hold("altitude").startswith("usage limit"))
+        self.assertFalse((dispatch.wip_hold("altitude") or "").startswith("usage limit"),
+                         "a Claude hold does not globally freeze Codex dispatch")
         self.assertTrue(engines.claude_print("hi", cwd=Path(_TMP)).get("limited"), "no call is made while held")
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")
         self.assertIsNone(engines.usage_hold())

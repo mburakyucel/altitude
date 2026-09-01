@@ -39,18 +39,20 @@ def main(argv=None) -> None:
     l1p = sub.add_parser("l1", help="optional L1 runs on either engine: run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
     lr = l1s.add_parser("run"); lr.add_argument("--brief", required=True); lr.add_argument("--role", default="implementer", choices=("implementer", "reviewer"))
     lr.add_argument("--engine", choices=("claude", "codex")); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
+    lr.add_argument("--paths", help="comma-separated sublease within the owning task lease")
     lw = l1s.add_parser("wait"); lw.add_argument("name", nargs="?"); lw.add_argument("--timeout", type=int, default=540)
     l1s.add_parser("status")
     lx = l1s.add_parser("_exec"); lx.add_argument("slug"); lx.add_argument("name")
 
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
+    a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
     r = ps.add_parser("remove"); r.add_argument("name")
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--model", choices=["opus", "sonnet", "haiku", "fable"], help="L2 model override; default opus"); n.add_argument("--paths", help="comma-separated paths this task will touch")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise weekly quota routes it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("show", "events", "messages"):
@@ -103,11 +105,13 @@ def main(argv=None) -> None:
             if ACTOR != "l2":
                 sys.exit("alt l1 run: only the current L2 may launch task helpers")
             dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
-            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN") or os.environ.get("ALTITUDE_L2_CAPABILITY")
             if not dispatch_id or not l2_token:
-                sys.exit("alt l1 run: ALTITUDE_DISPATCH_ID and ALTITUDE_L2_TOKEN are required")
+                sys.exit("alt l1 run: ALTITUDE_DISPATCH_ID and the L2 capability are required")
             out(L1.start(p, slug, Path(args.brief), role=args.role, engine=args.engine, model=args.model,
-                         name=args.name, cwd=args.cwd, expected_dispatch_id=dispatch_id,
+                         name=args.name, cwd=args.cwd,
+                         paths=[path.strip() for path in (args.paths or "").split(",") if path.strip()] or None,
+                         expected_dispatch_id=dispatch_id,
                          expected_l2_token=l2_token))
         elif args.lcmd == "wait":
             out(L1.wait(p, slug, args.name, timeout=args.timeout))
@@ -122,7 +126,9 @@ def main(argv=None) -> None:
             path = Path(args.path or (config.PROJECT_ROOTS[0] / args.name)).expanduser()
             if not path.is_dir():
                 sys.exit(f"alt: {path} is not a directory")
-            P[args.name] = {"path": str(path), "approval": args.approval, "wip": args.wip}
+            P[args.name] = {"path": str(path), "approval": args.approval, "wip": args.wip,
+                            **({"l2_engine": args.l2_engine} if args.l2_engine else {}),
+                            **({"l3_engine": args.l3_engine} if args.l3_engine else {})}
             config.save_projects(P); config.project_dir(args.name).mkdir(parents=True, exist_ok=True); S.regen_state_md(args.name); out(P[args.name])
         elif args.pcmd == "remove":
             P.pop(args.name, None); config.save_projects(P); out("removed")
@@ -136,7 +142,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "block":
@@ -173,7 +179,10 @@ def main(argv=None) -> None:
                 sys.exit("alt task hold-merge: --why <reason> (or --off)")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "done":
-            out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest))
+            out(T.done(p, args.slug, actor=ACTOR, digest=Path(args.file).read_text() if args.file else args.digest,
+                       expected_dispatch_id=os.environ.get("ALTITUDE_DISPATCH_ID") if ACTOR == "l2" else None,
+                       expected_l2_token=(os.environ.get("ALTITUDE_L2_TOKEN") or
+                                          os.environ.get("ALTITUDE_L2_CAPABILITY")) if ACTOR == "l2" else None))
         elif tc == "brief":
             out(str(T.brief(p, args.slug, _stdin_or_file(args), actor=ACTOR)))
         elif tc == "reply":
@@ -181,9 +190,9 @@ def main(argv=None) -> None:
                 sys.exit("alt task reply: only the current L2 may use this command")
             slug = args.slug or os.environ.get("ALTITUDE_TASK")
             dispatch_id = os.environ.get("ALTITUDE_DISPATCH_ID")
-            l2_token = os.environ.get("ALTITUDE_L2_TOKEN")
+            l2_token = os.environ.get("ALTITUDE_L2_TOKEN") or os.environ.get("ALTITUDE_L2_CAPABILITY")
             if not slug or not dispatch_id or not l2_token:
-                sys.exit("alt task reply: ALTITUDE_TASK, ALTITUDE_DISPATCH_ID, and ALTITUDE_L2_TOKEN are required")
+                sys.exit("alt task reply: ALTITUDE_TASK, ALTITUDE_DISPATCH_ID, and the L2 capability are required")
             out(T.append_task_message(p, slug, "l2", _stdin_or_file(args),
                                       expected_dispatch_id=dispatch_id, expected_l2_token=l2_token, actor="l2"))
         elif tc == "show":

@@ -30,7 +30,13 @@ logs, so Burak can steer it directly without routing every exchange through L3. 
 session identifiers fence messages and resumes against stale workers.
 
 L1 and reviewer runs are optional, tracked children of the L2 task. Their engine may be selected
-per run. Their output is input to L2; ownership never transfers.
+per run. An implementer receives a sublease, leaves the parent commit unchanged, and returns a
+validated binary patch plus findings to L2. It does not commit, open a PR, or integrate its own
+work. The L2 chooses whether to apply that patch; ownership never transfers.
+
+L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provider choice and keeps
+that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
+[Session lifecycle](SESSION_LIFECYCLE.md) for routing, message, resume, context, and cache semantics.
 
 ## Task lifecycle
 
@@ -43,7 +49,11 @@ queued ─► running ─► reported ─► done/archive
                          └─► rejected/archive
 ```
 
-Queued tasks wait for WIP, lease, quota, and recovery gates. Blocked means the current L2 needs an
+A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
+refuses that shortcut when the task branch changed. Code work uses the verified report path.
+
+Queued tasks wait for WIP, lease, engine availability, and recovery gates. One provider's quota does
+not globally freeze the other. Blocked means the current L2 needs an
 answer or an operational hold has a recorded resume time. Deferral is not an active state: durable
 future work belongs in a GitHub issue, and the task exits the active set.
 
@@ -53,11 +63,32 @@ into L3 context.
 
 ## Isolation and landing
 
-Each task uses `.claude/worktrees/<slug>` and `worktree-<slug>`, based on the exact fetched
-`origin/main`. Commits require the task provenance trailer. Protected branches cannot be updated
-outside the guarded landing path. `alt land` validates the lease and repository, commits, pushes,
-opens the PR, waits for configured checks, and merges only when requested and allowed. A task may
-carry an explicit merge hold for Burak review.
+Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
+based on the exact fetched `origin/main`. Commits require the task provenance trailer. Protected
+branches cannot be updated outside the guarded landing path. The trusted landing code validates the
+lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
+when requested and allowed. A task may carry an explicit merge hold for Burak review.
+
+Claude workers use a direct CLI contract: their scoped requests still cross the same backend
+identity, lease, provenance, and merge-policy checks. Codex workers have no control capability or
+Git-publication authority. A Codex L2 may write only in its task worktree under an explicit
+permission profile; its Git common directory and Altitude state are outside that writable surface,
+and hosted tools and model-command network access are disabled. The inner Codex sandbox hides host PIDs, while the
+entire process tree runs in a transient user cgroup. Only after the unit is empty does a trusted broker validate its
+strict, inert final action and perform any requested state change or landing operation.
+
+Codex L3 uses the same containment and broker boundary. It receives a disposable writable runtime directory while
+Altitude's compact state and the selected project checkout are mounted as explicit read-only inputs. This gives the
+Codex runtime the small amount of scratch space it needs without giving the coordinator write access to either source.
+The outer launcher alone receives the user-session bus needed to create the containment scope; the Codex child has
+that bus, its runtime socket tree, ambient service credentials, and scoped L2 capabilities removed. A deterministic
+host canary verifies that the inner sandbox cannot see or signal a known host PID; the trusted host can still stop
+the whole cgroup.
+A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
+draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
+L1 implementers receive narrower write subleases; the
+trusted wrapper verifies that their parent commit did not move and captures their changes as a
+patch for the owning L2 to evaluate.
 
 ## Recovery
 
@@ -82,5 +113,6 @@ Chat, and Monitor navigation plus project/task detail routes. Task chat is a hum
 conversation; operational events remain an audit detail.
 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
-and documentation describe only the current behavior. Superseded designs remain in Git history,
-not in the active tree.
+and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
+and telemetry; permission profiles, process containment, and backend validation form the Codex
+execution boundary. Superseded designs remain in Git history, not in the active tree.

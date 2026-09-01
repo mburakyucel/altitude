@@ -132,6 +132,23 @@ class TestCleanClose(unittest.TestCase):
                 self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
                 self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
+    def test_unfinished_l3_report_turn_remains_retryable(self):
+        task, verdict = self._task_and_verdict(
+            "route-hold", change=lambda report, _verdict: report["fyi"].append("needs coordinator"))
+        original_turn, original_log = l3.turn, server.log
+        logs = []
+        l3.turn = lambda *_args, **_kwargs: {
+            "completed": False, "error": "engine hold: no engine available", "limited": None,
+        }
+        server.log = lambda message: logs.append(message)
+        try:
+            server.report_turn(PROJECT, task, verdict)
+        finally:
+            l3.turn, server.log = original_turn, original_log
+
+        self.assertIsNone(S.load_task(PROJECT, task["slug"])["l3_handled"])
+        self.assertTrue(any("report turn unfinished" in line for line in logs))
+
     def test_malformed_report_shapes_fail_closed_and_not_applicable_closes(self):
         cases = (
             ("top-level-list", lambda report: [], False, False),
@@ -205,7 +222,7 @@ class TestCleanClose(unittest.TestCase):
 
                     self.assertEqual(len(turns), 1)
                     self.assertEqual(turns[0][2], "report-landed")
-                    self.assertTrue(any("l3_handled could not be stamped" in line for line in logs))
+                    self.assertTrue(any("report turn unfinished" in line for line in logs))
         finally:
             incidents.system_fault = original_fault
         self.assertEqual(len(faults), 1)

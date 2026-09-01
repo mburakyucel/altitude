@@ -116,7 +116,7 @@ class TestRead(unittest.TestCase):
 
 class TestRefresh(unittest.TestCase):
     def test_refresh_writes_the_router_file(self):
-        reading = {"known": True, "primary_used": 1.0, "read_at": "2026-08-30T00:00:00+00:00"}
+        reading = {"known": True, "primary_used": 1.0, "read_at": state.now()}
         with tempfile.TemporaryDirectory(prefix="altitude-codex-quota-") as tmp:
             with patch.object(config, "MONITOR_DIR", Path(tmp)):
                 with patch.object(quota_codex, "read", return_value=reading):

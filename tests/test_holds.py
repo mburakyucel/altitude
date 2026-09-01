@@ -26,12 +26,11 @@ class TestHolds(unittest.TestCase):
 
     def setUp(self):
         recovery.hold_path().unlink(missing_ok=True)
-        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
-        monitor.quota_hold = lambda: None
 
     def tearDown(self):
-        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        monitor.quota = self._quota
         recovery.hold_path().unlink(missing_ok=True)
 
     def test_unrelated_tasks_do_not_serialize(self):
@@ -41,7 +40,7 @@ class TestHolds(unittest.TestCase):
         self.assertIsNone(dispatch.wip_hold("h", b), "ordinary tasks on different files may run in parallel")
 
     def test_stopped_sessions_are_not_live(self):
-        agents = [{"kind": "background", "state": "stopped"}] * config.SESSIONS_PER_MACHINE + [{"kind": "background", "state": "working"}]
+        agents = [{"kind": "background", "state": "stopped"}] * 24 + [{"kind": "background", "state": "working"}]
         engines.claude_agents = lambda: agents
         try:
             t = T.new("h", "room", "r", actor="l3", paths=["x/"])

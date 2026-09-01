@@ -1,53 +1,71 @@
-"""Optional L1/reviewer engine choice records its reason."""
+"""Weekly-first provider routing is explicit, comparable, and can return unavailable."""
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_TMP = tempfile.mkdtemp(prefix="altitude-route-")
-os.environ["ALTITUDE_HOME"] = _TMP
+os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-route-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, route, monitor, state as S  # noqa: E402
+from altitude import config, engines, monitor, route  # noqa: E402
+
+
+def codex(weekly, short=0):
+    return {"known": True, "primary_used": weekly, "primary_window_minutes": route.WEEK_MINUTES,
+            "secondary_used": short, "secondary_window_minutes": route.SHORT_MINUTES}
 
 
 class TestPickEngine(unittest.TestCase):
     def setUp(self):
-        self._q, self._cx = monitor.quota, route.quota_codex
+        self._q, self._cx, self._hold = monitor.quota, route.quota_codex, engines.usage_hold
         self.claude, self.codex = {"known": False}, {"known": False}
         monitor.quota = lambda: self.claude
         route.quota_codex = lambda: self.codex
+        engines.usage_hold = lambda: None
 
     def tearDown(self):
-        monitor.quota, route.quota_codex = self._q, self._cx
+        monitor.quota, route.quota_codex, engines.usage_hold = self._q, self._cx, self._hold
 
-    def test_run_override(self):
-        self.assertEqual(route.pick_engine("l1", forced="claude")["engine"], "claude")
+    def test_override_is_visible_and_unavailable_override_does_not_fallback(self):
+        choice = route.pick_engine("l2", forced="claude")
+        self.assertEqual(choice["engine"], "claude")
+        self.claude = {"known": True, "five_hour": 100, "seven_day": 10}
+        choice = route.pick_engine("l2", forced="claude")
+        self.assertIsNone(choice["engine"]); self.assertIn("forced claude", choice["why"])
         with self.assertRaises(ValueError):
-            route.pick_engine("l1", forced="gemini")
+            route.pick_engine("l2", forced="gemini")
 
-    def test_unknown_quotas_use_the_default_policy_out_loud(self):
-        c = route.pick_engine("l1")
-        self.assertEqual(c["engine"], config.L1_DEFAULT_ENGINE)
-        self.assertIn("unknown", c["why"]); self.assertIn("default policy", c["why"])
+    def test_unknown_quotas_use_codex_default_out_loud(self):
+        choice = route.pick_engine("l2")
+        self.assertEqual(choice["engine"], config.PRIMARY_DEFAULT_ENGINE)
+        self.assertIn("unknown", choice["why"]); self.assertIn("default policy", choice["why"])
 
-    def test_both_known_picks_more_headroom(self):
-        self.claude, self.codex = {"known": True, "five_hour": 80}, {"known": True, "primary_used": 20}
-        self.assertEqual(route.pick_engine("l1")["engine"], "codex")
-        self.claude, self.codex = {"known": True, "five_hour": 10}, {"known": True, "primary_used": 60}
-        c = route.pick_engine("l1"); self.assertEqual(c["engine"], "claude"); self.assertIn("headroom", c["why"])
+    def test_weekly_headroom_wins_over_short_window_percentage(self):
+        self.claude = {"known": True, "five_hour": 5, "seven_day": 80}
+        self.codex = codex(20, short=90)
+        choice = route.pick_engine("l2")
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("weekly headroom", choice["why"])
+        self.claude = {"known": True, "five_hour": 90, "seven_day": 10}
+        self.codex = codex(60, short=5)
+        self.assertEqual(route.pick_engine("l2")["engine"], "claude")
 
-    def test_one_known_past_reserve_moves_work_to_the_other(self):
-        self.claude = {"known": True, "five_hour": 85}
-        self.assertEqual(route.pick_engine("l1")["engine"], "codex")
-        self.claude, self.codex = {"known": False}, {"known": True, "primary_used": 90}
-        self.assertEqual(route.pick_engine("l1")["engine"], "claude")
+    def test_short_exhaustion_only_rules_out_that_provider(self):
+        self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
+        self.codex = codex(80, short=20)
+        choice = route.pick_engine("l2")
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude unavailable", choice["why"])
 
-    def test_reviewer_takes_the_other_engine_from_the_author(self):
-        c = route.pick_engine("reviewer", other_than="codex")
-        self.assertEqual(c["engine"], "claude"); self.assertIn("other engine", c["why"])
-        self.claude = {"known": True, "five_hour": 95}  # no room on the other seat: same engine, no crash
-        self.assertEqual(route.pick_engine("reviewer", other_than="codex")["engine"], "codex")
+    def test_both_exhausted_returns_no_engine(self):
+        self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
+        self.codex = codex(100, short=20)
+        self.assertIsNone(route.pick_engine("l2")["engine"])
+
+    def test_review_does_not_force_the_scarcer_provider(self):
+        self.claude = {"known": True, "five_hour": 10, "seven_day": 70}
+        self.codex = codex(20, short=10)
+        choice = route.pick_engine("reviewer", other_than="codex")
+        self.assertEqual(choice["engine"], "codex")
+        self.assertIn("instead of forcing provider diversity", choice["why"])
 
 
 if __name__ == "__main__":

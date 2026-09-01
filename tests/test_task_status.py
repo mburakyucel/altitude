@@ -81,9 +81,8 @@ class TestTaskStatus(unittest.TestCase):
         config.ensure_root()
         recovery.hold_path().unlink(missing_ok=True)
         quota = mock.patch.object(monitor, "quota", return_value={"known": True})
-        quota_hold = mock.patch.object(monitor, "quota_hold", return_value=None)
-        quota.start(); quota_hold.start()
-        self.addCleanup(quota.stop); self.addCleanup(quota_hold.stop)
+        quota.start()
+        self.addCleanup(quota.stop)
 
         self.repo = self.tmp / "repo"
         self.repo.mkdir()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import uuid
 
 from . import config, state as S
@@ -14,7 +15,7 @@ def short_reason(reason: str, limit: int = 200) -> str:
 
 TRANSITIONS = {
     "queued": {"running", "rejected"},
-    "running": {"reported", "blocked", "rejected"},
+    "running": {"reported", "blocked", "rejected", "done"},
     "blocked": {"running", "rejected", "reported"},
     "reported": {"done", "running", "blocked", "rejected"},      # running: verifier says not done → resume
     "done": set(),
@@ -48,7 +49,7 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
     if not expected_dispatch_id:
         raise TransitionError("task message has no dispatch owner")
     if role == "l2" and not expected_l2_token:
-        raise TransitionError("L2 message has no session generation")
+        raise TransitionError("L2 message has no ownership capability")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         allowed_states = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
@@ -62,7 +63,7 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
         if expected_session_id is not None and task.get("session_id") != expected_session_id:
             raise TransitionError(f"{slug}: L2 session changed before the message was recorded")
         if expected_l2_token is not None and task.get("l2_token") != expected_l2_token:
-            raise TransitionError(f"{slug}: L2 generation changed before the message was recorded")
+            raise TransitionError(f"{slug}: L2 ownership capability changed before the message was recorded")
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(
                 f"{slug}: task changed from {expected_state} to {task.get('state')} "
@@ -116,25 +117,41 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     frm = task["state"]
     if to not in TRANSITIONS.get(frm, set()):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
+    stopped = None
+    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
+        from . import engines
+        engine = task.get("l2_engine") or "claude"
+        try:
+            note = engines.remove_l2_worker(
+                engine, task["agent_id"], job_root=S.task_dir(project, task["slug"]) / "l2-engine")
+        except Exception as exc:
+            raise TransitionError(
+                f"{task['slug']}: cannot reject while its {engine} worker may still be live: {exc}"
+            ) from exc
+        stopped = (engine, note)
     task["state"] = to
     if to == "running":
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
-        from . import engines
-        note = engines.claude_rm(task["agent_id"])
-        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"], note=note[:200])
+    if stopped:
+        engine, note = stopped
+        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
+                       engine=engine, note=note[:200])
     S.regen_state_md(project)
     return task
 
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
-        paths: list[str] | None = None, hold_merge: str | None = None) -> dict:
+        paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None) -> dict:
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
-    if model and model not in config.MODEL_ALIASES:
+    if engine and engine not in config.ENGINES:
+        raise TransitionError(f"engine must be one of {config.ENGINES}")
+    if model and engine != "codex" and model not in config.MODEL_ALIASES:
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
+    if model in config.MODEL_ALIASES and engine is None:
+        engine = "claude"  # a provider-specific model name is itself an explicit provider pin
     config.project(project)
     with S.project_lock(project):
         base = S.slugify(title)
@@ -162,7 +179,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
                 "branch": None, "prs": [], "spend": {}, "blocked_reason": None, "source": source,
-                "verified": None, "model": model, "l2_token": None,
+                "verified": None, "model": model, "engine": engine, "l2_engine": None,
+                "engine_model": None, "routing": None, "l2_token": None,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
         try:
@@ -196,13 +214,15 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 
 
 def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | None, agent_id: str | None,
-             worktree: str | None, branch: str | None, l2_token: str, actor: str = "altd") -> dict:
+             worktree: str | None, branch: str | None, l2_token: str, l2_engine: str = "claude",
+             engine_model: str | None = None, routing: dict | None = None, actor: str = "altd") -> dict:
     if not session_id or not agent_id or not l2_token:
-        raise TransitionError(f"{slug}: dispatch requires a concrete agent, session, and L2 generation")
+        raise TransitionError(f"{slug}: dispatch requires a concrete worker, session, and L2 capability")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         task.update({"dispatch_id": dispatch_id, "session_id": session_id, "agent_id": agent_id,
                      "l2_token": l2_token, "worktree": worktree, "branch": branch, "blocked_reason": None,
+                     "l2_engine": l2_engine, "engine_model": engine_model, "routing": routing,
                      "dispatched": S.now()})
         task["attempt"] = int(dispatch_id.rsplit("-", 1)[-1]) if dispatch_id.rsplit("-", 1)[-1].isdigit() else task["attempt"] + 1
         return _move(project, task, "running", actor, dispatch_id=dispatch_id, session_id=session_id)
@@ -230,25 +250,125 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
         return _move(project, task, "reported", actor, verdict=verified.get("verdict"))
 
 
-def block(project: str, slug: str, reason: str, actor: str = "altd") -> dict:
+def block(project: str, slug: str, reason: str, actor: str = "altd", *,
+          expected_state: str | None = None, expected_dispatch_id: str | None = None,
+          expected_session_id: str | None = None, expected_agent_id: str | None = None,
+          expected_pending_identity: dict | None = None, updates: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        for label, expected, actual in (
+            ("state", expected_state, task.get("state")),
+            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+            ("session", expected_session_id, task.get("session_id")),
+            ("agent", expected_agent_id, task.get("agent_id")),
+        ):
+            if expected is not None and expected != actual:
+                raise TransitionError(f"{slug}: {label} changed before block ({expected!r} → {actual!r})")
+        if expected_pending_identity is not None:
+            pending = task.get("pending_action") or {}
+            if pending.get("identity") != expected_pending_identity:
+                raise TransitionError(f"{slug}: pending action changed before block")
+        task.update(updates or {})
         task["blocked_reason"] = reason
         return _move(project, task, "blocked", actor, reason=reason)
 
 
-def resume(project: str, slug: str, actor: str = "altd", **ev) -> dict:
+def resume(project: str, slug: str, actor: str = "altd", *,
+           expected_state: str | None = None, expected_dispatch_id: str | None = None,
+           expected_session_id: str | None = None, expected_agent_id: str | None = None,
+           expected_pending_identity: dict | None = None, **ev) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        for label, expected, actual in (
+            ("state", expected_state, task.get("state")),
+            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+            ("session", expected_session_id, task.get("session_id")),
+            ("agent", expected_agent_id, task.get("agent_id")),
+        ):
+            if expected is not None and expected != actual:
+                raise TransitionError(f"{slug}: {label} changed before resume ({expected!r} → {actual!r})")
+        if expected_pending_identity is not None:
+            pending = task.get("pending_action") or {}
+            if pending.get("identity") != expected_pending_identity:
+                raise TransitionError(f"{slug}: pending action changed before resume")
         task["blocked_reason"] = None
         return _move(project, task, "running", actor, **ev)
 
 
-def done(project: str, slug: str, actor: str = "l3", digest: str = "") -> dict:
+def _require_no_code_change(task: dict) -> None:
+    """A proposal/research task may close directly; code delivery must use the verified report path."""
+    worktree = task.get("worktree")
+    if not worktree:
+        raise TransitionError("L2 direct completion requires its task worktree")
+    status = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=worktree,
+                            capture_output=True, text=True, timeout=30)
+    if status.returncode != 0 or (status.stdout or "").strip():
+        raise TransitionError("task worktree has uncommitted changes; code work must be landed and reported")
+    diff = subprocess.run(["git", "diff", "--quiet", "origin/main...HEAD"], cwd=worktree,
+                          capture_output=True, text=True, timeout=30)
+    if diff.returncode != 0:
+        if diff.returncode == 1:
+            raise TransitionError("task branch contains code changes; use alt land and the verified report path")
+        raise TransitionError(f"cannot prove the task branch is unchanged: {(diff.stderr or '').strip()[:200]}")
+
+
+def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
+         expected_state: str | None = None, expected_dispatch_id: str | None = None,
+         expected_session_id: str | None = None, expected_agent_id: str | None = None,
+         expected_l2_token: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if actor == "l2":
+            if (not expected_dispatch_id or not expected_l2_token
+                    or task.get("dispatch_id") != expected_dispatch_id
+                    or task.get("l2_token") != expected_l2_token):
+                raise TransitionError(f"{slug}: L2 ownership changed before completion")
+            if task.get("state") != "running":
+                raise TransitionError(f"{slug}: L2 can complete only its running task")
+            _require_no_code_change(task)
+            task["completion_requested"] = {"at": S.now(), "digest": digest,
+                                            "dispatch_id": expected_dispatch_id,
+                                            "agent_id": task.get("agent_id"),
+                                            "session_id": task.get("session_id")}
+            S.save_task(project, task)
+            S.append_event(project, slug, "completion-requested", by=actor,
+                           dispatch_id=expected_dispatch_id)
+            return task
+        for label, expected, actual in (
+            ("state", expected_state, task.get("state")),
+            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+            ("session", expected_session_id, task.get("session_id")),
+            ("agent", expected_agent_id, task.get("agent_id")),
+        ):
+            if expected is not None and expected != actual:
+                raise TransitionError(f"{slug}: {label} changed before completion ({expected!r} → {actual!r})")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
+        if digest:
+            S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
+        _archive(project, slug)
+        S.regen_state_md(project)
+        return task
+
+
+def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
+                        expected_agent_id: str | None, expected_session_id: str | None,
+                        actor: str = "altd") -> dict:
+    """Archive a no-code L2 completion only after its physical worker has exited."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        request = task.get("completion_requested") or {}
+        expected = (expected_dispatch_id, expected_agent_id, expected_session_id)
+        current = (task.get("dispatch_id"), task.get("agent_id"), task.get("session_id"))
+        requested = (request.get("dispatch_id"), request.get("agent_id"), request.get("session_id"))
+        if task.get("state") != "running" or current != expected or requested != expected:
+            raise TransitionError(f"{slug}: completion ownership changed before worker exit")
+        _require_no_code_change(task)
+        digest = str(request.get("digest") or "")
+        task.pop("completion_requested", None)
+        task.pop("pending_action", None)
+        d = S.task_dir(project, slug)
+        task = _move(project, task, "done", actor, requested_by="l2")
         if digest:
             S.atomic_write(d / "digest.md", digest.rstrip() + "\n")
         _archive(project, slug)
@@ -305,7 +425,8 @@ def decisions(project: str) -> list[dict]:
     """Tasks blocked on user input. Ordinary task steering happens directly with the L2."""
     out = []
     for t in S.list_tasks(project):
-        if t["state"] == "blocked" and not t.get("resume_after"):  # an operational hold is not a user decision
+        if (t["state"] == "blocked" and not t.get("resume_after")
+                and not t.get("pending_action")):  # operational waits are not user decisions
             out.append({"project": project, "slug": t["slug"], "title": t["title"],
                         "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
                         "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",

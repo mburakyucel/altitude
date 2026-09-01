@@ -16,12 +16,11 @@ class TestLeases(unittest.TestCase):
 
     def setUp(self):
         recovery.hold_path().unlink(missing_ok=True)
-        self._quota, self._quota_hold = monitor.quota, monitor.quota_hold
+        self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
-        monitor.quota_hold = lambda: None
 
     def tearDown(self):
-        monitor.quota, monitor.quota_hold = self._quota, self._quota_hold
+        monitor.quota = self._quota
         recovery.hold_path().unlink(missing_ok=True)
 
     def test_overlap_semantics(self):
@@ -102,13 +101,13 @@ class TestLeases(unittest.TestCase):
         d = T.new("p", "undeclared", "r", actor="burak")
         self.assertIsNone(dispatch.wip_hold("p", d), "no declared paths → no lease hold (surfaces at PR time)")
 
-    def test_session_ceiling(self):
-        many = [{"kind": "background", "state": "working"}] * config.SESSIONS_PER_MACHINE
+    def test_claude_session_count_does_not_globally_block_codex_dispatch(self):
+        many = [{"kind": "background", "state": "working"}] * 24
         old = engines.claude_agents
         engines.claude_agents = lambda: many
         try:
             t = T.new("p", "ceiling", "r", actor="burak", paths=["x/"])
-            self.assertIn("session ceiling", dispatch.wip_hold("p", t))
+            self.assertIsNone(dispatch.wip_hold("p", t))
         finally:
             engines.claude_agents = old
 

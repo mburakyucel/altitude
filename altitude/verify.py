@@ -45,10 +45,8 @@ def _verify(project: str, slug: str) -> dict:
     if not rep:
         out["problems"].append("report.json missing")
         out["verdict"] = "missing"
-        if not (d / "report.md").exists():
-            out["problems"].append("report.md missing")
         return _spend(out, project, task, d)
-    for k in ("landed", "review", "deviations", "decisions", "fyi", "blocked", "follow_ups", "spend"):
+    for k in ("landed", "review", "blocked"):
         if k not in rep:
             out["problems"].append(f"report.json lacks `{k}`")
     review = rep.get("review") or []
@@ -75,8 +73,6 @@ def _verify(project: str, slug: str) -> dict:
             out["problems"].append(f"run {rid} reported success but is {info.get('conclusion')}")
     if not landed.get("prs") and not rep.get("blocked"):
         out["problems"].append("no PRs landed and not blocked")
-    if rep.get("roadmap_complete") is False or not (d / "progress.md").exists():
-        out["problems"].append("roadmap missing or not complete")
     # Post-task signals are computed from the report, not remembered by a model.
     if rep.get("deviations"):
         out["signals"].append(f"{len(rep['deviations'])} deviation(s)")
@@ -89,11 +85,6 @@ def _verify(project: str, slug: str) -> dict:
         out["signals"].append(f"{sp['reverts']} revert(s)")
     if int(sp.get("retries", 0) or 0) > 1:
         out["signals"].append(f"{sp['retries']} retries")
-    tags = [r.get("tag") for r in review if r.get("tag")]
-    seen = _seen_tags(project, slug)
-    rep_tags = sorted(set(t for t in tags if t in seen))
-    if rep_tags:
-        out["signals"].append(f"reviewer tags seen before in this project: {', '.join(rep_tags)}")
     if out["problems"]:
         out["verdict"] = "contradicted"
     if rep.get("blocked"):
@@ -111,15 +102,3 @@ def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None)
                     "edits_hook": hook.get("edits"),
                     "retries": (sp or {}).get("retries")}
     return out
-
-
-def _seen_tags(project: str, current_slug: str) -> set[str]:
-    seen = set()
-    for t in S.list_tasks(project, include_archive=True):
-        if t["slug"] == current_slug:
-            continue
-        rep = S.read_json(S.task_dir(project, t["slug"]) / "report.json")
-        for r in (rep or {}).get("review") or []:
-            if r.get("tag"):
-                seen.add(r["tag"])
-    return seen
