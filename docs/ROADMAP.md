@@ -1,23 +1,12 @@
 # Roadmap
 
-## Current milestone: verified architecture cutover
+## Architecture cutover
 
-The service remains stopped and runtime-masked while the current architecture is landed. The
-cutover is complete only when:
+The simplified architecture and its separately authorized controlled restart are complete and
+verified. Service lifecycle remains separate from ordinary source work and requires explicit
+authorization.
 
-- the active tree contains only the L3 → one L2 → optional L1/reviewer model;
-- queued tasks dispatch directly, task chat and stale-worker fencing work, and completed or
-  rejected work leaves the active set;
-- ordinary fresh and resumed launches are blocked by the recovery fuse, with one explicit recovery
-  L2 allowed;
-- all code changes retain the isolated worktree, PR, checks, review, and merge safeguards;
-- Python tests, web tests/build, cleanup scans, PR CI, and the main-branch CI run pass on the exact
-  reviewed commits.
-
-Restart is a separate step. It requires explicit authorization after those checks; architecture
-work does not unmask or start the service.
-
-## Product work after the cutover
+## Current product work
 
 The durable backlog is GitHub issues selected by Burak. The current priorities are:
 

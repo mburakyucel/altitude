@@ -70,8 +70,10 @@ server runs at most one recovery turn for it at a time, retains failed turns wit
 audits successful handling. After stability returns, L3 triages the evidence: narrow corrective follow-up
 is an FYI, while broad architecture, policy, or system work is preserved for Burak as a proposal or issue.
 
-The service lifecycle is separate from source changes. The current deployment remains stopped and
-runtime-masked until a separately authorized restart verifies the merged main commit and its CI.
+The service lifecycle is separate from source changes. The architecture-cutover restart was
+explicitly authorized, completed from verified main, and smoke-tested without replaying archived
+work. Ordinary source changes never start, stop, mask, unmask, or restart the service; any later
+lifecycle action requires separate authorization and post-change health verification.
 
 ## Interfaces and storage
 

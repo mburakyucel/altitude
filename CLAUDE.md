@@ -31,5 +31,6 @@ A recovery hold blocks ordinary fresh and resumed launches. Only one explicitly 
 task can run while it is active. Clearing the hold requires a recorded reason after the system is
 stable.
 
-The service is intentionally stopped and runtime-masked for the architecture cutover. Do not
-start, unmask, or restart it without separate explicit authorization after merged CI is verified.
+The controlled architecture-cutover restart is complete. Do not start, stop, mask, unmask, or
+restart the service as part of ordinary work. Any lifecycle action requires separate explicit
+authorization and post-change health verification.
