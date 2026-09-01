@@ -49,7 +49,9 @@ class TestL3Actions(unittest.TestCase):
             "merge_hold": None, "incident": None, "labels": [],
         }
 
-        result = l3_actions.apply("p", envelope(action), action_id="0" * 64)
+        source = "Please implement GitHub issue #127 now."
+        result = l3_actions.apply("p", envelope(action), action_id="0" * 64,
+                                  github_issue_source=source)
         task = S.load_task("p", result[0]["slug"])
 
         self.assertEqual(task["state"], "queued")
@@ -68,6 +70,14 @@ class TestL3Actions(unittest.TestCase):
             l3_actions.apply("p", envelope(empty), action_id="b" * 64)
         self.assertFalse(S.task_dir("p", "empty").exists())
         self.assertFalse((config.project_dir("p") / "l3-actions" / ("b" * 64 + ".json")).exists())
+
+    def test_new_issue_task_must_be_authorized_by_the_current_user_message(self):
+        action = {"type": "new_task", "title": "Implement GitHub issue #127",
+                  "request": "Implement issue #127 as one focused documentation change."}
+        with self.assertRaisesRegex(l3_actions.L3ActionError, "not authorized"):
+            l3_actions.apply("p", envelope(action), action_id="4" * 64,
+                             github_issue_source="Please improve the documentation")
+        self.assertFalse(S.task_dir("p", "implement-github-issue-127").exists())
 
     def test_one_turn_cannot_apply_multiple_actions(self):
         value = {"message": "too many", "actions": [
