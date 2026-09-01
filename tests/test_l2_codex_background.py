@@ -133,10 +133,12 @@ class TestCodexBackground(unittest.TestCase):
         self.assertIn("features.goals=false", joined)
         self.assertIn("shell_environment_policy.ignore_default_excludes=false", joined)
         systemd_argv = json.loads(systemd_argv_path.read_text())
-        self.assertIn("--scope", systemd_argv)
+        self.assertIn("--wait", systemd_argv)
+        self.assertIn("--pipe", systemd_argv)
         self.assertIn("--collect", systemd_argv)
         self.assertIn("--property=KillMode=control-group", systemd_argv)
         self.assertIn("--property=SendSIGKILL=yes", systemd_argv)
+        self.assertIn("--property=NoNewPrivileges=no", systemd_argv)
         self.assertTrue(any(arg.startswith("--unit=altitude-codex-") for arg in systemd_argv))
         one = first["agent"]
         self.assertEqual(one["unit"], self._record_for_unit(one["unit"])["unit"])
@@ -243,7 +245,7 @@ class TestCodexBackground(unittest.TestCase):
     def test_containment_helper_requires_a_durable_inactive_unit(self):
         worker_id = "worker"
         paths = engines._codex_paths(self.jobs, worker_id)
-        engines.S.write_json(paths["record"], {"id": worker_id, "unit": "altitude-codex-worker.scope"})
+        engines.S.write_json(paths["record"], {"id": worker_id, "unit": "altitude-codex-worker.service"})
         with mock.patch.object(engines, "_systemd_unit_properties", return_value={
             "LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead",
             "ControlGroup": "", "MainPID": "0",
@@ -251,7 +253,7 @@ class TestCodexBackground(unittest.TestCase):
             self.assertTrue(engines.codex_containment_empty(worker_id, job_root=self.jobs))
         self.assertFalse(engines.codex_containment_empty("missing", job_root=self.jobs))
 
-    def test_cgroup_wide_sigkill_is_used_when_stop_does_not_empty_scope(self):
+    def test_cgroup_wide_sigkill_is_used_when_stop_does_not_empty_service(self):
         calls = []
 
         def run(cmd, **_kwargs):
@@ -261,7 +263,7 @@ class TestCodexBackground(unittest.TestCase):
         with mock.patch.object(engines.subprocess, "run", side_effect=run), \
              mock.patch.object(engines, "_wait_codex_unit_empty", side_effect=[False, True]), \
              mock.patch.object(engines, "_codex_unit_empty", return_value=False):
-            REAL_STOP_CODEX_UNIT("altitude-codex-worker.scope")
+            REAL_STOP_CODEX_UNIT("altitude-codex-worker.service")
 
         self.assertEqual(calls[0][2], "stop")
         self.assertEqual(calls[1][2:5], ["kill", "--kill-who=all", "--signal=SIGKILL"])
@@ -269,7 +271,7 @@ class TestCodexBackground(unittest.TestCase):
     def test_containment_state_fails_closed_when_user_manager_is_unavailable(self):
         worker_id = "worker"
         paths = engines._codex_paths(self.jobs, worker_id)
-        engines.S.write_json(paths["record"], {"id": worker_id, "unit": "altitude-codex-worker.scope"})
+        engines.S.write_json(paths["record"], {"id": worker_id, "unit": "altitude-codex-worker.service"})
         with mock.patch.object(engines, "_systemd_unit_properties",
                                side_effect=engines.CodexContainmentError("Failed to connect to bus")):
             with self.assertLogs(engines.logger.name, level="ERROR"):

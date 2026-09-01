@@ -80,10 +80,11 @@ strict, inert final action and perform any requested state change or landing ope
 Codex L3 uses the same containment and broker boundary. It receives a disposable writable runtime directory while
 Altitude's compact state and the selected project checkout are mounted as explicit read-only inputs. This gives the
 Codex runtime the small amount of scratch space it needs without giving the coordinator write access to either source.
-The outer launcher alone receives the user-session bus needed to create the containment scope; the Codex child has
-that bus, its runtime socket tree, ambient service credentials, and scoped L2 capabilities removed. A deterministic
-host canary verifies that the inner sandbox cannot see or signal a known host PID; the trusted host can still stop
-the whole cgroup.
+The user manager creates the transient containment service, so Altitude keeps its own `NoNewPrivileges` hardening
+while nested bwrap initializes inside the dedicated service. The outer launcher alone receives the user-session bus;
+the Codex child starts from an empty environment rebuilt from a narrow allowlist, with that bus, its runtime socket
+tree, ambient service credentials, and scoped L2 capabilities removed. A deterministic host canary verifies that the
+inner sandbox cannot see or signal a known host PID; the trusted host can still stop the whole cgroup.
 A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
 draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
 L1 implementers receive narrower write subleases; the
