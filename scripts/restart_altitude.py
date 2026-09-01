@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Operator-only, failure-safe rebuild and restart of deployed Altitude."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import shutil
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from urllib.error import URLError
+from urllib.parse import quote
+from urllib.request import urlopen
+
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from altitude import config, dispatch, engines, git_policy, recovery, state as S  # noqa: E402
+
+
+SERVICE = "altitude.service"
+WEB = ROOT / "web"
+DIST = WEB / "dist"
+TERMINAL_WORKER_STATES = {"failed", "done", "stopped"}
+
+
+class RestartError(RuntimeError):
+    """A restart boundary could not be proven safe or healthy."""
+
+
+def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None,
+        capture: bool = False) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, cwd=cwd, env=env, text=True,
+                            capture_output=capture, check=False)
+    if result.returncode:
+        detail = ((result.stderr or result.stdout or "") if capture else "").strip()
+        raise RestartError(f"{' '.join(args)} failed" + (f": {detail}" if detail else ""))
+    return result
+
+
+def unit_properties() -> dict[str, str]:
+    result = run([
+        "systemctl", "--user", "show", SERVICE,
+        "--property=WorkingDirectory", "--property=Environment",
+        "--property=MainPID", "--property=ActiveState", "--property=SubState",
+    ], capture=True)
+    return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
+
+def unit_environment() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in shlex.split(unit_properties().get("Environment", "")):
+        if "=" in item:
+            key, value = item.split("=", 1)
+            values[key] = value
+    return values
+
+
+def require_deployed_checkout() -> None:
+    deployed = unit_properties().get("WorkingDirectory", "")
+    if not deployed or Path(deployed).expanduser().resolve() != ROOT.resolve():
+        raise RestartError(
+            f"run this command from the installed service checkout ({deployed or 'unknown'}), not {ROOT}"
+        )
+    service_home = Path(unit_environment().get("ALTITUDE_HOME", Path.home() / ".altitude"))
+    if service_home.expanduser().resolve() != config.ROOT.expanduser().resolve():
+        raise RestartError(
+            f"ALTITUDE_HOME points to {config.ROOT}, but {SERVICE} uses {service_home}; refusing the wrong state"
+        )
+    try:
+        git_policy.fetch_and_require_exact_base(ROOT)
+    except git_policy.GitPolicyError as exc:
+        raise RestartError(str(exc)) from exc
+
+
+def worker_is_live(project: str, task: dict, claude_rows: list[dict] | None) -> bool:
+    worker_id = task.get("agent_id")
+    if not worker_id:
+        return False
+    if (task.get("l2_engine") or "claude") == "codex":
+        row = engines.codex_worker(worker_id, job_root=dispatch.l2_job_root(project, task["slug"]))
+        if row is None:
+            raise RestartError(f"cannot prove Codex worker {worker_id} has exited")
+    else:
+        row = next((item for item in (claude_rows or []) if item.get("id") == worker_id), None)
+        if row is None:
+            return False
+    return row.get("state") not in TERMINAL_WORKER_STATES and row.get("status") != "exited"
+
+
+def require_idle() -> None:
+    projects = config.load_projects()
+    tasks = [(project, task) for project in projects for task in S.list_tasks(project)]
+    needs_claude = any(
+        task.get("agent_id") and (task.get("l2_engine") or "claude") == "claude"
+        for _project, task in tasks
+    )
+    claude_rows = engines.claude_agents() if needs_claude else None
+    active: list[str] = []
+    for project, task in tasks:
+        state = task.get("state")
+        if task.get("dispatching"):
+            active.append(f"{project}/{task['slug']} (dispatch in progress)")
+        elif state in {"running", "reported"}:
+            active.append(f"{project}/{task['slug']} ({state})")
+        elif state == "blocked" and worker_is_live(project, task, claude_rows):
+            active.append(f"{project}/{task['slug']} (blocked but worker still live)")
+    if active:
+        raise RestartError("restart refused while work is active: " + ", ".join(active))
+    if unit_properties().get("ActiveState") == "active":
+        busy_l3: list[str] = []
+        for project in projects:
+            try:
+                status = json.loads(fetch(f"/api/chat/{quote(project, safe='')}"))
+            except (RestartError, ValueError, json.JSONDecodeError) as exc:
+                raise RestartError(f"cannot prove {project} L3 is idle: {exc}") from exc
+            if status.get("busy"):
+                busy_l3.append(project)
+        if busy_l3:
+            raise RestartError("restart refused while L3 is active: " + ", ".join(busy_l3))
+
+
+def validate_bundle(directory: Path) -> None:
+    index = directory / "index.html"
+    if not index.is_file():
+        raise RestartError("staged web bundle has no index.html")
+    contents = index.read_text(errors="replace")
+    assets = re.findall(r'(?:src|href)="/assets/([^"?#]+)', contents)
+    if not assets or not any(asset.endswith(".js") for asset in assets):
+        raise RestartError("staged web bundle index has no JavaScript asset")
+    if any(not (directory / "assets" / asset).is_file() for asset in assets):
+        raise RestartError("staged web bundle index references a missing asset")
+
+
+def build_bundle() -> Path:
+    staging = Path(tempfile.mkdtemp(prefix=".dist-next-", dir=WEB))
+    env = os.environ.copy()
+    node_bin = Path.home() / ".nvm" / "versions" / "node" / "v24.14.0" / "bin"
+    env["PATH"] = f"{node_bin}:{env.get('PATH', '')}"
+    try:
+        run(["pnpm", "install", "--frozen-lockfile"], cwd=WEB, env=env)
+        run(["pnpm", "exec", "tsc", "-b"], cwd=WEB, env=env)
+        run(["pnpm", "exec", "vite", "build", "--outDir", str(staging)], cwd=WEB, env=env)
+        validate_bundle(staging)
+        return staging
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def service_address() -> tuple[str, int]:
+    values = unit_environment()
+    return values.get("ALTITUDE_HOST", config.HOST), int(values.get("ALTITUDE_PORT", config.PORT))
+
+
+def fetch(path: str, *, timeout: float = 2.0) -> bytes:
+    host, port = service_address()
+    schemes = ("https", "http") if config.TLS else ("http", "https")
+    context = ssl._create_unverified_context()  # local CA may not be in Python's trust store
+    last_error: Exception | None = None
+    for scheme in schemes:
+        try:
+            with urlopen(f"{scheme}://{host}:{port}{path}", timeout=timeout,
+                         context=context if scheme == "https" else None) as response:
+                if response.status != 200:
+                    raise RestartError(f"{path} returned HTTP {response.status}")
+                return response.read()
+        except (OSError, URLError, RestartError) as exc:
+            last_error = exc
+    raise RestartError(f"{path} is unreachable: {last_error}")
+
+
+def wait_healthy(old_pid: int, timeout: int = 45) -> None:
+    deadline = time.monotonic() + timeout
+    last = "service did not start"
+    while time.monotonic() < deadline:
+        try:
+            props = unit_properties()
+            pid = int(props.get("MainPID", "0") or 0)
+            if props.get("ActiveState") != "active" or not pid or (old_pid and pid == old_pid):
+                raise RestartError(
+                    f"systemd is {props.get('ActiveState')}/{props.get('SubState')} with PID {pid}"
+                )
+            overview = json.loads(fetch("/api/overview"))
+            if not isinstance(overview.get("projects"), list):
+                raise RestartError("/api/overview returned an invalid payload")
+            page = fetch("/").decode("utf-8", "replace")
+            if 'id="root"' not in page:
+                raise RestartError("web root did not return the SPA shell")
+            return
+        except (RestartError, ValueError, json.JSONDecodeError) as exc:
+            last = str(exc)
+            time.sleep(1)
+    raise RestartError(f"Altitude did not become healthy within {timeout}s: {last}")
+
+
+def diagnostics() -> None:
+    subprocess.run(["systemctl", "--user", "status", SERVICE, "--no-pager"], check=False)
+    subprocess.run(["journalctl", "--user", "-u", SERVICE, "-n", "30", "--no-pager"], check=False)
+
+
+def publish_and_restart(staging: Path) -> None:
+    backup = WEB / ".dist-previous"
+    if backup.exists():
+        raise RestartError(
+            f"refusing to overwrite leftover rollback bundle {backup}; inspect or restore it first"
+        )
+    old_pid = int(unit_properties().get("MainPID", "0") or 0)
+    had_previous = DIST.exists()
+    if had_previous:
+        DIST.rename(backup)
+    try:
+        staging.rename(DIST)
+        run(["systemctl", "--user", "restart", SERVICE])
+        wait_healthy(old_pid)
+    except Exception as exc:
+        if DIST.exists():
+            DIST.rename(staging)
+        if had_previous and backup.exists():
+            backup.rename(DIST)
+        try:
+            run(["systemctl", "--user", "restart", SERVICE])
+        except RestartError:
+            pass
+        diagnostics()
+        raise RestartError(f"restart verification failed; restored the prior web bundle: {exc}") from exc
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+    if backup.exists():
+        shutil.rmtree(backup)
+
+
+def main() -> int:
+    staging: Path | None = None
+    try:
+        print("Checking the deployed checkout...")
+        require_deployed_checkout()
+        print("Building the web app in a staging directory...")
+        staging = build_bundle()
+        require_deployed_checkout()
+        # The same cross-process lock surrounds every final worker launch. A
+        # queued launch cannot slip between this idle proof and the restart,
+        # and the restarted timer waits here until health verification ends.
+        with recovery._launch_lock():  # noqa: SLF001 -- trusted operator boundary uses the canonical launch lock
+            print("Checking that Altitude is idle...")
+            require_idle()
+            print("Restarting Altitude and waiting for API/UI health...")
+            publish_and_restart(staging)
+        staging = None
+    except RestartError as exc:
+        print(f"Altitude restart failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if staging and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+    print("Altitude rebuilt and restarted successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

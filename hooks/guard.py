@@ -872,6 +872,16 @@ def _chunk_violation(words, config_env_active, variables, depth):
         return None
     verb = _basename(words[command_index])
 
+    # This command is intentionally available to Burak from an ordinary shell,
+    # but a task-owned Bash turn must not reach it indirectly through Make or
+    # the Python helper after the direct systemctl spelling was blocked.
+    if verb in {"make", "gmake"} and "restart" in words[command_index + 1:]:
+        return "Altitude restart is an operator-only action"
+    if verb in _INTERPRETERS and any(
+        _basename(word) == "restart_altitude.py" for word in words[command_index + 1:]
+    ):
+        return "Altitude restart is an operator-only action"
+
     for opener in ("{", "(", ")"):
         for i, token in enumerate(words[:-1]):
             if token == opener:
