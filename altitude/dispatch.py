@@ -604,7 +604,8 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
     return _resume_blocked_locked(project, slug, answer, prefix, locked_resume=False, **expected)
 
 
-def message_l2(project: str, slug: str, text: str) -> dict:
+def message_l2(project: str, slug: str, text: str, *, expected_dispatch_id: str | None = None,
+               expected_session_id: str | None = None, expected_engine: str | None = None) -> dict:
     """Persist Burak's message and deliver it only to the L2 attempt snapshot he addressed."""
     text = str(text or "").strip()
     if not text:
@@ -612,6 +613,13 @@ def message_l2(project: str, slug: str, text: str) -> dict:
     with _resume_lock(project, slug):
         task = S.load_task(project, slug)
         _require_resume_snapshot(task, slug)
+        for label, expected, actual in (
+            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+            ("session", expected_session_id, task.get("session_id")),
+            ("engine", expected_engine, l2_engine(task)),
+        ):
+            if expected is not None and str(expected) != str(actual or ""):
+                raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
         if not task.get("dispatch_id") or not task.get("session_id"):
             raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
         expected = {

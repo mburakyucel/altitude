@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, verify
+from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -620,6 +620,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(project_view(parts[2]))
             if api == "task" and len(parts) > 3:
                 return self._json(task_view(parts[2], parts[3]))
+            if api == "transcript" and len(parts) > 3:
+                try:
+                    return self._json(transcript.view(
+                        parts[2], parts[3], dispatch_id=q.get("dispatch_id", [""])[0],
+                        engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
+                        cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"))
+                except (KeyError, transcript.TranscriptAccessError):
+                    return self._json({"error": "transcript unavailable for this task generation"}, 404)
             if api == "monitor":
                 return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
                                    "agents": engines.claude_agents()})
@@ -695,7 +703,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     return self._json({"error": "empty task message"}, 400)
                 try:
-                    res = dispatch.message_l2(project, slug, text)
+                    res = dispatch.message_l2(
+                        project, slug, text, expected_dispatch_id=o.get("dispatch_id"),
+                        expected_session_id=o.get("session_id"), expected_engine=o.get("engine"))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "message": res["message"],
