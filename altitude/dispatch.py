@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import fcntl
 import json
 import secrets
+import subprocess
 from datetime import datetime, timezone
 import re
 from pathlib import Path
@@ -937,6 +938,129 @@ RESTART_PENDING = "restart-pending.json"
 DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded at start; everything else is read per use
 
 
+def _pin_ref(repo: Path, ref: str) -> tuple[str | None, str | None]:
+    try:
+        resolved = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                                  cwd=str(repo), capture_output=True, text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError, UnicodeError) as exc:
+        return None, str(exc)
+    sha = (resolved.stdout or "").strip()
+    if resolved.returncode != 0 or not sha:
+        return None, (resolved.stderr or "").strip()[:120] or f"exit {resolved.returncode}"
+    return sha, None
+
+
+def _squash_equivalent(repo: Path, branch_sha: str, main_sha: str) -> tuple[bool | None, str | None]:
+    """Prove every nonempty net path changed by a pinned branch has identical content on pinned main."""
+    try:
+        base = subprocess.run(["git", "merge-base", branch_sha, main_sha], cwd=str(repo),
+                              capture_output=True, text=True, timeout=30)
+    except (subprocess.SubprocessError, OSError, UnicodeError) as exc:
+        return None, f"cannot find merge base: {exc}"
+    base_sha = (base.stdout or "").strip()
+    if base.returncode != 0 or not base_sha:
+        detail = (base.stderr or "").strip()[:120] or f"exit {base.returncode}"
+        return None, f"cannot find merge base: {detail}"
+
+    def changed(left: str, right: str) -> tuple[set[str] | None, str | None]:
+        try:
+            diff = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", left, right],
+                                  cwd=str(repo), capture_output=True, text=True, timeout=30)
+        except (subprocess.SubprocessError, OSError, UnicodeError) as exc:
+            return None, str(exc)
+        if diff.returncode != 0:
+            return None, (diff.stderr or "").strip()[:120] or f"exit {diff.returncode}"
+        raw = diff.stdout or ""
+        if raw and not raw.endswith("\0"):
+            return None, "git diff returned malformed NUL-delimited paths"
+        return {path for path in raw.split("\0") if path}, None
+
+    touched, error = changed(base_sha, branch_sha)
+    if error:
+        return None, f"cannot read branch paths: {error}"
+    if not touched:
+        return False, "branch has no net changed paths"
+    different, error = changed(branch_sha, main_sha)
+    if error:
+        return None, f"cannot compare branch with main: {error}"
+    return not bool(touched & different), None
+
+
+def _ref_still_at(repo: Path, ref: str, expected: str) -> bool:
+    current, error = _pin_ref(repo, ref)
+    return error is None and current == expected
+
+
+def _merged_pr_receipt(repo: Path, task: dict, branch: str, branch_sha: str) -> tuple[bool | None, str]:
+    """Confirm GitHub merged this exact task branch tip; tree equality alone is not publication evidence."""
+    verified = task.get("verified") if isinstance(task.get("verified"), dict) else {}
+    raw_numbers = verified.get("prs") if verified.get("verdict") == "ok" else []
+    if not isinstance(raw_numbers, list):
+        return False, "task has no well-formed verified merged-PR receipt"
+    numbers = sorted({int(value) for value in raw_numbers
+                      if not isinstance(value, bool) and isinstance(value, (int, str)) and str(value).isdigit()})
+    if not numbers:
+        return False, "task has no verified merged-PR receipt"
+    errors = []
+    for number in numbers:
+        try:
+            viewed = subprocess.run(
+                ["gh", "pr", "view", str(number), "--json", "number,state,baseRefName,headRefName,headRefOid"],
+                cwd=str(repo), capture_output=True, text=True, timeout=60, env=engines.clean_env())
+        except (subprocess.SubprocessError, OSError, UnicodeError) as exc:
+            errors.append(f"PR #{number}: {exc}")
+            continue
+        if viewed.returncode != 0:
+            detail = (viewed.stderr or viewed.stdout or "").strip()[:120] or f"exit {viewed.returncode}"
+            errors.append(f"PR #{number}: {detail}")
+            continue
+        try:
+            info = json.loads(viewed.stdout or "{}")
+        except (TypeError, ValueError) as exc:
+            errors.append(f"PR #{number}: invalid response ({exc})")
+            continue
+        if not isinstance(info, dict):
+            errors.append(f"PR #{number}: invalid response shape")
+            continue
+        if (info.get("number") == number and info.get("state") == "MERGED" and info.get("baseRefName") == "main"
+                and info.get("headRefName") == branch
+                and info.get("headRefOid") == branch_sha):
+            return True, f"verified merged PR #{number}"
+    if errors:
+        return None, "; ".join(errors)[:240]
+    return False, "no verified merged PR matches the task branch and pinned tip"
+
+
+def _l1_patch_matches_current(worktree: Path, patch_path: Path) -> tuple[bool | None, str | None]:
+    """Recreate L1's binary patch and require it to equal the durable artifact byte-for-byte."""
+    from . import land
+    try:
+        groups = land._changes(worktree)
+        changed = sorted({path for _xy, group in groups for path in group})
+        if not changed:
+            return False, "dirty status had no reproducible changed paths"
+        untracked = sorted({path for xy, group in groups if xy == "??" for path in group})
+        if untracked:
+            added = subprocess.run(["git", "add", "-N", "--", *untracked], cwd=str(worktree),
+                                   capture_output=True, text=True, timeout=30)
+            if added.returncode != 0:
+                detail = (added.stderr or added.stdout or "").strip()[:120] or f"exit {added.returncode}"
+                return None, f"cannot prepare current L1 diff: {detail}"
+        try:
+            current = subprocess.run(["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--", *changed],
+                                     cwd=str(worktree), capture_output=True, text=True, timeout=60)
+        finally:
+            if untracked:
+                subprocess.run(["git", "reset", "-q", "HEAD", "--", *untracked], cwd=str(worktree),
+                               capture_output=True, text=True, timeout=30)
+        if current.returncode != 0:
+            detail = (current.stderr or current.stdout or "").strip()[:120] or f"exit {current.returncode}"
+            return None, f"cannot capture current L1 diff: {detail}"
+        return current.stdout == patch_path.read_text(), None
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError, RuntimeError) as exc:
+        return None, str(exc)
+
+
 def pull_after_done(project: str, task: dict) -> list[str]:
     """When a project's checkout is its deployment, fast-forward it to
     origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
@@ -982,7 +1106,7 @@ def pull_after_done(project: str, task: dict) -> list[str]:
 
 
 def cleanup_after_done(project: str, task: dict) -> list[str]:
-    """After `done`, remove only this task's merged L2 and completed L1/reviewer worktrees.
+    """After `done`, remove only this task's published L2 and completed L1/reviewer worktrees.
 
     Ownership comes from the task's persisted L2 path and L1/reviewer records, before any session or git-state guard is
     applied. An unfinished owned record is an expected deferral: it is logged and returned in the notes even if git
@@ -1031,6 +1155,23 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 paths.append((persisted_key, persisted_kind))
         return paths
 
+    def captured_patch(owner_slug: str, rec: dict, candidate_path: str) -> dict | None:
+        """Bind one completed L1 record to its exact worktree, parent, and conventional durable patch."""
+        if rec.get("role") != "implementer" or not rec.get("done"):
+            return None
+        result = rec.get("result") if isinstance(rec.get("result"), dict) else {}
+        if result.get("error") or not isinstance(result.get("patch"), str) or not rec.get("parent_sha"):
+            return None
+        if not rec.get("worktree") or path_key(rec["worktree"]) != candidate_path:
+            return None
+        artifact_root = (S.task_dir(project, owner_slug) / "l1").resolve()
+        patch = Path(result["patch"]).resolve()
+        expected = (artifact_root / f"{rec['name']}.patch").resolve()
+        if patch != expected or not patch.is_file():
+            return None
+        return {"patch": str(patch), "name": rec["name"], "parent_sha": rec["parent_sha"],
+                "worktree": candidate_path}
+
     # Include archived records: `done` archives the task before the server reaches this function. The passed record is
     # also included because direct callers and old state may not have a status file on disk.
     task_records = {t.get("slug"): t for t in S.list_tasks(project, include_archive=True) if t.get("slug")}
@@ -1052,11 +1193,14 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             for key, kind in record_paths(owner_slug, owner_task, rec):
                 owners.setdefault(key, set()).add(owner_slug)
                 if owner_slug == slug:
-                    candidate = own_candidates.setdefault(key, {"kind": kind, "unfinished": False})
+                    candidate = own_candidates.setdefault(key, {"kind": kind, "unfinished": False,
+                                                                 "l1_patch_proofs": []})
                     if kind == "L2":
                         candidate["kind"] = "L2"
                     if not rec.get("done"):
                         candidate["unfinished"] = True
+                    if proof := captured_patch(owner_slug, rec, key):
+                        candidate.setdefault("l1_patch_proofs", []).append(proof)
 
     # Deferral comes from persisted ownership, not from git's transient view. Record every unfinished L1/reviewer even
     # when its worktree is absent from (or cannot be read through) `git worktree list`.
@@ -1153,19 +1297,49 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
 
     for wt, branch, candidate in eligible:
         reason = None
+        squash_equivalent = False
+        pinned_branch = None
+        pinned_main = None
         if has_live_worker(wt):
             reason = "live L2 worker is using the worktree"
         elif not branch:
             reason = "git worktree has no branch"
         else:
+            pinned_branch, branch_error = _pin_ref(repo, f"refs/heads/{branch}")
+            pinned_main, main_error = _pin_ref(repo, "refs/remotes/origin/main")
+            if branch_error or main_error:
+                reason = f"cannot pin cleanup refs: {branch_error or main_error}"
+                incidents.system_fault("cleanup-ref", f"{project}/{slug} {branch}: {reason}",
+                                       project=project, task=slug)
             try:
-                ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", branch, "origin/main"], cwd=str(repo),
-                                          capture_output=True, text=True, timeout=30)
+                ancestry = (subprocess.run(["git", "merge-base", "--is-ancestor", pinned_branch, pinned_main],
+                                           cwd=str(repo), capture_output=True, text=True, timeout=30)
+                            if not reason else None)
             except (subprocess.SubprocessError, OSError) as e:
                 reason = f"merge-base indeterminate: {e}"
                 incidents.system_fault("cleanup-merge-base", f"{project}/{slug} {branch}: {reason}", project=project, task=slug)
             if not reason and ancestry.returncode == 1:
-                reason = "branch has commits not on origin/main"
+                expected_l2_path = path_key(task.get("worktree")) if task.get("worktree") else None
+                expected_branch = f"worktree-{slug}"
+                if (candidate["kind"] != "L2" or path_key(wt) != expected_l2_path
+                        or branch != task.get("branch") or branch != expected_branch):
+                    reason = "squash cleanup is limited to the task's exact persisted L2 branch and worktree"
+                else:
+                    squash_equivalent, equivalent_error = _squash_equivalent(repo, pinned_branch, pinned_main)
+                    if squash_equivalent is None:
+                        reason = f"squash equivalence indeterminate: {equivalent_error}"
+                        incidents.system_fault("cleanup-equivalence", f"{project}/{slug} {branch}: {reason}",
+                                               project=project, task=slug)
+                    elif not squash_equivalent:
+                        reason = equivalent_error or "branch has commits not on origin/main"
+                    else:
+                        receipt, receipt_detail = _merged_pr_receipt(repo, task, branch, pinned_branch)
+                        if receipt is None:
+                            reason = f"merged-PR receipt indeterminate: {receipt_detail}"
+                            incidents.system_fault("cleanup-publication-receipt", f"{project}/{slug} {branch}: {reason}",
+                                                   project=project, task=slug)
+                        elif not receipt:
+                            reason = receipt_detail
             elif not reason and ancestry.returncode != 0:
                 stderr = (ancestry.stderr or "").strip()[:120] or "(empty stderr)"
                 reason = f"merge-base indeterminate (exit {ancestry.returncode}); stderr: {stderr}"
@@ -1174,7 +1348,62 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
             notes.append(f"skipped worktree {Path(wt).name}: {reason}")
             continue
-        removal_reason = "task-owned branch is merged into origin/main"
+        if (not _ref_still_at(repo, f"refs/heads/{branch}", pinned_branch)
+                or not _ref_still_at(repo, "refs/remotes/origin/main", pinned_main)):
+            reason = "branch or origin/main moved after cleanup proof"
+            incidents.system_fault("cleanup-branch-race", f"{project}/{slug} {branch}: {reason}",
+                                   project=project, task=slug)
+            S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
+            notes.append(f"skipped worktree {Path(wt).name}: {reason}")
+            continue
+        dirty_l1_with_patch = False
+        try:
+            status = subprocess.run(["git", "-C", wt, "status", "--porcelain", "-z",
+                                     "--untracked-files=all", "--ignored=traditional"],
+                                    cwd=str(repo), capture_output=True, text=True, timeout=30)
+        except (subprocess.SubprocessError, OSError, UnicodeError) as e:
+            reason = f"cannot inspect worktree changes: {e}"
+        else:
+            if status.returncode != 0:
+                detail = (status.stderr or status.stdout or "").strip()[:120] or f"exit {status.returncode}"
+                reason = f"cannot inspect worktree changes: {detail}"
+            else:
+                raw_status = status.stdout or ""
+                if raw_status and not raw_status.endswith("\0"):
+                    reason = "cannot inspect worktree changes: malformed NUL-delimited status"
+                records = [record for record in raw_status.split("\0") if record] if not reason else []
+                ignored = [record[3:] for record in records if record.startswith("!! ")]
+                disposable_ignored = [path for path in ignored
+                                      if "__pycache__" in Path(path).parts and Path(path).suffix in (".pyc", ".pyo")]
+                protected_ignored = sorted(set(ignored) - set(disposable_ignored))
+                dirty = [record for record in records if not record.startswith("!! ")]
+                if protected_ignored:
+                    reason = f"worktree has ignored data: {', '.join(protected_ignored)[:160]}"
+                elif dirty:
+                    proofs = candidate.get("l1_patch_proofs") or []
+                    proof = proofs[0] if candidate["kind"] == "L1" and len(proofs) == 1 else None
+                    if proof and proof.get("worktree") == path_key(wt) and proof.get("parent_sha") == pinned_branch:
+                        matches, match_error = _l1_patch_matches_current(Path(wt), Path(proof["patch"]))
+                        if matches:
+                            dirty_l1_with_patch = True
+                        elif matches is None:
+                            reason = f"cannot validate current L1 diff against captured patch: {match_error}"
+                        else:
+                            reason = "dirty L1 worktree no longer matches its exact captured patch"
+                    else:
+                        reason = "worktree has tracked or untracked changes without one exact captured L1 patch"
+        if reason:
+            if reason.startswith("cannot inspect"):
+                incidents.system_fault("cleanup-worktree-status", f"{project}/{slug} {wt}: {reason}",
+                                       project=project, task=slug)
+            elif reason.startswith("cannot validate current L1 diff"):
+                incidents.system_fault("cleanup-l1-patch", f"{project}/{slug} {wt}: {reason}",
+                                       project=project, task=slug)
+            S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
+            notes.append(f"skipped worktree {Path(wt).name}: {reason}")
+            continue
+        removal_reason = ("task branch content is present in origin/main (squash-equivalent)"
+                          if squash_equivalent else "task-owned branch is merged into origin/main")
         removed_l2_worker = candidate["kind"] == "L2" and bool(task.get("agent_id"))
         if removed_l2_worker:
             try:
@@ -1188,7 +1417,9 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                 notes.append(f"{engine} worker {task['agent_id']}: {(rm_note or 'completed')[:120]}")
         if not reason:
             try:
-                rm = subprocess.run(["git", "worktree", "remove", "--force", wt], cwd=str(repo), capture_output=True,
+                remove_cmd = (["git", "worktree", "remove", "--force", wt]
+                              if dirty_l1_with_patch else ["git", "worktree", "remove", wt])
+                rm = subprocess.run(remove_cmd, cwd=str(repo), capture_output=True,
                                     text=True, timeout=60)
             except (subprocess.SubprocessError, OSError) as e:
                 reason = f"git worktree remove failed: {e}"
@@ -1201,14 +1432,14 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                                      project=project, task=slug)
         if not reason:
             try:
-                deleted = subprocess.run(["git", "branch", "-D", branch], cwd=str(repo), capture_output=True, text=True,
-                                         timeout=30)
+                deleted = subprocess.run(["git", "update-ref", "-d", f"refs/heads/{branch}", pinned_branch],
+                                         cwd=str(repo), capture_output=True, text=True, timeout=30)
             except (subprocess.SubprocessError, OSError) as e:
-                reason = f"git branch delete failed after worktree removal: {e}"
+                reason = f"git branch compare-and-delete failed after worktree removal: {e}"
             else:
                 if deleted.returncode != 0:
                     error = (deleted.stderr or deleted.stdout).strip()[:120] or f"exit {deleted.returncode}"
-                    reason = f"git branch delete failed after worktree removal: {error}"
+                    reason = f"git branch compare-and-delete failed after worktree removal: {error}"
             if reason:
                 incidents.system_fault("cleanup-branch-delete", f"{project}/{slug} {branch}: {reason}",
                                      project=project, task=slug)
@@ -1218,6 +1449,8 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             continue
         if removed_l2_worker:
             removal_reason += "; L2 worker removed"
+        elif dirty_l1_with_patch:
+            removal_reason += "; dirty L1 worktree removed after validating its captured patch"
         S.append_event(project, slug, "cleanup-worktree", action="removed", worktree=wt, reason=removal_reason)
         notes.append(f"removed merged worktree {Path(wt).name}")
     notes.extend(pull_after_done(project, task))
