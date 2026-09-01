@@ -1,5 +1,22 @@
 # Engine and session lifecycle
 
+## Live L2 transcript
+
+The task page stays a concise Burak/L2 conversation. Its opt-in **Live session** route projects the engine's local
+JSONL and Altitude's task events into one engine-neutral timeline; it does not run a summarizer and never claims
+hidden reasoning. Tool output is bounded in the default timeline and complete observable records can be expanded
+in raw mode. Raw mode remains local and redacts credential-shaped keys and values before data crosses the HTTP
+boundary. The browser supplies no paths: the server derives transcript files only from the registered task and its
+recorded engine, worker, and session identities.
+
+Each read and steering request carries the project, task, dispatch generation, engine, and displayed session. A
+mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Steering ends
+the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
+normally retains its thread id, while Claude retains its resumable session id. Altitude records the old and new
+worker/session identities and renders resume, replacement, compaction, engine-change, and recovery events as
+boundaries underneath the same logical task dispatch. A parser error or incomplete final JSONL record is displayed
+as viewer evidence and retried on the next poll; it never changes task or worker state.
+
 Altitude has one logical owner per task and replaceable physical workers. These are different
 identities on purpose:
 

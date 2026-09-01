@@ -157,6 +157,10 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         ) : null}
       </header>
 
+      {dispatchId && sessionId ? (
+        <Link className="btn w-fit" to={`/projects/${project}/tasks/${slug}/live`}>Live session</Link>
+      ) : null}
+
       {hasActivity ? (
         <section className="card space-y-1">
           <h2 className="label">Activity</h2>

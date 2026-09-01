@@ -200,6 +200,16 @@ export const TaskViewSchema = z
   })
   .passthrough();
 
+export const TranscriptEventSchema = z.object({
+  seq: z.number(), source: z.string(), kind: z.string(), type: z.string(),
+  at: z.string().nullish(), session_id: z.string().nullish(), text: z.string(),
+  truncated: z.boolean().nullish(), raw: z.unknown().nullish(),
+}).passthrough();
+export const TranscriptSchema = z.object({
+  project: z.string(), slug: z.string(), dispatch_id: z.string(), engine: z.string(),
+  session_id: z.string(), cursor: z.number(), events: z.array(TranscriptEventSchema), redaction: z.string(),
+}).passthrough();
+
 export const SessionSchema = z
   .object({
     kind: z.string(),
@@ -256,6 +266,7 @@ export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
 export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
+export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
@@ -287,6 +298,18 @@ export function useTask(project: string, slug: string) {
     queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
     refetchInterval: pollInterval,
     enabled: Boolean(project && slug),
+  });
+}
+
+export function useTranscript(project: string, slug: string, dispatchId: string, engine: string,
+                              sessionId: string, raw: boolean) {
+  const query = new URLSearchParams({ dispatch_id: dispatchId, engine, session_id: sessionId,
+                                      raw: raw ? "1" : "0" });
+  return useQuery({
+    queryKey: ["transcript", project, slug, dispatchId, engine, sessionId, raw],
+    queryFn: async () => TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`)),
+    refetchInterval: 2_000,
+    enabled: Boolean(project && slug && dispatchId && engine && sessionId),
   });
 }
 
@@ -392,6 +415,9 @@ export interface L2MessageInput {
   project: string;
   slug: string;
   text: string;
+  dispatch_id?: string;
+  session_id?: string;
+  engine?: string;
 }
 
 export function useL2Message(project: string) {

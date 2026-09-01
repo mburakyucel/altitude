@@ -64,6 +64,14 @@ class TestTaskConversation(unittest.TestCase):
             "expected_state": "running",
         })
 
+    def test_live_view_steering_rejects_a_stale_displayed_generation(self):
+        with mock.patch.object(dispatch, "_resume_session_locked") as resume:
+            with self.assertRaisesRegex(T.TransitionError, "session changed"):
+                dispatch.message_l2(self.project, self.slug, "stale", expected_dispatch_id=f"{self.slug}-1",
+                                    expected_session_id="session-replaced", expected_engine="claude")
+        resume.assert_not_called()
+        self.assertEqual(T.task_messages(self.project, self.slug), [])
+
     def test_l2_reply_and_task_api_show_both_sides_without_qa_log(self):
         T.append_task_message(self.project, self.slug, "burak", "Can we keep this small?",
                               expected_dispatch_id=f"{self.slug}-1", actor="burak")

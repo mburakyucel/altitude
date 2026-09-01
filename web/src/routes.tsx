@@ -8,6 +8,7 @@ import Project from "./routes/Project";
 import Task from "./routes/Task";
 import Chat from "./routes/Chat";
 import Monitor from "./routes/Monitor";
+import LiveSession from "./routes/LiveSession";
 
 /** /chat with no project: redirect to the first managed project's chat. */
 function ChatRedirect() {
@@ -27,6 +28,7 @@ export const routes: RouteObject[] = [
       { path: "/projects", element: <Projects /> },
       { path: "/projects/:name", element: <Project /> },
       { path: "/projects/:name/tasks/:slug", element: <Task /> },
+      { path: "/projects/:name/tasks/:slug/live", element: <LiveSession /> },
       { path: "/chat", element: <ChatRedirect /> },
       { path: "/chat/:name", element: <Chat /> },
       { path: "/monitor", element: <Monitor /> },
