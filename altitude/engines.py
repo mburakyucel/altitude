@@ -59,11 +59,12 @@ def codex_isolation_config(cwd: Path, *, writable: bool = True,
                            readable_roots: list[Path] | None = None) -> list[str]:
     """Suppress mutable user/project/plugin sources; managed host policy remains authoritative.
 
-    User config and rules are ignored by command-line flags, project config is marked untrusted, and plugins are
-    disabled. Hooks are disabled for these headless turns; the Codex permission profile and whole-turn containment,
-    not shell-text automation, are the write and process boundaries. Host-managed requirements remain authoritative.
+    User config and rules are ignored by command-line flags, and plugins are disabled. Do not synthesize a dynamic
+    ``projects.<path>.trust_level`` override: the Codex strict schema rejects that mutable map before it can report a
+    thread identity. Hooks are disabled for these headless turns; the Codex permission profile and
+    whole-turn containment, not shell-text automation, are the write and process boundaries. Host-managed
+    requirements remain authoritative.
     """
-    project_key = json.dumps(str(Path(cwd).resolve()))
     profile = "altitude_worker" if writable else "altitude_reader"
     access = "write" if writable else "read"
     # Start from Codex's maintained workspace baseline so its own executable/runtime remain available, then deny the
@@ -77,7 +78,7 @@ def codex_isolation_config(cwd: Path, *, writable: bool = True,
     filesystem = ('{ ":root"="deny", ":minimal"="read", '
                   f'":workspace_roots"={{ "."="{access}", ".git"="read", ".codex"="read" }}'
                   f', {json.dumps(str(runtime_dir))}="deny"{extra_reads} }}')
-    return [f"projects.{project_key}.trust_level=\"untrusted\"", "features.hooks=false", "features.plugins=false",
+    return ["features.hooks=false", "features.plugins=false",
             "features.remote_plugin=false", "features.apps=false", "features.multi_agent=false",
             "features.goals=false", 'web_search="disabled"', 'approval_policy="never"',
             "shell_environment_policy.ignore_default_excludes=false",
