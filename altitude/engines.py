@@ -219,15 +219,20 @@ def clean_env() -> dict:
 def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
     """Build the host environment for Codex without passing control capabilities or ambient credentials.
 
-    A contained launch retains the user bus only in the outer ``systemd-run`` client. The command executed inside
-    the scope gets those two variables explicitly unset by :func:`_codex_scope_command` before Codex starts.
+    A contained launch retains the user bus only in the outer ``systemd-run`` client. System services do not
+    necessarily inherit the interactive session's bus variables, so the trusted launcher synthesizes their canonical
+    per-user values when absent. The command executed inside the transient service gets both variables explicitly
+    unset by :func:`_codex_service_command` before Codex starts.
     """
     source = clean_env()
     source.update(extra_env or {})
     env = {key: value for key, value in source.items()
            if key in _CODEX_SAFE_ENV or key.startswith("LC_")}
     if retain_user_bus:
-        env.update({key: source[key] for key in _CODEX_CONTROL_ENV if key in source})
+        runtime_dir = source.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        env["XDG_RUNTIME_DIR"] = runtime_dir
+        env["DBUS_SESSION_BUS_ADDRESS"] = (source.get("DBUS_SESSION_BUS_ADDRESS")
+                                           or f"unix:path={runtime_dir}/bus")
     env["TMPDIR"] = "/tmp"
     for key in list(env):
         if key in _CODEX_SENSITIVE_ENV or _CODEX_SECRET_ENV.search(key):
@@ -501,24 +506,26 @@ class CodexContainmentError(RuntimeError):
 
 
 def _codex_unit(worker_id: str) -> str:
-    """A systemd-safe, collision-resistant transient scope name."""
+    """A systemd-safe, collision-resistant transient service name."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(worker_id))
-    return f"{CODEX_SYSTEMD_PREFIX}{safe}.scope"
+    return f"{CODEX_SYSTEMD_PREFIX}{safe}.service"
 
 
-def _codex_scope_command(unit: str, command: list[str]) -> list[str]:
-    """Run a turn in its own user-systemd cgroup while inheriting its explicit launcher environment.
+def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str]) -> list[str]:
+    """Run a turn in a user-manager-created transient service with its own cgroup.
 
-    Scope units synchronously execute the child of ``systemd-run`` and, unlike a process group, retain descendants
-    that call ``setsid`` or double-fork. Stopping the scope therefore has control-group kill semantics. The inner
-    Codex sandbox supplies the PID namespace; keeping syscall filters off the outer unit preserves nested bwrap.
+    ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
+    creates the child. This lets nested bwrap initialize without weakening altd's ``NoNewPrivileges=yes`` boundary.
+    Unlike a process group, the service cgroup retains descendants that call ``setsid`` or double-fork. The inner
+    Codex sandbox supplies the PID namespace; keeping syscall filters off the outer service preserves nested bwrap.
     """
-    scrub = [ENV_BIN]
-    for key in _CODEX_CONTROL_ENV:
-        scrub += ["-u", key]
-    return [SYSTEMD_RUN_BIN, "--user", "--scope", f"--unit={unit}", "--quiet", "--collect", "--same-dir",
-            "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
-            "--", *scrub, *command]
+    # A transient service inherits the user manager's environment, not the launching client's. Clear it completely
+    # and reconstruct only the already-sanitized child environment so task identity survives without ambient manager
+    # credentials or control sockets crossing the boundary.
+    scrub = [ENV_BIN, "-i", *(f"{key}={child_env[key]}" for key in sorted(child_env))]
+    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--pipe", f"--unit={unit}", "--quiet", "--collect",
+            "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
+            "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
 
 
 def _systemd_unit_properties(unit: str) -> dict[str, str]:
@@ -526,7 +533,8 @@ def _systemd_unit_properties(unit: str) -> dict[str, str]:
     cmd = [SYSTEMCTL_BIN, "--user", "show", unit, "--property=LoadState", "--property=ActiveState",
            "--property=SubState", "--property=ControlGroup"]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=clean_env())
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
+                                env=codex_env(retain_user_bus=True))
     except (OSError, subprocess.SubprocessError) as exc:
         raise CodexContainmentError(f"cannot inspect Codex containment unit {unit}: {exc}") from exc
     if result.returncode != 0:
@@ -585,11 +593,11 @@ def _wait_codex_unit_empty(unit: str, timeout: float = 5.0) -> bool:
 
 
 def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
-    """Stop every process in the transient scope, escalating to cgroup-wide SIGKILL if needed."""
+    """Stop every process in the transient service, escalating to cgroup-wide SIGKILL if needed."""
     try:
         stopped = subprocess.run([SYSTEMCTL_BIN, "--user", "stop", "--no-block", unit],
                                  capture_output=True, text=True,
-                                 timeout=timeout, env=clean_env())
+                                 timeout=timeout, env=codex_env(retain_user_bus=True))
     except (OSError, subprocess.SubprocessError) as exc:
         raise CodexContainmentError(f"cannot stop Codex containment unit {unit}: {exc}") from exc
     if stopped.returncode != 0 and not _codex_unit_empty(unit):
@@ -600,7 +608,8 @@ def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
     if _codex_unit_empty(unit):
         return
     killed = subprocess.run([SYSTEMCTL_BIN, "--user", "kill", "--kill-who=all", "--signal=SIGKILL", unit],
-                            capture_output=True, text=True, timeout=timeout, env=clean_env())
+                            capture_output=True, text=True, timeout=timeout,
+                            env=codex_env(retain_user_bus=True))
     if killed.returncode != 0 and _codex_unit_empty(unit):
         return
     if killed.returncode != 0 or not _wait_codex_unit_empty(unit, timeout):
@@ -609,7 +618,7 @@ def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
 
 
 def codex_containment_empty(worker_id: str, *, job_root: Path) -> bool:
-    """True only when a durable background worker's exact systemd scope is proven inactive and empty."""
+    """True only when a durable background worker's exact systemd service is proven inactive and empty."""
     try:
         record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
     except (OSError, ValueError):
@@ -689,15 +698,35 @@ done
     if not _codex_network_access(extra_config):
         cmd.append("--unshare-net")
     cmd += ["--die-with-parent", "/bin/sh", "-c", script, "altitude-codex-write-probe", sentinel, *roots]
+    unit = _codex_unit(f"preflight-{uuid.uuid4().hex}")
+    launcher_env = codex_env(retain_user_bus=True)
+    contained_cmd = _codex_service_command(unit, cmd, codex_env())
     detail = ""
     try:
-        probe = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
-        if probe.returncode == 0:
+        probe = subprocess.run(contained_cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+                               env=launcher_env)
+        try:
+            empty = _wait_codex_unit_empty(unit)
+        except CodexContainmentError as exc:
+            empty = False
+            detail = str(exc)
+        if probe.returncode == 0 and empty:
             return
-        detail = probe.stderr or f"bwrap exited {probe.returncode} without stderr"
+        if not empty:
+            try:
+                _stop_codex_unit(unit)
+            except CodexContainmentError as exc:
+                detail = str(exc)
+            detail = detail or f"Codex sandbox preflight service {unit} remained populated"
+        else:
+            detail = probe.stderr or f"bwrap exited {probe.returncode} without stderr"
     except subprocess.TimeoutExpired as exc:
+        try:
+            _stop_codex_unit(unit)
+        except CodexContainmentError as stop_exc:
+            detail = str(stop_exc)
         stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
-        detail = stderr or f"bwrap timed out after {timeout} seconds"
+        detail = detail or stderr or f"bwrap timed out after {timeout} seconds"
     except OSError as exc:
         detail = f"{type(exc).__name__}: {exc}"
     cleanup_errors = []
@@ -740,7 +769,7 @@ def _terminate_spawned_codex(proc: subprocess.Popen, unit: str) -> None:
     except CodexContainmentError as exc:
         containment_error = exc
     # The systemd-run wrapper is not the security boundary, but reaping it avoids a local zombie after the unit is
-    # empty and is useful when systemd-run itself failed before creating the scope.
+    # empty and is useful when systemd-run itself failed before creating the service.
     if proc.poll() is None:
         proc.terminate()
         try:
@@ -880,6 +909,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
                          + "\n\n" + prompt)
         cmd += ["-"]
     env = codex_env(extra_env, retain_user_bus=True)
+    child_env = codex_env(extra_env)
     # Persist the unguessable unit before crossing the spawn boundary. If altd dies between systemd-run and the PID
     # update, recovery still has the exact cgroup identity needed to stop every descendant.
     record = {"id": worker_id, "name": name, "pid": None, "pid_start": None, "unit": unit,
@@ -890,7 +920,8 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
     err = open(paths["stderr"], "ab", buffering=0)
     try:
         with spawn_guard if spawn_guard is not None else nullcontext():
-            proc = subprocess.Popen(_codex_scope_command(unit, cmd), cwd=str(cwd), stdin=subprocess.PIPE,
+            proc = subprocess.Popen(_codex_service_command(unit, cmd, child_env), cwd=str(cwd),
+                                    stdin=subprocess.PIPE,
                                     stdout=out, stderr=err, env=env, start_new_session=True)
             try:
                 proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
@@ -1049,8 +1080,9 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
     containment_error = None
     try:
         env = codex_env(extra_env, retain_user_bus=bool(unit))
+        child_env = codex_env(extra_env)
         argv = cmd + ([resume, prompt] if resume else [prompt])
-        contained_argv = _codex_scope_command(unit, argv) if unit else argv
+        contained_argv = _codex_service_command(unit, argv, child_env) if unit else argv
         if on_start:
             proc = subprocess.Popen(contained_argv, cwd=str(cwd), stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL, env=env,

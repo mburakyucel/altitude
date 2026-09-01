@@ -1,6 +1,8 @@
 """Workspace-write Codex turns prove the host sandbox can write every promised root before spending."""
+import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -42,14 +44,40 @@ class TestCodexPermissionProfile(unittest.TestCase):
         self.assertIn("DBUS_SESSION_BUS_ADDRESS", launcher)
         self.assertNotIn("GITHUB_TOKEN", launcher)
 
-    def test_scope_scrubs_user_bus_before_codex_starts(self):
-        command = engines._codex_scope_command("altitude-codex-test.scope", ["codex", "exec"])
+    def test_launcher_synthesizes_user_bus_for_a_system_service(self):
+        inherited = {"PATH": "/usr/bin", "HOME": "/tmp/home"}
+        with mock.patch.object(engines, "clean_env", side_effect=lambda: dict(inherited)), \
+             mock.patch.object(engines.os, "getuid", return_value=1234):
+            launcher = engines.codex_env(retain_user_bus=True)
+
+        self.assertEqual(launcher["XDG_RUNTIME_DIR"], "/run/user/1234")
+        self.assertEqual(launcher["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/run/user/1234/bus")
+
+    def test_service_launcher_is_synchronous_and_scrubs_user_bus_before_codex_starts(self):
+        child_env = {"PATH": os.environ["PATH"], "ALTITUDE_PROJECT": "altitude", "ALTITUDE_TASK": "task"}
+        script = ('import json, os; print(json.dumps({'
+                  '"project": os.environ.get("ALTITUDE_PROJECT"), '
+                  '"task": os.environ.get("ALTITUDE_TASK"), '
+                  '"secret": os.environ.get("MANAGER_FAKE_SECRET"), '
+                  '"bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS")}))')
+        command = engines._codex_service_command(
+            "altitude-codex-test.service", [sys.executable, "-c", script], child_env,
+        )
+        self.assertIn("--wait", command)
+        self.assertIn("--pipe", command)
+        self.assertIn("--property=NoNewPrivileges=no", command)
+        self.assertNotIn("--scope", command)
         separator = command.index("--")
         child = command[separator + 1:]
         self.assertEqual(child[0], engines.ENV_BIN)
-        for key in engines._CODEX_CONTROL_ENV:
-            self.assertIn(["-u", key], [child[i:i + 2] for i in range(len(child) - 1)])
-        self.assertEqual(child[-2:], ["codex", "exec"])
+        self.assertEqual(child[1], "-i")
+        result = REAL_SUBPROCESS_RUN(
+            child, capture_output=True, text=True, check=True,
+            env={"PATH": os.environ["PATH"], "MANAGER_FAKE_SECRET": "must-not-cross",
+                 "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"},
+        )
+        observed = json.loads(result.stdout)
+        self.assertEqual(observed, {"project": "altitude", "task": "task", "secret": None, "bus": None})
 
 
 class TestCodexSandboxPreflight(unittest.TestCase):
@@ -100,7 +128,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
 
         def fake_run(cmd, **kwargs):
             calls.append(cmd)
-            return self._probe_success(cmd) if cmd[0] == "/usr/bin/bwrap" else self._codex_success(cmd)
+            return self._probe_success(cmd) if "/usr/bin/bwrap" in cmd else self._codex_success(cmd)
 
         extra = [f'sandbox_workspace_write.writable_roots=["{second}"]']
         with mock.patch.object(engines.sys, "platform", "linux"):
@@ -111,8 +139,12 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertEqual(result["returncode"], 0)
         self.assertTrue(result["containment_empty"])
         self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], engines.SYSTEMD_RUN_BIN)
+        self.assertIn("--property=NoNewPrivileges=no", calls[0])
         self.assertEqual(calls[1][0], engines.SYSTEMD_RUN_BIN)
-        self.assertIn("--scope", calls[1])
+        self.assertIn("--wait", calls[1])
+        self.assertIn("--pipe", calls[1])
+        self.assertIn("--property=NoNewPrivileges=no", calls[1])
         self.assertIn("--property=KillMode=control-group", calls[1])
         self.assertIn("--property=SendSIGKILL=yes", calls[1])
         self.assertTrue(any(part.startswith("--unit=altitude-codex-sync-") for part in calls[1]))
@@ -154,7 +186,8 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertEqual(fault.call_args.args[0], "codex-sandbox")
         self.assertEqual(fault.call_args.kwargs, {"project": "project", "task": "task"})
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0][0], "/usr/bin/bwrap")
+        self.assertEqual(calls[0][0], engines.SYSTEMD_RUN_BIN)
+        self.assertIn("/usr/bin/bwrap", calls[0])
 
     def test_second_writable_root_failure_names_root_and_never_spends(self):
         second = Path(self.temp.name) / "task-folder"
@@ -214,7 +247,9 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertTrue(result["containment_empty"])
         self.assertTrue(result["unit"].startswith("altitude-codex-sync-"))
         self.assertEqual(calls[0][0], engines.SYSTEMD_RUN_BIN)
-        self.assertIn("--scope", calls[0])
+        self.assertIn("--wait", calls[0])
+        self.assertIn("--pipe", calls[0])
+        self.assertIn("--property=NoNewPrivileges=no", calls[0])
 
     def test_contained_timeout_stops_the_whole_transient_unit(self):
         stopped = []
@@ -261,7 +296,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         order = []
 
         def fake_run(cmd, **kwargs):
-            if cmd[0] == "/usr/bin/bwrap":
+            if "/usr/bin/bwrap" in cmd:
                 order.append("preflight")
                 return self._probe_success(cmd)
             order.append("codex")
@@ -274,14 +309,14 @@ class TestCodexSandboxPreflight(unittest.TestCase):
 
         self.assertEqual(order, ["preflight", "codex"])
 
-    def test_success_is_suppressed_when_scope_cannot_be_proven_empty(self):
+    def test_success_is_suppressed_when_service_cannot_be_proven_empty(self):
         def fake_run(cmd, **kwargs):
-            return self._probe_success(cmd) if cmd[0] == "/usr/bin/bwrap" else self._codex_success(cmd)
+            return self._probe_success(cmd) if "/usr/bin/bwrap" in cmd else self._codex_success(cmd)
 
         with mock.patch.object(engines.sys, "platform", "linux"), \
              mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"), \
              mock.patch.object(engines.subprocess, "run", side_effect=fake_run), \
-             mock.patch.object(engines, "_wait_codex_unit_empty", return_value=False), \
+             mock.patch.object(engines, "_wait_codex_unit_empty", side_effect=[True, False]), \
              mock.patch.object(engines, "_stop_codex_unit",
                                side_effect=engines.CodexContainmentError("unit remained populated")):
             result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
@@ -373,6 +408,28 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertIn("namespace unavailable", result["error"])
         self.assertIsNone(result["fault_recorded"])
         self.assertIn("Failed to record Codex sandbox preflight system fault", "\n".join(logs.output))
+
+    def test_preflight_containment_inspection_failure_faults_without_codex_spend(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._probe_success(cmd)
+
+        with mock.patch.object(engines.sys, "platform", "linux"), \
+             mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"), \
+             mock.patch.object(engines.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(engines, "_wait_codex_unit_empty",
+                               side_effect=engines.CodexContainmentError("manager inspection failed")), \
+             mock.patch.object(engines, "_stop_codex_unit") as stop, \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
+
+        self.assertEqual(len(calls), 1)
+        self.assertIs(result["engine_started"], False)
+        self.assertIn("manager inspection failed", result["error"])
+        stop.assert_called_once()
+        fault.assert_called_once()
 
     def test_concurrent_preflights_use_distinct_sentinels(self):
         barriers = (threading.Barrier(2), threading.Barrier(2))

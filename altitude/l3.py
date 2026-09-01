@@ -203,7 +203,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     result = engines.codex_exec(
         # L3 reads durable state and repository context. Its inert final actions
-        # are applied by the control plane only after the whole Codex scope exits.
+        # are applied by the control plane only after the whole Codex service exits.
         body, cwd=runtime, sandbox="workspace-write", schema=config.SCHEMAS / "l3_action.json", contain=True,
         timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
         effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
