@@ -102,6 +102,10 @@ same provider adapter.
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.
 
+After changing provider launch, runtime, or session-resume integration, validate Altitude with one
+tiny real task through the complete L3 → L2 → PR → required checks → merge path. Afterward, the
+operator must verify that no worker remains.
+
 ## Context and prompt-cache evidence
 
 For Claude, context is the newest genuine assistant usage record: input plus cache-read plus
