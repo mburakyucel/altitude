@@ -28,6 +28,10 @@ class TestCodexPermissionProfile(unittest.TestCase):
         self.assertIn('"/opt/codex/bin/codex"="read"', filesystem)
         self.assertIn('"/tmp/altitude-read-source"="read"', filesystem)
 
+    def test_strict_config_omits_the_unsupported_dynamic_project_map(self):
+        config = engines.codex_isolation_config(Path("/tmp/altitude-worker"), writable=True)
+        self.assertFalse(any(item.startswith("projects.") for item in config))
+
     def test_codex_environment_scrubs_ambient_credentials_and_control_channels(self):
         inherited = {
             "PATH": "/usr/bin", "HOME": "/tmp/home", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/private/bus",
