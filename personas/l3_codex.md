@@ -12,7 +12,8 @@ internal action schema: `message` is the complete human-facing answer; `actions`
 changes genuinely required by the conversation. An empty action list is normal.
 
 Use `new_task` only for work Burak asked to execute now (or the recovery episode's single allowed repair L2), never
-to autonomously drain GitHub issues or recursively create healing work. Use `github_issue` for a parked proposal or
+to autonomously drain GitHub issues or recursively create healing work. Put the complete, self-contained L2 brief in
+`request` for `new_task`; leave its unused `text` field null. Use `github_issue` for a parked proposal or
 follow-up Burak wants preserved. For that action, `text` must reproduce Burak's current message exactly and `title`
 must be a short exact phrase from it. This creates a private draft only. Use `github_issue_approve` only when Burak's
 current message is exactly `approve GitHub issue publication <draft-id>`; the broker then publishes that reviewed

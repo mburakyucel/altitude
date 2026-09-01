@@ -39,6 +39,36 @@ class TestL3Actions(unittest.TestCase):
         S.save_task("p", task)
         return task
 
+    def test_new_task_accepts_the_live_codex_brief_in_text(self):
+        brief = "Implement issue #127 as one focused documentation change."
+        action = {
+            "type": "new_task", "slug": "implement-github-issue-127",
+            "title": "Implement GitHub issue #127", "text": brief, "request": None,
+            "source": "chat", "engine": "codex", "model": None, "paths": [],
+            "reason": None, "digest": None, "answer": None, "hold_merge": None,
+            "merge_hold": None, "incident": None, "labels": [],
+        }
+
+        result = l3_actions.apply("p", envelope(action), action_id="0" * 64)
+        task = S.load_task("p", result[0]["slug"])
+
+        self.assertEqual(task["state"], "queued")
+        self.assertEqual(task["engine"], "codex")
+        self.assertEqual((S.task_dir("p", task["slug"]) / "request.md").read_text(), brief + "\n")
+
+    def test_new_task_prefers_request_and_rejects_two_empty_brief_fields(self):
+        explicit = {"type": "new_task", "title": "Explicit", "request": "canonical brief",
+                    "text": "fallback brief", "source": "chat"}
+        result = l3_actions.apply("p", envelope(explicit), action_id="a" * 64)
+        slug = result[0]["slug"]
+        self.assertEqual((S.task_dir("p", slug) / "request.md").read_text(), "canonical brief\n")
+
+        empty = {"type": "new_task", "title": "Empty", "request": None, "text": "  "}
+        with self.assertRaisesRegex(l3_actions.L3ActionError, "requires request"):
+            l3_actions.apply("p", envelope(empty), action_id="b" * 64)
+        self.assertFalse(S.task_dir("p", "empty").exists())
+        self.assertFalse((config.project_dir("p") / "l3-actions" / ("b" * 64 + ".json")).exists())
+
     def test_one_turn_cannot_apply_multiple_actions(self):
         value = {"message": "too many", "actions": [
             {"type": "task_fyi", "slug": "a", "text": "one"},

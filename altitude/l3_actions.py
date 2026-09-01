@@ -36,6 +36,12 @@ def _need(value, field: str) -> str:
     return text
 
 
+def _new_task_request(action: dict) -> str:
+    """Accept the schema's inert text slot when Codex puts the L2 brief there."""
+    request = str(action.get("request") or "").strip()
+    return request or _need(action.get("text"), "request")
+
+
 def _validate(structured: object) -> dict | None:
     if not isinstance(structured, dict) or not isinstance(structured.get("actions"), list):
         raise L3ActionError("Codex L3 ended without a schema-valid action envelope")
@@ -55,7 +61,7 @@ def _validate(structured: object) -> dict | None:
         _need(action.get("reason"), "reason")
     if kind == "new_task":
         _need(action.get("title"), "title")
-        _need(action.get("request"), "request")
+        _new_task_request(action)
     if kind == "github_issue":
         _need(action.get("title"), "title")
         _need(action.get("text"), "text")
@@ -205,7 +211,7 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
     kind = action["type"]
     slug = str(action.get("slug") or "").strip()
     if kind == "new_task":
-        task = T.new(project, _need(action.get("title"), "title"), _need(action.get("request"), "request"),
+        task = T.new(project, _need(action.get("title"), "title"), _new_task_request(action),
                      actor="l3", source=action.get("source") or "chat", engine=action.get("engine"),
                      model=action.get("model"), paths=action.get("paths") or None,
                      hold_merge=action.get("hold_merge"))

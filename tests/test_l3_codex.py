@@ -9,7 +9,7 @@ from unittest import mock
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-l3-sessions-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, l3, route  # noqa: E402
+from altitude import config, engines, l3, route, state as S  # noqa: E402
 
 
 class TestL3Sessions(unittest.TestCase):
@@ -66,6 +66,29 @@ class TestL3Sessions(unittest.TestCase):
         self.assertEqual(seen["sandbox"], "workspace-write")
         self.assertEqual([Path(path) for path in seen["readable_roots"]],
                          [config.ROOT, config.project_path("k")])
+
+    def test_codex_new_task_brief_in_text_is_applied(self):
+        brief = "Implement issue #127 as one focused documentation change."
+        structured = {"message": "Queued the task.", "actions": [{
+            "type": "new_task", "slug": "implement-github-issue-127",
+            "title": "Implement GitHub issue #127", "text": brief, "request": None,
+            "source": "chat", "engine": "codex", "model": None, "paths": [],
+            "reason": None, "digest": None, "answer": None, "hold_merge": None,
+            "merge_hold": None, "incident": None, "labels": [],
+        }]}
+        result = {"text": "", "session_id": "cx-live", "reported_session_id": "cx-live",
+                  "error": None, "usage": {"input_tokens": 100}, "structured": structured,
+                  "returncode": 0, "containment_empty": True}
+
+        with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
+             mock.patch.object(engines, "codex_exec", return_value=result):
+            out = l3.turn("k", "Implement GitHub issue #127 now")
+
+        self.assertTrue(out["completed"])
+        self.assertIsNone(out["error"])
+        task = S.load_task("k", out["actions"][0]["slug"])
+        self.assertEqual(task["engine"], "codex")
+        self.assertEqual((S.task_dir("k", task["slug"]) / "request.md").read_text(), brief + "\n")
 
     def test_github_issue_action_returns_a_human_approval_phrase(self):
         source = "Please preserve this sidecar idea as a GitHub issue"
