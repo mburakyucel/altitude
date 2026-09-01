@@ -1,233 +1,62 @@
 {
- "type": "object",
- "additionalProperties": false,
- "required": [
-  "landed",
-  "review",
-  "deviations",
-  "decisions",
-  "fyi",
-  "blocked",
-  "follow_ups",
-  "spend",
-  "roadmap_complete"
- ],
- "properties": {
-  "landed": {
-   "type": "object",
-   "required": [
-    "prs",
-    "main_runs",
-    "deploy"
-   ],
-   "properties": {
-    "prs": {
-     "type": "array",
-     "items": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["landed", "review", "blocked"],
+  "properties": {
+    "landed": {
       "type": "object",
-      "required": [
-       "number",
-       "title",
-       "merged",
-       "merge_sha"
-      ],
+      "additionalProperties": false,
+      "required": ["prs", "main_runs", "deploy"],
       "properties": {
-       "number": {
-        "type": "integer"
-       },
-       "title": {
-        "type": [
-         "string",
-         "null"
-        ]
-       },
-       "merged": {
-        "type": "boolean"
-       },
-       "merge_sha": {
-        "type": [
-         "string",
-         "null"
-        ]
-       }
-      },
-      "additionalProperties": false
-     }
+        "prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["number", "title", "merged", "merge_sha"],
+            "properties": {
+              "number": {"type": "integer"},
+              "title": {"type": ["string", "null"]},
+              "merged": {"type": "boolean"},
+              "merge_sha": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "main_runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "conclusion"],
+            "properties": {
+              "id": {"type": "string"},
+              "conclusion": {"type": "string"}
+            }
+          }
+        },
+        "deploy": {"type": "string", "description": "healthy | not-applicable | failed: <why>"}
+      }
     },
-    "main_runs": {
-     "type": "array",
-     "items": {
-      "type": "object",
-      "required": [
-       "id",
-       "conclusion"
-      ],
-      "properties": {
-       "id": {
-        "type": "string"
-       },
-       "conclusion": {
-        "type": "string"
-       }
-      },
-      "additionalProperties": false
-     }
-    },
-    "deploy": {
-     "type": "string",
-     "description": "healthy | not-applicable | failed: <why>"
-    }
-   },
-   "additionalProperties": false
-  },
-  "review": {
-   "type": "array",
-   "items": {
-    "type": "object",
-    "required": [
-     "tag",
-     "severity",
-     "summary",
-     "disposition",
-     "reason"
-    ],
-    "properties": {
-     "tag": {
-      "type": "string"
-     },
-     "severity": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "summary": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "disposition": {
-      "type": "string",
-      "enum": [
-       "fixed",
-       "dismissed",
-       "open"
-      ]
-     },
-     "reason": {
-      "type": [
-       "string",
-       "null"
-      ]
-     }
-    },
-    "additionalProperties": false
-   }
-  },
-  "deviations": {
-   "type": "array",
-   "items": {
-    "type": "object",
-    "required": [
-     "choice",
-     "default_taken",
-     "reversible"
-    ],
-    "properties": {
-     "choice": {
-      "type": "string"
-     },
-     "default_taken": {
-      "type": "string"
-     },
-     "reversible": {
-      "type": [
-       "boolean",
-       "null"
-      ]
-     }
-    },
-    "additionalProperties": false
-   }
-  },
-  "decisions": {
-   "type": "array",
-   "items": {
-    "type": "object",
-    "required": [
-     "question",
-     "options"
-    ],
-    "properties": {
-     "question": {
-      "type": "string"
-     },
-     "options": {
+    "review": {
       "type": "array",
       "items": {
-       "type": "string"
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "disposition", "reason"],
+        "properties": {
+          "summary": {"type": ["string", "null"]},
+          "severity": {"type": ["string", "null"]},
+          "disposition": {"type": "string", "enum": ["fixed", "dismissed", "open"]},
+          "reason": {"type": ["string", "null"]}
+        }
       }
-     }
     },
-    "additionalProperties": false
-   }
-  },
-  "fyi": {
-   "type": "array",
-   "items": {
-    "type": "string"
-   }
-  },
-  "blocked": {
-   "type": "string",
-   "description": "Empty if not blocked; otherwise the exact missing item."
-  },
-  "follow_ups": {
-   "type": "array",
-   "items": {
-    "type": "string"
-   }
-  },
-  "spend": {
-   "type": "object",
-   "required": [
-    "turns",
-    "subagent_launches",
-    "retries",
-    "model_tiers",
-    "reverts"
-   ],
-   "properties": {
-    "turns": {
-     "type": "integer"
-    },
-    "subagent_launches": {
-     "type": "integer"
-    },
-    "retries": {
-     "type": "integer"
-    },
-    "model_tiers": {
-     "type": [
-      "string",
-      "null"
-     ]
-    },
-    "reverts": {
-     "type": [
-      "integer",
-      "null"
-     ]
-    }
-   },
-   "additionalProperties": false
-  },
-  "roadmap_complete": {
-   "type": [
-    "boolean",
-    "null"
-   ]
+    "blocked": {"type": "string"},
+    "decisions": {"type": "array", "items": {"type": "object"}},
+    "fyi": {"type": "array", "items": {"type": "string"}},
+    "follow_ups": {"type": "array", "items": {"type": "string"}},
+    "deviations": {"type": "array", "items": {"type": "object"}},
+    "spend": {"type": "object"}
   }
- }
 }

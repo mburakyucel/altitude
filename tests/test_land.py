@@ -248,7 +248,7 @@ class TestLand(unittest.TestCase):
         os.environ["ALTITUDE_L2_TOKEN"] = "replaced-token"
         self.leased_change()
         commands = self.record_commands()
-        with self.assertRaisesRegex(land.LandError, "session generation changed"):
+        with self.assertRaisesRegex(land.LandError, "ownership capability changed"):
             land.land("must refuse", cwd=self.repo, wait=0)
         self.assert_no_publish_mutation(commands)
 
@@ -310,7 +310,7 @@ class TestLand(unittest.TestCase):
         self.assertEqual(
             self.git("log", "-1", "--format=%B").strip(),
             "fix: land the thing\n\nlonger body\n\n"
-            "Altitude-Task: demo/fix-x\nCo-Authored-By: Claude <noreply@anthropic.com>")
+            "Altitude-Task: demo/fix-x")
         remote_sha = subprocess.run(["git", "-C", str(self.remote), "rev-parse", "worktree-fix-x"],
                                     capture_output=True, text=True).stdout.strip()
         self.assertEqual(remote_sha, self.git("rev-parse", "HEAD").strip())

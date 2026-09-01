@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message",
+    "action",
+    "commit_message",
+    "pr_title",
+    "merge",
+    "digest",
+    "blocked_reason",
+    "continue_reason",
+    "helpers",
+    "outcome"
+  ],
+  "properties": {
+    "message": {"type": "string"},
+    "action": {
+      "type": "string",
+      "enum": ["publish", "complete_no_code", "block", "request_helpers", "continue"]
+    },
+    "commit_message": {"type": ["string", "null"]},
+    "pr_title": {"type": ["string", "null"]},
+    "merge": {"type": ["boolean", "null"]},
+    "digest": {"type": ["string", "null"]},
+    "blocked_reason": {"type": ["string", "null"]},
+    "continue_reason": {"type": ["string", "null"]},
+    "helpers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "brief", "engine", "model", "paths"],
+        "properties": {
+          "role": {"type": "string", "enum": ["implementer", "reviewer"]},
+          "brief": {"type": "string"},
+          "engine": {"type": ["string", "null"], "enum": ["claude", "codex", null]},
+          "model": {"type": ["string", "null"]},
+          "paths": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deploy", "review", "decisions", "fyi", "follow_ups", "deviations", "spend"],
+      "properties": {
+        "deploy": {"type": "string"},
+        "review": {"type": "array", "items": {"type": "object"}},
+        "decisions": {"type": "array", "items": {"type": "object"}},
+        "fyi": {"type": "array", "items": {"type": "string"}},
+        "follow_ups": {"type": "array", "items": {"type": "string"}},
+        "deviations": {"type": "array", "items": {"type": "object"}},
+        "spend": {"type": "object"}
+      }
+    }
+  }
+}

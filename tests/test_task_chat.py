@@ -162,7 +162,7 @@ class TestTaskConversation(unittest.TestCase):
         task.update({"session_id": "session-new", "agent_id": "agent-new", "l2_token": "token-new"})
         S.save_task(self.project, task)
 
-        with self.assertRaisesRegex(T.TransitionError, "generation changed"):
+        with self.assertRaisesRegex(T.TransitionError, "ownership capability changed"):
             T.append_task_message(
                 self.project, self.slug, "l2", "reply from replaced worker",
                 expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2",
@@ -200,7 +200,7 @@ class TestResumeGenerationFence(unittest.TestCase):
             with self.assertRaisesRegex(T.TransitionError, "generation changed during resume"):
                 dispatch.resume_session(project, "resume-race", "continue")
 
-        stop.assert_called_once_with("agent-new")
+        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
         self.assertEqual(S.load_task(project, "resume-race")["state"], "rejected")
 
     def test_resume_persistence_failure_stops_the_unowned_replacement_and_holds_recovery(self):
@@ -230,7 +230,7 @@ class TestResumeGenerationFence(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "could not bind replacement worker"):
                 dispatch.resume_session(project, "resume-persist", "continue")
 
-        stop.assert_called_once_with("agent-new")
+        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
         current = S.load_task(project, "resume-persist")
         self.assertEqual((current["agent_id"], current["session_id"], current["l2_token"]),
                          ("agent-old", "session-old", "token-old"))

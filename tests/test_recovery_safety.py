@@ -1,6 +1,7 @@
 """Recovery faults stop ordinary dispatch without recursively creating work."""
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -451,11 +452,23 @@ class TestRecoveryFuse(unittest.TestCase):
             return FakeProcess()
 
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-                mock.patch.object(engines, "find_agent", return_value=None):
+                mock.patch.object(engines, "claude_agents", return_value=[]):
             result = engines.claude_bg("altitude/test", "prompt", cwd=self.repo,
                                        settings=self.root / "settings.json", spawn_guard=spawn_guard())
         self.assertEqual(result["returncode"], 0)
         self.assertEqual(result["stdout"], "started")
+
+    def test_same_name_claude_retry_binds_only_the_new_worker(self):
+        old = {"id": "old", "name": "altitude/retry-1", "state": "stopped", "status": "exited",
+               "startedAt": "2026-01-01T00:00:00Z"}
+        new = {"id": "new", "name": "altitude/retry-1", "state": "working", "status": "busy",
+               "sessionId": "new-session", "startedAt": "2026-01-02T00:00:00Z"}
+        completed = subprocess.CompletedProcess([], 0, stdout="started", stderr="")
+        with mock.patch.object(engines, "claude_agents", side_effect=[[old], [old, new]]), \
+             mock.patch.object(engines, "_guarded_spawn", return_value=completed):
+            result = engines.claude_bg("altitude/retry-1", "prompt", cwd=self.repo,
+                                       settings=self.root / "settings.json")
+        self.assertEqual(result["agent"]["id"], "new")
 
     def test_recovery_task_requires_an_active_hold_and_explicit_actor(self):
         with self.assertRaisesRegex(T.TransitionError, "requires an active recovery hold"):
@@ -482,20 +495,19 @@ class TestRecoveryFuse(unittest.TestCase):
         with mock.patch.object(dispatch, "run", side_effect=lambda project, slug: started.append(slug) or {
             "dispatch_id": slug, "agent": None
         }), mock.patch.object(engines, "claude_agents", return_value=[]), \
-                mock.patch.object(monitor, "quota", return_value={"known": True}), \
-                mock.patch.object(monitor, "quota_hold", return_value=None):
+                mock.patch.object(monitor, "quota", return_value={"known": True}):
             server.dispatch_waiting("altitude")
         self.assertEqual(started, [repair["slug"]])
         project_hold = S.read_json(config.project_dir("altitude") / "hold.json")
         self.assertTrue(project_hold["reason"].startswith("recovery hold"))
 
-    def test_quota_fault_holds_the_same_ordinary_dispatch_attempt(self):
+    def test_unknown_claude_quota_does_not_trip_global_recovery(self):
         ordinary = T.new("altitude", "ordinary quota work", "request", actor="l3", source="chat")
         with mock.patch.object(engines, "claude_agents", return_value=[]), \
-                mock.patch.object(monitor, "quota", return_value={"known": False}), \
-                mock.patch.object(monitor, "quota_hold", return_value=None):
+                mock.patch.object(monitor, "quota", return_value={"known": False}):
             held = dispatch.wip_hold("altitude", ordinary)
-        self.assertIn("recovery hold: quota-unknown", held)
+        self.assertIsNone(held)
+        self.assertIsNone(recovery.status())
 
     def test_failed_task_write_rolls_back_the_repair_claim(self):
         recovery.hold("manual hold", actor="l3")
@@ -523,7 +535,7 @@ class TestRecoveryFuse(unittest.TestCase):
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
                 mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=fault_then_return), \
                 mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
-                mock.patch.object(engines, "claude_bg", side_effect=guarded_launch) as launch:
+                mock.patch.object(engines, "start_l2", side_effect=guarded_launch) as launch:
             with self.assertRaisesRegex(T.TransitionError, "recovery hold: fetch-race"):
                 dispatch.run("altitude", ordinary["slug"])
 
@@ -537,15 +549,17 @@ class TestRecoveryFuse(unittest.TestCase):
     def test_resume_launch_obeys_hold_but_claimed_repair_can_resume(self):
         ordinary = T.new("altitude", "ordinary resume", "request", actor="l3", source="chat")
         ordinary.update({"state": "running", "worktree": str(self.repo), "dispatch_id": "ordinary-resume-1",
-                         "session_id": "ordinary-session"})
+                         "session_id": "ordinary-session", "agent_id": "ordinary-agent"})
         S.save_task("altitude", ordinary)
         recovery.hold("manual hold", kind="manual", actor="l3")
 
         with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
+                mock.patch.object(engines, "stop_l2_worker") as stop, \
                 mock.patch.object(engines, "claude_resume_bg") as resume:
             with self.assertRaisesRegex(T.TransitionError, "recovery hold: manual"):
                 dispatch.resume_session("altitude", ordinary["slug"], "steer")
+        stop.assert_not_called()
         resume.assert_not_called()
 
         repair = T.new("altitude", "claimed repair resume", "request", actor="l3", source="recovery")
@@ -562,6 +576,57 @@ class TestRecoveryFuse(unittest.TestCase):
             result = dispatch.resume_session("altitude", repair["slug"], "continue repair")
         resume.assert_called_once()
         self.assertEqual(result["agent"]["id"], "agent-2")
+
+    def test_hold_appearing_after_stop_creates_exact_pending_resume(self):
+        task = T.new("altitude", "post stop hold", "request", actor="l3", source="chat")
+        task.update({
+            "state": "running", "worktree": str(self.repo), "dispatch_id": "post-stop-hold-1",
+            "session_id": "post-stop-session", "agent_id": "post-stop-agent", "l2_token": "stable-token",
+        })
+        S.save_task("altitude", task)
+        held = "recovery hold: injected-race; explicit L3 clearance required"
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                mock.patch.object(dispatch, "_validate_task_worktree"), \
+                mock.patch.object(recovery, "dispatch_hold", side_effect=[None, held]), \
+                mock.patch.object(engines, "stop_l2_worker", return_value="stopped") as stop, \
+                mock.patch.object(engines, "resume_l2") as launch:
+            with self.assertRaisesRegex(T.TransitionError, "injected-race"):
+                dispatch.resume_session("altitude", task["slug"], "exact steering prompt")
+
+        stop.assert_called_once()
+        launch.assert_not_called()
+        pending = S.load_task("altitude", task["slug"])
+        self.assertEqual(pending["state"], "blocked")
+        self.assertEqual(pending["resume_answer"], "exact steering prompt")
+        self.assertTrue(pending["resume_exact_prompt"])
+        self.assertTrue(pending["resume_after"])
+        self.assertIn("injected-race", pending["blocked_reason"])
+
+        seen = {}
+
+        def resumed(engine, name, session_id, prompt, **kwargs):
+            seen["prompt"] = prompt
+            return {"returncode": 0, "stdout": "", "stderr": "", "agent": {
+                "id": "replacement", "sessionId": "replacement-session", "state": "working", "startedAt": 2,
+            }}
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                mock.patch.object(dispatch, "_validate_task_worktree"), \
+                mock.patch.object(recovery, "dispatch_hold", return_value=None), \
+                mock.patch.object(engines, "stop_l2_worker", return_value="already stopped"), \
+                mock.patch.object(engines, "resume_l2", side_effect=resumed), \
+                mock.patch.object(engines, "claude_agents", return_value=[{
+                    "id": "replacement", "sessionId": "replacement-session",
+                    "name": "altitude/post-stop-hold-1", "state": "working", "startedAt": 2,
+                }]):
+            retried = dispatch.resume_due("altitude")
+
+        self.assertEqual(retried, [task["slug"]])
+        self.assertEqual(seen["prompt"], "exact steering prompt")
+        resumed_task = S.load_task("altitude", task["slug"])
+        self.assertEqual(resumed_task["state"], "running")
+        self.assertNotIn("resume_exact_prompt", resumed_task)
 
 
 if __name__ == "__main__":

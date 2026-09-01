@@ -10,19 +10,79 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config
+from . import config, state as S
 
 logger = logging.getLogger(__name__)
+_codex_processes: dict[str, subprocess.Popen] = {}
+
+CODEX_SYSTEMD_PREFIX = "altitude-codex-"
+SYSTEMD_RUN_BIN = shutil.which("systemd-run") or "systemd-run"
+SYSTEMCTL_BIN = shutil.which("systemctl") or "systemctl"
+ENV_BIN = shutil.which("env") or "/usr/bin/env"
+
+_CODEX_SECRET_ENV = re.compile(
+    r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY|SESSION_KEY|CREDENTIAL)(?:$|_)",
+    re.I,
+)
+_CODEX_CONTROL_ENV = ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR")
+_CODEX_SENSITIVE_ENV = {
+    "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS",
+    "GIT_SSH_COMMAND", "ALTITUDE_L2_TOKEN", "ALTITUDE_L2_CAPABILITY",
+}
+_CODEX_SAFE_ENV = {
+    "HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "COLORTERM", "TZ",
+    "CODEX_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NO_COLOR",
+    "ALTITUDE_HOME", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_ACTOR", "ALTITUDE_SESSION_KEY",
+    "ALTITUDE_DISPATCH_ID",
+}
 
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends; L1 applies the same default cap to the artifacts it exposes.
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
+CODEX_PATCH_NOTE = (
+    "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
+    "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
+    "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
+    "sandbox and its configured writable roots."
+)
+
+
+def codex_isolation_config(cwd: Path, *, writable: bool = True,
+                           readable_roots: list[Path] | None = None) -> list[str]:
+    """Suppress mutable user/project/plugin sources; managed host policy remains authoritative.
+
+    User config and rules are ignored by command-line flags, project config is marked untrusted, and plugins are
+    disabled. Hooks are disabled for these headless turns; the Codex permission profile and whole-turn containment,
+    not shell-text automation, are the write and process boundaries. Host-managed requirements remain authoritative.
+    """
+    project_key = json.dumps(str(Path(cwd).resolve()))
+    profile = "altitude_worker" if writable else "altitude_reader"
+    access = "write" if writable else "read"
+    # Start from Codex's maintained workspace baseline so its own executable/runtime remain available, then deny the
+    # broad root and reopen only minimal runtime paths plus the effective workspace roots. Coordinators narrow those
+    # roots to read; every worker keeps Git/Codex metadata read-only.
+    parent = ":workspace"
+    codex_binary = Path(shutil.which(config.CODEX_BIN) or config.CODEX_BIN).resolve()
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}").resolve()
+    extra_reads = "".join(f", {json.dumps(str(Path(root).resolve()))}=\"read\""
+                          for root in [codex_binary, *(readable_roots or [])])
+    filesystem = ('{ ":root"="deny", ":minimal"="read", '
+                  f'":workspace_roots"={{ "."="{access}", ".git"="read", ".codex"="read" }}'
+                  f', {json.dumps(str(runtime_dir))}="deny"{extra_reads} }}')
+    return [f"projects.{project_key}.trust_level=\"untrusted\"", "features.hooks=false", "features.plugins=false",
+            "features.remote_plugin=false", "features.apps=false", "features.multi_agent=false",
+            "features.goals=false", 'web_search="disabled"', 'approval_policy="never"',
+            "shell_environment_policy.ignore_default_excludes=false",
+            f"default_permissions=\"{profile}\"", f"permissions.{profile}.extends=\"{parent}\"",
+            f"permissions.{profile}.filesystem={filesystem}"]
 
 
 def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
@@ -73,6 +133,12 @@ class _BoundedRawCapture:
 # ---- usage limit: the subscription window closing is a timed hold, not a failure ----------
 LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)
 RESETS = re.compile(r"resets?\s+(?:(?:at|in)\s+)?(?:([A-Za-z]{3,9}\s+\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.I)
+TEMPORARY_CAPACITY_TEXT = "Selected model is at capacity. Please try a different model."
+
+
+def temporary_capacity_in(text: str | None) -> bool:
+    """Recognize the provider's exact temporary-capacity warning, not a quota exhaustion."""
+    return bool(text and TEMPORARY_CAPACITY_TEXT in text)
 
 
 def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | None = None) -> str | None:
@@ -147,6 +213,28 @@ def clean_env() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    return env
+
+
+def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
+    """Build the host environment for Codex without passing control capabilities or ambient credentials.
+
+    A contained launch retains the user bus only in the outer ``systemd-run`` client. The command executed inside
+    the scope gets those two variables explicitly unset by :func:`_codex_scope_command` before Codex starts.
+    """
+    source = clean_env()
+    source.update(extra_env or {})
+    env = {key: value for key, value in source.items()
+           if key in _CODEX_SAFE_ENV or key.startswith("LC_")}
+    if retain_user_bus:
+        env.update({key: source[key] for key in _CODEX_CONTROL_ENV if key in source})
+    env["TMPDIR"] = "/tmp"
+    for key in list(env):
+        if key in _CODEX_SENSITIVE_ENV or _CODEX_SECRET_ENV.search(key):
+            env.pop(key, None)
+    if not retain_user_bus:
+        for key in _CODEX_CONTROL_ENV:
+            env.pop(key, None)
     return env
 
 
@@ -319,6 +407,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
               permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
               settings: Path | None = None, extra_env: dict | None = None, spawn_guard=None) -> dict:
     """Start a background session (verified shape). Returns what `claude --bg` printed + the agent row."""
+    before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--permission-mode", permission_mode]
     if worktree:
         cmd += ["-w", worktree]
@@ -332,7 +421,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
     env = clean_env()
     env.update(extra_env or {})
     p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
-    row = find_agent(name)
+    row = _new_claude_agent(name, before)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": row}
 
 
@@ -362,19 +451,34 @@ def find_agent(name: str | None = None, agent_id: str | None = None, session_id:
     return None
 
 
+def _new_claude_agent(name: str, before: set[str]) -> dict | None:
+    """Resolve only the concrete worker created after this launch, never an old same-name job."""
+    rows = [row for row in claude_agents()
+            if row.get("name") == name and row.get("id") and row.get("id") not in before]
+    live = [row for row in rows
+            if row.get("state") not in ("failed", "done", "stopped") and row.get("status") != "exited"]
+    candidates = live or rows
+    return max(candidates, key=lambda row: str(row.get("startedAt") or ""), default=None)
+
+
 def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path | None = None,
-                     permission_mode: str = "auto", max_turns: int | None = None, settings: Path | None = None,
+                     permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
+                     settings: Path | None = None,
                      extra_env: dict | None = None, spawn_guard=None) -> dict:
+    before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--resume", session_id, "--permission-mode", permission_mode]
     if persona:
         cmd += ["--append-system-prompt-file", str(persona)]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
+    if model:
+        cmd += ["--model", model]
     cmd += ["--settings", str(settings or claude_settings())]
     env = clean_env()
     env.update(extra_env or {})
     p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
-    return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": find_agent(name)}
+    return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode,
+            "agent": _new_claude_agent(name, before)}
 
 
 def claude_rm(agent_id: str) -> str:
@@ -390,6 +494,134 @@ class CodexSandboxPreflightError(RuntimeError):
         detail = str(detail).strip() or "unknown bwrap failure"
         self.detail = detail if len(detail) <= 500 else detail[:245] + " ... " + detail[-250:]
         super().__init__(f"Codex sandbox preflight failed for {', '.join(self.roots)}: {self.detail}")
+
+
+class CodexContainmentError(RuntimeError):
+    """A Codex turn cannot start or finish without a proven-empty transient cgroup."""
+
+
+def _codex_unit(worker_id: str) -> str:
+    """A systemd-safe, collision-resistant transient scope name."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(worker_id))
+    return f"{CODEX_SYSTEMD_PREFIX}{safe}.scope"
+
+
+def _codex_scope_command(unit: str, command: list[str]) -> list[str]:
+    """Run a turn in its own user-systemd cgroup while inheriting its explicit launcher environment.
+
+    Scope units synchronously execute the child of ``systemd-run`` and, unlike a process group, retain descendants
+    that call ``setsid`` or double-fork. Stopping the scope therefore has control-group kill semantics. The inner
+    Codex sandbox supplies the PID namespace; keeping syscall filters off the outer unit preserves nested bwrap.
+    """
+    scrub = [ENV_BIN]
+    for key in _CODEX_CONTROL_ENV:
+        scrub += ["-u", key]
+    return [SYSTEMD_RUN_BIN, "--user", "--scope", f"--unit={unit}", "--quiet", "--collect", "--same-dir",
+            "--expand-environment=no", "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
+            "--", *scrub, *command]
+
+
+def _systemd_unit_properties(unit: str) -> dict[str, str]:
+    """Read the security-relevant state of one transient user unit, failing closed with no user bus."""
+    cmd = [SYSTEMCTL_BIN, "--user", "show", unit, "--property=LoadState", "--property=ActiveState",
+           "--property=SubState", "--property=ControlGroup"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, env=clean_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CodexContainmentError(f"cannot inspect Codex containment unit {unit}: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "systemctl show failed").strip()
+        # A collected transient unit is expected to disappear. This response proves the user manager was reached;
+        # connection/permission failures remain hard failures.
+        if "could not be found" in detail.lower() or "not found" in detail.lower():
+            return {"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead",
+                    "ControlGroup": ""}
+        raise CodexContainmentError(f"cannot inspect Codex containment unit {unit}: {detail[:500]}")
+    props: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            props[key] = value
+    required = {"LoadState", "ActiveState", "ControlGroup"}
+    if not required.issubset(props):
+        raise CodexContainmentError(f"incomplete systemd state for Codex containment unit {unit}")
+    return props
+
+
+def _cgroup_unpopulated(control_group: str) -> bool:
+    """Prove a v2 cgroup and all descendants are empty; a removed cgroup is also empty."""
+    if not control_group:
+        return True
+    relative = Path(control_group.lstrip("/"))
+    if ".." in relative.parts:
+        return False
+    events = Path("/sys/fs/cgroup") / relative / "cgroup.events"
+    try:
+        values = dict(line.split(None, 1) for line in events.read_text().splitlines() if len(line.split(None, 1)) == 2)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return values.get("populated") == "0"
+
+
+def _codex_unit_empty(unit: str) -> bool:
+    props = _systemd_unit_properties(unit)
+    if props.get("LoadState") == "not-found":
+        return True
+    if props.get("ActiveState") not in ("inactive", "failed"):
+        return False
+    return _cgroup_unpopulated(props.get("ControlGroup") or "")
+
+
+def _wait_codex_unit_empty(unit: str, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if _codex_unit_empty(unit):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
+    """Stop every process in the transient scope, escalating to cgroup-wide SIGKILL if needed."""
+    try:
+        stopped = subprocess.run([SYSTEMCTL_BIN, "--user", "stop", "--no-block", unit],
+                                 capture_output=True, text=True,
+                                 timeout=timeout, env=clean_env())
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CodexContainmentError(f"cannot stop Codex containment unit {unit}: {exc}") from exc
+    if stopped.returncode != 0 and not _codex_unit_empty(unit):
+        detail = (stopped.stderr or stopped.stdout or "systemctl stop failed").strip()
+        raise CodexContainmentError(f"cannot stop Codex containment unit {unit}: {detail[:500]}")
+    if _wait_codex_unit_empty(unit, timeout):
+        return
+    if _codex_unit_empty(unit):
+        return
+    killed = subprocess.run([SYSTEMCTL_BIN, "--user", "kill", "--kill-who=all", "--signal=SIGKILL", unit],
+                            capture_output=True, text=True, timeout=timeout, env=clean_env())
+    if killed.returncode != 0 and _codex_unit_empty(unit):
+        return
+    if killed.returncode != 0 or not _wait_codex_unit_empty(unit, timeout):
+        detail = (killed.stderr or killed.stdout or "unit remained populated").strip()
+        raise CodexContainmentError(f"Codex containment unit {unit} did not empty: {detail[:500]}")
+
+
+def codex_containment_empty(worker_id: str, *, job_root: Path) -> bool:
+    """True only when a durable background worker's exact systemd scope is proven inactive and empty."""
+    try:
+        record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
+    except (OSError, ValueError):
+        logger.exception("Could not read Codex containment record for worker %s", worker_id)
+        return False
+    if not isinstance(record, dict) or not record.get("unit"):
+        return False
+    try:
+        return _codex_unit_empty(str(record["unit"]))
+    except CodexContainmentError:
+        logger.exception("Could not prove Codex containment empty for worker %s", worker_id)
+        return False
 
 
 def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
@@ -481,16 +713,302 @@ done
     raise CodexSandboxPreflightError(roots, detail)
 
 
+def _pid_start(pid: int) -> str | None:
+    """Linux process start tick, used to avoid signaling a recycled pid."""
+    try:
+        fields = Path(f"/proc/{int(pid)}/stat").read_text().split()
+        return None if fields[2] == "Z" else fields[21]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
+    root = Path(job_root)
+    return {
+        "record": root / f"{worker_id}.json",
+        "stdout": root / f"{worker_id}.stdout.jsonl",
+        "stderr": root / f"{worker_id}.stderr.log",
+        "answer": root / f"{worker_id}.answer.md",
+    }
+
+
+def _terminate_spawned_codex(proc: subprocess.Popen, unit: str) -> None:
+    """Fail-closed cgroup cleanup before a Codex worker has a durable owner."""
+    containment_error = None
+    try:
+        _stop_codex_unit(unit)
+    except CodexContainmentError as exc:
+        containment_error = exc
+    # The systemd-run wrapper is not the security boundary, but reaping it avoids a local zombie after the unit is
+    # empty and is useful when systemd-run itself failed before creating the scope.
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+    else:
+        proc.wait(timeout=1)
+    if containment_error is not None:
+        raise containment_error
+
+
+def _codex_events(path: Path) -> list[dict]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    events = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _codex_thread(events: list[dict]) -> str | None:
+    for event in events:
+        if event.get("type") == "thread.started" and event.get("thread_id"):
+            return str(event["thread_id"])
+    return None
+
+
+def _codex_usage(events: list[dict]) -> dict:
+    for event in reversed(events):
+        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
+            return dict(event["usage"])
+    return {}
+
+
+def _codex_action(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
+    """Return one Codex process as the same normalized row shape used for Claude workers."""
+    if not worker_id:
+        return None
+    paths = _codex_paths(job_root, worker_id)
+    record = S.read_json(paths["record"], None)
+    if not isinstance(record, dict):
+        return None
+    events = _codex_events(paths["stdout"])
+    session_id = _codex_thread(events) or record.get("session_id")
+    pid = record.get("pid")
+    unit = str(record.get("unit") or "")
+    containment_error = ""
+    try:
+        empty = bool(unit) and _codex_unit_empty(unit)
+    except CodexContainmentError as exc:
+        # Unknown containment state must never look completed: the trusted broker independently checks the same
+        # durable unit before any action, and dispatch keeps this row in-flight until state is provable.
+        empty = False
+        containment_error = str(exc)
+    alive = not empty
+    completed = next((event for event in reversed(events) if event.get("type") == "turn.completed"), None)
+    failed = next((event for event in reversed(events)
+                   if event.get("type") in ("turn.failed", "error")), None)
+    if record.get("stopped"):
+        state, status = "stopped", "exited"
+    elif alive:
+        state, status = "working", "busy"
+    elif completed:
+        state, status = "done", "exited"
+    else:
+        state, status = "failed", "exited"
+    if empty and worker_id in _codex_processes:
+        proc = _codex_processes.pop(worker_id)
+        try:
+            proc.wait(timeout=0)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    detail = ""
+    if containment_error:
+        detail = containment_error[:500]
+    elif failed:
+        detail = str(failed.get("message") or failed.get("error") or failed)[:500]
+    elif not alive and not completed:
+        try:
+            detail = paths["stderr"].read_text(errors="replace")[-500:]
+        except OSError:
+            detail = "Codex worker exited without turn.completed"
+    return {
+        "id": worker_id, "sessionId": session_id, "name": record.get("name"), "pid": pid, "unit": unit,
+        "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
+        "startedAt": record.get("started_at"), "engine": "codex", "action": _codex_action(paths["answer"]),
+    }
+
+
+def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
+             persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
+             spawn_guard=None, start_timeout: float = 15.0) -> dict:
+    """Start one detached Codex L2 turn and wait boundedly for its stable thread identity."""
+    extra_config = [*codex_isolation_config(cwd)]
+    if not resume:
+        codex_sandbox_preflight(Path(cwd), extra_config)
+
+    worker_id = uuid.uuid4().hex
+    unit = _codex_unit(worker_id)
+    root = Path(job_root); root.mkdir(parents=True, exist_ok=True)
+    paths = _codex_paths(root, worker_id)
+    schema = config.SCHEMAS / "l2_action.json"
+    if resume:
+        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", str(paths["answer"]),
+               "--output-schema", str(schema), "--skip-git-repo-check", "--ignore-user-config",
+               "--ignore-rules"]
+    else:
+        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", str(paths["answer"]),
+               "--output-schema", str(schema), "-C", str(cwd),
+               "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
+    if model:
+        cmd += ["-m", model]
+    for setting in extra_config:
+        cmd += ["-c", setting]
+    if resume:
+        cmd += [resume, "-"]
+        launch_prompt = prompt
+    else:
+        launch_prompt = (((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE
+                         + "\n\n" + prompt)
+        cmd += ["-"]
+    env = codex_env(extra_env, retain_user_bus=True)
+    # Persist the unguessable unit before crossing the spawn boundary. If altd dies between systemd-run and the PID
+    # update, recovery still has the exact cgroup identity needed to stop every descendant.
+    record = {"id": worker_id, "name": name, "pid": None, "pid_start": None, "unit": unit,
+              "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
+    S.write_json(paths["record"], record)
+    out = open(paths["stdout"], "ab", buffering=0)
+    err = open(paths["stderr"], "ab", buffering=0)
+    try:
+        with spawn_guard if spawn_guard is not None else nullcontext():
+            proc = subprocess.Popen(_codex_scope_command(unit, cmd), cwd=str(cwd), stdin=subprocess.PIPE,
+                                    stdout=out, stderr=err, env=env, start_new_session=True)
+            try:
+                proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+    finally:
+        out.close(); err.close()
+    pid_start = _pid_start(proc.pid)
+    if not pid_start:
+        _terminate_spawned_codex(proc, unit)
+        raise RuntimeError("Codex worker started without a stable process identity")
+    try:
+        record.update({"pid": proc.pid, "pid_start": pid_start})
+        S.write_json(paths["record"], record)
+        _codex_processes[worker_id] = proc
+        deadline = time.monotonic() + start_timeout
+        thread_id = None
+        while time.monotonic() < deadline:
+            events = _codex_events(paths["stdout"])
+            thread_id = _codex_thread(events)
+            if thread_id:
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        if not thread_id or (resume and thread_id != resume):
+            try:
+                codex_stop(worker_id, job_root=root)
+            except Exception:  # noqa: BLE001 — report the identity failure, not a secondary stop failure
+                pass
+            row = codex_worker(worker_id, job_root=root) or {}
+            detail = row.get("detail") or ("resumed a different Codex thread" if thread_id else "no thread.started event")
+            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
+        record["session_id"] = thread_id
+        S.write_json(paths["record"], record)
+        return {"stdout": "", "stderr": "", "returncode": 0,
+                "agent": codex_worker(worker_id, job_root=root)}
+    except BaseException:
+        _codex_processes.pop(worker_id, None)
+        _terminate_spawned_codex(proc, unit)
+        raise
+
+
+def codex_stop(worker_id: str, *, job_root: Path) -> str:
+    paths = _codex_paths(job_root, worker_id)
+    record = S.read_json(paths["record"], None)
+    if not isinstance(record, dict):
+        return "Codex worker record already absent"
+    unit = str(record.get("unit") or "")
+    if not unit:
+        raise CodexContainmentError(f"Codex worker {worker_id} has no durable containment unit")
+    _stop_codex_unit(unit)
+    if not _codex_unit_empty(unit):
+        raise CodexContainmentError(f"Codex worker {worker_id} containment unit is still populated")
+    proc = _codex_processes.pop(worker_id, None)
+    if proc is not None:
+        try:
+            proc.wait(timeout=1)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    record["stopped"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    S.write_json(paths["record"], record)
+    return "Codex worker stopped"
+
+
+def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
+             model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+    if engine == "claude":
+        return claude_bg(name, prompt, cwd=cwd, persona=persona, permission_mode="auto", model=model,
+                         settings=settings, extra_env=extra_env, spawn_guard=spawn_guard)
+    if engine == "codex":
+        return codex_bg(name, prompt, cwd=cwd, persona=persona, model=model, extra_env=extra_env,
+                        job_root=job_root, spawn_guard=spawn_guard)
+    raise ValueError(f"unknown L2 engine {engine!r}")
+
+
+def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
+              model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+    if engine == "claude":
+        return claude_resume_bg(name, session_id, prompt, cwd=cwd, persona=persona, settings=settings,
+                                model=model, extra_env=extra_env, spawn_guard=spawn_guard)
+    if engine == "codex":
+        return codex_bg(name, prompt, cwd=cwd, resume=session_id, model=model, extra_env=extra_env,
+                        job_root=job_root, spawn_guard=spawn_guard)
+    raise ValueError(f"unknown L2 engine {engine!r}")
+
+
+def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
+    return claude_stop(worker_id) if engine == "claude" else codex_stop(worker_id, job_root=job_root)
+
+
+def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
+    if engine == "claude":
+        return claude_rm(worker_id)
+    return codex_stop(worker_id, job_root=job_root)
+
+
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
                model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
                effort: str | None = None, extra_env: dict | None = None,
-               fault_context: dict[str, str] | None = None) -> dict:
+               fault_context: dict[str, str] | None = None, resume: str | None = None,
+               on_start=None, contain: bool | None = None,
+               readable_roots: list[Path] | None = None) -> dict:
     """Codex headless (optional L1 implementers/reviewers) — verified: needs stdin closed, -o for
-    the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from the
-    `turn.completed` events on stdout."""
+    the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from
+    the `turn.completed` events on stdout. Workspace-write turns are contained by default; ``contain=True`` also
+    places a read-only coordinator turn in a transient cgroup before it may return trusted actions."""
+    try:
+        effective_config = [*(extra_config or []), *codex_isolation_config(
+            cwd, writable=sandbox == "workspace-write", readable_roots=readable_roots)]
+    except RuntimeError as exc:
+        return {"text": "", "structured": None, "returncode": 1, "engine_started": False,
+                "fault_recorded": None, "usage": {}, "error": str(exc),
+                "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
+                "raw_stderr_truncated": False}
     if sandbox == "workspace-write":
         try:
-            codex_sandbox_preflight(cwd, extra_config)
+            codex_sandbox_preflight(cwd, effective_config)
         except CodexSandboxPreflightError as exc:
             from . import incidents  # local import avoids the incident/engine module cycle
             fault_recorded = None
@@ -512,19 +1030,58 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                     "raw_stderr_truncated": False}
     with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
         out_path = outf.name
-    cmd = [config.CODEX_BIN, "exec", "--json", "-o", out_path, "-s", sandbox, "-C", str(cwd), "--skip-git-repo-check"]
+    if resume:
+        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", out_path, "--skip-git-repo-check",
+               "--ignore-user-config", "--ignore-rules"]
+    else:
+        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", out_path, "-C", str(cwd),
+               "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
     if schema:
         cmd += ["--output-schema", str(schema)]
     if model:
         cmd += ["-m", model]
-    for kv in extra_config or []:
+    for kv in effective_config:
         cmd += ["-c", kv]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
+    contained = sandbox == "workspace-write" if contain is None else contain
+    unit = _codex_unit(f"sync-{uuid.uuid4().hex}") if contained else None
+    containment_error = None
     try:
-        env = clean_env(); env.update(extra_env or {})
-        p = subprocess.run(cmd + [prompt], cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                           stdin=subprocess.DEVNULL, env=env)
+        env = codex_env(extra_env, retain_user_bus=bool(unit))
+        argv = cmd + ([resume, prompt] if resume else [prompt])
+        contained_argv = _codex_scope_command(unit, argv) if unit else argv
+        if on_start:
+            proc = subprocess.Popen(contained_argv, cwd=str(cwd), stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL, env=env,
+                                    start_new_session=True)
+            on_start(proc.pid)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    if unit:
+                        _stop_codex_unit(unit)
+                finally:
+                    proc.kill(); stdout, stderr = proc.communicate()
+                raise
+            p = subprocess.CompletedProcess(contained_argv, proc.returncode, stdout, stderr)
+        else:
+            try:
+                p = subprocess.run(contained_argv, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
+                                   stdin=subprocess.DEVNULL, env=env)
+            except subprocess.TimeoutExpired:
+                if unit:
+                    _stop_codex_unit(unit)
+                raise
+        if unit:
+            try:
+                if not _wait_codex_unit_empty(unit):
+                    _stop_codex_unit(unit)
+                if not _codex_unit_empty(unit):
+                    raise CodexContainmentError(f"Codex containment unit {unit} remained populated after the turn")
+            except CodexContainmentError as exc:
+                containment_error = str(exc)
         text = Path(out_path).read_text() if Path(out_path).exists() else ""
     finally:
         try:
@@ -536,21 +1093,29 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         structured = json.loads(text)
     except ValueError:
         pass
-    usage, messages = {}, []
+    usage, messages, session_id, reported_session_id = {}, [], resume, None
     for line in (p.stdout or "").splitlines():
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
-            for k, v in ev["usage"].items():
-                usage[k] = usage.get(k, 0) + (v or 0)
+        if ev.get("type") == "thread.started" and ev.get("thread_id"):
+            session_id = reported_session_id = str(ev["thread_id"])
+        elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
+            usage = dict(ev["usage"])
         elif ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
             messages.append(str((ev["item"] or {}).get("text") or ""))
     if not text.strip() and messages:  # no -o file (or empty): the last agent message is the answer
         text = messages[-1]
-    return {"text": text.strip(), "structured": structured, "returncode": p.returncode, "usage": usage,
-            "error": None if p.returncode == 0 else p.stderr.strip()[:500],
+    if containment_error:
+        # Never expose an actionable answer while a descendant could still be running. Raw streams remain local
+        # diagnostic evidence, while L1/L3 see a deterministic engine failure.
+        text, structured = "", None
+    return {"text": text.strip(), "structured": structured,
+            "returncode": 1 if containment_error else p.returncode, "usage": usage,
+            "session_id": session_id, "reported_session_id": reported_session_id,
+            "unit": unit, "containment_empty": (not containment_error) if unit else None,
+            "error": containment_error or (None if p.returncode == 0 else p.stderr.strip()[:500]),
             "raw_stdout": p.stdout or "", "raw_stderr": p.stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
 

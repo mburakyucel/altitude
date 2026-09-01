@@ -110,9 +110,8 @@ INCIDENT_ID_ATTEMPTS = 20
 def _alloc_lock(directory: Path):
     """Use a dedicated leaf lock for incident-id allocation, never ``S.project_lock``.
 
-    it is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
-    with itself nor invert an order against the project lock — and `dispatch.run` does hold a project lock while
-    `wip_hold` files a `quota-unknown` fault, so reusing that lock here would deadlock altd outright."""
+    It is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
+    with itself nor invert an order against the project lock."""
     directory.mkdir(parents=True, exist_ok=True)
     with open(directory / ".alloc.lock", "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
@@ -166,9 +165,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     """Write incident evidence into the project's Altitude state.
 
     Filing an incident never creates a task or schedules a healing workflow.
-    Safe to call while holding any project lock: allocation takes a leaf lock of its own, so a
-    caller that already holds one (`dispatch.run` does, around the `wip_hold` that files `quota-unknown`) cannot
-    deadlock on it."""
+    Safe to call while holding any project lock: allocation takes a leaf lock of its own."""
     template = (config.TEMPLATES / "incident.md").read_text()
     fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
                   cause=cause.strip(), status="watch")

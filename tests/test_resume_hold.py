@@ -32,22 +32,25 @@ class TestResumeHold(unittest.TestCase):
         self.resumed = []
         self.stopped = []
         self.originals = (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
-                          engines.usage_hold, monitor.quota, monitor.quota_hold)
+                          engines.usage_hold, monitor.quota)
         dispatch.resume_session = self._resume_session
         engines.claude_stop = self.stopped.append
         engines.claude_agents = lambda: []
         engines.usage_hold = lambda: None
         monitor.quota = lambda: {"known": True}
-        monitor.quota_hold = lambda: None
 
     def tearDown(self):
         (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
-         engines.usage_hold, monitor.quota, monitor.quota_hold) = self.originals
+         engines.usage_hold, monitor.quota) = self.originals
         recovery.hold_path().unlink(missing_ok=True)
 
-    def _resume_session(self, project, slug, text, session_id=None):
+    def _resume_session(self, project, slug, text, session_id=None, **_expected):
         self.resumed.append({"project": project, "slug": slug, "text": text, "session_id": session_id})
-        return {"agent": {"id": f"new-{slug}"}, "stdout": ""}
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            task["agent_id"] = f"new-{slug}"
+            S.save_task(project, task)
+        return {"agent": {"id": f"new-{slug}", "sessionId": task["session_id"]}, "stdout": ""}
 
     def _task(self, title, state, path, created):
         task = T.new(self.project, title, "request", actor="l3", paths=[path])
@@ -121,7 +124,7 @@ class TestResumeHold(unittest.TestCase):
         self.assertFalse(result["deferred"])
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
         self.assertEqual([call["slug"] for call in self.resumed], [blocked["slug"]])
-        self.assertEqual(self.stopped, [blocked["agent_id"]])
+        self.assertEqual(self.stopped, [], "the mocked public resume seam owns worker replacement in this test")
 
     def test_only_blocked_task_with_pending_resume_holds_its_files(self):
         pending = self._task("pending lease", "blocked", "altitude/pending.py", "2026-01-01T00:00:00+00:00")

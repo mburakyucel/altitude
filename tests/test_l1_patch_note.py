@@ -55,6 +55,7 @@ class TestL1PatchNote(unittest.TestCase):
                     stack.enter_context(mock.patch.object(
                         S, "load_task", return_value={
                             "state": "running", "worktree": str(root), "source": "chat",
+                            "paths": ["fixture.txt"],
                             "dispatch_id": "task-1", "session_id": "session-1",
                             "agent_id": "agent-1", "l2_token": "token-1",
                         }
@@ -75,13 +76,15 @@ class TestL1PatchNote(unittest.TestCase):
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])
+                footer = l1.IMPLEMENTER_FOOTER if role == "implementer" else l1.REVIEWER_FOOTER
+                suffix = footer + (" Your sublease is: ['fixture.txt']." if role == "implementer" else "")
                 if engine == "codex":
                     self.assertEqual(prompt.count(l1.CODEX_PATCH_NOTE), 1)
-                    self.assertTrue(prompt.endswith(l1.FOOTER))
-                    self.assertLess(prompt.index(l1.CODEX_PATCH_NOTE), prompt.index(l1.FOOTER))
+                    self.assertTrue(prompt.endswith(suffix))
+                    self.assertLess(prompt.index(l1.CODEX_PATCH_NOTE), prompt.index(footer))
                 else:
                     persona = l1.config.PERSONAS / ("reviewer.md" if role == "reviewer" else "l1.md")
-                    expected = persona.read_text() + "\n\n# Sub-brief\n\n" + brief.read_text() + l1.FOOTER
+                    expected = persona.read_text() + "\n\n# Sub-brief\n\n" + brief.read_text() + suffix
                     self.assertEqual(prompt, expected)
                     self.assertNotIn(l1.CODEX_PATCH_NOTE, prompt)
         self.assertIsNone(l1._codex_sandbox_denial(l1.CODEX_PATCH_NOTE))

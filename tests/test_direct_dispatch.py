@@ -75,9 +75,9 @@ class TestDirectDispatch(unittest.TestCase):
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
-             mock.patch.object(dispatch.engines, "claude_bg", return_value=fake), \
+             mock.patch.object(dispatch.engines, "start_l2", return_value=fake), \
              mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(dispatch.DispatchFailure, "concrete agent id and session id"):
+            with self.assertRaisesRegex(dispatch.DispatchFailure, "concrete worker id and session id"):
                 dispatch.run("direct", task["slug"])
 
         waiting = S.load_task("direct", task["slug"])
@@ -92,7 +92,7 @@ class TestDirectDispatch(unittest.TestCase):
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
-             mock.patch.object(dispatch.engines, "claude_bg", return_value=fake) as launch:
+             mock.patch.object(dispatch.engines, "start_l2", return_value=fake) as launch:
             dispatch.run("direct", task["slug"])
 
         running = S.load_task("direct", task["slug"])
@@ -101,33 +101,8 @@ class TestDirectDispatch(unittest.TestCase):
         token = running["l2_token"]
         self.assertTrue(token)
         self.assertEqual(launch.call_args.kwargs["extra_env"]["ALTITUDE_L2_TOKEN"], token)
-
-    def test_session_index_failure_keeps_the_concrete_worker_bound_and_holds_dispatch(self):
-        task = T.new("direct", "Session index fails", "Dispatch it.", actor="burak")
-        fake = {"stdout": "started", "stderr": "", "returncode": 0,
-                "agent": {"id": "agent-index", "sessionId": "session-index"}}
-        real_write_json = S.write_json
-
-        def fail_session_index(path, value):
-            if Path(path).name == "session-session-index.json":
-                raise OSError("monitor disk unavailable")
-            return real_write_json(path, value)
-
-        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
-             mock.patch.object(dispatch.engines, "claude_bg", return_value=fake), \
-             mock.patch.object(S, "write_json", side_effect=fail_session_index), \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            result = dispatch.run("direct", task["slug"])
-
-        running = S.load_task("direct", task["slug"])
-        self.assertEqual((running["state"], running["agent_id"], running["session_id"]),
-                         ("running", "agent-index", "session-index"))
-        self.assertEqual(result["agent"]["id"], "agent-index")
-        self.assertEqual(S.read_events("direct", task["slug"])[-1]["kind"], "session-index-failed")
-        fault.assert_called_once()
-
+        self.assertEqual(running["l2_engine"], "codex")
+        self.assertIn("default policy", running["routing"]["why"])
 
 if __name__ == "__main__":
     unittest.main()

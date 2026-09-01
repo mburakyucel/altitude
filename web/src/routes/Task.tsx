@@ -101,13 +101,14 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const dispatchId = str(task["dispatch_id"]);
   const sessionId = str(task["session_id"]);
   const agentId = str(task["agent_id"]);
+  const engine = str(task["l2_engine"]) || "claude";
   const worktree = str(task["worktree"]);
   const branch = str(task["branch"]);
   const blockedReason = str(task["blocked_reason"]);
   // Held by Altitude (blocked + resume_after) reads as queued, not as something you must unstick:
   // it gets the sentence and the neutral colour, never the danger line.
   const held = state === "blocked" && Boolean(task.resume_after);
-  const model = str(task["model"]);
+  const model = str(task["engine_model"]) || str(task["model"]);
   const hasActivity = Object.keys(spend).length > 0;
   const liveState = rec(live["agent"]);
 
@@ -139,12 +140,13 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
           <h1 className="text-page-title font-semibold">{task.title || slug}</h1>
         </div>
         <p className="text-meta text-muted">
-          {slug} · dispatch {dispatchId || "—"} · session {sessionId ? sessionId.slice(0, 8) : "—"} ·
+          {slug} · {engine} · dispatch {dispatchId || "—"} · session {sessionId ? sessionId.slice(0, 8) : "—"} ·
           worktree {worktree || "—"}
           {branch ? ` · branch ${branch}` : ""}
           {model ? ` · model ${model}` : ""}
         </p>
-        {agentId ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
+        {agentId && engine === "claude" ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
+        {agentId && engine === "codex" ? <p className="text-meta text-muted">Codex worker {agentId.slice(0, 8)} · message this L2 to steer/resume it</p> : null}
         {held ? (
           <p className="text-body text-ink-2">
             Queued: Altitude resumes this L2 itself when the operational hold

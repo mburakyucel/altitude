@@ -11,19 +11,17 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, incidents, recovery, route, state as S, tasks as T
+from . import config, dispatch, engines, git_policy, incidents, recovery, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
-# Single source of truth for the host patch constraint; the Codex L2 path must import this rather than define a copy.
-CODEX_PATCH_NOTE = (
-    "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
-    "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
-    "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
-    "sandbox and its configured writable roots."
-)
-FOOTER = ("\n\n---\nWhen you are finished, print exactly one final line `RESULT: <PR number or URL, or 'no PR'> — <one sentence on what "
-          "landed or why you stopped>`. Do not merge. Do not spawn agents or subagents.")
+# One shared host constraint for Codex L1 and L2 prompts.
+CODEX_PATCH_NOTE = engines.CODEX_PATCH_NOTE
+IMPLEMENTER_FOOTER = ("\n\n---\nWhen finished, leave the bounded change uncommitted and print exactly one final line "
+                      "`RESULT: patch ready — <tests and one-sentence handoff>`. Do not commit, open a PR, or merge; "
+                      "Altitude captures a patch and the L2 decides what to integrate.")
+REVIEWER_FOOTER = ("\n\n---\nWhen finished, print exactly one final line "
+                   "`RESULT: no commit — <one-sentence review verdict>`. Do not edit, open a PR, or merge.")
 POLL = 5
 # Raw engine artifacts are capped at 2 MiB per stream. Truncated files retain both ends and state the exact byte drop.
 RAW_OUTPUT_CAP = engines.RAW_CAPTURE_CAP
@@ -96,7 +94,7 @@ def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token
     if task.get("state") != "running":
         raise T.TransitionError(f"{slug}: optional L1s may launch only for the current running L2")
     if not dispatch_id or not l2_token:
-        raise T.TransitionError(f"{slug}: current L2 dispatch and generation are required")
+        raise T.TransitionError(f"{slug}: current L2 dispatch and capability are required")
     if task.get("dispatch_id") != dispatch_id or task.get("l2_token") != l2_token:
         raise T.TransitionError(f"{slug}: L2 ownership changed before the L1 launch")
     if not task.get("session_id") or not task.get("agent_id"):
@@ -120,6 +118,7 @@ def _launch_permission(project: str, slug: str, dispatch_id: str, l2_token: str)
 
 def start(project: str, slug: str, brief: Path, *, role: str = "implementer", engine: str | None = None,
           model: str | None = None, name: str | None = None, cwd: str | None = None,
+          paths: list[str] | None = None,
           expected_dispatch_id: str | None = None, expected_l2_token: str | None = None) -> dict:
     if role not in ("implementer", "reviewer"):
         raise T.TransitionError("role must be implementer or reviewer")
@@ -145,18 +144,27 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
         if name in used_names:
             raise T.TransitionError(f"run {name!r} already exists")
         return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
-                      n=n, author=author, runs=runs, expected_dispatch_id=expected_dispatch_id,
+                      paths=paths, n=n, author=author, runs=runs, expected_dispatch_id=expected_dispatch_id,
                       expected_l2_token=expected_l2_token)
 
 
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
-           name: str, cwd: str | None, n: int, author: str | None, runs: list[dict],
+           name: str, cwd: str | None, paths: list[str] | None, n: int, author: str | None, runs: list[dict],
            expected_dispatch_id: str, expected_l2_token: str) -> dict:
     """Route, make the worktree, write the prompt, and start the detached wrapper."""
     choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine,
                                other_than=author if role == "reviewer" else None)
+    if not choice.get("engine"):
+        raise T.TransitionError(f"engine hold: {choice['why']}")
     base = Path(cwd) if cwd else Path(task.get("worktree") or config.project_path(project))
     if role == "implementer":
+        task_lease = dispatch.task_paths(project, task)
+        sublease = [dispatch._norm(path).lstrip("/") for path in (paths or task_lease) if str(path).strip()]
+        if not sublease:
+            raise T.TransitionError("write-capable L1 requires a non-empty sublease")
+        outside = [path for path in sublease if not dispatch.inside_lease(path, task_lease)]
+        if outside:
+            raise T.TransitionError(f"L1 sublease is outside the task lease: {', '.join(outside)}")
         parent_branch = _git(base, "rev-parse", "--abbrev-ref", "HEAD")
         branch_name = (parent_branch.stdout or "").strip() if parent_branch.returncode == 0 else ""
         if not branch_name or branch_name == "HEAD":
@@ -198,24 +206,31 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
             raise T.TransitionError(
                 f"L1 parent has commit(s) without exact `Altitude-Task: {project}/{slug}` provenance: {sample}"
             )
-    if role == "implementer" and not cwd:
-        common = _git(base, "rev-parse", "--git-common-dir").stdout.strip()
-        if not common:
-            raise T.TransitionError(f"{base} is not a git checkout")
-        repo_root = (base / common).resolve().parent  # `.git` comes back relative to `base`
-        short = slug[:30]
-        wt, branch = repo_root / ".claude" / "worktrees" / f"{short}-{name}", f"l1/{short}-{name}"
-        r = _git(base, "worktree", "add", "-b", branch, str(wt), parent_sha)
-        if r.returncode != 0:
-            raise T.TransitionError(f"git worktree add failed: {(r.stderr or r.stdout).strip()[:300]}")
-        workdir = wt
+    if role == "implementer":
+        if not cwd:
+            common = _git(base, "rev-parse", "--git-common-dir").stdout.strip()
+            if not common:
+                raise T.TransitionError(f"{base} is not a git checkout")
+            repo_root = (base / common).resolve().parent  # `.git` comes back relative to `base`
+            short = slug[:30]
+            wt, branch = repo_root / ".claude" / "worktrees" / f"{short}-{name}", f"l1/{short}-{name}"
+            r = _git(base, "worktree", "add", "-b", branch, str(wt), parent_sha)
+            if r.returncode != 0:
+                raise T.TransitionError(f"git worktree add failed: {(r.stderr or r.stdout).strip()[:300]}")
+            workdir = wt
+        else:
+            workdir, branch = base, branch_name
     else:
+        sublease = []
         workdir, branch = base, _git(base, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     persona = config.PERSONAS / ("reviewer.md" if role == "reviewer" else "l1.md")
     prompt = persona.read_text() + "\n\n# Sub-brief\n\n" + Path(brief).read_text()
     if choice["engine"] == "codex":
         prompt += "\n\n" + CODEX_PATCH_NOTE
-    prompt += FOOTER
+    if role == "implementer":
+        prompt += IMPLEMENTER_FOOTER + f" Your sublease is: {sublease}."
+    else:
+        prompt += REVIEWER_FOOTER
     (runs_dir(project, slug) / f"{name}.prompt.md").write_text(prompt)
     key = "reviewer" if role == "reviewer" else "l1"
     model = model or (None if choice["engine"] == "codex" else config.MODELS[key])
@@ -227,7 +242,8 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
             )
     rec = {"n": n, "name": name, "role": role, "engine": choice["engine"], "why": choice["why"], "model": model,
            "worktree": str(workdir), "branch": branch, "brief": str(brief), "started": S.now(), "pid": None,
-           "done": None, "result": None}
+           "done": None, "result": None, "paths": sublease,
+           "parent_sha": parent_sha if role == "implementer" else None}
     save(project, slug, rec)
     # <name>.log remains the detached wrapper's own stdout/stderr; engine pipes are the separate raw artifacts.
     log = open(runs_dir(project, slug) / f"{name}.log", "ab")
@@ -272,14 +288,20 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     raw_stdout_truncated = raw_stderr_truncated = False
     try:
         if rec["engine"] == "codex":
-            common = _git(wt, "rev-parse", "--git-common-dir").stdout.strip()
-            extra = ["sandbox_workspace_write.network_access=true"]
-            if common:
-                extra.append(f'sandbox_workspace_write.writable_roots=["{(wt / common).resolve()}"]')
-            res = engines.codex_exec(prompt, cwd=wt, sandbox="read-only" if rec["role"] == "reviewer" else "workspace-write",
-                                     model=rec["model"], timeout=config.L1_TIMEOUT, extra_config=extra, schema=schema,
-                                     effort=config.CODEX_EFFORT.get(rec["role"]),
-                                     fault_context={"project": project, "task": slug})
+            if rec["role"] == "reviewer":
+                runtime = runs_dir(project, slug) / f"{name}.codex-runtime"
+                runtime.mkdir(parents=True, exist_ok=True)
+                codex_prompt = (f"[altitude] Read-only review checkout: {wt}\n\n" + prompt)
+                res = engines.codex_exec(
+                    codex_prompt, cwd=runtime, sandbox="workspace-write", readable_roots=[wt],
+                    model=rec["model"], timeout=config.L1_TIMEOUT, schema=schema,
+                    effort=config.CODEX_EFFORT.get(rec["role"]),
+                    fault_context={"project": project, "task": slug})
+            else:
+                res = engines.codex_exec(prompt, cwd=wt, sandbox="workspace-write",
+                                         model=rec["model"], timeout=config.L1_TIMEOUT, schema=schema,
+                                         effort=config.CODEX_EFFORT.get(rec["role"]),
+                                         fault_context={"project": project, "task": slug})
         else:
             res = engines.claude_print(prompt, cwd=wt, model=rec["model"], permission_mode="plan" if rec["role"] == "reviewer" else "auto",
                                        max_turns=config.L1_MAX_TURNS, timeout=config.L1_TIMEOUT, schema=schema,
@@ -331,10 +353,43 @@ def exec_run(project: str, slug: str, name: str) -> dict:
                 err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
         summary = "engine fault: codex-sandbox"
     pr = None
+    patch_path = None
+    if rec["role"] == "implementer" and not err and not denial:
+        from . import land
+        try:
+            final_head = (_git(wt, "rev-parse", "HEAD").stdout or "").strip()
+            if not final_head or final_head != rec.get("parent_sha"):
+                raise T.TransitionError(
+                    f"L1 moved HEAD ({str(rec.get('parent_sha') or '')[:12]} → {final_head[:12] or 'unreadable'}); "
+                    "preserving the worktree but refusing to synthesize a patch"
+                )
+            groups = land._changes(wt)
+            changed = sorted({path for _xy, group in groups for path in group})
+            outside = [path for path in changed if not dispatch.inside_lease(path, rec.get("paths") or [])]
+            if outside:
+                raise T.TransitionError(f"L1 changed files outside its sublease: {', '.join(outside)}")
+            if changed:
+                untracked = sorted({path for xy, group in groups if xy == "??" for path in group})
+                if untracked:
+                    add = _git(wt, "add", "-N", "--", *untracked)
+                    if add.returncode != 0:
+                        raise T.TransitionError(f"cannot prepare L1 patch: {(add.stderr or add.stdout).strip()[:300]}")
+                diff = subprocess.run(["git", "diff", "--binary", "--no-ext-diff", "HEAD", "--", *changed],
+                                      cwd=str(wt), capture_output=True, text=True, timeout=60)
+                if untracked:
+                    _git(wt, "reset", "-q", "HEAD", "--", *untracked)
+                if diff.returncode != 0:
+                    raise T.TransitionError(f"cannot capture L1 patch: {(diff.stderr or diff.stdout).strip()[:300]}")
+                patch_file = runs_dir(project, slug) / f"{name}.patch"
+                patch_file.write_text(diff.stdout)
+                patch_path = str(patch_file)
+        except (OSError, subprocess.SubprocessError, T.TransitionError) as exc:
+            err = str(exc)
     if summary and "no pr" not in summary.lower():
         pm = PR_RE.search(summary)
         pr = int(pm.group(1)) if pm else None
-    rec.update({"done": S.now(), "result": {"error": err, "pr": pr, "summary": summary, "usage": res.get("usage"),
+    rec.update({"done": S.now(), "result": {"error": err, "pr": pr, "patch": patch_path,
+                                            "summary": summary, "usage": res.get("usage"),
                                             "structured": res.get("structured"), "returncode": res.get("returncode"),
                                             "text_tail": text[-1500:], "raw": raw_info}})
     save(project, slug, rec)
@@ -346,7 +401,8 @@ def _compact(r: dict) -> dict:
     """Return the L2 view; ``raw`` paths point to local-only diagnostic evidence."""
     res = r.get("result") or {}
     compact = {k: r.get(k) for k in ("name", "role", "engine", "why", "model", "branch", "worktree", "started", "done")} | {
-        "pr": res.get("pr"), "summary": res.get("summary"), "error": res.get("error"), "usage": res.get("usage"),
+        "pr": res.get("pr"), "patch": res.get("patch"), "summary": res.get("summary"),
+        "error": res.get("error"), "usage": res.get("usage"),
         "raw": res.get("raw")}
     if r.get("role") != "reviewer":
         return compact

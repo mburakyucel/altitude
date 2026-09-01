@@ -52,6 +52,7 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Default Claude models. A Codex L1/reviewer uses the Codex CLI's configured model unless its run overrides it.
 MODELS = {"l3": "fable", "l2": "opus", "l1": "opus", "reviewer": "opus"}
 ENGINES = ("claude", "codex")
+PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
@@ -61,13 +62,11 @@ L1_TIMEOUT = 3600                # one L1 run, either engine
 L1_MAX_TURNS = 80                # Claude L1s
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
-QUOTA_RESERVE = 0.70
 WIP_PER_PROJECT = 3
 WIP_PER_MACHINE = 10
-SESSIONS_PER_MACHINE = 24         # live Claude sessions (L2s + optional L1s) across all projects
 SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2/L1 (hooks/guard.py)
 L3_TURN_TIMEOUT = 900             # seconds
-L3_CODEX_TURN_TIMEOUT = 1200       # Codex fallback runs without a resumable Claude session
+L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30
 
 PROJECTS_FILE = ROOT / "projects.json"

@@ -8,16 +8,17 @@ import subprocess
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, verify
+from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
+CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
 
 
 def log(msg: str) -> None:
@@ -64,34 +65,115 @@ def start_l3(project: str) -> None:
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    with S.project_lock(project):
+        live = S.load_task(project, slug)
+        snapshot = (t.get("state"), t.get("dispatch_id"), t.get("session_id"), t.get("agent_id"))
+        current = (live.get("state"), live.get("dispatch_id"), live.get("session_id"), live.get("agent_id"))
+    if current != snapshot:
+        log(f"[{project}/{slug}] ignored stale finished worker snapshot {snapshot} → {current}")
+        return
+    t = live  # include completion/action fields that may have landed after poll took its worker snapshot
+
+    def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
+        return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"),
+                       expected_dispatch_id=t.get("dispatch_id"), expected_session_id=t.get("session_id"),
+                       expected_agent_id=t.get("agent_id"), updates=updates)
+
+    if t.get("completion_requested"):
+        a = item.get("agent") or {}
+        if a.get("state") == "working" or a.get("status") in ("busy", "idle"):
+            raise RuntimeError(f"{project}/{slug}: completion reached finished handling while its L2 is still live")
+        T.finalize_completion(project, slug, expected_dispatch_id=str(t.get("dispatch_id") or ""),
+                              expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"))
+        log(f"[{project}/{slug}] no-code completion finalized after the L2 worker exited")
+        return
+    if item.get("capacity"):
+        # Provider capacity is local to this task/model, unlike an exhausted subscription window or a system fault.
+        # Keep its logical L2 identity and retry the same conversation after bounded exponential-ish backoff.
+        attempt = max(0, int(t.get("capacity_retries") or 0)) + 1
+        delay = CAPACITY_RETRY_DELAYS[min(attempt - 1, len(CAPACITY_RETRY_DELAYS) - 1)]
+        until = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+        engine = t.get("l2_engine") or "claude"
+        model = t.get("engine_model") or "provider default"
+        updates = {"capacity_retries": attempt, "resume_after": until,
+                   "resume_answer": (f"Temporary capacity backoff elapsed. Retry with the same {engine} provider "
+                                     f"and {model} model."), "resume_prefix": "Altitude: "}
+        try:
+            block_snapshot(f"{engine} model {model} is temporarily at capacity; "
+                           f"Altitude retries this same L2 after {until}", updates=updates)
+        except T.TransitionError:
+            log(f"[{project}/{slug}] capacity result lost a concurrent lifecycle race; ignored")
+            return
+        log(f"[{project}/{slug}] {engine}/{model} temporarily at capacity → retry {attempt} after {delay}s")
+        return
     if item.get("limited"):  # hold, remember when to come back, and announce the window once
         until, a = item["limited"], item.get("agent") or {}
-        news = engines.note_usage_limit(until, f"L2 {a.get('id', '')} of {slug}")
-        with S.project_lock(project):
-            t0 = S.load_task(project, slug); t0["resume_after"] = until; S.save_task(project, t0)
-        T.block(project, slug, f"usage limit: the subscription window is exhausted, resets {until} — Altitude resumes this L2 itself after that")
+        engine = t.get("l2_engine") or "claude"
+        # Claude's hold file is consumed only by Claude turns. A Codex limit must not freeze Claude work.
+        news = (engines.note_usage_limit(until, f"L2 {a.get('id', '')} of {slug}")
+                if engine == "claude" else True)
+        try:
+            block_snapshot(f"usage limit: the subscription window is exhausted, resets {until} — "
+                           "Altitude resumes this L2 itself after that", updates={"resume_after": until})
+        except T.TransitionError:
+            log(f"[{project}/{slug}] usage-limit result lost a concurrent lifecycle race; ignored")
+            return
         if news:
-            T.fyi(project, slug, f"Usage limit hit (5-hour window). Dispatch and L3 turns are held until {until}; "
-                                 f"blocked L2s resume automatically, WIP-throttled, oldest first.", actor="altd")
+            T.fyi(project, slug, f"{engine} usage window hit. This L2 resumes after {until}; the other provider remains available.",
+                  actor="altd")
         log(f"[{project}/{slug}] L2 hit the usage limit → blocked until {until}")
         return
     with S.project_lock(project):  # a new report: whatever L3 did with the previous one no longer counts
-        t0 = S.load_task(project, slug); t0["l3_handled"] = None; S.save_task(project, t0)
+        t0 = S.load_task(project, slug)
+        t0["l3_handled"] = None
+        t0.pop("capacity_retries", None)
+        S.save_task(project, t0)
     if item.get("needs_input"):
         a = item.get("agent") or {}
-        reason = f"L2 is idle without a report — probably waiting for permission or an answer. Attach: `claude attach {a.get('id', '')}` or message the L2 directly."
-        T.block(project, slug, reason)
+        attach = (f"Attach: `claude attach {a.get('id', '')}` or "
+                  if (t.get("l2_engine") or "claude") == "claude" else "")
+        reason = f"L2 is idle without a report — probably waiting for permission or an answer. {attach}message the L2 directly."
+        try:
+            block_snapshot(reason)
+        except T.TransitionError:
+            log(f"[{project}/{slug}] idle result lost a concurrent lifecycle race; ignored")
+            return
         T.fyi(project, slug, f"{slug}: L2 idle {dispatch.IDLE_NEEDS_INPUT_SECONDS}s without finishing — needs input? attach {a.get('id', '')}")
         log(f"[{project}/{slug}] L2 idle → blocked (needs input)")
         return
     if item.get("died"):
         a = item.get("agent") or {}
+        engine = t.get("l2_engine") or "claude"
+        try:
+            block_snapshot(f"L2 session died before reporting (Altitude fault, not the L2's) — Resume from the card "
+                           f"re-attaches its transcript (agent {a.get('id', '')})")
+        except T.TransitionError:
+            log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
+            return
         incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
-                             f"`claude agents` state=failed", project=project, task=slug)
-        T.block(project, slug, f"L2 session died before reporting (Altitude fault, not the L2's) — Resume from the card "
-                               f"re-attaches its transcript (agent {a.get('id', '')})")
+                               f"{engine} worker state=failed", project=project, task=slug)
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
+    if (t.get("l2_engine") or "claude") == "codex":
+        item = {**item, "task": t}
+        try:
+            handled = actions.process_l2(project, item)
+        except actions.ActionError as exc:
+            try:
+                blocked = block_snapshot(f"contained Codex action refused: {exc}")
+                dispatch.resume_blocked(
+                    project, slug, str(exc), prefix="Altitude action schema correction: ",
+                    expected_state="blocked", expected_dispatch_id=blocked.get("dispatch_id"),
+                    expected_session_id=blocked.get("session_id"), expected_agent_id=blocked.get("agent_id"),
+                )
+            except T.TransitionError:
+                log(f"[{project}/{slug}] Codex action correction lost a concurrent lifecycle race; ignored")
+                return
+            log(f"[{project}/{slug}] Codex action refused and resumed in the same thread: {exc}")
+            return
+        if handled.get("kind") != "report":
+            log(f"[{project}/{slug}] contained Codex action handled: {handled.get('kind')}")
+            return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})
@@ -183,8 +265,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     # Report details belong in the task record, not a turn-log reply.
     header = (f"Report landed for `{slug}`: verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
-              f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n"
-              "Read <task_dir>/report.md if you need more.\n\n"
+              f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n\n"
               "Handle the report: write a concise digest and use `alt task done`, or block/resume with the exact gap; "
               "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
               "a repair task or healing workflow. "
@@ -192,8 +273,9 @@ def report_turn(project: str, t: dict, v: dict) -> None:
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
     res = l3.turn(project, header, trigger="report-landed")
-    if (res or {}).get("limited"):
-        log(f"[{project}/{slug}] report turn held: {res['error']}")  # not stamped: re-run when the window reopens
+    if not (res or {}).get("completed") or (res or {}).get("error"):
+        detail = (res or {}).get("error") or "L3 turn did not complete"
+        log(f"[{project}/{slug}] report turn unfinished: {detail}")  # not stamped: stranded-report retry owns it
         return
     try:
         with S.project_lock(project):
@@ -204,8 +286,6 @@ def report_turn(project: str, t: dict, v: dict) -> None:
 
 def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
-    if engines.usage_hold():
-        return
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
@@ -332,6 +412,19 @@ def wake_recovery_l3(project: str) -> None:
         spawn(f"recovery:{project}", run_recovery_turn, project)
 
 
+def resume_pending_actions(project: str) -> None:
+    """Retry trusted Codex actions held by the recovery fuse without spending another model turn."""
+    for task in actions.pending(project):
+        if task.get("state") not in ("running", "blocked") or recovery.dispatch_hold(project, task):
+            continue
+        worker = engines.codex_worker(task.get("agent_id"), job_root=dispatch.l2_job_root(project, task["slug"]))
+        action = (task.get("pending_action") or {}).get("action")
+        if not action:
+            continue
+        item = {"task": task, "agent": worker, "action": action}
+        spawn(f"pending-action:{project}:{task['slug']}", on_l2_finished, project, item)
+
+
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
@@ -341,6 +434,7 @@ def tick() -> None:
     for project in list(config.load_projects()):
         try:
             wake_recovery_l3(project)
+            resume_pending_actions(project)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
@@ -350,10 +444,12 @@ def tick() -> None:
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
                     notes = dispatch.cleanup_after_done(project, t)
-                    with S.project_lock(project):
-                        t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
+                    deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
+                    if not deferred:
+                        with S.project_lock(project):
+                            t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
                     S.append_event(project, t["slug"], "cleanup", notes=notes)
-                    log(f"[{project}/{t['slug']}] cleanup: {notes}")
+                    log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
             incidents.system_fault("tick", f"{project}: {e}", project=project)

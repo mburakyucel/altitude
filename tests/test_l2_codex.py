@@ -13,13 +13,56 @@ from altitude import engines
 REAL_SUBPROCESS_RUN = subprocess.run
 
 
+class TestCodexPermissionProfile(unittest.TestCase):
+    def test_profile_reopens_only_runtime_binary_and_explicit_read_roots(self):
+        cwd = Path("/tmp/altitude-worker")
+        source = Path("/tmp/altitude-read-source")
+        with mock.patch.object(engines.shutil, "which", return_value="/opt/codex/bin/codex"):
+            config = engines.codex_isolation_config(cwd, writable=True, readable_roots=[source])
+        filesystem = next(item for item in config if item.startswith("permissions.altitude_worker.filesystem="))
+        self.assertIn('":root"="deny"', filesystem)
+        self.assertIn('":minimal"="read"', filesystem)
+        self.assertIn('"."="write"', filesystem)
+        self.assertIn('"/opt/codex/bin/codex"="read"', filesystem)
+        self.assertIn('"/tmp/altitude-read-source"="read"', filesystem)
+
+    def test_codex_environment_scrubs_ambient_credentials_and_control_channels(self):
+        inherited = {
+            "PATH": "/usr/bin", "HOME": "/tmp/home", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/private/bus",
+            "XDG_RUNTIME_DIR": "/private/runtime", "GITHUB_TOKEN": "not-a-real-token",
+            "ALTITUDE_L2_CAPABILITY": "not-a-real-capability", "SAFE_SETTING": "kept",
+        }
+        with mock.patch.object(engines, "clean_env", side_effect=lambda: dict(inherited)):
+            direct = engines.codex_env({"OPENAI_API_KEY": "not-a-real-key"})
+            launcher = engines.codex_env(retain_user_bus=True)
+        self.assertNotIn("SAFE_SETTING", direct)
+        for key in ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "GITHUB_TOKEN",
+                    "ALTITUDE_L2_CAPABILITY", "OPENAI_API_KEY"):
+            self.assertNotIn(key, direct)
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS", launcher)
+        self.assertNotIn("GITHUB_TOKEN", launcher)
+
+    def test_scope_scrubs_user_bus_before_codex_starts(self):
+        command = engines._codex_scope_command("altitude-codex-test.scope", ["codex", "exec"])
+        separator = command.index("--")
+        child = command[separator + 1:]
+        self.assertEqual(child[0], engines.ENV_BIN)
+        for key in engines._CODEX_CONTROL_ENV:
+            self.assertIn(["-u", key], [child[i:i + 2] for i in range(len(child) - 1)])
+        self.assertEqual(child[-2:], ["codex", "exec"])
+
+
 class TestCodexSandboxPreflight(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="altitude-codex-preflight-")
         self.cwd = Path(self.temp.name) / "worktree"
         self.cwd.mkdir()
+        self.wait_empty = mock.patch.object(engines, "_wait_codex_unit_empty", return_value=True)
+        self.unit_empty = mock.patch.object(engines, "_codex_unit_empty", return_value=True)
+        self.wait_empty.start(); self.unit_empty.start()
 
     def tearDown(self):
+        self.unit_empty.stop(); self.wait_empty.stop()
         self.temp.cleanup()
 
     @staticmethod
@@ -66,7 +109,19 @@ class TestCodexSandboxPreflight(unittest.TestCase):
                     result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write", extra_config=extra)
 
         self.assertEqual(result["returncode"], 0)
+        self.assertTrue(result["containment_empty"])
         self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][0], engines.SYSTEMD_RUN_BIN)
+        self.assertIn("--scope", calls[1])
+        self.assertIn("--property=KillMode=control-group", calls[1])
+        self.assertIn("--property=SendSIGKILL=yes", calls[1])
+        self.assertTrue(any(part.startswith("--unit=altitude-codex-sync-") for part in calls[1]))
+        self.assertIn("--strict-config", calls[1])
+        self.assertNotIn("--approve-for-me", calls[1])
+        joined = " ".join(calls[1])
+        for override in ('approval_policy="never"', 'web_search="disabled"', "features.apps=false",
+                         "features.multi_agent=false", "features.goals=false"):
+            self.assertIn(override, joined)
         self.assertEqual(list(self.cwd.glob(".altitude-codex-write-probe-*")), [])
         self.assertEqual(list(second.glob(".altitude-codex-write-probe-*")), [])
 
@@ -134,7 +189,7 @@ class TestCodexSandboxPreflight(unittest.TestCase):
             calls.append(cmd)
             return self._codex_success(cmd)
 
-        with mock.patch.object(engines.shutil, "which") as which:
+        with mock.patch.object(engines.shutil, "which", return_value="/usr/bin/codex") as which:
             with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
                 with mock.patch("altitude.incidents.system_fault") as fault:
                     result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="read-only")
@@ -142,8 +197,65 @@ class TestCodexSandboxPreflight(unittest.TestCase):
         self.assertEqual(result["returncode"], 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1], "exec")
-        which.assert_not_called()
+        which.assert_called_once_with(engines.config.CODEX_BIN)
         fault.assert_not_called()
+
+    def test_read_only_coordinator_can_require_whole_turn_containment(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return self._codex_success(cmd)
+
+        with mock.patch.object(engines.subprocess, "run", side_effect=fake_run):
+            result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="read-only", contain=True)
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertTrue(result["containment_empty"])
+        self.assertTrue(result["unit"].startswith("altitude-codex-sync-"))
+        self.assertEqual(calls[0][0], engines.SYSTEMD_RUN_BIN)
+        self.assertIn("--scope", calls[0])
+
+    def test_contained_timeout_stops_the_whole_transient_unit(self):
+        stopped = []
+
+        def stop(unit):
+            stopped.append(unit)
+
+        with mock.patch.object(engines.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired(["systemd-run"], 1)), \
+             mock.patch.object(engines, "_stop_codex_unit", side_effect=stop):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                engines.codex_exec("prompt", cwd=self.cwd, sandbox="read-only", contain=True, timeout=1)
+
+        self.assertEqual(len(stopped), 1)
+        self.assertTrue(stopped[0].startswith("altitude-codex-sync-"))
+
+    def test_contained_on_start_path_wraps_the_l3_process(self):
+        launched = []
+        started = []
+
+        class FakeProcess:
+            pid = 4242
+            returncode = 0
+
+            def __init__(self, cmd):
+                launched.append(cmd)
+                Path(cmd[cmd.index("-o") + 1]).write_text('{"message":"ok"}\n')
+
+            def communicate(self, timeout=None):
+                return ('{"type":"thread.started","thread_id":"thread"}\n', "")
+
+        with mock.patch.object(engines.subprocess, "Popen",
+                               side_effect=lambda cmd, **_kwargs: FakeProcess(cmd)):
+            result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="read-only", contain=True,
+                                        on_start=started.append)
+
+        self.assertEqual(started, [4242])
+        self.assertEqual(launched[0][0], engines.SYSTEMD_RUN_BIN)
+        self.assertIn("--property=KillMode=control-group", launched[0])
+        self.assertTrue(result["containment_empty"])
+        self.assertEqual(result["reported_session_id"], "thread")
 
     def test_preflight_subprocess_strictly_precedes_codex(self):
         order = []
@@ -161,6 +273,24 @@ class TestCodexSandboxPreflight(unittest.TestCase):
                     engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
 
         self.assertEqual(order, ["preflight", "codex"])
+
+    def test_success_is_suppressed_when_scope_cannot_be_proven_empty(self):
+        def fake_run(cmd, **kwargs):
+            return self._probe_success(cmd) if cmd[0] == "/usr/bin/bwrap" else self._codex_success(cmd)
+
+        with mock.patch.object(engines.sys, "platform", "linux"), \
+             mock.patch.object(engines.shutil, "which", return_value="/usr/bin/bwrap"), \
+             mock.patch.object(engines.subprocess, "run", side_effect=fake_run), \
+             mock.patch.object(engines, "_wait_codex_unit_empty", return_value=False), \
+             mock.patch.object(engines, "_stop_codex_unit",
+                               side_effect=engines.CodexContainmentError("unit remained populated")):
+            result = engines.codex_exec("prompt", cwd=self.cwd, sandbox="workspace-write")
+
+        self.assertEqual(result["text"], "")
+        self.assertIsNone(result["structured"])
+        self.assertNotEqual(result["returncode"], 0)
+        self.assertFalse(result["containment_empty"])
+        self.assertIn("unit remained populated", result["error"])
 
     def test_probe_roots_parses_dedupes_and_ignores_malformed_overrides(self):
         second = str(Path(self.temp.name) / "second")

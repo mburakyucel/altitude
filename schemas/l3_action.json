@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["message", "actions"],
+  "properties": {
+    "message": {"type": "string"},
+    "actions": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "slug", "title", "text", "reason", "request", "digest", "answer", "source", "engine", "model", "paths", "hold_merge", "merge_hold", "incident", "labels"],
+        "properties": {
+          "type": {"type": "string", "enum": ["new_task", "task_done", "task_block", "task_resume", "task_fyi", "task_hold_merge", "github_issue", "github_issue_approve", "incident_new", "incident_amend", "recovery_hold", "recovery_clear"]},
+          "slug": {"type": ["string", "null"]},
+          "title": {"type": ["string", "null"]},
+          "text": {"type": ["string", "null"]},
+          "reason": {"type": ["string", "null"]},
+          "request": {"type": ["string", "null"]},
+          "digest": {"type": ["string", "null"]},
+          "answer": {"type": ["string", "null"]},
+          "source": {"type": ["string", "null"], "enum": ["chat", "recovery", null]},
+          "engine": {"type": ["string", "null"], "enum": ["claude", "codex", null]},
+          "model": {"type": ["string", "null"]},
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "hold_merge": {"type": ["string", "null"]},
+          "merge_hold": {"type": ["boolean", "null"]},
+          "incident": {"type": ["object", "null"]},
+          "labels": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

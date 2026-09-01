@@ -1,0 +1,188 @@
+"""Codex L3 actions are one-at-a-time, owner-fenced, and durably idempotent."""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+_ROOT = Path(tempfile.mkdtemp(prefix="altitude-l3-actions-"))
+os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from altitude import config, dispatch, engines, l3_actions, state as S, tasks as T  # noqa: E402
+
+
+def envelope(action):
+    return {"message": "handled", "actions": [action]}
+
+
+class TestL3Actions(unittest.TestCase):
+    def setUp(self):
+        self.repo = _ROOT / "repo"
+        self.repo.mkdir(exist_ok=True)
+        config.ensure_root()
+        config.save_projects({"p": {"name": "p", "path": str(self.repo)}})
+        for directory in (S.tasks_dir("p"), S.archive_dir("p"), config.project_dir("p") / "l3-actions"):
+            if directory.exists():
+                for path in sorted(directory.rglob("*"), reverse=True):
+                    if path.is_file():
+                        path.unlink()
+                    elif path.is_dir():
+                        path.rmdir()
+
+    def task(self, title="Task", state="running", **updates):
+        task = T.new("p", title, "request")
+        task.update({"state": state, "dispatch_id": f"{task['slug']}-1", "session_id": "session-1",
+                     "agent_id": "agent-1", "l2_engine": "claude", **updates})
+        S.save_task("p", task)
+        return task
+
+    def test_one_turn_cannot_apply_multiple_actions(self):
+        value = {"message": "too many", "actions": [
+            {"type": "task_fyi", "slug": "a", "text": "one"},
+            {"type": "task_fyi", "slug": "b", "text": "two"},
+        ]}
+        with self.assertRaisesRegex(l3_actions.L3ActionError, "at most one"):
+            l3_actions.apply("p", value, action_id="a" * 64)
+        self.assertEqual(list((config.project_dir("p") / "l3-actions").glob("*.json")), [])
+
+    def test_completed_action_replays_its_result_without_repeating_side_effect(self):
+        task = self.task(state="blocked")
+        value = envelope({"type": "task_fyi", "slug": task["slug"], "text": "one durable note"})
+        first = l3_actions.apply("p", value, action_id="b" * 64)
+        second = l3_actions.apply("p", value, action_id="b" * 64)
+        self.assertEqual(first, second)
+        lines = (config.project_dir("p") / "inbox.jsonl").read_text().splitlines()
+        self.assertEqual(len(lines), 1)
+
+    def test_l3_never_blocks_or_completes_a_live_worker(self):
+        task = self.task()
+        live = [{"id": "agent-1", "state": "working", "status": "busy"}]
+        with mock.patch.object(engines, "claude_agents", return_value=live):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "cannot block a live"):
+                l3_actions.apply("p", envelope({"type": "task_block", "slug": task["slug"],
+                                                "reason": "stop"}), action_id="c" * 64)
+        self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
+
+        task["state"] = "reported"
+        S.save_task("p", task)
+        with mock.patch.object(engines, "claude_agents", return_value=live):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "no live L2"):
+                l3_actions.apply("p", envelope({"type": "task_done", "slug": task["slug"],
+                                                "digest": "done"}), action_id="d" * 64)
+        self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
+
+    def test_missing_codex_worker_record_fails_closed(self):
+        task = self.task(state="reported", l2_engine="codex")
+        with mock.patch.object(engines, "codex_worker", return_value=None):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "worker record is missing"):
+                l3_actions.apply("p", envelope({"type": "task_done", "slug": task["slug"],
+                                                "digest": "done"}), action_id="9" * 64)
+        self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
+
+    def test_resume_requires_and_fences_the_exact_blocked_session(self):
+        task = self.task(state="blocked")
+        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}) as resume:
+            result = l3_actions.apply(
+                "p", envelope({"type": "task_resume", "slug": task["slug"], "answer": "continue"}),
+                action_id="e" * 64,
+            )
+        self.assertFalse(result[0]["deferred"])
+        resume.assert_called_once_with(
+            "p", task["slug"], "continue", prefix="L3: ", expected_state="blocked",
+            expected_dispatch_id=task["dispatch_id"], expected_session_id="session-1", expected_agent_id="agent-1",
+        )
+
+        missing = self.task(title="No session", state="blocked", session_id=None, agent_id=None)
+        with mock.patch.object(T, "resume") as unsafe_resume:
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "no exact blocked L2 session"):
+                l3_actions.apply(
+                    "p", envelope({"type": "task_resume", "slug": missing["slug"], "answer": "continue"}),
+                    action_id="f" * 64,
+                )
+        unsafe_resume.assert_not_called()
+
+    def test_github_issue_content_marker_prevents_duplicate_across_turns(self):
+        created_body = []
+
+        def run(args, **_kwargs):
+            if args[:4] == ["gh", "issue", "list", "--state"]:
+                rows = [{"url": "https://example.test/1", "body": created_body[0]}] if created_body else []
+                return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+            self.assertEqual(args[:3], ["gh", "issue", "create"])
+            created_body.append(args[args.index("--body") + 1])
+            return subprocess.CompletedProcess(args, 0, "https://example.test/1\n", "")
+
+        action = {"type": "github_issue", "title": "Architecture note", "text": "Preserve this idea", "labels": []}
+        source = "Please Preserve this idea as an Architecture note"
+        action["text"] = source
+        draft = l3_actions.apply("p", envelope(action), action_id="1" * 64, github_issue_source=source)
+        key = draft[0]["id"]
+        approval_source = f"approve github issue publication {key}"
+        approval = {"type": "github_issue_approve", "digest": key}
+        with mock.patch.object(l3_actions.subprocess, "run", side_effect=run) as process:
+            first = l3_actions.apply("p", envelope(approval), action_id="2" * 64,
+                                     github_issue_source=approval_source)
+            second = l3_actions.apply("p", envelope(approval), action_id="3" * 64,
+                                      github_issue_source=approval_source)
+        self.assertTrue(draft[0]["pending_review"])
+        self.assertFalse(first[0]["reused"])
+        self.assertTrue(second[0]["reused"])
+        self.assertEqual(sum(call.args[0][:3] == ["gh", "issue", "create"] for call in process.call_args_list), 1)
+
+    def test_github_issue_cannot_publish_hidden_or_security_sensitive_context(self):
+        safe_source = "Please preserve the sidecar transcript audit idea"
+        hidden = {"type": "github_issue", "title": "sidecar transcript audit idea",
+                  "text": safe_source + "\nprivate model-added detail", "labels": []}
+        with mock.patch.object(l3_actions.subprocess, "run") as process:
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "exact current user message"):
+                l3_actions.apply("p", envelope(hidden), action_id="7" * 64,
+                                 github_issue_source=safe_source)
+        process.assert_not_called()
+
+        sensitive = "Please create a credential issue for API key: sk-abcdefghijklmnopqrstuvwxyz123456"
+        action = {"type": "github_issue", "title": "credential issue", "text": sensitive, "labels": []}
+        draft = l3_actions.apply("p", envelope(action), action_id="8" * 64,
+                                 github_issue_source=sensitive)
+        key = draft[0]["id"]
+        approval = {"type": "github_issue_approve", "digest": key}
+        with mock.patch.object(l3_actions.subprocess, "run") as process:
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "may contain a secret"):
+                l3_actions.apply("p", envelope(approval), action_id="6" * 64,
+                                 github_issue_source=f"approve github issue publication {key}")
+        process.assert_not_called()
+
+    def test_security_mechanism_issue_is_private_until_exact_human_approval(self):
+        source = "the sandbox lets a worker stop Altitude through the user bus"
+        action = {"type": "github_issue", "title": "sandbox lets a worker stop Altitude",
+                  "text": source, "labels": []}
+        with mock.patch.object(l3_actions.subprocess, "run") as process:
+            result = l3_actions.apply("p", envelope(action), action_id="5" * 64,
+                                      github_issue_source=source)
+        process.assert_not_called()
+        self.assertTrue(result[0]["pending_review"])
+
+    def test_common_secret_formats_remain_hard_refused_after_approval(self):
+        examples = [
+            "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
+            "AIzaSyD-abcdefghijklmnopqrstuvwxyz1234567",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuvwxyz123456",
+        ]
+        for index, secret in enumerate(examples):
+            source = f"Please create token example issue {secret}"
+            action = {"type": "github_issue", "title": "token example issue", "text": source, "labels": []}
+            draft = l3_actions.apply("p", envelope(action), action_id=f"{index + 1:x}" * 64,
+                                     github_issue_source=source)
+            key = draft[0]["id"]
+            approval = {"type": "github_issue_approve", "digest": key}
+            with mock.patch.object(l3_actions.subprocess, "run") as process:
+                with self.assertRaisesRegex(l3_actions.L3ActionError, "may contain a secret"):
+                    l3_actions.apply("p", envelope(approval), action_id=f"{index + 10:x}" * 64,
+                                     github_issue_source=f"approve github issue publication {key}")
+            process.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
