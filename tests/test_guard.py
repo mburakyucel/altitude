@@ -33,6 +33,16 @@ class TestGuardExecutedText(unittest.TestCase):
         self.assert_blocked("systemctl --user restart altitude")
         self.assert_blocked('systemctl --user restart "altitude"')
 
+    def test_blocks_operator_restart_wrappers(self):
+        for command in (
+            "make restart",
+            "make -f Makefile restart",
+            "gmake restart",
+            "python3 scripts/restart_altitude.py",
+            "env python3 ./scripts/restart_altitude.py",
+        ):
+            self.assert_blocked(command)
+
     def test_ignores_heredoc_body(self):
         self.assert_allowed(
             "cat > report.md <<'EOF'\n"
