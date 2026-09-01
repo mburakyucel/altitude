@@ -41,8 +41,8 @@ bin/alt --project <name> state
 bin/alt --project <name> task status <slug>
 ```
 
-## Service hold
+## Service lifecycle
 
-The Altitude service is intentionally stopped and runtime-masked during the architecture cutover.
-Do not start or unmask it as part of ordinary development. Restart requires a separate explicit
-authorization after the cutover PR and its main-branch CI run are verified.
+The controlled architecture-cutover restart was completed and smoke-verified on 2026-08-31.
+Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
+Any later lifecycle change requires separate explicit authorization and post-change health checks.
