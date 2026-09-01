@@ -27,7 +27,26 @@
           "paths": {"type": "array", "items": {"type": "string"}},
           "hold_merge": {"type": ["string", "null"]},
           "merge_hold": {"type": ["boolean", "null"]},
-          "incident": {"type": ["object", "null"]},
+          "incident": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "title", "task", "what", "evidence", "cause", "tags", "status"],
+                "properties": {
+                  "id": {"type": ["string", "null"]},
+                  "title": {"type": ["string", "null"]},
+                  "task": {"type": ["string", "null"]},
+                  "what": {"type": ["string", "null"]},
+                  "evidence": {"type": ["string", "null"]},
+                  "cause": {"type": ["string", "null"]},
+                  "tags": {"type": "array", "items": {"type": "string"}},
+                  "status": {"type": ["string", "null"]}
+                }
+              },
+              {"type": "null"}
+            ]
+          },
           "labels": {"type": "array", "items": {"type": "string"}}
         }
       }
