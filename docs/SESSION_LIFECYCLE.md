@@ -9,6 +9,28 @@ in raw mode. Raw mode remains local and redacts credential-shaped keys and value
 boundary. The browser supplies no paths: the server derives transcript files only from the registered task and its
 recorded engine, worker, and session identities.
 
+## Durable transcript bundles
+
+Every L2 lifecycle boundary snapshots the current attempt beneath the task's `transcripts/` directory. Each
+attempt is separate and contains a versioned `manifest.json`, a stable ordered `events.jsonl`, and redacted
+provider-native JSONL. Canonical events retain join keys for the task, dispatch/attempt, session, worker, task
+message, and helper where available; report or digest checksums link the terminal outcome. Worker replacement
+and resume stay in the same attempt, while redispatch records `previous_attempt` and starts a new directory.
+The snapshot is best-effort at early creation and incomplete provider records are retried at the next boundary,
+so interruption, cancellation, containment faults, and malformed final actions retain evidence produced so far.
+
+`alt --project PROJECT transcript export SLUG FILE.tar.gz` creates a self-contained private archive; after
+extracting it, `alt transcript validate DIRECTORY` verifies its schema, ordering, and SHA-256 checksums without
+an Altitude home or provider session store. Export is an access-controlled local operator action. Credential-
+shaped keys and values and encrypted content are removed from both canonical and provider-native copies. Bundles
+are private by default and are never automatically added to future model context.
+
+Transcript retention follows task retention: archival moves the entire task directory, so worker/worktree cleanup
+cannot remove it. The default is indefinite retention. Operators may delete an archived task's transcript only
+under their external retention policy; deletion is intentionally not coupled to routine cleanup. Schema readers
+reject unknown versions, and future L3, L1, reviewer, and recovery bundles can use the same manifest/event contract
+with a different `level` and `role`.
+
 Each read and steering request carries the project, task, dispatch generation, engine, and displayed session. A
 mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Steering ends
 the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
