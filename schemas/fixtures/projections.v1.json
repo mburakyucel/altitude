@@ -1,0 +1,169 @@
+{
+  "valid": {
+    "task": {
+      "wire_version": 1,
+      "kind": "task",
+      "project": "altitude",
+      "slug": "simplify-boundaries",
+      "title": "Simplify the control boundaries",
+      "state": "blocked",
+      "publication_scope": {
+        "version": 1,
+        "kind": "paths",
+        "paths": ["altitude/contracts.py", "web/src/data/contracts.ts"]
+      },
+      "conversation": [
+        {
+          "at": "2026-09-02T08:30:00+00:00",
+          "role": "user",
+          "text": "Keep the security boundary explicit."
+        },
+        {
+          "at": "2026-09-02T08:31:00+00:00",
+          "role": "l2",
+          "text": "Waiting for the named clearance."
+        }
+      ],
+      "publication": null,
+      "current_worker": {
+        "provider": "codex",
+        "status": "stopped"
+      },
+      "blocked": {
+        "kind": "operational_hold",
+        "summary": "Recovery clearance is pending.",
+        "resume_at": null
+      },
+      "updated_at": "2026-09-02T08:31:00+00:00"
+    },
+    "operational": {
+      "wire_version": 1,
+      "kind": "operational",
+      "generated_at": "2026-09-02T08:31:30+00:00",
+      "providers": [
+        {
+          "version": 1,
+          "provider": "claude",
+          "freshness": "fresh",
+          "observed_at": "2026-09-02T08:31:20+00:00",
+          "weekly_remaining_percent": 62.5,
+          "short_remaining_percent": 80.0,
+          "availability": "available",
+          "retry_at": null
+        },
+        {
+          "version": 1,
+          "provider": "codex",
+          "freshness": "unknown",
+          "observed_at": null,
+          "weekly_remaining_percent": null,
+          "short_remaining_percent": null,
+          "availability": "unknown",
+          "retry_at": null
+        }
+      ],
+      "sessions": [
+        {
+          "provider": "claude",
+          "role": "l3",
+          "status": "idle",
+          "task": null,
+          "context_percent": 18.4
+        }
+      ],
+      "services": [
+        {
+          "name": "altitude",
+          "state": "healthy",
+          "source_sha": "97e1197f6f0d88b6b9d80640a16354d8a04922fb"
+        }
+      ],
+      "recovery": {
+        "state": "open",
+        "episode_id": "recovery-20260902-01",
+        "reason": "Awaiting explicit clearance."
+      }
+    }
+  },
+  "numeric_cases": {
+    "version": {
+      "accepted": [1.0],
+      "rejected": [true, 1.5, 2.0, 9007199254740991.0, 9007199254740992.0]
+    },
+    "application_revision": {
+      "accepted": [1.0, 42.0, 9007199254740991.0],
+      "rejected": [true, 0.0, 1.5, 9007199254740992.0]
+    },
+    "publication_pr_number": {
+      "accepted": [1.0, 42.0, 9007199254740991.0],
+      "rejected": [true, 0.0, 1.5, 9007199254740992.0]
+    }
+  },
+  "invalid": {
+    "task_unknown_version": {
+      "wire_version": 2,
+      "kind": "task",
+      "project": "altitude",
+      "slug": "simplify-boundaries",
+      "title": "Simplify the control boundaries",
+      "state": "queued",
+      "publication_scope": {
+        "version": 1,
+        "kind": "policy_derived"
+      },
+      "conversation": [],
+      "publication": null,
+      "current_worker": null,
+      "blocked": null,
+      "updated_at": "2026-09-02T08:31:00+00:00"
+    },
+    "task_extra_authority": {
+      "wire_version": 1,
+      "kind": "task",
+      "project": "altitude",
+      "slug": "simplify-boundaries",
+      "title": "Simplify the control boundaries",
+      "state": "running",
+      "publication_scope": {
+        "version": 1,
+        "kind": "policy_derived"
+      },
+      "conversation": [],
+      "publication": null,
+      "current_worker": {
+        "provider": "codex",
+        "status": "live",
+        "capability_id": "must-never-cross-the-wire"
+      },
+      "blocked": null,
+      "updated_at": "2026-09-02T08:31:00+00:00"
+    },
+    "operational_unknown_version": {
+      "wire_version": 2,
+      "kind": "operational",
+      "generated_at": "2026-09-02T08:31:30+00:00",
+      "providers": [],
+      "sessions": [],
+      "services": [],
+      "recovery": {
+        "state": "clear",
+        "episode_id": null,
+        "reason": null
+      }
+    },
+    "operational_extra_authority": {
+      "wire_version": 1,
+      "kind": "operational",
+      "generated_at": "2026-09-02T08:31:30+00:00",
+      "providers": [],
+      "sessions": [],
+      "services": [],
+      "recovery": {
+        "state": "open",
+        "episode_id": "recovery-20260902-01",
+        "reason": "Awaiting explicit clearance.",
+        "clearance_capability": "must-never-cross-the-wire"
+      }
+    }
+  }
+}

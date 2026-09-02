@@ -113,6 +113,14 @@ The Python server owns state transitions and JSON APIs. The React app provides I
 Chat, and Monitor navigation plus project/task detail routes. Task chat is a human-readable Burak/L2
 conversation; operational events remain an audit detail.
 
+The next control-plane boundary is defined, but deliberately dormant: `altitude/contracts.py` owns
+closed Python contracts for worker outcomes, publication scope, quota observations, application
+command results, and task/operational read projections. `web/src/data/contracts.ts` independently
+expresses the matching task/operational wire schemas in the existing Zod runtime validator, and both
+runtimes exercise the same versioned JSON fixtures. No service, broker, API, CLI, or UI path imports
+these contracts yet; each later adoption must replace its old producer and consumer together rather
+than introduce a behavior selector or a second authority.
+
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
 and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
 and telemetry; permission profiles, process containment, and backend validation form the Codex
