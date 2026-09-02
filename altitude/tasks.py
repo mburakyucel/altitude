@@ -224,6 +224,7 @@ def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
+        _require_helpers_terminal(project, slug)
         task["blocked_reason"] = None
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -381,6 +382,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
         ):
             if expected is not None and expected != actual:
                 raise TransitionError(f"{slug}: {label} changed before completion ({expected!r} → {actual!r})")
+        _require_helpers_terminal(project, slug)
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
         if digest:
@@ -403,6 +405,7 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
         requested = (request.get("dispatch_id"), request.get("agent_id"), request.get("session_id"))
         if task.get("state") != "running" or current != expected or requested != expected:
             raise TransitionError(f"{slug}: completion ownership changed before worker exit")
+        _require_helpers_terminal(project, slug)
         _require_no_code_change(task)
         digest = str(request.get("digest") or "")
         task.pop("completion_requested", None)
@@ -417,6 +420,7 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
 
 
 def _archive(project: str, slug: str) -> None:
+    _require_helpers_terminal(project, slug)
     src = S.tasks_dir(project) / slug
     if src.is_dir():
         # Capture the final state/outcome after digest/report creation and before the task moves.
@@ -425,6 +429,12 @@ def _archive(project: str, slug: str) -> None:
         dst = S.archive_dir(project) / slug
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)
+
+
+def _require_helpers_terminal(project: str, slug: str) -> None:
+    """Use the helper aggregate's one exact terminal/empty claim; no legacy fallback exists."""
+    from . import l1
+    l1.require_helpers_terminal(project, slug)
 
 
 def set_spend(project: str, slug: str, **spend) -> dict:

@@ -6,14 +6,12 @@ dispatch identity is still current, may turn that JSON into state changes, helpe
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from . import config, dispatch, engines, land, l1, recovery, state as S, tasks as T
+from . import config, dispatch, engines, land, recovery, state as S, tasks as T
 
 ACTION_FIELDS = ("dispatch_id", "session_id", "agent_id")
 MAX_HELPERS = 4
-MAX_HELPER_RESULT_BYTES = engines.RAW_CAPTURE_CAP
 
 
 class ActionError(RuntimeError):
@@ -210,46 +208,9 @@ def _publish(project: str, task: dict, action: dict) -> dict:
 
 
 def _helpers(project: str, task: dict, action: dict) -> dict:
-    records = []
-    task_dir = S.task_dir(project, task["slug"])
-    for index, helper in enumerate(action.get("helpers") or [], 1):
-        brief = task_dir / f"helper-request-{task.get('attempt', 0)}-{index}.md"
-        S.atomic_write(brief, str(helper["brief"]).rstrip() + "\n")
-        name = f"helper-{task.get('attempt', 0)}-{index}"
-        existing = l1.load(project, task["slug"], name)
-        records.append(existing or l1.start(
-            project, task["slug"], brief, role=helper["role"], engine=helper.get("engine"),
-            model=helper.get("model"), paths=helper.get("paths") or None, name=name,
-            expected_dispatch_id=str(task.get("dispatch_id") or ""),
-            expected_l2_token=str(task.get("l2_token") or ""),
-        ))
-    waits = [l1.wait(project, task["slug"], record["name"], timeout=config.L1_TIMEOUT) for record in records]
-    results = [wait.get("run") or {"name": record["name"], "error": "helper wait timed out"}
-               for wait, record in zip(waits, records)]
-    compact = []
-    total = 0
-    artifact_root = (task_dir / "l1").resolve()
-    for result in results:
-        item = {key: result.get(key) for key in ("name", "role", "engine", "findings", "summary", "error")}
-        patch_path = result.get("patch")
-        if patch_path:
-            path = Path(str(patch_path)).resolve()
-            if not path.is_relative_to(artifact_root) or path.suffix != ".patch":
-                raise T.TransitionError(f"helper {result.get('name')} returned an invalid patch artifact")
-            data = path.read_bytes()
-            total += len(data)
-            if total > MAX_HELPER_RESULT_BYTES:
-                raise T.TransitionError("helper patch artifacts exceed the bounded L2 handoff size")
-            item["patch"] = data.decode("utf-8", errors="replace")
-        else:
-            item["patch"] = None
-        compact.append(item)
-    prompt = ("Altitude finished the optional helpers you requested. No patch was auto-applied. Inspect these "
-              "bounded inline patches/findings, integrate only what you judge useful, test the combined work, and return "
-              f"your next schema-valid action:\n{json.dumps(compact, sort_keys=True)}")
-    if len(prompt.encode("utf-8")) > MAX_HELPER_RESULT_BYTES:
-        raise T.TransitionError("helper results exceed the bounded L2 handoff size")
-    return _resume_same(project, task, prompt)
+    # Phase 1B.4 cannot truthfully bind a helper until Phase 1B.3 supplies its one
+    # typed current-generation snapshot. Refuse before writing a brief or artifact.
+    raise ActionError("engine hold: managed helpers await the Phase 1B.3 current-generation broker")
 
 
 def process_l2(project: str, item: dict) -> dict:
@@ -262,6 +223,10 @@ def process_l2(project: str, item: dict) -> dict:
     if (task.get("l2_engine") or "claude") != "codex":
         raise ActionError("trusted action broker accepts only contained Codex L2 workers")
     action = _validate_shape(item.get("action") or (item.get("agent") or {}).get("action"))
+    if action["action"] == "request_helpers":
+        # Refuse at ingress: no pending-action claim, conversation row, brief, or
+        # continuation may exist before B3 supplies the one owner-generation seam.
+        raise ActionError("engine hold: managed helpers await the Phase 1B.3 current-generation broker")
     _require_contained_exit(project, task)
     record = _claim(project, task, action)
     hold = recovery.dispatch_hold(project, S.load_task(project, task["slug"]))

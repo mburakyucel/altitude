@@ -308,6 +308,32 @@ durable current-turn claim; in-memory locks remain local optimization only. Unkn
 fails closed instead of being declared empty. A static process inventory must be empty before the
 next sub-PR; no maintenance claimant exists during this sequence.
 
+For 1B.4 specifically, the existing helper JSON record embeds the transition; there is no sidecar adapter,
+compatibility reader, or second provider unit. The foreground managed wrapper contains the enabled Codex process
+tree. Helper status derives from the physical stage, and the replaced PID/job/start-done timestamp plus helper-PR
+writers and fallback readers are deleted together. Reconciliation may advance exact receipts after a crash but
+never launches or repeats a provider effect. The exact B3 `dispatch.owner_result_snapshot`—including result
+identity, terminal stage, empty-receipt digest, and recovery fence—is rechecked immediately before provider
+execution and before result persistence. Scope, worktree, branch, and base SHA are added only by the claimant-held
+broker from B3's returned live task; callers do not supply a parallel generation object.
+The one broker call holds project→task→operation from mechanical election through the launch receipt: it durably
+records `prior_stopped`, launches once, and records `spawned` before release. A replay found at `prior_stopped`
+may only reconcile or refuse and never invokes the provider again. Stored results and terminal cleanup require the
+deterministic result id plus exact canonical hash; all aggregate/marker reads are bounded before decoding.
+
+The 1B.4 implementation branch must be based on the landed 1B.3 current-generation API. If an isolated candidate
+lacks that dependency, it may land only the closed helper record, staged preparation, result marker, and
+reconciliation primitives with every launch/action/CLI entrypoint dormant. Tests may supply the exact typed 1B.3
+snapshot wrapper directly. It must not reconstruct ownership from v1 fields, carry an L2 token in environment/argv, add a
+fallback selector, or activate until rebased onto the one authoritative API and the full 1B.3→1B.4 suite passes.
+That injected snapshot is not current-authority proof: the rebase must obtain a fresh claimant-validated B3
+owner/recovery snapshot at each preparation, spawn, result, and settlement boundary.
+The isolated dormant candidate adds no dependency, endpoint, timer, service, process launcher, production file, or
+artifact family: its exact branch accounting is 886 runnable-source additions and 568 deletions (+318 lines), with
+the existing helper aggregate/prompt/patch/result marker retained as one helper-bundle lifecycle. Project→task→
+operation is its only lock path. The B3 rebase must replace the inert CLI shims with one claimant-held broker call;
+final budgets still require later net deletion and prohibit a compatibility adapter.
+
 ### PRs 1C.1-1C.5: outcomes and reconciled external effects on v1
 
 - **1C.1 — normalized outcomes:** adopt strict `WorkerOutcome` for enabled L2 adapters and delete the

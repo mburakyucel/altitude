@@ -10,7 +10,7 @@ from unittest import mock
 _ROOT = Path(tempfile.mkdtemp(prefix="altitude-l2-actions-"))
 os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import actions, config, dispatch, engines, l1, recovery, state as S, tasks as T  # noqa: E402
+from altitude import actions, config, dispatch, engines, recovery, state as S, tasks as T  # noqa: E402
 
 
 class TestL2Actions(unittest.TestCase):
@@ -76,29 +76,29 @@ class TestL2Actions(unittest.TestCase):
                 actions.process_l2("p", self.item(task, action))
         self.assertEqual(S.load_task("p", task["slug"])["state"], "blocked")
 
-    def test_helper_patch_is_inlined_for_the_contained_owner(self):
+    def test_helper_request_is_dormant_before_any_artifact_or_resume(self):
         task = self.task()
-        patch_dir = S.task_dir("p", task["slug"]) / "l1"
-        patch_dir.mkdir(parents=True)
-        patch_path = patch_dir / "helper-1-1.patch"
-        patch_path.write_text("diff --git a/x b/x\n+new line\n")
         action = {"action": "request_helpers", "helpers": [{
             "role": "implementer", "brief": "change x", "engine": "codex", "model": None,
             "paths": ["x"],
         }]}
-        record = {"name": "helper-1-1"}
-        result = {"name": "helper-1-1", "role": "implementer", "engine": "codex",
-                  "patch": str(patch_path), "summary": "ready", "error": None}
-        with mock.patch.object(l1, "load", return_value=None), \
-             mock.patch.object(l1, "start", return_value=record), \
-             mock.patch.object(l1, "wait", return_value={"run": result}), \
-             mock.patch.object(dispatch, "resume_session", return_value={"agent": {"id": "worker-2"}}) as resume:
-            handled = actions._helpers("p", task, action)  # noqa: SLF001 -- broker contract test
-        self.assertEqual(handled["kind"], "resumed")
-        prompt = resume.call_args.args[2]
-        self.assertIn("diff --git a/x b/x", prompt)
-        self.assertNotIn(str(patch_path), prompt)
-        self.assertIn("No patch was auto-applied", prompt)
+        with mock.patch.object(S, "atomic_write") as write, \
+             mock.patch.object(dispatch, "resume_session") as resume, \
+             self.assertRaisesRegex(actions.ActionError, "await.*Phase 1B.3"):
+            actions._helpers("p", task, action)  # noqa: SLF001 -- broker contract test
+        write.assert_not_called()
+        resume.assert_not_called()
+        self.assertFalse((S.task_dir("p", task["slug"]) / "l1").exists())
+
+        before = {path.relative_to(config.ROOT): path.read_bytes()
+                  for path in config.ROOT.rglob("*") if path.is_file()}
+        with mock.patch.object(actions, "_require_contained_exit") as contained, \
+             self.assertRaisesRegex(actions.ActionError, "await.*Phase 1B.3"):
+            actions.process_l2("p", self.item(task, action))
+        contained.assert_not_called()
+        after = {path.relative_to(config.ROOT): path.read_bytes()
+                 for path in config.ROOT.rglob("*") if path.is_file()}
+        self.assertEqual(after, before)
 
     def test_post_stop_recovery_race_keeps_exact_prompt_and_drops_old_action(self):
         task = self.task()

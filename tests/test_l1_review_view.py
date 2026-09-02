@@ -1,90 +1,76 @@
-"""Reviewer findings exposed by the compact L1 status view."""
+"""Reviewer findings exposed by the non-authoritative compact helper view."""
+import os
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest import mock
 
-from altitude import l1
+os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-review-view-")
+
+from altitude import config, engines, l1
+from tests.physical_fixture import helper_record
+
+
+def _record(*, done=True, summary=None, error=None, findings=None, role="reviewer"):
+    with mock.patch.object(config, "project_path", return_value=Path("/tmp/fixture-repo")):
+        record = helper_record("project", "task", terminal="spawned")
+    record["role"] = role
+    record["paths"] = [] if role == "reviewer" else ["tests"]
+    physical = record["physical"]
+    if done:
+        unit = physical["process_unit_id"]
+        if error:
+            physical = engines.note_physical_transition_error(physical, error)
+        physical = engines.advance_physical_transition(
+            physical, "spawned", "bound",
+            {"bound": True, "physical_worker_id": unit, "provider_session_id": "thread-1"})
+        physical = engines.advance_physical_transition(
+            physical, "bound", "result_observed", {"result_id": "result-1", "sha256": "a" * 64})
+        physical = engines.advance_physical_transition(physical, "result_observed", "empty", {
+            "process_unit_id": unit, "load_state": "not-found", "active_state": "inactive",
+            "sub_state": "dead", "control_group": "", "population": "empty", "empty": True})
+        terminal = "failed" if error else "complete"
+        physical = engines.advance_physical_transition(physical, "empty", terminal, {"status": terminal})
+        record["result"] = {
+            "provider_session_id": "thread-1", "status": terminal, "summary": summary, "error": error,
+            "patch": None, "findings": findings, "usage": {"input_tokens": 1},
+        }
+    record["physical"] = physical
+    return record
 
 
 class TestL1ReviewView(unittest.TestCase):
-    def _status(self, *, role="reviewer", summary=None, error=None, structured=None,
-                done="2026-08-30T00:01:00Z"):
-        record = {
-            "name": "reviewer-1" if role == "reviewer" else "implementer-1",
-            "role": role,
-            "engine": "codex",
-            "why": "test",
-            "model": "test-model",
-            "branch": "test-branch",
-            "worktree": "/tmp/test-worktree",
-            "started": "2026-08-30T00:00:00Z",
-            "done": done,
-            "result": {"pr": 42, "summary": summary, "error": error, "usage": {"input_tokens": 1},
-                       "structured": structured},
-        }
-        with patch.object(l1, "list_runs", return_value=[record]):
-            return l1.status("altitude", "review-view")[0]
+    def _status(self, **kwargs):
+        with mock.patch.object(l1, "list_runs", return_value=[_record(**kwargs)]):
+            return l1.status("project", "task")[0]
 
-    def test_reviewer_findings_and_derived_summary(self):
-        severities = ["blocking"] * 2 + ["major"] * 4 + ["minor"] * 5
-        findings = [{"severity": severity, "claim": f"{severity} finding"} for severity in severities]
+    def test_findings_and_trusted_summary_are_projected_without_a_second_reducer(self):
+        findings = ([{"severity": "blocking"}] * 2 + [{"severity": "major"}] * 4
+                    + [{"severity": "minor"}] * 5)
+        view = self._status(findings=findings, summary="reviewed 11 findings")
+        self.assertEqual(view["findings"], findings)
+        self.assertEqual(view["summary"], "reviewed 11 findings")
 
-        status = self._status(summary=None, structured={"findings": findings})
+    def test_empty_findings_is_a_clean_review(self):
+        view = self._status(findings=[])
+        self.assertEqual(view["findings"], [])
+        self.assertIsNone(view["summary"])
+        self.assertIsNone(view["error"])
 
-        self.assertEqual(status["findings"], findings)
-        self.assertEqual(status["summary"], "11 findings: 2 blocking, 4 major, 5 minor")
+    def test_missing_terminal_review_result_is_not_reinterpreted_by_the_view(self):
+        view = self._status(findings=None)
+        self.assertIsNone(view["error"])
 
-    def test_reviewer_summary_omits_zero_buckets_and_counts_other(self):
-        findings = [{"severity": "blocking"}, {"severity": "nit"}, "junk"]
+    def test_in_flight_review_has_no_synthetic_error(self):
+        view = self._status(done=False)
+        self.assertFalse(view["done"])
+        self.assertIsNone(view["error"])
 
-        status = self._status(summary=None, structured={"findings": findings})
-
-        self.assertEqual(status["summary"], "3 findings: 1 blocking, 2 other")
-
-    def test_reviewer_non_string_severity_counts_as_other(self):
-        findings = [{"severity": ["blocking"]}]
-
-        status = self._status(summary=None, structured={"findings": findings})
-
-        self.assertEqual(status["summary"], "1 findings: 1 other")
-
-    def test_reviewer_empty_findings_is_a_clean_review(self):
-        status = self._status(summary=None, structured={"findings": []})
-
-        self.assertEqual(status["findings"], [])
-        self.assertEqual(status["summary"], "no findings")
-        self.assertIsNone(status["error"])
-
-    def test_implementer_compact_record_is_unchanged(self):
-        status = self._status(role="implementer", summary="persisted summary", structured={"findings": []})
-
-        self.assertNotIn("findings", status)
-        self.assertEqual(status["summary"], "persisted summary")
-
-    def test_reviewer_without_findings_or_summary_is_an_error(self):
-        status = self._status(summary=None, structured=None)
-
-        self.assertIsNone(status["findings"])
-        self.assertEqual(status["error"], "reviewer returned no findings and no summary")
-
-    def test_in_flight_reviewer_without_findings_or_summary_is_not_an_error(self):
-        with patch.object(l1, "_alive", return_value=True):
-            status = self._status(done=None, summary=None, structured=None)
-
-        self.assertIsNone(status["findings"])
-        self.assertIsNone(status["error"])
-
-    def test_finished_reviewer_with_summary_is_not_an_error(self):
-        status = self._status(structured=None, summary="PR #7 landed")
-
-        self.assertIsNone(status["findings"])
-        self.assertEqual(status["summary"], "PR #7 landed")
-        self.assertIsNone(status["error"])
-
-    def test_reviewer_existing_error_is_preserved(self):
-        status = self._status(summary=None, error="engine fault", structured={"findings": "invalid"})
-
-        self.assertIsNone(status["findings"])
-        self.assertEqual(status["error"], "engine fault")
+    def test_parent_capability_and_result_identity_are_never_projected(self):
+        view = self._status(findings=[])
+        self.assertNotIn("parent", view)
+        self.assertNotIn("capability_id", str(view))
+        self.assertNotIn("owner_result_id", str(view))
 
 
 if __name__ == "__main__":

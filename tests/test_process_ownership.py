@@ -502,8 +502,8 @@ class TestManagedUnit(unittest.TestCase):
             engines.stop_managed_unit(unit)
 
 
-class TestDormantBoundary(unittest.TestCase):
-    def test_new_physical_api_has_no_runtime_consumer(self):
+class TestAdoptionBoundary(unittest.TestCase):
+    def test_only_the_managed_helper_family_consumes_the_physical_api(self):
         names = {
             "new_physical_transition", "advance_physical_transition", "note_physical_transition_error",
             "validate_physical_transition", "reconcile_physical_transition",
@@ -518,12 +518,25 @@ class TestDormantBoundary(unittest.TestCase):
             tree = ast.parse(path.read_text(), filename=str(path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Name) and node.id in names:
-                    uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.id}")
+                    uses.append((str(path.relative_to(production.parent)), node.id))
                 elif isinstance(node, ast.Attribute) and node.attr in names:
-                    uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.attr}")
+                    uses.append((str(path.relative_to(production.parent)), node.attr))
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in names:
-                    uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.value}")
-        self.assertEqual(uses, [], "Phase 1B.1 must remain dormant: " + ", ".join(uses))
+                    uses.append((str(path.relative_to(production.parent)), node.value))
+        self.assertEqual(sorted(uses), sorted([
+            ("altitude/l1.py", "validate_physical_transition"),
+            ("altitude/l1.py", "new_physical_transition"),
+            ("altitude/l1.py", "advance_physical_transition"),
+            ("altitude/l1.py", "advance_physical_transition"),
+            ("altitude/l1.py", "advance_physical_transition"),
+            ("altitude/l1.py", "note_physical_transition_error"),
+            ("altitude/l1.py", "note_physical_transition_error"),
+            ("altitude/l1.py", "reconcile_physical_transition"),
+            ("altitude/l1.py", "reconcile_physical_transition"),
+            ("altitude/l1.py", "reconcile_physical_transition"),
+            ("altitude/l1.py", "observe_managed_unit"),
+            ("altitude/l1.py", "stop_managed_unit"),
+        ]))
 
 
 if __name__ == "__main__":

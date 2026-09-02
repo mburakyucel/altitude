@@ -110,26 +110,55 @@ base-owned workflow accepts only same-repository heads, pins its actions and Nod
 read-only repository permission, persists no checkout credential, exposes no token or secret, and
 runs candidate commands under an empty environment with disposable HOME and cache directories.
 
-### Dormant physical-ownership foundation
+### Dormant helper ownership foundation
 
-`engines.py` now defines one closed physical transition for later L3, L2-owner, and helper adoption:
+`engines.py` defines one closed physical transition for later L3, L2-owner, and helper adoption:
 `planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete | failed`.
 Its deterministic unit, physical generation, provider-session request, stable message id, and optional
 recovery episode/permit revision are immutable intent protected by one stable digest. Receipts have closed
 stage-specific shapes, and the record revision is derived exactly from its receipts and durable error. Each
-caller will embed the transition in its existing
-authoritative aggregate and persist it with the durable state primitives; the transition creates no sidecar
+adopting caller embeds the transition in its existing authoritative aggregate and persists it with the durable
+state primitives; the transition creates no sidecar
 record, journal, lock, or artifact family. A recorded pre-spawn error reconciles through
 `launched=false`, `bound=false`, its exact error result, and proven empty before failure, without a
 provider effect. After `prior_stopped`, an empty/collected unit with neither an error nor a durable
 result is ambiguous—the launch may have run and exited—so reconciliation returns
 `ownership_uncertain` instead of relaunching. An unknown or populated unit can never become terminal.
 
-Provider-neutral managed-unit helpers expose exact manager/cgroup observation and whole-unit spawn/stop while
+`l1.py` now defines the strict helper aggregate that embeds this transition. Its durable request id, exact B3
+`dispatch.owner_result_snapshot` (including terminal/empty result evidence and recovery revision), broker-bound
+task scope/repository context, helper sub-scope, prompt preparation, and generation-keyed provider result marker
+are one closed context. Every writer takes
+project→task→operation locks. Worktree and prompt effects are separate replayable stages after durable intent;
+the sole dormant spawn seam holds that whole claim while it records `prior_stopped`, invokes the future broker's
+one launch, and records `spawned`. A replay at `prior_stopped` may reconcile or refuse but cannot launch again.
+Every aggregate/marker read is bounded before decoding, and missing, empty, malformed, oversized, and unreadable
+ownership remain distinct. A stored result must match the deterministic result id and canonical hash in the
+physical receipt; complete/failed status and error must agree before terminal cleanup. Reconciliation advances
+receipts but never launches. A stale parent stops its exact unit and discards an outcome
+only when the shared physical reconciler proves the launch/result facts; an empty `prior_stopped` or `spawned`
+unit without an exact marker remains `ownership_uncertain` and nonterminal. Status derives terminal state from the physical stage; helper PID, job, start/done timestamp, and PR
+fields are no longer ownership or publication evidence.
+
+Provider-neutral managed-unit primitives expose exact manager/cgroup observation and whole-unit spawn/stop while
 reusing the existing Codex containment mechanics. A read-only reconciliation helper correlates the exact unit
 with a durable result marker carrying the same intent digest and returns a crash-stage decision; disagreement
-refuses as `ownership_uncertain` rather than guessing or relaunching. This foundation is deliberately dormant: no production L3,
-L2, helper, server, CLI, or timer path consumes it yet, and all current provider behavior remains unchanged.
+refuses as `ownership_uncertain` rather than guessing or relaunching. This branch intentionally has no helper
+launcher or internal CLI executor: the action and CLI entrypoints fail before writing. Activation remains blocked
+until rebased onto B3 and its claimant-held broker builds the task/repository wrapper directly from
+`require_owner_result`; no caller-supplied synthetic generation, fallback task reader, actor token, compatibility
+selector, or alternate owner is accepted. This isolated branch has no such production caller.
+Its injected snapshot is only a test seam, not proof that B3 is still current: the rebase must obtain a fresh
+claimant-validated owner/recovery snapshot from B3 at every preparation, spawn, result, and settlement boundary.
+
+The branch changes no dependency, endpoint, timer, service, process launcher, or artifact family. Helper aggregate,
+prompt, patch, and generation-keyed marker bytes remain one existing helper-bundle lifecycle under the task. The
+only new lock use follows the existing project→task→operation order. Against `ff1fba0`, runnable source changes by
+886 additions and 568 deletions (**+318 lines**, zero files); the increase is the dormant closed validator,
+preparation/result reconciliation, and terminal cleanup fence. Deleted code includes detached PID/job/timestamp/PR
+ownership, dual-provider execution, raw-stream reducers, and convention-derived cleanup. Final target budgets still
+apply; the B3 rebase must add one claimant-held broker call while deleting these temporary inert CLI shims, and may
+not add a parallel adapter.
 
 ## Recovery
 

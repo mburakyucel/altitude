@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from altitude import config, dispatch, engines, incidents, state as S
+from tests.physical_fixture import helper_record
 
 
 class CleanupHarness(unittest.TestCase):
@@ -144,8 +145,14 @@ class CleanupHarness(unittest.TestCase):
     def add_record(self, slug, name, *, role="implementer", done="2026-08-30T01:00:00Z", **fields):
         directory = S.task_dir(self.project, slug) / "l1"
         directory.mkdir(parents=True, exist_ok=True)
-        record = {"name": name, "role": role, "done": done, **fields}
-        S.write_json(directory / f"{name}.json", record)
+        result = fields.get("result")
+        terminal = None if done is None else ("failed" if isinstance(result, dict) and result.get("error") else "complete")
+        patch = result.get("patch") if isinstance(result, dict) and isinstance(result.get("patch"), str) else None
+        record = helper_record(self.project, slug, terminal=terminal, role=role, patch=patch,
+                               error=result.get("error") if isinstance(result, dict) else None,
+                               request_seed=name,
+                               parent_worktree=fields.get("worktree") if role == "reviewer" else None)
+        S.write_json(directory / f"{record['name']}.json", record)
         return record
 
     def cleanup(self, task):
@@ -398,14 +405,12 @@ class TestDoneCleanupScope(CleanupHarness):
     def test_dirty_completed_l1_is_forced_only_after_its_captured_patch_is_validated(self):
         slug = "dirty-l1-captured"
         task = self.make_task(slug, archive=True)
-        patch = S.task_dir(self.project, slug) / "l1" / "implementer-1.patch"
-        patch.parent.mkdir(parents=True, exist_ok=True)
-        patch.write_text("diff --git a/a b/a\n")
-        l1 = self.worktree(f"{slug[:30]}-implementer-1")
-        branch = f"l1/{slug[:30]}-implementer-1"
         head = "1" * 40
-        self.add_record(slug, "implementer-1", parent_sha=head, worktree=str(l1),
-                        result={"error": None, "patch": str(patch)})
+        record = self.add_record(slug, "implementer-1",
+                                 result={"error": None, "patch": "diff --git a/a b/a\n"})
+        l1 = Path(record["preparation"]["worktree"])
+        branch = record["preparation"]["branch"]
+        head = record["preparation"]["parent_sha"]
         self.porcelain = self.row(l1, branch)
         self.rev_parse_results[f"refs/heads/{branch}^{{commit}}"] = (0, head + "\n")
         self.status_results[str(l1)] = (0, " M a\0", "")
@@ -421,9 +426,9 @@ class TestDoneCleanupScope(CleanupHarness):
     def test_dirty_l1_without_a_valid_captured_patch_is_preserved(self):
         slug = "dirty-l1-no-patch"
         task = self.make_task(slug, archive=True)
-        self.add_record(slug, "implementer-1", result={"error": None, "patch": "/outside/missing.patch"})
-        l1 = self.worktree(f"{slug[:30]}-implementer-1")
-        branch = f"l1/{slug[:30]}-implementer-1"
+        record = self.add_record(slug, "implementer-1", result={"error": None, "patch": None})
+        l1 = Path(record["preparation"]["worktree"])
+        branch = record["preparation"]["branch"]
         self.porcelain = self.row(l1, branch)
         self.status_results[str(l1)] = (0, " M a\0", "")
 
@@ -436,32 +441,20 @@ class TestDoneCleanupScope(CleanupHarness):
         a_slug = "task-a-with-a-deliberately-long-cleanup-slug"
         b_slug = "task-b-running-codex"
         a_l2 = self.worktree(a_slug)
-        a_done = self.worktree(f"{a_slug[:30]}-done-l1")
-        a_flight = self.worktree(f"{a_slug[:30]}-in-flight-l1")
-        a_locked = self.worktree(f"{a_slug[:30]}-locked-l1")
-        a_unmerged = self.worktree(f"{a_slug[:30]}-unmerged-l1")
-        b_codex = self.worktree(f"{b_slug[:30]}-implementer-1")
         orphan = self.worktree("orphan-with-no-task-record")
-        task_a = self.make_task(a_slug, archive=True, worktree=str(a_l2), agent_id="agent-a")
+        task_a = self.make_task(a_slug, archive=True, worktree=str(a_l2), l2_engine="codex")
         self.make_task(b_slug, state="running", l2_engine="codex")
-        self.add_record(a_slug, "done-l1", engine="claude")
-        self.add_record(a_slug, "in-flight-l1", done=None, engine="codex")
-        self.add_record(a_slug, "locked-l1", engine="codex")
-        self.add_record(a_slug, "unmerged-l1", engine="claude")
-        self.add_record(b_slug, "implementer-1", done=None, engine="codex")
-        a_l2.mkdir(parents=True)
-        self.claude_remove_path = a_l2
+        a_record = self.add_record(a_slug, "done-l1")
+        b_record = self.add_record(b_slug, "implementer-1")
+        a_done = Path(a_record["preparation"]["worktree"])
+        b_codex = Path(b_record["preparation"]["worktree"])
         self.porcelain = "".join([
             self.row(self.repo, "main"),
             self.row(a_l2, f"worktree-{a_slug}"),
-            self.row(a_done, f"l1/{a_slug[:30]}-done-l1"),
-            self.row(a_flight, f"l1/{a_slug[:30]}-in-flight-l1"),
-            self.row(a_locked, f"l1/{a_slug[:30]}-locked-l1", locked=True),
-            self.row(a_unmerged, f"l1/{a_slug[:30]}-unmerged-l1"),
-            self.row(b_codex, f"l1/{b_slug[:30]}-implementer-1"),
+            self.row(a_done, a_record["preparation"]["branch"]),
+            self.row(b_codex, b_record["preparation"]["branch"]),
             self.row(orphan, "worktree-orphan"),
         ])
-        self.merge_results[f"l1/{a_slug[:30]}-unmerged-l1"] = (1, "")
 
         notes = self.cleanup(task_a)
         events = self.cleanup_events(a_slug)
@@ -470,35 +463,13 @@ class TestDoneCleanupScope(CleanupHarness):
         merge_checks = {self.ref_by_sha.get(call[3], call[3])
                         for call in self.calls if call[:3] == ("git", "merge-base", "--is-ancestor")}
         self.assertEqual(removed, {str(a_l2), str(a_done)})
-        self.assertEqual([call for call in self.calls if call[:1] == ("claude_rm",)], [("claude_rm", "agent-a")])
-        self.assertFalse({str(a_flight), str(a_locked), str(a_unmerged), str(b_codex), str(orphan)} & removed)
-        self.assertNotIn(f"refs/heads/l1/{b_slug[:30]}-implementer-1^{{commit}}", merge_checks)
+        self.assertFalse({str(b_codex), str(orphan)} & removed)
+        self.assertNotIn(f"refs/heads/{b_record['preparation']['branch']}^{{commit}}", merge_checks)
         self.assertNotIn("refs/heads/worktree-orphan^{commit}", merge_checks)
-        self.assertTrue(any("persisted L1 record has no done stamp" in note for note in notes))
-        claude_rm_index = self.calls.index(("claude_rm", "agent-a"))
-        for guard in [
-            ("git", "fetch", "-q", "origin", "main"),
-            ("git", "worktree", "list", "--porcelain"),
-            ("claude_agents",),
-        ]:
-            self.assertLess(self.calls.index(guard), claude_rm_index)
-        l2_ref = f"refs/heads/worktree-{a_slug}^{{commit}}"
-        l2_merge = next(call for call in self.calls
-                        if call[:3] == ("git", "merge-base", "--is-ancestor")
-                        and self.ref_by_sha.get(call[3]) == l2_ref)
-        self.assertLess(self.calls.index(l2_merge), claude_rm_index)
-        self.assertLess(claude_rm_index,
-                        self.calls.index(("git", "worktree", "remove", str(a_l2))))
 
         by_path = {event["worktree"]: event for event in events}
         self.assertEqual(by_path[str(a_l2)]["action"], "removed")
-        self.assertEqual(by_path[str(a_l2)]["reason"],
-                         "task-owned branch is merged into origin/main; L2 worker removed")
         self.assertEqual(by_path[str(a_done)]["action"], "removed")
-        self.assertEqual(by_path[str(a_flight)]["action"], "deferred")
-        self.assertEqual(by_path[str(a_locked)]["reason"], "git worktree is locked")
-        self.assertEqual(by_path[str(a_unmerged)]["reason"],
-                         "squash cleanup is limited to the task's exact persisted L2 branch and worktree")
         self.assertNotIn(str(b_codex), by_path)
         self.assertNotIn(str(orphan), by_path)
 
@@ -506,17 +477,16 @@ class TestDoneCleanupScope(CleanupHarness):
         prefix = "x" * 30
         old_slug = prefix + "-old"
         new_slug = prefix + "-new"
-        shared = self.worktree(f"{prefix}-implementer-1")
         old = self.make_task(old_slug, archive=True, cleaned="2026-08-30T02:00:00Z")
         current = self.make_task(new_slug, archive=True)
         self.add_record(old["slug"], "implementer-1")
-        self.add_record(current["slug"], "implementer-1")
-        branch = f"l1/{prefix}-implementer-1"
-        self.porcelain = self.row(shared, branch)
+        record = self.add_record(current["slug"], "implementer-1")
+        owned = Path(record["preparation"]["worktree"])
+        self.porcelain = self.row(owned, record["preparation"]["branch"])
 
         self.cleanup(current)
 
-        self.assertIn(("git", "worktree", "remove", str(shared)), self.calls)
+        self.assertIn(("git", "worktree", "remove", str(owned)), self.calls)
         event = self.cleanup_events(new_slug)[0]
         self.assertEqual((event["action"], event["reason"]),
                          ("removed", "task-owned branch is merged into origin/main"))
@@ -525,20 +495,24 @@ class TestDoneCleanupScope(CleanupHarness):
         prefix = "y" * 30
         other_slug = prefix + "-running"
         current_slug = prefix + "-done"
-        shared = self.worktree(f"{prefix}-reviewer-1")
         other = self.make_task(other_slug, state="running")
         current = self.make_task(current_slug, archive=True)
-        self.add_record(other["slug"], "reviewer-1", role="reviewer")
-        self.add_record(current["slug"], "reviewer-1", role="reviewer")
-        self.porcelain = self.row(shared, f"l1/{prefix}-reviewer-1")
+        other_path = self.worktree(other_slug)
+        current_path = self.worktree(current_slug)
+        other_record = self.add_record(other["slug"], "reviewer-1", role="reviewer", worktree=str(other_path))
+        current_record = self.add_record(current["slug"], "reviewer-1", role="reviewer", worktree=str(current_path))
+        other_path = Path(other_record["preparation"]["worktree"])
+        current_path = Path(current_record["preparation"]["worktree"])
+        self.assertNotEqual(other_path, current_path)
+        self.porcelain = self.row(current_path, current_record["preparation"]["branch"])
 
         notes = self.cleanup(current)
 
-        self.assertFalse(any(call[:3] == ("git", "merge-base", "--is-ancestor") for call in self.calls))
-        self.assertFalse(any(call[:3] == ("git", "worktree", "remove") for call in self.calls))
-        self.assertTrue(any(f"also owned by task(s): {other_slug}" in note for note in notes), notes)
+        self.assertIn(("git", "worktree", "remove", str(current_path)), self.calls)
+        self.assertFalse(any(call[:3] == ("git", "worktree", "remove") and str(other_path) in call
+                             for call in self.calls))
 
-    def test_persisted_cwd_reviewer_and_namespace_paths_defer_the_real_worktrees(self):
+    def test_nonterminal_strict_helpers_fail_closed_before_cleanup_discovery(self):
         slug = "reviewer-cwd-protects-real-worktree"
         l2 = self.worktree(slug)
         namespace = self.worktree(f"{slug[:30]}-custom-cwd")
@@ -550,43 +524,56 @@ class TestDoneCleanupScope(CleanupHarness):
         notes = self.cleanup(task)
         by_path = {event["worktree"]: event for event in self.cleanup_events(slug)}
 
-        self.assertEqual(by_path[str(l2)]["action"], "deferred")
-        self.assertEqual(by_path[str(namespace)]["action"], "deferred")
-        self.assertTrue(any(f"deferred worktree {l2.name}" in note for note in notes), notes)
+        self.assertEqual(by_path[str(l2)]["action"], "skipped")
+        self.assertNotIn(str(namespace), by_path)
+        self.assertTrue(any("helper ownership evidence is invalid" in note for note in notes), notes)
         self.assertNotIn(("claude_rm", "agent-review"), self.calls)
         self.assertFalse(any(call[:3] == ("git", "worktree", "remove") for call in self.calls))
 
-    def test_unfinished_l1_defers_without_worktree_list_membership(self):
+    def test_unfinished_helper_refuses_cleanup_without_worktree_list_membership(self):
         slug = "deferred-l1-omitted"
         task = self.make_task(slug, archive=True)
         self.add_record(slug, "implementer-1", done=None)
+        self.porcelain = self.row(self.repo, "main")
+
+        notes = self.cleanup(task)
+
+        self.assertTrue(any("helper ownership evidence is invalid" in note for note in notes), notes)
+        self.assertEqual(self.cleanup_events(slug), [])
+        self.assertNotIn(("git", "worktree", "list", "--porcelain"), self.calls)
+        self.fault.assert_called_once()
+        self.assertEqual(self.fault.call_args.args[0], "cleanup-helper-record")
+
+    def test_legacy_done_stamp_is_not_helper_ownership_evidence(self):
+        slug = "legacy-helper-record"
+        task = self.make_task(slug, archive=True)
+        directory = S.task_dir(self.project, slug) / "l1"
+        directory.mkdir(parents=True, exist_ok=True)
+        S.write_json(directory / "implementer-1.json", {
+            "name": "implementer-1", "role": "implementer", "done": "2026-08-30T01:00:00Z"})
         expected = str(self.worktree(f"{slug[:30]}-implementer-1").resolve())
         self.porcelain = self.row(self.repo, "main")
 
         notes = self.cleanup(task)
 
-        self.assertTrue(any(note.startswith("deferred worktree ") for note in notes), notes)
-        self.assertEqual([(e["action"], e["worktree"], e["reason"]) for e in self.cleanup_events(slug)],
-                         [("deferred", expected, "persisted L1 record has no done stamp")])
-        self.assertIn(("claude_agents",), self.calls)
-        self.fault.assert_not_called()
+        self.assertTrue(any("helper ownership evidence is invalid" in note for note in notes), notes)
+        self.assertEqual(self.cleanup_events(slug), [])
+        self.assertFalse(any(call[:3] == ("git", "worktree", "remove") for call in self.calls))
 
-    def test_unfinished_l1_defers_when_worktree_list_fails(self):
+    def test_unfinished_helper_refuses_before_worktree_list_failure(self):
         slug = "deferred-l1-failed"
         task = self.make_task(slug, archive=True)
         self.add_record(slug, "implementer-1", done=None)
-        expected = str(self.worktree(f"{slug[:30]}-implementer-1").resolve())
         self.list_returncode = 2
         self.list_stderr = "simulated list failure"
 
         notes = self.cleanup(task)
 
-        self.assertTrue(any(note.startswith("deferred worktree ") for note in notes), notes)
-        self.assertEqual([(e["action"], e["worktree"], e["reason"]) for e in self.cleanup_events(slug)],
-                         [("deferred", expected, "persisted L1 record has no done stamp")])
-        self.assertNotIn(("claude_agents",), self.calls)
+        self.assertTrue(any("helper ownership evidence is invalid" in note for note in notes), notes)
+        self.assertEqual(self.cleanup_events(slug), [])
+        self.assertNotIn(("git", "worktree", "list", "--porcelain"), self.calls)
         self.fault.assert_called_once()
-        self.assertEqual(self.fault.call_args.args[0], "cleanup-git")
+        self.assertEqual(self.fault.call_args.args[0], "cleanup-helper-record")
         dispatch.pull_after_done.assert_called_once_with(self.project, task)
 
     def test_live_claude_session_skips_the_exact_owned_worktree(self):
@@ -709,9 +696,9 @@ class TestDoneCleanupScope(CleanupHarness):
     def test_branch_move_after_final_repin_is_refused_by_compare_and_delete(self):
         slug = "branch-delete-failure"
         task = self.make_task(slug, archive=True)
-        self.add_record(slug, "implementer-1")
-        l1 = self.worktree(f"{slug[:30]}-implementer-1")
-        branch = f"l1/{slug[:30]}-implementer-1"
+        record = self.add_record(slug, "implementer-1")
+        l1 = Path(record["preparation"]["worktree"])
+        branch = record["preparation"]["branch"]
         self.porcelain = self.row(l1, branch)
         ref = f"refs/heads/{branch}^{{commit}}"
         head = "1" * 40

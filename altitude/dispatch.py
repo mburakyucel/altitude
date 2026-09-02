@@ -1140,8 +1140,8 @@ def _merged_pr_receipt(repo: Path, task: dict, branch: str, branch_sha: str) -> 
     return False, "no verified merged PR matches the task branch and pinned tip"
 
 
-def _l1_patch_matches_current(worktree: Path, patch_path: Path) -> tuple[bool | None, str | None]:
-    """Recreate L1's binary patch and require it to equal the durable artifact byte-for-byte."""
+def _l1_patch_matches_current(worktree: Path, patch: str) -> tuple[bool | None, str | None]:
+    """Recreate L1's binary patch and require it to equal the strict inline result byte-for-byte."""
     from . import land
     try:
         groups = land._changes(worktree)
@@ -1165,7 +1165,7 @@ def _l1_patch_matches_current(worktree: Path, patch_path: Path) -> tuple[bool | 
         if current.returncode != 0:
             detail = (current.stderr or current.stdout or "").strip()[:120] or f"exit {current.returncode}"
             return None, f"cannot capture current L1 diff: {detail}"
-        return current.stdout == patch_path.read_text(), None
+        return current.stdout == patch, None
     except (OSError, subprocess.SubprocessError, UnicodeError, ValueError, RuntimeError) as exc:
         return None, str(exc)
 
@@ -1238,55 +1238,14 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
 
     worktrees_root = (repo / ".claude" / "worktrees").resolve()
 
-    def l1_records(owner_slug: str) -> list[dict]:
-        directory = S.task_dir(project, owner_slug) / "l1"
-        if not directory.is_dir():
-            return []
-        return [rec for p in sorted(directory.glob("*.json"))
-                if (rec := S.read_json(p, {})) and rec.get("name") and rec.get("role") in ("implementer", "reviewer")]
-
-    def record_paths(owner_slug: str, owner_task: dict, rec: dict) -> list[tuple[str, str]]:
-        """Return convention-derived and validated persisted paths, with their cleanup kind."""
-        paths = [(path_key(worktrees_root / f"{owner_slug[:30]}-{rec['name']}"), "L1")]
-        persisted = rec.get("worktree")
-        if not persisted:
-            return paths
-        persisted_key = path_key(persisted)
-        l2_keys = {path_key(worktrees_root / owner_slug)}
-        if owner_task.get("worktree"):
-            l2_keys.add(path_key(owner_task["worktree"]))
-        persisted_path = Path(persisted_key)
-        in_l1_namespace = (persisted_path.parent == worktrees_root
-                           and persisted_path.name.startswith(f"{owner_slug[:30]}-"))
-        if persisted_key in l2_keys or in_l1_namespace:
-            persisted_kind = "L2" if persisted_key in l2_keys else "L1"
-            if (persisted_key, persisted_kind) not in paths:
-                paths.append((persisted_key, persisted_kind))
-        return paths
-
-    def captured_patch(owner_slug: str, rec: dict, candidate_path: str) -> dict | None:
-        """Bind one completed L1 record to its exact worktree, parent, and conventional durable patch."""
-        if rec.get("role") != "implementer" or not rec.get("done"):
-            return None
-        result = rec.get("result") if isinstance(rec.get("result"), dict) else {}
-        if result.get("error") or not isinstance(result.get("patch"), str) or not rec.get("parent_sha"):
-            return None
-        if not rec.get("worktree") or path_key(rec["worktree"]) != candidate_path:
-            return None
-        artifact_root = (S.task_dir(project, owner_slug) / "l1").resolve()
-        patch = Path(result["patch"]).resolve()
-        expected = (artifact_root / f"{rec['name']}.patch").resolve()
-        if patch != expected or not patch.is_file():
-            return None
-        return {"patch": str(patch), "name": rec["name"], "parent_sha": rec["parent_sha"],
-                "worktree": candidate_path}
-
     # Include archived records: `done` archives the task before the server reaches this function. The passed record is
     # also included because direct callers and old state may not have a status file on disk.
     task_records = {t.get("slug"): t for t in S.list_tasks(project, include_archive=True) if t.get("slug")}
     task_records[slug] = task
     owners: dict[str, set[str]] = {}
     own_candidates: dict[str, dict] = {}
+    helper_errors = []
+    from . import l1
     for owner_slug, owner_task in task_records.items():
         # A cleaned archived task has already relinquished reusable L1-prefix paths. Active and not-yet-cleaned tasks
         # retain ownership; the task currently being cleaned remains an owner even for defensive direct callers.
@@ -1296,38 +1255,38 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             owners.setdefault(key, set()).add(owner_slug)
             if owner_slug == slug:
                 own_candidates[key] = {"kind": "L2", "unfinished": False}
-        for rec in l1_records(owner_slug):
-            if not retains_ownership:
-                continue
-            for key, kind in record_paths(owner_slug, owner_task, rec):
-                owners.setdefault(key, set()).add(owner_slug)
-                if owner_slug == slug:
-                    candidate = own_candidates.setdefault(key, {"kind": kind, "unfinished": False,
-                                                                 "l1_patch_proofs": []})
-                    if kind == "L2":
-                        candidate["kind"] = "L2"
-                    if not rec.get("done"):
-                        candidate["unfinished"] = True
-                    if proof := captured_patch(owner_slug, rec, key):
-                        candidate.setdefault("l1_patch_proofs", []).append(proof)
-
-    # Deferral comes from persisted ownership, not from git's transient view. Record every unfinished L1/reviewer even
-    # when its worktree is absent from (or cannot be read through) `git worktree list`.
-    deferred_keys = set()
-    for key, candidate in own_candidates.items():
-        if candidate["unfinished"]:
-            reason = "persisted L1 record has no done stamp"
-            S.append_event(project, slug, "cleanup-worktree", action="deferred", worktree=key, reason=reason)
-            notes.append(f"deferred worktree {Path(key).name}: {reason}")
-            deferred_keys.add(key)
+        if not retains_ownership:
+            continue
+        try:
+            helper_records = l1.cleanup_evidence(project, owner_slug)
+        except (T.TransitionError, engines.PhysicalTransitionError, ValueError) as exc:
+            helper_errors.append(f"{owner_slug}: {exc}")
+            continue
+        for rec in helper_records:
+            key = path_key(rec["worktree"])
+            l2_paths = {path_key(worktrees_root / owner_slug)}
+            if owner_task.get("worktree"):
+                l2_paths.add(path_key(owner_task["worktree"]))
+            kind = "L2" if key in l2_paths else "L1"
+            owners.setdefault(key, set()).add(owner_slug)
+            if owner_slug == slug:
+                candidate = own_candidates.setdefault(key, {"kind": kind, "l1_patch_proofs": []})
+                if kind == "L2":
+                    candidate["kind"] = "L2"
+                if kind == "L1" and isinstance(rec.get("patch"), str):
+                    candidate["l1_patch_proofs"].append(rec)
 
     def finish_after_failure(reason: str) -> list[str]:
         for key in own_candidates:
-            if key not in deferred_keys:
-                S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=key, reason=reason)
+            S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=key, reason=reason)
         notes.append(f"skipped worktree cleanup: {reason}")
         notes.extend(pull_after_done(project, task))
         return notes
+
+    if helper_errors:
+        reason = "helper ownership evidence is invalid: " + "; ".join(helper_errors)[:240]
+        incidents.system_fault("cleanup-helper-record", f"{project}/{slug}: {reason}", project=project, task=slug)
+        return finish_after_failure(reason)
 
     try:
         fetch = subprocess.run(["git", "fetch", "-q", "origin", "main"], cwd=str(repo), capture_output=True, text=True, timeout=60)
@@ -1367,8 +1326,6 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
 
     eligible = []
     for wt, branch, locked, key, candidate in records:
-        if key in deferred_keys:
-            continue
         if owners.get(key, set()) != {slug}:
             reason = "also owned by task(s): " + ", ".join(sorted(owners[key] - {slug}))
             S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
@@ -1492,7 +1449,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
                     proofs = candidate.get("l1_patch_proofs") or []
                     proof = proofs[0] if candidate["kind"] == "L1" and len(proofs) == 1 else None
                     if proof and proof.get("worktree") == path_key(wt) and proof.get("parent_sha") == pinned_branch:
-                        matches, match_error = _l1_patch_matches_current(Path(wt), Path(proof["patch"]))
+                        matches, match_error = _l1_patch_matches_current(Path(wt), proof["patch"])
                         if matches:
                             dirty_l1_with_patch = True
                         elif matches is None:

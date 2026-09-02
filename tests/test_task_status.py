@@ -13,6 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, monitor, recovery, state as S, status as task_status  # noqa: E402
+from tests.physical_fixture import helper_record  # noqa: E402
 
 
 GH = """#!/usr/bin/env python3
@@ -119,10 +120,8 @@ class TestTaskStatus(unittest.TestCase):
         task_dir.mkdir(parents=True)
         S.write_json(task_dir / "status.json", task)
         S.write_json(task_dir / "report.json", {"landed": {}})
-        S.write_json(task_dir / "l1" / "implementer-1.json", {
-            "name": "implementer-1", "n": 1, "role": "implementer", "engine": "codex",
-            "pid": os.getpid(), "done": None, "result": {"pr": 18},
-        })
+        helper = helper_record("demo", "task-one", terminal="spawned")
+        S.write_json(task_dir / "l1" / f"{helper['name']}.json", helper)
         other_dir = S.tasks_dir("demo") / "other-task"
         other_dir.mkdir(parents=True)
         S.write_json(other_dir / "status.json", {
@@ -161,13 +160,13 @@ class TestTaskStatus(unittest.TestCase):
         }])
         self.assertTrue(result["report_json"]["exists"])
         self.assertEqual(result["gate"], "github-actions")
-        self.assertEqual([pr["number"] for pr in result["prs"]], [17, 18])
+        self.assertEqual([pr["number"] for pr in result["prs"]], [17])
         self.assertEqual(result["prs"][0]["merge_sha"], "merge-old")
         self.assertEqual(result["prs"][0]["checks"], {
             "total": 3, "passed": 1, "failed": 1, "pending": 1, "failing": ["lint"]})
         self.assertEqual(result["main_run"], {
-            "id": 9, "workflow": "CI", "status": "completed", "conclusion": "success",
-            "head_sha": "merge-new"})
+            "id": 6, "workflow": "CI", "status": "completed", "conclusion": "success",
+            "head_sha": "merge-old"})
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["run", "list"]]), 1)
         run_call = next(call for call in self.calls() if call[:2] == ["run", "list"])
         self.assertEqual(run_call[run_call.index("--limit") + 1], "100")
@@ -322,7 +321,7 @@ class TestTaskStatus(unittest.TestCase):
         result = task_status.status("demo", "task-one")
         self.assertIsNone(result["main_run"])
         self.assertEqual(result["gate"], "github-actions")
-        self.assertIn("no main run found for merge-new", result["errors"])
+        self.assertIn("no main run found for merge-old", result["errors"])
 
     def test_repo_without_workflows_uses_local_suite_without_main_run_error(self):
         shutil.rmtree(self.repo / ".github")
@@ -336,6 +335,10 @@ class TestTaskStatus(unittest.TestCase):
         self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
 
     def test_one_pr_fault_keeps_other_summaries_and_checks_main(self):
+        task_path = S.task_dir("demo", "task-one") / "status.json"
+        task = S.read_json(task_path)
+        task["prs"] = [17, 18]
+        S.write_json(task_path, task)
         self._setenv("FAKE_GH_FAIL_PR", "18")
         result = task_status.status("demo", "task-one")
         self.assertEqual([pr["number"] for pr in result["prs"]], [17])
@@ -348,7 +351,7 @@ class TestTaskStatus(unittest.TestCase):
         task = S.read_json(task_path)
         task["prs"] = []
         S.write_json(task_path, task)
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
+        run_path = next((S.task_dir("demo", "task-one") / "l1").glob("helper-*.json"))
         run = S.read_json(run_path)
         run["result"] = None
         S.write_json(run_path, run)
@@ -365,7 +368,7 @@ class TestTaskStatus(unittest.TestCase):
         task = S.read_json(task_path)
         task["prs"] = []
         S.write_json(task_path, task)
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
+        run_path = next((S.task_dir("demo", "task-one") / "l1").glob("helper-*.json"))
         run = S.read_json(run_path)
         run["result"] = None
         S.write_json(run_path, run)
@@ -377,11 +380,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual([pr["number"] for pr in result["prs"]], [17])
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["pr", "list"]]), 1)
 
-    def test_stale_l1_is_reported_without_writing(self):
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
-        run = S.read_json(run_path)
-        run["pid"] = 999_999_999
-        S.write_json(run_path, run)
+    def test_physical_l1_stage_is_reported_without_writing(self):
         before = {str(path.relative_to(self.root)): path.read_bytes()
                   for path in self.root.rglob("*") if path.is_file()}
 
@@ -390,9 +389,9 @@ class TestTaskStatus(unittest.TestCase):
         after = {str(path.relative_to(self.root)): path.read_bytes()
                  for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(after, before)
-        self.assertTrue(result["l1_runs"]["runs"][0]["stale"])
-        self.assertIsNone(result["l1_runs"]["runs"][0]["done"])
-        self.assertEqual(result["l1_runs"]["in_flight"], 0)
+        self.assertEqual(result["l1_runs"]["runs"][0]["physical_stage"], "spawned")
+        self.assertFalse(result["l1_runs"]["runs"][0]["done"])
+        self.assertEqual(result["l1_runs"]["in_flight"], 1)
 
     def test_broken_gh_degrades_without_raising(self):
         self._setenv("FAKE_GH_FAIL", "1")
@@ -408,7 +407,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
         self.assertEqual(result["slug"], "task-one")
-        self.assertEqual(result["main_run"]["head_sha"], "merge-new")
+        self.assertEqual(result["main_run"]["head_sha"], "merge-old")
 
     def test_cli_defaults_slug_from_altitude_task(self):
         self._setenv("ALTITUDE_TASK", "task-one")

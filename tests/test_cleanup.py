@@ -1,5 +1,6 @@
 """cleanup_after_done removes only merged worktrees nobody owns: not a running task's, not a locked one (real git)."""
 import os
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ _TMP = tempfile.mkdtemp(prefix="altitude-cleanup-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, engines, dispatch  # noqa: E402
+from tests.physical_fixture import helper_record  # noqa: E402
 
 
 def git(*args, cwd):
@@ -145,13 +147,18 @@ class TestCapturedL1Cleanup(unittest.TestCase):
         git("init", "-q", "--bare", str(bare), cwd=repo)
         git("remote", "add", "origin", str(bare), cwd=repo)
         git("push", "-q", "origin", "main", cwd=repo)
-        worktree = repo / ".claude" / "worktrees" / f"{slug[:30]}-implementer-1"
-        branch = f"l1/{slug[:30]}-implementer-1"
-        git("worktree", "add", "-q", "-b", branch, str(worktree), "origin/main", cwd=repo)
         config.save_projects({project: {"name": project, "path": str(repo)}})
+        parent_sha = git("rev-parse", "HEAD", cwd=repo).strip()
+        record = helper_record(project, slug, terminal="complete", request_seed="cleanup", parent_sha=parent_sha)
+        worktree = Path(record["preparation"]["worktree"])
+        branch = record["preparation"]["branch"]
+        git("worktree", "add", "-q", "-b", branch, str(worktree), "origin/main", cwd=repo)
         task = {"slug": slug, "state": "done", "l2_engine": "codex"}
         S.task_dir(project, slug).mkdir(parents=True, exist_ok=True)
         S.save_task(project, {**task, "created": S.now(), "updated": S.now()})
+        directory = S.task_dir(project, slug) / "l1"
+        directory.mkdir(parents=True, exist_ok=True)
+        S.write_json(directory / f"{record['name']}.json", record)
         return project, repo, worktree, branch, task
 
     def capture_record(self, project, slug, worktree, *, include_untracked=True):
@@ -164,14 +171,13 @@ class TestCapturedL1Cleanup(unittest.TestCase):
         patch_text = git("diff", "--binary", "--no-ext-diff", "HEAD", "--", *changed, cwd=worktree)
         if include_untracked:
             git("reset", "-q", "HEAD", "--", "new.txt", cwd=worktree)
-        artifact = S.task_dir(project, slug) / "l1" / "implementer-1.patch"
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_text(patch_text)
-        record = {"name": "implementer-1", "role": "implementer", "done": S.now(),
-                  "parent_sha": git("rev-parse", "HEAD", cwd=worktree).strip(), "worktree": str(worktree),
-                  "result": {"error": None, "patch": str(artifact)}}
-        S.write_json(artifact.with_suffix(".json"), record)
-        return artifact
+        record_path = next((S.task_dir(project, slug) / "l1").glob("helper-*.json"))
+        record = S.read_json(record_path)
+        record["result"]["patch"] = patch_text
+        record["physical"]["receipts"]["result_observed"]["sha256"] = hashlib.sha256(
+            S._canonical_json(record["result"])).hexdigest()  # noqa: SLF001
+        S.write_json(record_path, record)
+        return patch_text
 
     def test_real_dirty_l1_is_removed_only_when_current_diff_exactly_matches_its_patch(self):
         slug = "captured-exact"
@@ -199,10 +205,6 @@ class TestCapturedL1Cleanup(unittest.TestCase):
     def test_real_ignored_file_is_preserved(self):
         slug = "ignored-data"
         project, repo, worktree, branch, task = self.make_l1(slug)
-        record_path = S.task_dir(project, slug) / "l1" / "implementer-1.json"
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        S.write_json(record_path, {"name": "implementer-1", "role": "reviewer", "done": S.now(),
-                                   "worktree": str(worktree)})
         (worktree / "important.ignored").write_text("keep\n")
 
         notes = dispatch.cleanup_after_done(project, task)
@@ -215,10 +217,6 @@ class TestCapturedL1Cleanup(unittest.TestCase):
     def test_real_ignored_python_bytecode_is_explicitly_disposable(self):
         slug = "ignored-bytecode"
         project, repo, worktree, branch, task = self.make_l1(slug)
-        record_path = S.task_dir(project, slug) / "l1" / "implementer-1.json"
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-        S.write_json(record_path, {"name": "implementer-1", "role": "reviewer", "done": S.now(),
-                                   "worktree": str(worktree)})
         bytecode = worktree / "pkg" / "__pycache__" / "module.cpython-312.pyc"
         bytecode.parent.mkdir(parents=True)
         bytecode.write_bytes(b"generated")
