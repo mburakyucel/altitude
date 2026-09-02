@@ -2,13 +2,95 @@
 """alt — the Altitude CLI. Thin: state operations go through the library under a lock; serving is `alt serve`."""
 from __future__ import annotations
 import argparse
+import hashlib
+import importlib.abc
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T  # noqa: E402
+# Evidence readers and the startup capture must not create bytecode in an inspected checkout.
+if {"manifest", "preflight", "serve"} & set(sys.argv[1:]):
+    sys.dont_write_bytecode = True
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _early_runtime_source(repo: Path) -> tuple[dict, dict[str, bytes]]:
+    """Capture runtime identities and the exact Python bytes that this process will execute."""
+    build = ("web/design/tokens.css", "web/index.html", "web/package.json", "web/tsconfig.json",
+             "web/vite.config.ts", "systemd/altitude.service", "Makefile")
+    files = list((repo / "altitude").rglob("*.py"))
+    files += [repo / relative for relative in ("bin/alt", "scripts/restart_altitude.py", *build)]
+    for directory in ("personas", "schemas", "templates", "hooks"):
+        root = repo / directory
+        files += [path for path in root.rglob("*")
+                  if (path.is_file() or path.is_symlink()) and "__pycache__" not in path.parts]
+    web = repo / "web" / "src"
+    files += [path for path in web.rglob("*") if (path.is_file() or path.is_symlink())
+              and path.suffix in (".ts", ".tsx", ".css") and ".test." not in path.name
+              and "test" not in path.relative_to(web).parts and path.name != "vitest.setup.ts"]
+    rows, python_sources = [], {}
+    for path in sorted(set(files), key=lambda item: item.relative_to(repo).as_posix()):
+        if not path.is_file() and not path.is_symlink():
+            continue
+        stat = path.lstat()
+        link = os.readlink(path) if path.is_symlink() else None
+        relative = path.relative_to(repo).as_posix()
+        if link is not None and relative.startswith("altitude/") and relative.endswith(".py"):
+            raise RuntimeError(
+                f"refusing executable Python runtime symlink before import: {relative}")
+        data = os.fsencode(link) if link is not None else path.read_bytes()
+        if link is None and relative.startswith("altitude/") and relative.endswith(".py"):
+            python_sources[relative] = data
+        mode = "120000" if link is not None else "100755" if stat.st_mode & 0o111 else "100644"
+        rows.append({"path": relative, "mode": mode,
+                     "sha256": hashlib.sha256(data).hexdigest(),
+                     "stat": [stat.st_dev, stat.st_ino, stat.st_size,
+                              stat.st_mtime_ns, stat.st_ctime_ns]})
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return ({"root": str(repo.resolve()), "files": rows,
+             "sha256": hashlib.sha256(encoded).hexdigest()}, python_sources)
+
+
+class _CapturedAltitudeImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Load only captured ``altitude/*.py`` bytes, bypassing all timestamp-based pyc caches."""
+
+    def __init__(self, repo: Path, sources: dict[str, bytes]):
+        self.repo, self.sources = repo, sources
+
+    @staticmethod
+    def _relative(fullname: str) -> str:
+        suffix = fullname.removeprefix("altitude").replace(".", "/")
+        return "altitude/__init__.py" if not suffix else f"altitude{suffix}.py"
+
+    def find_spec(self, fullname, path=None, target=None):
+        relative = self._relative(fullname)
+        if ((fullname != "altitude" and not fullname.startswith("altitude."))
+                or relative not in self.sources):
+            return None
+        return importlib.util.spec_from_loader(fullname, self, is_package=fullname == "altitude")
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module) -> None:
+        relative = self._relative(module.__name__)
+        filename = str(self.repo / relative)
+        module.__file__ = filename
+        if module.__name__ == "altitude":
+            module.__path__ = [str(self.repo / "altitude")]
+        exec(compile(self.sources[relative], filename, "exec", dont_inherit=True), module.__dict__)
+
+
+if ("serve" in sys.argv[1:] or
+        ({"manifest", "preflight"} & set(sys.argv[1:]) and "running_install" in sys.argv[1:])):
+    _STARTUP_SOURCE, _STARTUP_PYTHON = _early_runtime_source(_REPO)
+    sys.meta_path.insert(0, _CapturedAltitudeImporter(_REPO, _STARTUP_PYTHON))
+else:
+    _STARTUP_SOURCE = None
+sys.path.insert(0, str(_REPO))
+from altitude import config  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
 
@@ -30,6 +112,27 @@ def _stdin_or_file(args) -> str:
 
 def out(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
+
+
+def _read_evidence(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    try:
+        value = json.loads(path.read_bytes())
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        sys.exit(f"alt: cannot read evidence {path}: {exc}")
+    if not isinstance(value, dict):
+        sys.exit(f"alt: evidence {path} is not a JSON object")
+    return value
+
+
+def _read_evidence_bytes(path: Path | None) -> bytes | None:
+    if path is None:
+        return None
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        sys.exit(f"alt: cannot read raw evidence {path}: {exc}")
 
 
 def main(argv=None) -> None:
@@ -91,14 +194,62 @@ def main(argv=None) -> None:
     rcs.add_parser("status")
     rh = rcs.add_parser("hold"); rh.add_argument("--reason", required=True)
     rr = rcs.add_parser("clear"); rr.add_argument("--reason", required=True)
+    mf = sub.add_parser("manifest", help="print one strict read-only install/candidate manifest")
+    pf = sub.add_parser("preflight", help="read-only inventory of a copied ALTITUDE_HOME")
+    pf.add_argument("--home", type=Path, required=True, help="path to the offline copied state home")
+    for reader in (mf, pf):
+        reader.add_argument("--role", required=True,
+                            choices=("running_install", "stopped_install", "detached_candidate"))
+        reader.add_argument("--repo", type=Path, help="checkout to inspect; B is still derived from ExecStart")
+        reader.add_argument("--inventory-repo", type=Path,
+                            help="preflight source roster checkout when it differs from inspected B")
+        reader.add_argument("--provider-home", type=Path,
+                            help="explicit home containing copied/read-only provider job evidence")
+        reader.add_argument("--candidate-sha", help="required full commit SHA for detached_candidate")
+        reader.add_argument("--prior-receipt", type=Path,
+                            help="immutable running/bootstrap prior receipt for stopped_install")
+        reader.add_argument("--bootstrap-evidence", type=Path,
+                            help="one-time bootstrap declaration for first stopped activation")
+        reader.add_argument("--bootstrap-raw-evidence", type=Path,
+                            help="exact prerequisite freeze/provenance evidence bytes")
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
     sub.add_parser("install-git-guards")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
-    config.ensure_root()
     c = args.cmd
+    # These two commands are evidence readers.  In particular, do not call ensure_root before an
+    # offline preflight: even a missing input must remain missing.
+    if c == "manifest":
+        from altitude import manifest
+        result = manifest.runtime_manifest(
+            role=args.role, repo=args.repo, expected_commit=args.candidate_sha,
+            prior_receipt=_read_evidence(args.prior_receipt),
+            bootstrap_evidence=_read_evidence(args.bootstrap_evidence),
+            bootstrap_raw_evidence=_read_evidence_bytes(args.bootstrap_raw_evidence),
+            startup_source=_STARTUP_SOURCE, loaded_modules=manifest.loaded_module_origins())
+        out(result)
+        if not result["valid"]:
+            raise SystemExit(2)
+        return
+    if c == "preflight":
+        from altitude import legacy_preflight
+        result = legacy_preflight.offline_preflight(
+            args.home, repo=args.repo, manifest_role=args.role,
+            inventory_repo=args.inventory_repo, provider_home=args.provider_home,
+            expected_commit=args.candidate_sha,
+            prior_receipt=_read_evidence(args.prior_receipt),
+            bootstrap_evidence=_read_evidence(args.bootstrap_evidence),
+            bootstrap_raw_evidence=_read_evidence_bytes(args.bootstrap_raw_evidence),
+            startup_source=_STARTUP_SOURCE,
+            loaded_modules=legacy_preflight.runtime_identity.loaded_module_origins())
+        out(result)
+        if result["cutover_blocked"]:
+            raise SystemExit(2)
+        return
+    from altitude import state as S, tasks as T
+    config.ensure_root()
     if c == "l1":
         from altitude import l1 as L1
         p = _project(args)
@@ -283,7 +434,9 @@ def main(argv=None) -> None:
             out(recovery.status() or {"active": False})
         return
     if c == "serve":
-        from altitude import server; server.main(host=args.host, port=args.port); return
+        from altitude import server
+        server.main(host=args.host, port=args.port, startup_source=_STARTUP_SOURCE)
+        return
     if c == "install-statusline":
         from altitude import server; out(server.install_statusline()); return
     if c == "install-git-guards":

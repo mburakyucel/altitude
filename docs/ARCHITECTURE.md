@@ -213,3 +213,48 @@ focused test module and this architecture note are the only new/expanded source 
 dependencies, services, selectors, schemas, generated outputs, and durable artifact families each
 increase by zero. The added production surface is the three reusable primitives above; domain
 adapters and replay machinery are intentionally outside this phase.
+
+### Runtime identity and migration preflight
+
+The read-only `alt manifest --role ...` has three closed identities. Before `bin/alt` imports any
+Altitude module for `serve` or a running manifest/preflight, it captures every runtime input's bytes
+and device/inode/size/mtime/ctime identity, then loads Altitude from those captured source bytes;
+timestamp bytecode caches are never eligible and executable Python symlinks are rejected before import.
+`running_install` revalidates that unchanged capture, the
+loaded Altitude module origins, and the exact `alt serve` manager configuration against a positive MainPID/start identity in the observed
+cgroup. `stopped_install` derives B from manager ExecStart, requires inactive/dead plus an empty
+cgroup, reads B without importing it, and compares every installed byte/configuration fact to an
+immutable prior receipt. That prior is normally `running_install`; the already-stopped first
+activation instead uses a `stopped_install` with `prior_kind=bootstrap_freeze`, bound to the exact
+raw prerequisite evidence bytes, the copied frozen-state tree digest, a closed service/provider-unit/
+worktree/ref/process roster, and bounded operator authorization. It never fabricates or backdates
+a running receipt. `detached_candidate` requires an explicit full candidate SHA, matches all runtime
+and build inputs to that commit, hashes its unit template and web bundle, and never claims the old
+manager points to C. Unknown, absent, mismatched, or unqueryable role evidence is invalid.
+`GET /api/manifest` returns only one canonical immutable redacted byte snapshot created at startup:
+hashes and status are visible, but host paths, commands, PIDs, evidence bodies, and diagnostics are
+not. If startup capture was absent, the endpoint returns an explicit unavailable response and never
+re-reads mutable source to synthesize identity.
+
+`alt preflight --home <copied-home> --role ...` performs a deterministic inventory without locking,
+normalizing, networking, or writing the copy or repository. It enumerates closed active
+monitor/project/task/provider/operation shapes, recovery/hold/incident evidence, and all 46 current
+artifact families. Each family keeps its declared source-owner roster separate from a mechanically
+observed active-consumer count: a counted source owner must contain both a read seam and a literal
+family token; provider/external declarations are never silently counted as observed code. Its exact
+§07 roster reports permanent,
+temporary, support, policy/template, and test categories separately; new or missing production paths
+block. The Python writer inventory classifies built-in/`os.open`, `fdopen`, temporary-file/directory,
+permission, path-write, subprocess, and equivalent current calls; TypeScript, shell, and static inputs
+have their own explicit dependency/effect analysis contracts. Unknown active entries, nested control
+fields, provider evidence, owner variants, or required identity facts make cutover ineligible.
+Project holds and live provider jobs must settle; statusline records and service manager state use
+closed accepted fields and states, so new provider or manager shapes cannot silently pass cutover.
+Unknown archived entries are reported for a separate
+read-only archive decoder and never enter active dispatch, resume, or settlement. An unregistered
+project is archive-only only when its complete namespace is exactly one real `archive/` directory
+and no active monitor state refers to it.
+
+The legacy preflight and every real-state compatibility importer remain shipped through the first
+successful real production ActivationReceipt. Disposable success or pre-activation cleanup cannot
+remove them; only the separately reviewed PR 10B may do so after frozen-state and cutover receipts exist.

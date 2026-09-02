@@ -13,12 +13,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, transcript, verify
+from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, manifest, monitor, quota_codex, recovery, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
 CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
+_UNAVAILABLE_MANIFEST_BYTES = json.dumps({
+    "schema_version": manifest.MANIFEST_SCHEMA,
+    "role": manifest.RUNNING_INSTALL,
+    "identity_known": False,
+    "snapshot_status": "unavailable",
+    "identity_error_fields": ["startup_snapshot"],
+}, sort_keys=True, separators=(",", ":")).encode()
+_RUNTIME_MANIFEST_BYTES: bytes | None = None
 
 
 def log(msg: str) -> None:
@@ -535,6 +543,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, default=str).encode()
+        self._json_bytes(body, code)
+
+    def _json_bytes(self, body: bytes, code: int = 200) -> None:
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -622,6 +633,10 @@ class Handler(BaseHTTPRequestHandler):
             if not parts or parts[0] != "api":
                 return self._static(u.path)
             api = parts[1] if len(parts) > 1 else ""
+            if api == "manifest":
+                return self._json_bytes(
+                    _RUNTIME_MANIFEST_BYTES or _UNAVAILABLE_MANIFEST_BYTES,
+                    200 if _RUNTIME_MANIFEST_BYTES is not None else 503)
             if api == "overview":
                 return self._json(overview())
             if api == "project" and len(parts) > 2:
@@ -806,7 +821,18 @@ def install_statusline() -> dict:
     return {"ok": True, "wrapped": orig}
 
 
-def main(host: str | None = None, port: int | None = None) -> None:
+def main(host: str | None = None, port: int | None = None,
+         *, startup_source: dict | None = None) -> None:
+    global _RUNTIME_MANIFEST_BYTES
+    # Capture before timers start.  The API then identifies the source and bundle this process
+    # actually started from, rather than re-reading a checkout that may later move underneath it.
+    loaded_modules = manifest.loaded_module_origins()
+    startup_manifest = manifest.runtime_manifest(
+        role=manifest.RUNNING_INSTALL, startup_source=startup_source,
+        loaded_modules=loaded_modules)
+    _RUNTIME_MANIFEST_BYTES = json.dumps(
+        manifest.public_manifest(startup_manifest), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=True).encode()
     config.ensure_root()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance clears the restart-pending flag
         try:

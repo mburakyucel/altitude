@@ -1,5 +1,6 @@
 """HEAD responses match GET metadata without sending an entity body."""
 import os
+import json
 import shutil
 import socket
 import sys
@@ -7,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-server-head-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -47,6 +49,12 @@ class TestHead(unittest.TestCase):
         self.old_overview = server.overview
         server.overview = lambda: {"state": "ready"}
         self.addCleanup(setattr, server, "overview", self.old_overview)
+
+        self.old_manifest = server._RUNTIME_MANIFEST_BYTES
+        self.manifest_value = {"schema_version": "test-manifest", "source_commit": "abc123"}
+        server._RUNTIME_MANIFEST_BYTES = json.dumps(
+            self.manifest_value, sort_keys=True, separators=(",", ":")).encode()
+        self.addCleanup(setattr, server, "_RUNTIME_MANIFEST_BYTES", self.old_manifest)
 
         self.logs = []
         self.old_log = server.log
@@ -111,6 +119,45 @@ class TestHead(unittest.TestCase):
 
     def test_overview_head_matches_get_without_body(self):
         self._assert_head_matches_get("/api/overview", 200)
+
+    def test_manifest_is_read_only_and_uses_the_startup_snapshot(self):
+        with mock.patch.object(server.manifest, "runtime_manifest",
+                               side_effect=AssertionError("must use startup snapshot")), \
+                mock.patch.object(server.manifest, "public_manifest",
+                                  side_effect=AssertionError("must serve pre-redacted bytes")):
+            status, headers, body = self._request("GET", "/api/manifest")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["cache-control"], "no-store")
+        self.assertEqual(body, server._RUNTIME_MANIFEST_BYTES)
+        self.assertEqual(json.loads(body), self.manifest_value)
+
+    def test_manifest_without_startup_snapshot_is_explicitly_unavailable_and_never_fresh_reads(self):
+        server._RUNTIME_MANIFEST_BYTES = None
+        with mock.patch.object(server.manifest, "runtime_manifest",
+                               side_effect=AssertionError("must never reconstruct startup identity")):
+            status, headers, body = self._request("GET", "/api/manifest")
+        payload = json.loads(body)
+        self.assertEqual(status, 503)
+        self.assertEqual(headers["cache-control"], "no-store")
+        self.assertFalse(payload["identity_known"])
+        self.assertEqual(payload["snapshot_status"], "unavailable")
+
+    def test_main_freezes_one_canonical_redacted_byte_snapshot(self):
+        full = {"private": ["mutable"]}
+        public = {"identity_known": True, "source_commit": "abc", "schema_version": "test"}
+        with mock.patch.object(server.manifest, "loaded_module_origins", return_value={}), \
+                mock.patch.object(server.manifest, "runtime_manifest", return_value=full), \
+                mock.patch.object(server.manifest, "public_manifest", return_value=public), \
+                mock.patch.object(server.config, "ensure_root"), \
+                mock.patch.object(server, "ThreadingHTTPServer", side_effect=RuntimeError("stop")):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                server.main(startup_source={})
+        expected = json.dumps(public, sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(server._RUNTIME_MANIFEST_BYTES, expected)
+        full["private"].append("changed")
+        public["source_commit"] = "changed"
+        self.assertEqual(server._RUNTIME_MANIFEST_BYTES, expected)
 
     def test_unknown_api_head_matches_get_without_body(self):
         self._assert_head_matches_get("/api/definitely-unknown", 404)
