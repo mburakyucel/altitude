@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "created_date": "2026-09-02",
   "authoritative_runtime": {
     "branch": "main",
@@ -68,6 +68,15 @@
       "do not treat any saved simplification target as approved",
       "do not implement or merge a module until its decision and exact scope are recorded"
     ]
+  },
+  "publication": {
+    "repository": "mburakyucel/altitude",
+    "visibility": "private",
+    "documentation_pr": 143,
+    "documentation_merged": true,
+    "draft_code_prs": [139, 142, 138, 140, 141],
+    "all_listed_candidate_refs_pushed": true,
+    "published_date": "2026-09-02"
   },
   "evidence": {
     "durable_per_commit_test_logs_present": false,

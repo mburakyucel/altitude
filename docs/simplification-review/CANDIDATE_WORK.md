@@ -1,7 +1,23 @@
 # Candidate and preserved work
 
-All branches below are local unless a later operator explicitly publishes them. At checkpoint time,
-no remote branch contained `simplify/integration`.
+At checkpoint creation these branches were local. On 2026-09-02 all branches listed here were
+pushed to the private `mburakyucel/altitude` repository; no relevant simplification work remains
+local-only.
+
+## Publication and review surfaces
+
+| PR | Scope | State |
+| --- | --- | --- |
+| [#139](https://github.com/mburakyucel/altitude/pull/139) | Accumulated `simplify/integration` candidate against `main` | draft; do not merge wholesale |
+| [#142](https://github.com/mburakyucel/altitude/pull/142) | B3 L2-ownership experiment against `simplify/integration` | draft; recorded steering objection |
+| [#138](https://github.com/mburakyucel/altitude/pull/138) | Managed-helper experiment against `simplify/integration` | draft; incomplete and conflicting |
+| [#140](https://github.com/mburakyucel/altitude/pull/140) | Outcome-settlement experiment against `simplify/integration` | draft; incomplete and conflicting |
+| [#141](https://github.com/mburakyucel/altitude/pull/141) | Separate deferred durability work against `main` | draft; review one owning module at a time |
+
+The component and superseded branches are also exact remote refs. They do not each have another PR:
+their reviewable code is represented by the aggregate or WIP PR above, and opening duplicate PRs
+would multiply overlapping merge candidates. PR
+[#143](https://github.com/mburakyucel/altitude/pull/143) merged this documentation checkpoint.
 
 ## 1. Clean accumulated checkpoint — not approved
 
