@@ -69,40 +69,5 @@ class TestDirectDispatch(unittest.TestCase):
             task=task["slug"],
         )
 
-    def test_zero_exit_without_a_concrete_agent_never_marks_running(self):
-        task = T.new("direct", "Missing launch identity", "Try to dispatch it.", actor="burak")
-        fake = {"stdout": "started", "stderr": "", "returncode": 0, "agent": None}
-        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
-             mock.patch.object(dispatch.engines, "start_l2", return_value=fake), \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(dispatch.DispatchFailure, "concrete worker id and session id"):
-                dispatch.run("direct", task["slug"])
-
-        waiting = S.load_task("direct", task["slug"])
-        self.assertEqual(waiting["state"], "queued")
-        self.assertIsNone(waiting.get("dispatching"))
-        fault.assert_called_once()
-
-    def test_successful_launch_binds_the_generation_given_to_the_l2(self):
-        task = T.new("direct", "Concrete launch identity", "Dispatch it.", actor="burak")
-        fake = {"stdout": "started", "stderr": "", "returncode": 0,
-                "agent": {"id": "agent-1", "sessionId": "session-1"}}
-        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
-             mock.patch.object(dispatch.engines, "start_l2", return_value=fake) as launch:
-            dispatch.run("direct", task["slug"])
-
-        running = S.load_task("direct", task["slug"])
-        self.assertEqual((running["state"], running["agent_id"], running["session_id"]),
-                         ("running", "agent-1", "session-1"))
-        token = running["l2_token"]
-        self.assertTrue(token)
-        self.assertEqual(launch.call_args.kwargs["extra_env"]["ALTITUDE_L2_TOKEN"], token)
-        self.assertEqual(running["l2_engine"], "codex")
-        self.assertIn("default policy", running["routing"]["why"])
-
 if __name__ == "__main__":
     unittest.main()

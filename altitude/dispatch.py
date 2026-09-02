@@ -2,9 +2,12 @@
 from __future__ import annotations
 from contextlib import contextmanager
 import fcntl
+import hashlib
 import json
 import secrets
+import stat
 import subprocess
+import sys
 from datetime import datetime, timezone
 import re
 from pathlib import Path
@@ -16,14 +19,32 @@ class DispatchFailure(T.TransitionError):
     """A launch fault already persisted and routed through the global recovery fuse."""
 
 
+def _active_task(project: str, slug: str) -> dict:
+    """Never follow the archive fallback while claiming or mutating physical ownership."""
+    task = S.read_json(S.tasks_dir(project) / slug / "status.json")
+    if not task:
+        raise T.TransitionError(f"{slug}: active task no longer exists")
+    return task
+
+
+def _task_owner_update(project: str, slug: str, update) -> dict:
+    """Route a B3 task projection update through the Task authority seam."""
+    def decide(task):
+        update(task)
+        return task, None, None
+    task, _ = T.owner_command(project, slug, decide,
+                              lambda value: (_owner(value, project=project, required=True)
+                                             if value.get("active_operation") is not None else None))
+    return task
+
+
 def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
     """Leave a failed launch queued, clear its transient claim, and trip recovery once."""
     reason = str(error)[:300]
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
+    def clear_dispatching(task):
         if task.get("state") == "queued":
             task["dispatching"] = None
-            S.save_task(project, task)
+    _task_owner_update(project, slug, clear_dispatching)
     S.append_event(project, slug, "dispatch-failed", reason=reason)
     from . import incidents
     incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug)
@@ -49,11 +70,8 @@ def project_never_list(repo: Path) -> str:
     return "no changes outside the brief; no weakened guardrails; honor any recorded merge hold"
 
 
-JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
-
-
 def l2_engine(task: dict) -> str:
-    """Old task records predate provider identity and are necessarily Claude sessions."""
+    """Old task records are inspectable legacy evidence, never launch authority."""
     return task.get("l2_engine") or "claude"
 
 
@@ -62,8 +80,345 @@ def provider_capability_hold(task: dict) -> str | None:
     return T.owner_provider_capability_hold(task)
 
 
-def l2_job_root(project: str, slug: str) -> Path:
-    return S.task_dir(project, slug) / "l2-engine"
+# Read-only legacy Claude evidence. Codex ownership never reads or writes this provider-private tree.
+JOBS_DIR = config.HOME / ".claude" / "jobs"
+
+
+_OWNER_KEYS = {"kind", "request", "preparation", "physical", "result", "stop", "successor", "recovery_epoch"}
+_REQUEST_KEYS = {"message_id", "prompt", "prompt_sha256", "model", "routing", "issue_digest"}
+_PREPARATION_KEYS = {"stage", "intent", "receipt", "prior_unit"}
+_PREPARATION_INTENT_KEYS = {"repository", "worktree", "branch", "base_ref"}
+_PREPARATION_RECEIPT_KEYS = {"repository", "worktree", "branch", "base_ref", "base_sha"}
+_RESULT_KEYS = {"provider_session_id", "action", "usage", "error"}
+_OWNER_HISTORY_KEYS = {"generation", "transition_id", "process_unit_id", "message_id",
+                       "event_id", "result_id", "result_sha256", "session_id"}
+_OWNER_ERROR_CAP = 500
+
+
+def _bounded_owner_error(error: object) -> str:
+    value = str(error).strip() or "unknown Codex owner failure"
+    encoded, suffix = value.encode("utf-8", "replace"), b" [truncated]"
+    if len(encoded) <= _OWNER_ERROR_CAP:
+        return value
+    return (encoded[:_OWNER_ERROR_CAP - len(suffix)].decode("utf-8", "ignore").rstrip()
+            + suffix.decode())
+
+
+def _owner(task: dict, *, project: str | None = None, required: bool = False) -> dict | None:
+    """Validate the sole TaskRecord-owned Codex generation; never consult legacy job rows."""
+    op = task.get("active_operation")
+    if op is None:
+        if required:
+            raise T.TransitionError(f"{task.get('slug')}: exact Codex owner operation required")
+        return None
+    if not isinstance(op, dict) or set(op) != _OWNER_KEYS or op.get("kind") != "codex_owner":
+        raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner operation")
+    request, prep = op.get("request"), op.get("preparation")
+    if (not isinstance(request, dict) or set(request) != _REQUEST_KEYS
+            or not isinstance(request.get("message_id"), str) or not request["message_id"]
+            or not isinstance(request.get("prompt"), str) or not request["prompt"]
+            or request.get("prompt_sha256") != hashlib.sha256(request["prompt"].encode()).hexdigest()
+            or request.get("model") is not None and not isinstance(request["model"], str)
+            or not isinstance(request.get("routing"), dict)
+            or request.get("issue_digest") is not None and not isinstance(request["issue_digest"], str)):
+        raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner request")
+    intent, prep_receipt = (prep or {}).get("intent"), (prep or {}).get("receipt")
+    if (not isinstance(prep, dict) or set(prep) != _PREPARATION_KEYS
+            or prep.get("stage") not in ("planned", "complete")
+            or prep.get("prior_unit") is not None and not isinstance(prep["prior_unit"], str)
+            or not isinstance(intent, dict) or set(intent) != _PREPARATION_INTENT_KEYS
+            or not all(isinstance(intent.get(key), str) and intent[key]
+                       for key in _PREPARATION_INTENT_KEYS)
+            or intent.get("base_ref") != "origin/main"
+            or prep["stage"] == "planned" and prep_receipt is not None
+            or prep["stage"] == "complete" and (not isinstance(prep_receipt, dict)
+                or set(prep_receipt) != _PREPARATION_RECEIPT_KEYS
+                or not all(isinstance(prep_receipt.get(key), str) and prep_receipt[key]
+                           for key in _PREPARATION_RECEIPT_KEYS)
+                or any(prep_receipt[key] != intent[key]
+                       for key in _PREPARATION_INTENT_KEYS))):
+        raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner preparation")
+    expected_intent = _preparation_intent(project or intent["repository"], str(task.get("slug") or ""))
+    if intent != expected_intent:
+        raise T.TransitionError(f"{task.get('slug')}: Codex owner preparation path changed")
+    physical = op.get("physical")
+    if (isinstance(op.get("recovery_epoch"), bool) or not isinstance(op.get("recovery_epoch"), int)
+            or op["recovery_epoch"] < 0):
+        raise T.TransitionError(f"{task.get('slug')}: malformed owner recovery epoch")
+    if prep["stage"] == "planned":
+        if physical is not None:
+            raise T.TransitionError(f"{task.get('slug')}: unprepared owner has physical authority")
+    else:
+        try:
+            physical = engines.validate_physical_transition(physical)
+        except engines.PhysicalTransitionError as exc:
+            raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner transition: {exc}") from exc
+        expected_project = project or str((physical or {}).get("subject_id", "")).partition("/")[0]
+        identity = {
+            "project": expected_project, "slug": task.get("slug"),
+            "dispatch_id": task.get("dispatch_id"), "owner_generation": task.get("owner_generation"),
+            "message_id": request["message_id"], "worktree": prep_receipt["worktree"],
+            "branch": prep_receipt["branch"], "base_sha": prep_receipt["base_sha"], "model": request["model"],
+            "routing": request["routing"], "prompt_sha256": request["prompt_sha256"],
+            "capability_sha256": hashlib.sha256(str(task.get("l2_token") or "").encode()).hexdigest(),
+        }
+        transition_id = hashlib.sha256(b"codex-owner\0" + S._canonical_json(identity)).hexdigest()  # noqa: SLF001
+        if (physical["subject_kind"] != "owner" or physical["provider"] != "codex"
+                or physical["subject_id"] != f"{expected_project}/{task.get('slug')}"
+                or physical["transition_id"] != transition_id or physical["generation"] != transition_id
+                or physical["message_id"] != request["message_id"]
+                or prep_receipt["worktree"] != task.get("worktree")
+                or prep_receipt["branch"] != task.get("branch")
+                or prep_receipt["base_sha"] != task.get("base_sha")):
+            raise T.TransitionError(f"{task.get('slug')}: Codex owner context changed")
+        provider_request = physical["provider_session_request"]
+        bound = physical["receipts"].get("bound") or {}
+        if (provider_request["kind"] == "resume" and bound.get("bound") is not True
+                and provider_request["session_id"] != task.get("session_id")):
+            raise T.TransitionError(f"{task.get('slug')}: Codex resume thread changed")
+        if bound.get("bound") is True and (bound["provider_session_id"] != task.get("session_id")
+                or bound["physical_worker_id"] != task.get("agent_id")):
+            raise T.TransitionError(f"{task.get('slug')}: Codex bound ownership projection changed")
+    result = op.get("result")
+    if result is not None and (not isinstance(result, dict) or set(result) != _RESULT_KEYS
+            or result.get("provider_session_id") is not None
+                and (not isinstance(result["provider_session_id"], str)
+                     or not result["provider_session_id"]
+                     or len(result["provider_session_id"].encode()) > engines.CODEX_PROVIDER_SESSION_ID_CAP)
+            or result.get("action") is not None and not isinstance(result["action"], dict)
+            or not isinstance(result.get("usage"), dict)
+            or result.get("error") is not None and (not isinstance(result["error"], str)
+                or not result["error"] or len(result["error"].encode("utf-8", "replace")) > _OWNER_ERROR_CAP)):
+        raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner result")
+    if result is not None and physical is None:
+        raise T.TransitionError(f"{task.get('slug')}: unprepared owner has a result")
+    for field in ("stop", "successor"):
+        value = op.get(field)
+        if value is not None and not isinstance(value, dict):
+            raise T.TransitionError(f"{task.get('slug')}: malformed owner {field} intent")
+    if op.get("successor") is not None:
+        successor = op["successor"]
+        if set(successor) != _REQUEST_KEYS:
+            raise T.TransitionError(f"{task.get('slug')}: malformed owner successor")
+        _owner({**task, "active_operation": {"kind": "codex_owner", "request": successor,
+            "preparation": {"stage": "planned", "intent": intent, "receipt": None,
+                            "prior_unit": None},
+            "physical": None, "result": None, "stop": None, "successor": None,
+            "recovery_epoch": op["recovery_epoch"]}}, project=project, required=True)
+    history = task.get("owner_generations") or []
+    if not isinstance(history, list):
+        raise T.TransitionError(f"{task.get('slug')}: malformed owner generation history")
+    for row in history:
+        if (not isinstance(row, dict) or set(row) != _OWNER_HISTORY_KEYS
+                or not all(isinstance(row.get(key), str) and row[key]
+                           for key in _OWNER_HISTORY_KEYS - {"session_id"})
+                or row.get("session_id") is not None and not isinstance(row["session_id"], str)
+                or row["event_id"] != f"l2-engine/{row['generation']}/events.jsonl"
+                or not re.fullmatch(r"[0-9a-f]{64}", row["generation"])
+                or not re.fullmatch(r"[0-9a-f]{64}", row["result_sha256"])):
+            raise T.TransitionError(f"{task.get('slug')}: malformed owner generation history")
+    return {**op, "physical": physical}
+
+
+def _request(message_id: str, prompt: str, model: str | None, routing: dict,
+             issue_digest: str | None = None) -> dict:
+    return {"message_id": message_id, "prompt": prompt,
+            "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), "model": model,
+            "routing": routing, "issue_digest": issue_digest}
+
+
+def _preparation_intent(project: str, slug: str) -> dict:
+    repository = config.project_path(project)
+    worktree = _expected_task_worktree(repository, slug)
+    return {"repository": str(repository),
+            "worktree": str(worktree),
+            "branch": f"worktree-{slug}", "base_ref": "origin/main"}
+
+
+def _operation(project: str, slug: str, request: dict, prior_unit: str | None = None,
+               recovery_epoch: int = 0) -> dict:
+    return {"kind": "codex_owner", "request": request,
+            "preparation": {"stage": "planned", "intent": _preparation_intent(project, slug),
+                            "receipt": None, "prior_unit": prior_unit},
+            "physical": None, "result": None, "stop": None, "successor": None,
+            "recovery_epoch": recovery_epoch}
+
+
+def _owner_terminal(op: dict | None) -> bool:
+    return bool(op and op.get("physical") and op["physical"]["stage"] in ("complete", "failed"))
+
+
+def _retire_owner_generation(task: dict, op: dict) -> None:
+    """Project one terminal generation before active_operation can be overwritten."""
+    if not _owner_terminal(op):
+        raise T.TransitionError(f"{task['slug']}: cannot retire a nonterminal owner generation")
+    physical = op["physical"]
+    result = physical["receipts"]["result_observed"]
+    row = {"generation": physical["generation"], "transition_id": physical["transition_id"],
+           "process_unit_id": physical["process_unit_id"], "message_id": physical["message_id"],
+           "event_id": f"l2-engine/{physical['generation']}/events.jsonl",
+           "result_id": result["result_id"], "result_sha256": result["sha256"],
+           "session_id": (op.get("result") or {}).get("provider_session_id")}
+    history = task.setdefault("owner_generations", [])
+    existing = next((entry for entry in history if entry.get("generation") == row["generation"]), None)
+    if existing not in (None, row):
+        raise T.TransitionError(f"{task['slug']}: owner generation history conflicts")
+    if existing is None:
+        history.append(row)
+
+
+def _save_owner(project: str, before: dict, replacement: dict, *, updates: dict | None = None) -> dict:
+    """One TaskRecord CAS. Effects are forbidden while this short project lock is held."""
+    def decide(task):
+        current = _owner(task, project=project, required=True)
+        if current != _owner(before, project=project, required=True):
+            raise T.TransitionError(f"{before['slug']}: Codex owner changed concurrently")
+        candidate = {**task, **(updates or {}), "active_operation": replacement}
+        return candidate, None, None
+    candidate, _ = T.owner_command(project, before["slug"], decide,
+                                   lambda value: _owner(value, project=project, required=True))
+    return candidate
+
+
+def _recovery_observation(project: str, task: dict) -> dict:
+    try:
+        return recovery.observe_owner_state(project, task)
+    except ValueError as exc:
+        raise T.TransitionError(str(exc)) from exc
+
+
+def _new_physical(project: str, task: dict, op: dict, prep: dict) -> dict:
+    generation = int(task.get("owner_generation") or 0)
+    receipt = prep["receipt"]
+    identity = {"project": project, "slug": task["slug"], "dispatch_id": task["dispatch_id"],
+                "owner_generation": generation, "message_id": op["request"]["message_id"],
+                "worktree": receipt["worktree"], "branch": receipt["branch"],
+                "base_sha": receipt["base_sha"],
+                "model": op["request"]["model"], "routing": op["request"]["routing"],
+                "prompt_sha256": op["request"]["prompt_sha256"],
+                "capability_sha256": hashlib.sha256(task["l2_token"].encode()).hexdigest()}
+    transition_id = hashlib.sha256(b"codex-owner\0" + S._canonical_json(identity)).hexdigest()  # noqa: SLF001
+    recovery_state = _recovery_observation(project, task)
+    if op["recovery_epoch"] != recovery_state["epoch"]:
+        raise T.TransitionError(f"{task['slug']}: recovery epoch changed before owner preparation")
+    request = ({"kind": "resume", "session_id": task["session_id"]}
+               if task.get("session_id") else {"kind": "fresh"})
+    return engines.new_physical_transition(
+        transition_id=transition_id, subject_kind="owner", subject_id=f"{project}/{task['slug']}",
+        generation=transition_id, provider="codex", provider_session_request=request,
+        message_id=op["request"]["message_id"],
+        recovery_episode_id=recovery_state["episode_id"],
+        recovery_permit_revision=recovery_state["permit_revision"])
+
+
+def owner_projection(project: str, task: dict) -> dict | None:
+    """Pure public/liveness projection. It never repairs TaskRecord state."""
+    op = _owner(task, project=project)
+    if op is None:
+        return None
+    physical = op.get("physical")
+    observation = engines.observe_managed_unit(physical["process_unit_id"]) if physical else None
+    return {"provider": "codex", "stage": physical["stage"] if physical else "preparing",
+            "process_unit_id": physical["process_unit_id"] if physical else None,
+            "empty": observation.get("empty") if observation else True,
+            "working": bool(observation and not observation.get("empty")),
+            "terminal": _owner_terminal(op), "session_id": task.get("session_id")}
+
+
+def _owner_paths(project: str, slug: str, physical: dict) -> dict[str, Path]:
+    generation = physical["generation"]
+    if not re.fullmatch(r"[0-9a-f]{64}", generation):
+        raise T.TransitionError(f"{slug}: invalid owner runtime generation")
+    project_dir, tasks = config.project_dir(project), S.tasks_dir(project)
+    task_dir, family = tasks / slug, tasks / slug / "l2-engine"
+    root = family / generation
+    chain = (project_dir, tasks, task_dir, family, root)
+    if (any(path.is_symlink() or path.exists() and not path.is_dir() for path in chain)
+            or tasks.resolve().parent != project_dir.resolve()
+            or task_dir.resolve().parent != tasks.resolve()
+            or family.resolve().parent != task_dir.resolve()
+            or root.resolve().parent != family.resolve()):
+        raise T.TransitionError(f"{slug}: owner runtime path escapes its generation")
+    paths = {"root": root, "events": root / "events.jsonl", "answer": root / "answer.json",
+             "result": root / "result.json"}
+    for path in paths.values():
+        if path == root or not path.exists():
+            continue
+        mode = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(mode.st_mode) or mode.st_nlink != 1:
+            raise T.TransitionError(f"{slug}: owner runtime evidence is not a private regular file")
+        if path.resolve().parent != root.resolve():
+            raise T.TransitionError(f"{slug}: owner runtime evidence escapes its generation")
+    return paths
+
+
+def _owner_spool_header(physical: dict) -> dict:
+    return {"type": "altitude.owner.spool", "version": 1,
+            "transition_id": physical["transition_id"], "generation": physical["generation"],
+            "process_unit_id": physical["process_unit_id"], "message_id": physical["message_id"],
+            "intent_digest": physical["intent_digest"],
+            "answer_id": f"l2-engine/{physical['generation']}/answer.json"}
+
+
+def owner_event_path(project: str, task: dict) -> Path | None:
+    op = _owner(task, project=project)
+    return _owner_paths(project, task["slug"], op["physical"])["events"] if op and op.get("physical") else None
+
+
+def owner_generation_event_paths(project: str, task: dict) -> list[tuple[str, Path]]:
+    """Enumerate only validated TaskRecord generation projections; never scan runtime files."""
+    _owner(task, project=project)  # validates the compact history as well as the current generation
+    values = [(row.get("session_id") or "", _owner_paths(
+        project, task["slug"], {"generation": row["generation"]})["events"])
+        for row in task.get("owner_generations") or []]
+    current = _owner(task, project=project)
+    if current and current.get("physical"):
+        values.append((task.get("session_id") or "",
+                       _owner_paths(project, task["slug"], current["physical"])["events"]))
+    return values
+
+
+def _sync_owner_transcript(project: str, slug: str) -> None:
+    from . import transcript
+    transcript.sync(project, slug)
+
+
+def _owner_marker(project: str, task: dict, op: dict) -> tuple[dict | None, dict]:
+    physical = op["physical"]
+    path = _owner_paths(project, task["slug"], physical)["result"]
+    if not path.exists():
+        return None, {"present": False}
+    try:
+        marker = S._strict_json_loads(engines.read_bounded_codex_output(path, 65536, "Codex owner result"))  # noqa: SLF001
+    except (RuntimeError, ValueError, RecursionError) as exc:
+        raise T.TransitionError(f"{task['slug']}: invalid owner result marker: {exc}") from exc
+    if (not isinstance(marker, dict) or set(marker) != {"version", "transition_id", "process_unit_id",
+            "intent_digest", "result"} or marker.get("version") != 1
+            or (marker.get("transition_id"), marker.get("process_unit_id"), marker.get("intent_digest")) !=
+                (physical["transition_id"], physical["process_unit_id"], physical["intent_digest"])):
+        raise T.TransitionError(f"{task['slug']}: owner result marker does not match its intent")
+    result = marker.get("result")
+    if not isinstance(result, dict) or set(result) != _RESULT_KEYS:
+        raise T.TransitionError(f"{task['slug']}: malformed owner result marker")
+    probe = {**op, "result": result}
+    _owner({**task, "active_operation": probe}, project=project, required=True)
+    bound = (physical["receipts"].get("bound") or {})
+    if (result.get("error") is None and bound.get("bound") is True
+            and result.get("provider_session_id") != bound.get("provider_session_id")):
+        raise T.TransitionError(f"{task['slug']}: owner result changed its bound provider thread")
+    requested = physical["provider_session_request"]
+    if (result.get("error") is None and requested["kind"] == "resume"
+            and result.get("provider_session_id") != requested["session_id"]):
+        raise T.TransitionError(f"{task['slug']}: owner result changed its resumed provider thread")
+    if (physical.get("error") and result == {"provider_session_id": None, "action": None,
+            "usage": {}, "error": physical["error"]}):
+        return marker, {"present": True, "process_unit_id": physical["process_unit_id"],
+                        "intent_digest": physical["intent_digest"], "result_id": "transition:error",
+                        "sha256": hashlib.sha256(physical["error"].encode()).hexdigest()}
+    return marker, {"present": True, "process_unit_id": physical["process_unit_id"],
+                    "intent_digest": physical["intent_digest"],
+                    "result_id": f"l2-engine/{physical['generation']}/result.json",
+                    "sha256": hashlib.sha256(S._canonical_json(marker)).hexdigest()}  # noqa: SLF001
 
 
 @contextmanager
@@ -90,22 +445,10 @@ def _git_branch(worktree: str | Path) -> str | None:
     return b if r.returncode == 0 and b and b != "HEAD" else None
 
 
-def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str | None = None) -> str:
-    """The branch `claude --bg -w <slug>` really checks out — `worktree-<slug>`, never the bare slug.
-
-    The harness records the real name in `~/.claude/jobs/<agent_id>/state.json` (`worktreeBranch`); before an agent id
-    exists the name is derived and confirmed against the worktree itself. Every failure degrades to the derived name:
-    a wrong branch in the brief is bad, a dispatch that dies reading a state file is worse."""
+def worktree_branch(slug: str, worktree: str | Path | None = None) -> str:
+    """Return the exact Git branch when observable, otherwise the deterministic task branch."""
     derived = f"worktree-{slug}"
-    if agent_id:
-        try:
-            st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
-            b = (st.get("worktreeBranch") or "").strip() if isinstance(st, dict) else ""
-            if b:
-                return b
-        except (OSError, ValueError, AttributeError):
-            pass
-    return (_git_branch(worktree) or derived) if worktree else derived
+    return (_git_branch(worktree) or derived) if worktree and Path(worktree).exists() else derived
 
 
 def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path:
@@ -113,7 +456,7 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
     import subprocess
 
     expected_branch = f"worktree-{slug}"
-    worktree = repo / ".claude" / "worktrees" / slug
+    worktree = _expected_task_worktree(repo, slug)
 
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
@@ -140,8 +483,9 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
     """Validate an already-created L2 checkout before either a fresh launch or a resume."""
     import subprocess
 
-    expected_path = (repo / ".claude" / "worktrees" / slug).resolve()
-    if worktree.resolve() != expected_path or not worktree.is_dir():
+    expected_path = _expected_task_worktree(repo, slug)
+    if (worktree.absolute() != expected_path or worktree.is_symlink()
+            or worktree.resolve() != expected_path or not worktree.is_dir()):
         raise T.TransitionError(f"task worktree for {project}/{slug} must be {expected_path}, got {worktree}")
     expected_branch = f"worktree-{slug}"
     actual = _git_branch(worktree)
@@ -172,8 +516,22 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
             )
 
 
+def _expected_task_worktree(repo: Path, slug: str) -> Path:
+    """Return one lexical canonical worktree path; symlinked parents/targets are never authority."""
+    repository = repo.expanduser().absolute()
+    claude, parent = repository / ".claude", repository / ".claude" / "worktrees"
+    target = parent / slug
+    if (repository.is_symlink() or claude.is_symlink() or parent.is_symlink() or target.is_symlink()
+            or repository.resolve() != repository
+            or claude.resolve().parent != repository
+            or parent.resolve().parent != claude.resolve()
+            or target.resolve().parent != parent.resolve()):
+        raise T.TransitionError(f"task worktree path for {slug} escapes its registered repository")
+    return target
+
+
 def build_brief(project: str, slug: str, issue_snapshot: dict | None = None) -> str:
-    task = S.load_task(project, slug)
+    task = _active_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
     request = (d / "request.md").read_text()
@@ -229,36 +587,527 @@ def build_brief(project: str, slug: str, issue_snapshot: dict | None = None) -> 
     return text
 
 
-def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-dispatch settings: repository guardrails and passive edit telemetry."""
-    hooks = config.HOOKS
-    settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
-        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
-    }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
-               "ALTITUDE_SESSION_KEY": session_key},
-        "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
-    p = S.task_dir(project, slug) / "settings.json"
-    S.write_json(p, settings)
-    return p
+def _begin_owner_request(project: str, slug: str, request: dict, *, initial: dict | None = None) -> tuple[dict, str]:
+    """Install one request or its durable successor. A different live request is never overwritten."""
+    snapshot = _active_task(project, slug)
+    snapshot_owner = _owner(snapshot, project=project)
+    terminal_expected = None
+    if _owner_terminal(snapshot_owner):
+        _terminal_owner_evidence(project, snapshot, snapshot_owner)
+        terminal_expected = snapshot_owner
+    epoch = recovery.clearance_epoch()
+    def decide(task):
+        if task.get("state") not in ("queued", "running", "blocked"):
+            raise T.TransitionError(f"{slug}: cannot install owner request in {task.get('state')}")
+        current = _owner(task, project=project)
+        if current and _owner_terminal(current) and current != terminal_expected:
+            raise T.TransitionError(f"{slug}: terminal owner changed before successor installation")
+        if current and not _owner_terminal(current):
+            if current["request"] == request:
+                return task, "recover", None
+            if current.get("successor") not in (None, request):
+                raise T.TransitionError(f"{slug}: a different owner successor is already pending")
+            current["successor"] = request
+            current["stop"] = current.get("stop") or {
+                "reason": "superseded by persisted owner request", "requested": S.now()}
+            task["active_operation"] = current
+            return task, "stop", None
+        prior = current["physical"]["process_unit_id"] if current and current.get("physical") else None
+        if current:
+            _retire_owner_generation(task, current)
+        task.update(initial or {})
+        task["active_operation"] = _operation(project, slug, request, prior, epoch)
+        return task, "prepare", ("owner-request-planned", {"message_id": request["message_id"]})
+    task, disposition = T.owner_command(project, slug, decide,
+                                        lambda value: _owner(value, project=project, required=True))
+    if terminal_expected is not None and disposition == "prepare":
+        _sync_owner_transcript(project, slug)
+    return task, disposition
 
+
+def _promote_successor(project: str, slug: str) -> dict:
+    snapshot = _active_task(project, slug)
+    expected = _owner(snapshot, project=project, required=True)
+    _terminal_owner_evidence(project, snapshot, expected)
+    epoch = recovery.clearance_epoch()
+    def decide(task):
+        current = _owner(task, project=project, required=True)
+        if current != expected or not _owner_terminal(current) or current.get("successor") is None:
+            raise T.TransitionError(f"{slug}: owner successor is not ready")
+        prior = current["physical"]["process_unit_id"]
+        _retire_owner_generation(task, current)
+        task["active_operation"] = _operation(project, slug, current["successor"], prior, epoch)
+        return task, None, None
+    task, _ = T.owner_command(project, slug, decide,
+                              lambda value: _owner(value, project=project, required=True))
+    _sync_owner_transcript(project, slug)
+    return task
+
+
+def _prepare_owner(project: str, task: dict, *, worktree: Path, branch: str, base_sha: str) -> dict:
+    """CAS the completed Git preparation and inert physical intent after effects finish."""
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "complete":
+        return task
+    intent = op["preparation"]["intent"]
+    receipt = {**intent, "base_sha": base_sha}
+    if (str(worktree), branch) != (intent["worktree"], intent["branch"]):
+        raise T.TransitionError(f"{task['slug']}: Git preparation differs from persisted intent")
+    prepared = {**op, "preparation": {"stage": "complete", "intent": intent,
+        "receipt": receipt, "prior_unit": op["preparation"]["prior_unit"]}}
+    generation = int(task.get("owner_generation") or 0) + 1
+    candidate = {**task, "owner_generation": generation, "worktree": str(worktree), "branch": branch,
+                 "base_sha": base_sha}
+    prepared["physical"] = _new_physical(project, candidate, prepared, prepared["preparation"])
+    return _save_owner(project, task, prepared, updates={
+        "owner_generation": generation, "worktree": str(worktree), "branch": branch, "base_sha": base_sha})
+
+
+def _step_owner(project: str, task: dict, stage: str, following: str, receipt: dict,
+                *, result: dict | None = None, updates: dict | None = None) -> dict:
+    op = _owner(task, project=project, required=True)
+    replacement = {**op, "physical": engines.advance_physical_transition(
+        op["physical"], stage, following, receipt)}
+    if result is not None:
+        replacement["result"] = result
+    return _save_owner(project, task, replacement, updates=updates)
+
+
+def _claim_owner_launch(project: str, task: dict) -> tuple[dict, bool]:
+    """Only the CAS winner of planned→prior_stopped may cross the provider spawn boundary."""
+    op = _owner(task, project=project, required=True)
+    if op["physical"]["stage"] != "planned":
+        return task, False
+    prior = op["preparation"]["prior_unit"]
+    if prior is None:
+        receipt = {"previous_process_unit_id": None, "empty": True}
+    else:
+        observed = engines.observe_managed_unit(prior)
+        if observed.get("empty") is not True:
+            return task, False
+        receipt = {"previous_process_unit_id": prior, "empty": True, "observation": observed}
+    try:
+        return _step_owner(project, task, "planned", "prior_stopped", receipt), True
+    except T.TransitionError:
+        current = _active_task(project, task["slug"])
+        _owner(current, project=project, required=True)
+        return current, False
+
+
+def _write_owner_marker(project: str, task: dict, op: dict, result: dict) -> None:
+    physical = op["physical"]
+    marker = {"version": 1, "transition_id": physical["transition_id"],
+              "process_unit_id": physical["process_unit_id"],
+              "intent_digest": physical["intent_digest"], "result": result}
+    try:
+        encoded = S._canonical_json(marker) + b"\n"  # noqa: SLF001
+    except (TypeError, ValueError, RecursionError):
+        encoded = b""
+    if not encoded or len(encoded) > 65536:
+        result = {"provider_session_id": None, "action": None, "usage": {},
+                  "error": "Codex owner result exceeded 65536 bytes"}
+        marker["result"] = result
+        encoded = S._canonical_json(marker) + b"\n"  # noqa: SLF001
+    S.atomic_write(_owner_paths(project, task["slug"], physical)["result"], encoded.decode())
+
+
+def _parse_owner_spool(project: str, task: dict, op: dict) -> dict:
+    paths, physical = _owner_paths(project, task["slug"], op["physical"]), op["physical"]
+    events_text = engines.read_bounded_codex_output(paths["events"], engines.CODEX_EVENT_CAP,
+                                                     "Codex owner event spool")
+    answer_text = engines.read_bounded_codex_output(paths["answer"], engines.CODEX_ANSWER_CAP,
+                                                     "Codex owner answer")
+    if not events_text.endswith("\n"):
+        raise T.TransitionError("Codex owner event spool has an incomplete tail")
+    try:
+        events = [S._strict_json_loads(line) for line in events_text.splitlines()]  # noqa: SLF001
+        action = S._strict_json_loads(answer_text)  # noqa: SLF001
+        for value in [*events, action]:
+            S._canonical_json(value)  # noqa: SLF001
+        from . import actions
+        actions._validate_shape(action)  # noqa: SLF001
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise T.TransitionError(f"invalid Codex owner spool: {exc}") from exc
+    header = _owner_spool_header(physical)
+    started = [(i, row) for i, row in enumerate(events[1:], 1) if row.get("type") == "thread.started"]
+    terminals = [(i, row) for i, row in enumerate(events[1:], 1)
+                 if row.get("type") in ("turn.completed", "turn.failed")]
+    if (not events or events[0] != header or len(started) != 1 or len(terminals) != 1
+            or terminals[0][1].get("type") != "turn.completed"
+            or not started[0][0] < terminals[0][0] == len(events) - 1
+            or not isinstance(started[0][1].get("thread_id"), str)
+            or not started[0][1]["thread_id"]
+            or len(started[0][1]["thread_id"].encode()) > engines.CODEX_PROVIDER_SESSION_ID_CAP
+            or not isinstance(terminals[0][1].get("usage"), dict)):
+        raise T.TransitionError("Codex owner spool has no single successful turn")
+    return {"provider_session_id": started[0][1]["thread_id"], "action": action,
+            "usage": terminals[0][1]["usage"], "error": None}
+
+
+def _owner_thread(project: str, task: dict, op: dict) -> str | None:
+    """Read only the bounded, unique thread-start prefix while the managed unit is live."""
+    path = _owner_paths(project, task["slug"], op["physical"])["events"]
+    if not path.exists():
+        return None
+    text = engines.read_bounded_codex_output(path, engines.CODEX_EVENT_CAP, "Codex owner event spool")
+    rows = []
+    for line in text.splitlines():
+        try:
+            row = S._strict_json_loads(line)  # noqa: SLF001
+        except (ValueError, RecursionError):
+            if line == text.splitlines()[-1] and not text.endswith("\n"):
+                break
+            raise T.TransitionError("Codex owner event spool contains corrupt evidence")
+        if not isinstance(row, dict):
+            raise T.TransitionError("Codex owner event spool row is not an object")
+        rows.append(row)
+    if not rows or rows[0] != _owner_spool_header(op["physical"]):
+        raise T.TransitionError("Codex owner event spool header does not match its generation")
+    starts = [row.get("thread_id") for row in rows[1:] if row.get("type") == "thread.started"]
+    if len(starts) > 1:
+        raise T.TransitionError("Codex owner event spool contains duplicate thread identity")
+    if not starts:
+        return None
+    value = starts[0]
+    if (not isinstance(value, str) or not value
+            or len(value.encode()) > engines.CODEX_PROVIDER_SESSION_ID_CAP):
+        raise T.TransitionError("Codex owner thread identity is invalid")
+    return value
+
+
+def _managed_owner(project: str, slug: str, transition_id: str) -> int:
+    """Run one bounded Codex turn inside the predeclared outer managed unit."""
+    task = _active_task(project, slug)
+    op = _owner(task, project=project, required=True)
+    physical = op["physical"]
+    if physical["transition_id"] != transition_id or physical["stage"] not in ("prior_stopped", "spawned"):
+        return 2
+    paths = _owner_paths(project, slug, physical)
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    header = _owner_spool_header(physical)
+    if any(path.exists() for key, path in paths.items() if key != "root"):
+        return 3
+    S.atomic_write(paths["events"], S._canonical_json(header).decode() + "\n")  # noqa: SLF001
+    S.atomic_write(paths["answer"], "")
+    current = _active_task(project, slug)
+    current_op = _owner(current, project=project, required=True)
+    same = (current_op["request"] == op["request"] and current_op["preparation"] == op["preparation"]
+            and all(current_op["physical"][key] == physical[key]
+                    for key in ("transition_id", "generation", "process_unit_id", "message_id", "intent_digest")))
+    if (not same or current_op.get("stop") is not None
+            or not recovery.owner_state_is_current(project, current, physical, current_op["recovery_epoch"])):
+        _write_owner_marker(project, task, op, {"provider_session_id": None, "action": None,
+                            "usage": {}, "error": "owner cancelled or recovery changed before Codex launch"})
+        return 4
+    persona = (config.PERSONAS / "l2_codex.md").read_text()
+    request = physical["provider_session_request"]
+    result = engines.codex_exec(
+        persona + "\n\n" + op["request"]["prompt"],
+        cwd=Path(op["preparation"]["receipt"]["worktree"]),
+        schema=config.SCHEMAS / "l2_action.json", sandbox="workspace-write",
+        model=op["request"]["model"], timeout=config.L3_CODEX_TURN_TIMEOUT,
+        extra_env=l2_env(project, task), resume=request.get("session_id"), contain=False,
+        answer_path=paths["answer"], event_spool=paths["events"])
+    try:
+        if result.get("returncode") != 0:
+            raise T.TransitionError(_bounded_owner_error(
+                result.get("error") or "Codex owner process failed"))
+        bounded = _parse_owner_spool(project, task, op)
+        if request["kind"] == "resume" and bounded["provider_session_id"] != request["session_id"]:
+            raise T.TransitionError("Codex owner resumed a different provider thread")
+        current = _active_task(project, slug)
+        current_op = _owner(current, project=project, required=True)
+        if (current_op.get("stop") is not None or current_op["request"] != op["request"]
+                or current_op["preparation"] != op["preparation"]
+                or current_op["physical"]["intent_digest"] != physical["intent_digest"]
+                or not recovery.owner_state_is_current(
+                    project, current, physical, current_op["recovery_epoch"])):
+            raise T.TransitionError("owner cancelled or recovery changed before owner result")
+    except T.TransitionError as exc:
+        bounded = {"provider_session_id": None, "action": None, "usage": {},
+                   "error": _bounded_owner_error(exc)}
+    current = _active_task(project, slug)
+    current_op = _owner(current, project=project, required=True)
+    same = (current_op["request"] == op["request"] and current_op["preparation"] == op["preparation"]
+            and current_op["physical"]["intent_digest"] == physical["intent_digest"])
+    if not same:
+        return 5
+    if (current_op.get("stop") is not None
+            or not recovery.owner_state_is_current(project, current, physical,
+                                                    current_op["recovery_epoch"])):
+        bounded = {"provider_session_id": None, "action": None, "usage": {},
+                   "error": "owner cancelled or recovery changed before result persistence"}
+    _write_owner_marker(project, current, current_op, bounded)
+    return 0 if bounded["error"] is None else 1
+
+
+def _spawn_owner(project: str, task: dict) -> dict:
+    task, winner = _claim_owner_launch(project, task)
+    if not winner:
+        return reconcile_owner(project, task["slug"])
+    op = _owner(task, project=project, required=True)
+    physical = op["physical"]
+    child_env = engines.codex_env(l2_env(project, task)); child_env["PYTHONPATH"] = str(config.REPO)
+    try:
+        with recovery.owner_launch_permission(project, task, physical, op["recovery_epoch"]):
+            current = _active_task(project, task["slug"])
+            current_op = _owner(current, project=project, required=True)
+            if current_op != op or current_op.get("stop") is not None:
+                raise T.TransitionError("owner changed or was cancelled before provider launch")
+            engines.spawn_managed_unit(
+                physical, [sys.executable, "-m", "altitude.dispatch", "--managed-owner", project,
+                           task["slug"], physical["transition_id"]], cwd=config.REPO,
+                launcher_env=engines.codex_env(l2_env(project, task), retain_user_bus=True),
+                child_env=child_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        replacement = {**op, "physical": engines.note_physical_transition_error(
+            physical, _bounded_owner_error(exc))}
+        return _save_owner(project, task, replacement)
+    try:
+        return _step_owner(project, task, "prior_stopped", "spawned",
+                           {"process_unit_id": physical["process_unit_id"], "launched": True})
+    except T.TransitionError:
+        # A concurrent reconciler may have observed this exact unit and recorded the
+        # same launch. It owns the later receipts; never stop a healthy elected unit.
+        return reconcile_owner(project, task["slug"])
+
+
+def reconcile_owner(project: str, slug: str) -> dict:
+    """Forward-repair one physical stage per CAS loop. Reconciliation never launches."""
+    for _ in range(12):
+        task = _active_task(project, slug)
+        op = _owner(task, project=project, required=True)
+        if op["preparation"]["stage"] == "planned" or _owner_terminal(op):
+            return task
+        marker, durable = _owner_marker(project, task, op)
+        physical, stage = op["physical"], op["physical"]["stage"]
+        if (not recovery.owner_state_is_current(project, task, physical, op["recovery_epoch"])
+                and stage not in ("complete", "failed")
+                and not (stage == "prior_stopped" and marker is not None)):
+            if not engines.observe_managed_unit(physical["process_unit_id"])["empty"]:
+                engines.stop_managed_unit(physical["process_unit_id"])
+            if physical["error"] is None:
+                task = _save_owner(project, task, {**op, "physical":
+                    engines.note_physical_transition_error(
+                        physical, _bounded_owner_error("recovery episode changed before owner settlement"))})
+                continue
+        try:
+            decision = engines.reconcile_physical_transition(physical, durable)
+        except engines.PhysicalTransitionError as exc:
+            raise T.TransitionError(f"{slug}: ownership_uncertain: {exc}") from exc
+        action, unit = decision["decision"], decision["process_unit"]
+        if stage == "planned":
+            return task
+        if stage == "prior_stopped":
+            if action not in ("record_spawned", "record_spawn_failure"):
+                raise T.TransitionError(f"{slug}: unexpected launch reconciliation {action}")
+            launched = action == "record_spawned"
+            task = _step_owner(project, task, stage, "spawned", {
+                "process_unit_id": physical["process_unit_id"], "launched": launched,
+                **({} if launched else {"reason": physical["error"]})})
+            continue
+        if stage == "spawned":
+            if marker is None and not unit["empty"]:
+                bound = _owner_thread(project, task, op)
+                if bound is None:
+                    return task
+                request = physical["provider_session_request"]
+                if request["kind"] == "resume" and request["session_id"] != bound:
+                    raise T.TransitionError(f"{slug}: Codex owner resumed a different thread")
+                updates = {"session_id": bound, "agent_id": physical["process_unit_id"]}
+                if task.get("state") == "queued":
+                    updates.update({"state": "running", "dispatching": None})
+                task = _step_owner(project, task, stage, "bound", {
+                    "bound": True, "physical_worker_id": physical["process_unit_id"],
+                    "provider_session_id": bound}, updates=updates)
+                continue
+            if marker is None:
+                error = physical["error"] or "Codex owner exited without a bounded result"
+                replacement = {**op, "physical": (physical if physical["error"] else
+                    engines.note_physical_transition_error(physical, error))}
+                task = _save_owner(project, task, replacement)
+                op = _owner(task, project=project, required=True)
+                _write_owner_marker(project, task, op, {"provider_session_id": None, "action": None,
+                                    "usage": {}, "error": error})
+                continue
+            result = marker["result"]
+            if result["error"] and physical["error"] is None:
+                task = _save_owner(project, task, {**op, "physical":
+                    engines.note_physical_transition_error(
+                        physical, _bounded_owner_error(result["error"]))})
+                continue
+            bound = result.get("provider_session_id")
+            receipt = ({"bound": True, "physical_worker_id": physical["process_unit_id"],
+                        "provider_session_id": bound} if bound else
+                       {"bound": False, "reason": physical["error"]})
+            updates = ({"session_id": bound, "agent_id": physical["process_unit_id"],
+                        **({"state": "running", "dispatching": None}
+                           if task.get("state") == "queued" else {})} if bound else None)
+            task = _step_owner(project, task, stage, "bound", receipt,
+                               updates=updates)
+            continue
+        if stage == "bound":
+            if marker is None:
+                if not unit["empty"]:
+                    return task
+                error = physical["error"] or "Codex owner exited without a bounded result"
+                task = _save_owner(project, task, {**op, "physical": (physical if physical["error"] else
+                    engines.note_physical_transition_error(physical, error))})
+                op = _owner(task, project=project, required=True)
+                _write_owner_marker(project, task, op, {"provider_session_id": None, "action": None,
+                                    "usage": {}, "error": error})
+                continue
+            task = _step_owner(project, task, stage, "result_observed",
+                {"result_id": durable["result_id"], "sha256": durable["sha256"]}, result=marker["result"])
+            continue
+        if stage == "result_observed":
+            if not unit["empty"]:
+                return task
+            task = _step_owner(project, task, stage, "empty", unit)
+            continue
+        if stage == "empty":
+            terminal = "failed" if physical["error"] else "complete"
+            task = _step_owner(project, task, stage, terminal, {"status": terminal})
+            if terminal == "complete" and task.get("state") == "queued":
+                # A completed turn may have exited before its bound receipt was projected; state still becomes owned.
+                pass
+            return task
+    raise T.TransitionError(f"{slug}: owner reconciliation exceeded its closed stage count")
+
+
+def stop_owner(project: str, slug: str, reason: str) -> dict:
+    """Persist stop intent, perform idempotent stop, then reconcile exact terminal emptiness."""
+    def decide(task):
+        op = _owner(task, project=project, required=True)
+        if _owner_terminal(op):
+            return task, None, None
+        if op.get("stop") is None:
+            op["stop"] = {"reason": _bounded_owner_error(reason), "requested": S.now()}
+            task["active_operation"] = op
+        return task, None, None
+    task, _ = T.owner_command(project, slug, decide,
+                              lambda value: _owner(value, project=project, required=True))
+    if _owner_terminal(_owner(task, project=project, required=True)):
+        return task
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "planned":
+        raise T.TransitionError(f"{slug}: prepared Git effect must reconcile before stop")
+    physical = op["physical"]
+    if physical["stage"] == "planned":
+        task = _save_owner(project, task, {**op, "physical":
+            engines.note_physical_transition_error(physical, _bounded_owner_error(reason))})
+        task, _winner = _claim_owner_launch(project, task)
+        op = _owner(task, project=project, required=True)
+        physical = op["physical"]
+    if physical["stage"] == "prior_stopped" and physical["error"] is None:
+        raise T.TransitionError(f"{slug}: launch boundary is ambiguous; reconcile before replacement")
+    unlaunched = (physical["stage"] == "prior_stopped" and physical["error"] is not None
+                  or (physical["receipts"].get("spawned") or {}).get("launched") is False)
+    if physical["stage"] not in ("complete", "failed") and not unlaunched:
+        engines.stop_managed_unit(physical["process_unit_id"])
+    task = reconcile_owner(project, slug)
+    if not _owner_terminal(_owner(task, project=project, required=True)):
+        task = reconcile_owner(project, slug)
+    return task
+
+
+def cancel_owner(project: str, slug: str, reason: str) -> dict:
+    """Install the rejection cancellation intent before the idempotent physical stop."""
+    def install(task):
+        op = _owner(task, project=project, required=True)
+        if not _owner_terminal(op):
+            op["stop"] = {"reason": _bounded_owner_error(reason), "requested": S.now(), "cancel": True}
+            task["active_operation"] = op
+        return task, None, None
+    task, _ = T.owner_command(project, slug, install,
+                              lambda value: _owner(value, project=project, required=True))
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "planned":
+        def retire(task):
+            current = _owner(task, project=project, required=True)
+            if current != op or not (current.get("stop") or {}).get("cancel"):
+                raise T.TransitionError(f"{slug}: cancellation intent changed")
+            task.pop("active_operation", None)
+            return task, None, ("owner-request-cancelled-before-effect", {})
+        task, _ = T.owner_command(project, slug, retire,
+                                  lambda value: None if value.get("active_operation") is None else
+                                  _owner(value, project=project, required=True))
+        return task
+    return stop_owner(project, slug, reason)
+
+
+def owner_archive_ready(project: str, task: dict) -> bool:
+    op = _owner(task, project=project)
+    return op is None or (_owner_terminal(op) and op["physical"]["receipts"].get("empty", {}).get("empty") is True)
+
+
+def _terminal_owner_evidence(project: str, task: dict, op: dict) -> tuple[dict, dict]:
+    if not _owner_terminal(op):
+        raise T.TransitionError(f"{task['slug']}: owner is not terminal")
+    marker, durable = _owner_marker(project, task, op)
+    receipt = op["physical"]["receipts"]["result_observed"]
+    observed = ({"result_id": durable.get("result_id"), "sha256": durable.get("sha256")}
+                if durable.get("present") else None)
+    if marker is None or observed != receipt or marker["result"] != op.get("result"):
+        raise T.TransitionError(f"{task['slug']}: terminal owner result evidence changed")
+    return marker, durable
+
+
+def owner_result_snapshot(project: str, task: dict) -> dict:
+    task = reconcile_owner(project, task["slug"])
+    op = _owner(task, project=project, required=True)
+    if op["physical"]["stage"] != "complete" or op.get("result") is None:
+        raise T.TransitionError(f"{task['slug']}: exact terminal-empty owner result required")
+    _terminal_owner_evidence(project, task, op)
+    if not recovery.owner_state_is_current(project, task, op["physical"], op["recovery_epoch"]):
+        raise T.TransitionError(f"{task['slug']}: owner recovery fence changed")
+    physical = op["physical"]
+    return {"task": task, "result": op["result"], "transition_id": physical["transition_id"],
+            "process_unit_id": physical["process_unit_id"], "intent_digest": physical["intent_digest"],
+            "message_id": physical["message_id"], "generation": physical["generation"],
+            "result_receipt": physical["receipts"]["result_observed"],
+            "empty_receipt": physical["receipts"]["empty"],
+            "recovery_episode_id": physical["recovery_episode_id"],
+            "recovery_permit_revision": physical["recovery_permit_revision"],
+            "recovery_epoch": op["recovery_epoch"]}
+
+
+def require_owner_result(project: str, task: dict) -> dict:
+    """Stable broker seam: return only the exact terminal-empty, recovery-current owner result."""
+    snapshot = owner_result_snapshot(project, task)
+    live, result = snapshot["task"], snapshot["result"]
+    return {**snapshot, "agent": {"id": live.get("agent_id"), "sessionId": live.get("session_id"),
+                                   "state": "done", "status": "exited", "engine": "codex",
+                                   "action": result.get("action")},
+            "worker_result": result.get("action"), "owner_result": {
+                "version": 1, "provider": "codex", "project": project, "slug": live["slug"],
+                "owner_generation": live.get("owner_generation"),
+                "transition_id": snapshot["transition_id"],
+                "generation": snapshot["generation"], "message_id": snapshot["message_id"],
+                "process_unit_id": snapshot["process_unit_id"],
+                "intent_digest": snapshot["intent_digest"],
+                "result_receipt": snapshot["result_receipt"],
+                "empty_receipt": snapshot["empty_receipt"],
+                "recovery_episode_id": snapshot["recovery_episode_id"],
+                "recovery_permit_revision": snapshot["recovery_permit_revision"],
+                "recovery_epoch": snapshot["recovery_epoch"]}}
+
+
+def require_owner_permit_current(project: str, task: dict) -> None:
+    op = _owner(task, project=project, required=True)
+    if not recovery.owner_state_is_current(project, task, op["physical"], op["recovery_epoch"]):
+        raise T.TransitionError(f"{task['slug']}: owner recovery fence changed")
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
-    # Read task eligibility first, but do not mark or write anything until the deployment checkout has passed
-    # its remote-backed gate and this task's worktree has a provenance-safe base.
+    """Install a durable request before Git/provider effects, then start only as CAS launch winner."""
     with S.project_lock(project):
-        task = S.load_task(project, slug)
+        task = _active_task(project, slug)
         if task["state"] != "queued":
             raise T.TransitionError(f"{slug} is {task['state']}, not queued")
-        # A provider already persisted on a queued legacy row is ownership
-        # evidence, not a routing suggestion. Never rewrite it to an enabled
-        # provider or perform intake/Git/worktree effects first.
+        # Persisted provider ownership and explicit provider pins are checked
+        # before intake, Git, worktree, or launch effects.
         T.require_owner_provider_capability(task)
-        if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
-            raise T.TransitionError(f"{slug} is already being dispatched")
-        held = wip_hold(project, task)
-        if held:
-            raise T.TransitionError(held)
         proj = config.project(project)
         forced_engine = task.get("engine") or proj.get("l2_engine")
         if model in config.MODEL_ALIASES and not forced_engine:
@@ -268,105 +1117,86 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
                 engines.require_autonomous_engine(forced_engine)
             except engines.EngineCapabilityError as exc:
                 raise T.TransitionError(f"engine hold: {exc}") from exc
-    try:
-        issue_snapshot = github_intake.ensure_snapshot(project, slug, expected_state="queued")
-    except github_intake.IssueIntakeError as exc:
-        raise T.TransitionError(f"GitHub issue intake held before launch: {exc}") from exc
+        held = wip_hold(project, task)
+        if held:
+            raise T.TransitionError(held)
+        if task.get("l2_engine") == "codex" and task.get("active_operation") is None:
+            raise T.TransitionError(f"{slug}: unknown legacy Codex ownership cannot be relaunched")
+        existing = _owner(task, project=project) if task.get("l2_engine") == "codex" else None
+    if existing and not _owner_terminal(existing):
+        if existing["preparation"]["stage"] == "planned":
+            request = existing["request"]
+        else:
+            started = (_spawn_owner(project, task) if existing["physical"]["stage"] == "planned"
+                       else reconcile_owner(project, slug))
+            return _wait_owner_started(project, started)
+    else:
+        try:
+            issue_snapshot = github_intake.ensure_snapshot(project, slug, expected_state="queued")
+        except github_intake.IssueIntakeError as exc:
+            raise T.TransitionError(f"GitHub issue intake held before launch: {exc}") from exc
+        with S.project_lock(project):
+            task = _active_task(project, slug)
+            proj = config.project(project)
+            forced = task.get("engine") or proj.get("l2_engine")
+            choice = route.pick_engine("l2", forced=forced)
+            if choice.get("engine") != "codex":
+                raise T.TransitionError("Codex is the sole autonomous L2 provider")
+            selected_model = model or task.get("model") or proj.get("l2_codex_model")
+            attempt = int(task.get("attempt") or 0) + 1
+            dispatch_id = f"{slug}-{attempt}"
+        brief = build_brief(project, slug, issue_snapshot)
+        message_id = hashlib.sha256(
+            f"owner\0{project}\0{slug}\0{dispatch_id}\0initial".encode()).hexdigest()
+        request = _request(message_id, brief, selected_model, choice,
+                           (issue_snapshot or {}).get("content_sha256"))
+        task, disposition = _begin_owner_request(project, slug, request, initial={
+            "dispatching": S.now(), "dispatch_id": dispatch_id, "attempt": attempt,
+            "l2_engine": "codex", "engine_model": selected_model, "routing": choice,
+            "l2_token": secrets.token_urlsafe(24)})
+        if disposition not in ("prepare", "recover"):
+            raise T.TransitionError(f"{slug}: initial owner request unexpectedly requires stop")
+        T.brief(project, slug, brief, actor="altd")
+
     repo = config.project_path(project)
     try:
         with publication_settlement(project):
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-    except git_policy.GitPolicyError as exc:
-        # system_fault may acquire state locks, so it deliberately lives outside project_lock.
-        from . import incidents
-        incidents.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
-        raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
-    try:
-        worktree_path = _task_worktree(repo, project, slug, origin_sha)
+        worktree = _task_worktree(repo, project, slug, origin_sha)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import incidents
-        incidents.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
-        raise T.TransitionError(f"dispatch refused by task provenance gate: {exc}") from exc
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task["state"] != "queued":
-            raise T.TransitionError(f"{slug} is {task['state']}, not queued")
-        T.require_owner_provider_capability(task)
-        if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
-            raise T.TransitionError(f"{slug} is already being dispatched")
-        proj = config.project(project)
-        forced_engine = task.get("engine") or proj.get("l2_engine")
-        if model in config.MODEL_ALIASES and not forced_engine:
-            forced_engine = "claude"
-        choice = route.pick_engine("l2", forced=forced_engine)
-        if not choice.get("engine"):
-            raise T.TransitionError(f"engine hold: {choice['why']}")
-        engine = choice["engine"]
-        try:
-            engines.require_autonomous_engine(engine)
-        except engines.EngineCapabilityError as exc:
-            raise T.TransitionError(f"engine hold: {exc}") from exc
-        selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
-                          if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
-        task.update({"dispatching": S.now(), "l2_engine": engine, "engine_model": selected_model,
-                     "routing": choice})
-        S.save_task(project, task)
-    attempt = task.get("attempt", 0) + 1
-    dispatch_id = f"{slug}-{attempt}"
-    name = f"{project}/{dispatch_id}"
-    l2_token = secrets.token_urlsafe(24)
-    agent = {}
-    try:
-        brief_md = build_brief(project, slug, issue_snapshot)
-        T.brief(project, slug, brief_md, actor="altd")
-        settings = session_settings(project, slug, f"{project}--{dispatch_id}")
-        persona = config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md")
-        res = engines.start_l2(
-            engine, name, brief_md, cwd=worktree_path, persona=persona, model=selected_model, settings=settings,
-            extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id, "l2_token": l2_token}),
-            job_root=l2_job_root(project, slug), spawn_guard=recovery.launch_permission(project, task))
-    except recovery.LaunchHeld as exc:
-        with S.project_lock(project):
-            held_task = S.load_task(project, slug)
-            held_task["dispatching"] = None
-            S.save_task(project, held_task)
-        S.append_event(project, slug, "dispatch-held", reason=str(exc))
-        raise T.TransitionError(str(exc)) from exc
-    except Exception as exc:
         raise record_dispatch_failure(project, slug, exc) from exc
-    agent = res.get("agent") or {}
-    try:
-        if res.get("returncode") != 0:
-            raise RuntimeError(f"{engine} L2 launch failed: {res.get('stderr', '')[:300] or res.get('stdout', '')[:300]}")
-        if not agent.get("id") or not agent.get("sessionId"):
-            raise RuntimeError(f"{engine} L2 returned without a concrete worker id and session id")
-        worktree = str(worktree_path)
-        T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent["sessionId"], agent_id=agent["id"],
-                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]), l2_token=l2_token,
-                   l2_engine=engine, engine_model=selected_model, routing=choice)
-    except T.TransitionError as exc:
-        if agent.get("id"):
-            try:
-                engines.stop_l2_worker(engine, agent["id"], job_root=l2_job_root(project, slug))
-            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
-                pass
-        try:
-            current_state = S.load_task(project, slug).get("state")
-        except (KeyError, OSError, ValueError):
-            current_state = None
-        if current_state != "queued":
-            S.append_event(project, slug, "dispatch-cancelled", reason=str(exc)[:300])
-            raise
-        raise record_dispatch_failure(project, slug, exc) from exc
-    except Exception as exc:
-        if agent.get("id"):
-            try:
-                engines.stop_l2_worker(engine, agent["id"], job_root=l2_job_root(project, slug))
-            except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
-                pass
-        raise record_dispatch_failure(project, slug, exc) from exc
-    return {"dispatch_id": dispatch_id, "engine": engine, "routing": choice,
-            "agent": agent, "stdout": res.get("stdout", "")}
+    task = _active_task(project, slug)
+    op = _owner(task, project=project, required=True)
+    if op["request"] != request:
+        raise T.TransitionError(f"{slug}: owner request changed during Git preparation")
+    if op["preparation"]["stage"] == "planned":
+        task = _prepare_owner(project, task, worktree=worktree,
+                              branch=worktree_branch(slug, worktree), base_sha=origin_sha)
+    task = _spawn_owner(project, task)
+    return _wait_owner_started(project, task)
+
+
+def _wait_owner_started(project: str, task: dict, timeout: float = 15.0) -> dict:
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        task = reconcile_owner(project, task["slug"])
+        op = _owner(task, project=project, required=True)
+        if task.get("state") == "running" or _owner_terminal(op):
+            break
+        time.sleep(0.05)
+    op = _owner(task, project=project, required=True)
+    if task.get("state") != "running" and not _owner_terminal(op):
+        raise T.TransitionError(f"{task['slug']}: owner did not expose a stable thread before timeout")
+    if op["physical"]["stage"] == "failed":
+        raise T.TransitionError(f"{task['slug']}: owner failed before binding")
+    projection = owner_projection(project, task) or {}
+    return {"dispatch_id": task["dispatch_id"], "engine": "codex",
+            "routing": task.get("routing"), "agent": {
+                "id": op["physical"]["process_unit_id"], "sessionId": task.get("session_id"),
+                "state": "working" if projection.get("working") else "done", "engine": "codex"},
+            "stdout": ""}
+
 
 
 def l2_env(project: str, task: dict) -> dict:
@@ -380,340 +1210,161 @@ def l2_env(project: str, task: dict) -> dict:
             "ALTITUDE_L2_CAPABILITY": str(task["l2_token"])}
 
 
-@contextmanager
-def _resume_lock(project: str, slug: str):
-    """Serialize replacements of one L2 across the server and human-run CLI processes."""
-    path = S.task_dir(project, slug) / ".resume.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
-
-
 def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str | None = None,
                              expected_session_id: str | None = None,
                              expected_agent_id: str | None = None,
                              expected_state: str | None = None) -> None:
     if task.get("state") not in ("running", "blocked"):
-        raise T.TransitionError(f"{slug}: L2 can be resumed only while running or blocked (state {task.get('state')})")
-    checks = (
+        raise T.TransitionError(f"{slug}: owner can be resumed only while running or blocked")
+    for label, expected, current in (
         ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
         ("session", expected_session_id, task.get("session_id")),
         ("agent", expected_agent_id, task.get("agent_id")),
         ("state", expected_state, task.get("state")),
-    )
-    for label, expected, current in checks:
+    ):
         if expected is not None and current != expected:
-            raise T.TransitionError(f"{slug}: L2 {label} changed before resume ({expected!r} → {current!r})")
+            raise T.TransitionError(f"{slug}: owner {label} changed before resume")
 
 
 def _issue_resume_prompt(project: str, task: dict, prompt: str) -> tuple[str, str | None]:
-    """Add missing legacy issue context once, before any current worker is stopped."""
     try:
         snapshot = github_intake.ensure_snapshot(
             project, task["slug"], expected_state=task.get("state"),
             expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-            expected_agent_id=task.get("agent_id"),
-        )
+            expected_agent_id=task.get("agent_id"))
     except github_intake.IssueIntakeError as exc:
-        raise T.TransitionError(f"GitHub issue intake held before L2 resume: {exc}") from exc
-    if not snapshot:
+        raise T.TransitionError(f"GitHub issue intake held before owner resume: {exc}") from exc
+    if not snapshot or task.get("github_issue_context_delivered") == snapshot["content_sha256"]:
         return prompt, None
-    digest = snapshot["content_sha256"]
-    brief_path = S.task_dir(project, task["slug"]) / "brief.md"
-    brief_has_context = brief_path.exists() and github_intake.marker(snapshot) in brief_path.read_text()
-    already_delivered = task.get("github_issue_context_delivered") == digest
-    if brief_has_context or already_delivered:
-        return prompt, None
-    if github_intake.marker(snapshot) not in prompt:
-        prompt = github_intake.render(snapshot) + "\n\n" + prompt
-    return prompt, digest
+    rendered = github_intake.render(snapshot)
+    return (prompt if github_intake.marker(snapshot) in prompt else rendered + "\n\n" + prompt,
+            snapshot["content_sha256"])
 
 
-def _resume_session_locked(project: str, slug: str, text: str, session_id: str | None = None, *,
-                           expected_dispatch_id: str | None = None,
-                           expected_session_id: str | None = None,
-                           expected_agent_id: str | None = None,
-                           expected_state: str | None = None) -> dict:
-    """Stop the current physical worker, then resume its provider conversation with ``text``.
+def _resume_owner(project: str, slug: str, prompt: str, *, message_id: str, **expected) -> dict:
+    task = _active_task(project, slug)
+    _require_resume_snapshot(task, slug, **expected)
+    T.require_owner_provider_capability(task)
+    if l2_engine(task) != "codex" or _owner(task, project=project) is None:
+        raise T.TransitionError("legacy non-Codex ownership cannot be resumed")
+    if not task.get("session_id") or not task.get("worktree"):
+        raise T.TransitionError(f"{slug}: exact provider thread and worktree are required")
+    prompt, issue_digest = _issue_resume_prompt(project, task, prompt)
+    request = _request(message_id, prompt, task.get("engine_model"), task.get("routing") or {}, issue_digest)
+    task, disposition = _begin_owner_request(project, slug, request)
+    if disposition == "stop":
+        task = stop_owner(project, slug, "superseded by persisted owner request")
+        try:
+            task = _promote_successor(project, slug)
+        except T.TransitionError:
+            task = _active_task(project, slug)
+            if _owner(task, project=project, required=True)["request"] != request:
+                raise
+    elif disposition == "recover":
+        current = _owner(task, project=project, required=True)
+        if current["request"] != request:
+            raise T.TransitionError(f"{slug}: owner request changed before recovery")
 
-    The task dispatch and L2 capability token are logical ownership and stay stable. The physical worker changes on
-    every enabled Codex turn. Disabled legacy Claude work is held before provenance or stop. We never overlap two
-    writers in one worktree, and a running task never silently crosses providers.
-    """
-    task = S.load_task(project, slug)
-    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                             expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
-    engine = l2_engine(task)
-    if capability_hold := provider_capability_hold(task):
-        raise T.TransitionError(capability_hold)
-    if not task.get("l2_token"):
-        # Compatibility for sessions dispatched before the worker capability existed. It becomes stable now.
-        with S.project_lock(project):
-            current = S.load_task(project, slug)
-            _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
-                                     expected_session_id=task.get("session_id"),
-                                     expected_agent_id=task.get("agent_id"), expected_state=task.get("state"))
-            current["l2_token"] = secrets.token_urlsafe(24)
-            S.save_task(project, current)
-            task = current
-    sid = session_id or task.get("session_id")
-    if not sid:
-        raise T.TransitionError("no session to resume; dispatch again")
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "planned":
+        repo, worktree = config.project_path(project), Path(task["worktree"])
+        try:
+            with publication_settlement(project):
+                origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+                _validate_task_worktree(repo, project, slug, worktree, origin_sha, require_clean=False)
+            task = _prepare_owner(project, task, worktree=worktree,
+                                  branch=worktree_branch(slug, worktree), base_sha=origin_sha)
+        except (git_policy.GitPolicyError, recovery.LaunchHeld, T.TransitionError) as exc:
+            if recovery.dispatch_hold(project, task):
+                def defer(live):
+                    live["blocked_reason"] = str(recovery.dispatch_hold(project, live))
+                    live.update({"state": "blocked", "resume_after": S.now(),
+                                 "resume_answer": prompt, "resume_prefix": "",
+                                 "resume_exact_prompt": True,
+                                 "resume_message_id": request["message_id"]})
+                _task_owner_update(project, slug, defer)
+                return {"deferred": True, "hold": str(exc), "waiting": str(exc)}
+            raise
+    op = _owner(task, project=project, required=True)
+    task = _spawn_owner(project, task) if op["physical"]["stage"] == "planned" else reconcile_owner(project, slug)
+    result = _wait_owner_started(project, task)
+    live = _active_task(project, slug)
+    if request.get("issue_digest"):
+        live = _task_owner_update(project, slug, lambda value:
+                                  value.update({"github_issue_context_delivered": request["issue_digest"]}))
+    result["deferred"] = False
+    return result
+
+
+def resume_session(project: str, slug: str, text: str, session_id: str | None = None, *,
+                   message_id: str | None = None, **expected) -> dict:
+    task = _active_task(project, slug)
     if session_id is not None and task.get("session_id") != session_id:
-        raise T.TransitionError(f"{slug}: requested session is no longer the current L2 session")
-    cwd = Path(task.get("worktree") or "")
-    if not task.get("worktree") or not cwd.is_dir():
-        raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
-    repo = config.project_path(project)
-    try:
-        with publication_settlement(project):
-            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-            # A resume is specifically how an agent continues uncommitted work, so dirt is allowed here; path,
-            # branch, and every committed ancestor remain strict.
-            _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
-    except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import incidents
-        incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
-        raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
-    # Provenance checks may take a network round trip. Re-read before spending an engine launch.
-    current = S.load_task(project, slug)
-    _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
-                             expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                             expected_state=task.get("state"))
-    # A recovery fuse that was already active must leave the current worker attached. The launch guard below still
-    # closes a later race at the spawn boundary, but checking after the potentially slow provenance work and before
-    # stop prevents a known hold from needlessly stranding a healthy conversation.
-    held = recovery.dispatch_hold(project, current)
-    if held:
-        S.append_event(project, slug, "resume-held", reason=held, previous=sid)
-        raise T.TransitionError(held)
-    task = current
-    text, delivered_issue_digest = _issue_resume_prompt(project, task, text)
-    name = f"{project}/{task['dispatch_id']}"
-    job_root = l2_job_root(project, slug)
-    old_worker = task.get("agent_id")
-    if old_worker:
-        try:
-            engines.stop_l2_worker(engine, old_worker, job_root=job_root)
-            if engine == "claude":
-                old = next((row for row in engines.claude_agents() if row.get("id") == old_worker), None)
-                if old and old.get("state") not in ("failed", "done", "stopped") and old.get("status") != "exited":
-                    raise RuntimeError(f"Claude worker {old_worker} is still live after stop")
-        except Exception as exc:
-            raise record_resume_failure(project, slug, sid, f"old worker could not be stopped: {exc}") from exc
-    try:
-        held = recovery.dispatch_hold(project, task)
-        if held:
-            raise recovery.LaunchHeld(held)
-        res = engines.resume_l2(
-            engine, name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
-            model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
-            extra_env=l2_env(project, task), job_root=job_root,
-            spawn_guard=recovery.launch_permission(project, task))
-    except recovery.LaunchHeld as exc:
-        try:
-            _defer_stopped_resume(project, task, text, str(exc), previous=sid)
-        except Exception as defer_exc:
-            raise record_resume_failure(
-                project, slug, sid, f"recovery hold appeared after worker stop and pending resume could not persist: {defer_exc}"
-            ) from defer_exc
-        raise T.TransitionError(str(exc)) from exc
-    except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
-    try:
-        if engine == "claude":
-            live = [a for a in engines.claude_agents()
-                    if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")
-                    and a.get("sessionId") and a.get("id") and a.get("id") != old_worker]
-        else:
-            row = res.get("agent") or {}
-            live = [row] if row.get("id") and row.get("sessionId") and row.get("state") == "working" else []
-    except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
-    if res.get("returncode") != 0 or not live:
-        for row in live:
-            try:
-                engines.stop_l2_worker(engine, row["id"], job_root=job_root)
-            except Exception:  # noqa: BLE001 — the recovery fuse records the launch failure below
-                pass
-        note = res.get("stderr", "")[:200] or res.get("stdout", "")[:200]
-        if res.get("returncode") != 0:
-            detail = note or f"resume launcher exited {res.get('returncode')}"
-        else:
-            detail = "no concrete live worker"
-            if note:
-                detail += f" ({note})"
-        raise record_resume_failure(project, slug, sid, detail)
-    new = max(live, key=lambda a: a.get("startedAt") or 0)
-    changed = None
-    try:
-        with S.project_lock(project):
-            t = S.load_task(project, slug)
-            try:
-                _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
-                                         expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                                         expected_state=task.get("state"))
-            except T.TransitionError as exc:
-                changed = exc
-            else:
-                t["agent_id"], t["session_id"] = new["id"], new["sessionId"]
-                if delivered_issue_digest:
-                    t["github_issue_context_delivered"] = delivered_issue_digest
-                t.pop("completion_requested", None)
-                S.save_task(project, t)
-    except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held
-        try:
-            engines.stop_l2_worker(engine, new["id"], job_root=job_root)
-        except Exception:  # noqa: BLE001 — recovery owns any worker the stop command could not reach
-            pass
-        raise record_resume_failure(project, slug, sid, f"could not bind replacement worker: {exc}") from exc
-    if changed is not None:
-        engines.stop_l2_worker(engine, new["id"], job_root=job_root)
-        S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],
-                       reason=str(changed))
-        raise T.TransitionError(f"{slug}: task generation changed during resume; replacement worker stopped") from changed
-    S.append_event(project, slug, "resumed", engine=engine, agent_id=new.get("id"),
-                   session_id=new.get("sessionId"), previous_session=sid, previous_worker=old_worker)
-    res["agent"] = new
-    return res
+        raise T.TransitionError(f"{slug}: requested provider thread is stale")
+    stable = message_id or hashlib.sha256(
+        f"owner\0{project}\0{slug}\0{task.get('dispatch_id')}\0{secrets.token_hex(16)}".encode()).hexdigest()
+    return _resume_owner(project, slug, text, message_id=stable, **expected)
 
 
-def _defer_stopped_resume(project: str, snapshot: dict, prompt: str, hold: str, *, previous: str) -> None:
-    """Atomically turn a post-stop recovery race into an exact pending resume."""
-    reason = f"waiting: {hold}"
-    with S.project_lock(project):
-        task = S.load_task(project, snapshot["slug"])
-        _require_resume_snapshot(
-            task, snapshot["slug"], expected_dispatch_id=snapshot.get("dispatch_id"),
-            expected_session_id=snapshot.get("session_id"), expected_agent_id=snapshot.get("agent_id"),
-            expected_state=snapshot.get("state"),
-        )
-        task["resume_after"] = S.now()
-        task["resume_answer"] = prompt
-        task["resume_prefix"] = ""
-        task["resume_exact_prompt"] = True
-        task["blocked_reason"] = reason
-        if task["state"] == "running":
-            T._move(project, task, "blocked", "altd", reason=reason)  # noqa: SLF001 — atomic state + resume payload
-        else:
-            S.save_task(project, task)
-            S.regen_state_md(project)
-        S.append_event(project, task["slug"], "resume-held", reason=hold, previous=previous,
-                       pending_resume=True)
-
-
-def resume_session(project: str, slug: str, text: str, session_id: str | None = None, **expected) -> dict:
-    with _resume_lock(project, slug):
-        return _resume_session_locked(project, slug, text, session_id, **expected)
-
-
-def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
-                           expected_dispatch_id: str | None = None,
-                           expected_session_id: str | None = None,
-                           expected_agent_id: str | None = None,
-                           expected_state: str | None = None,
-                           locked_resume: bool = True) -> dict:
-    task = S.load_task(project, slug)
-    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                             expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
+def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
+                   message_id: str | None = None, **expected) -> dict:
+    task = _active_task(project, slug)
+    _require_resume_snapshot(task, slug, **expected)
     if capability_hold := provider_capability_hold(task):
         return {"deferred": True, "hold": capability_hold, "waiting": capability_hold}
-    if task["state"] == "blocked":
-        provider_hold = engines.usage_hold() if l2_engine(task) == "claude" else None
-        hold = (f"usage limit: subscription window exhausted, resets {provider_hold}"
-                if provider_hold else wip_hold(project, task))
-        if hold:
-            waiting = (f"waiting for lease: {hold.removeprefix('file lease: ')}"
-                       if hold.startswith("file lease: ") else f"waiting: {hold}")
-            with S.project_lock(project):
-                task = S.load_task(project, slug)
-                _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                                         expected_session_id=expected_session_id,
-                                         expected_agent_id=expected_agent_id, expected_state=expected_state)
-                if "blocked_question" not in task:
-                    task["blocked_question"] = task.get("blocked_reason")
-                task["resume_answer"] = answer
-                task["resume_prefix"] = prefix
-                task["resume_after"] = S.now()
-                task["blocked_reason"] = waiting
-                S.save_task(project, task)
-                S.append_event(project, slug, "resume-deferred", hold=hold, reason=waiting)
-            return {"deferred": True, "hold": hold, "waiting": waiting}
-    prompt = (answer if task.get("resume_exact_prompt")
-              else f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
-    expected = {key: value for key, value in {
-        "expected_dispatch_id": expected_dispatch_id,
-        "expected_session_id": expected_session_id,
-        "expected_agent_id": expected_agent_id,
-        "expected_state": expected_state,
-    }.items() if value is not None}
-    if locked_resume:
-        res = _resume_session_locked(project, slug, prompt, **expected)
-    else:
-        # Keep the public resume seam used by callers and tests; it owns its own cross-process lock.
-        res = resume_session(project, slug, prompt, **expected)
-    new_agent = res.get("agent") or {}
+    hold = wip_hold(project, task) if task["state"] == "blocked" else None
+    if hold:
+        waiting = (f"waiting for lease: {hold.removeprefix('file lease: ')}"
+                   if hold.startswith("file lease: ") else f"waiting: {hold}")
+        def defer(live):
+            live.setdefault("blocked_question", live.get("blocked_reason"))
+            live.update({"resume_answer": answer, "resume_prefix": prefix,
+                         "resume_after": S.now(), "blocked_reason": waiting})
+        _task_owner_update(project, slug, defer)
+        return {"deferred": True, "hold": hold, "waiting": waiting}
+    prompt = (answer if task.get("resume_exact_prompt") and answer == task.get("resume_answer") else
+              f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
+    result = resume_session(project, slug, prompt, message_id=message_id, **expected)
+    if result.get("deferred"):
+        return result
+    live = _active_task(project, slug)
     T.resume(project, slug, answer=answer, expected_state="blocked",
-             expected_dispatch_id=task.get("dispatch_id"),
-             expected_session_id=new_agent.get("sessionId") or task.get("session_id"),
-             expected_agent_id=new_agent.get("id") or task.get("agent_id"))
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        task.pop("resume_after", None)
-        task.pop("resume_answer", None)
-        task.pop("resume_prefix", None)
-        task.pop("resume_exact_prompt", None)
-        S.save_task(project, task)
-    res["deferred"] = False
-    return res
-
-
-def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", **expected) -> dict:
-    return _resume_blocked_locked(project, slug, answer, prefix, locked_resume=False, **expected)
+             expected_dispatch_id=live.get("dispatch_id"),
+             expected_session_id=live.get("session_id"), expected_agent_id=live.get("agent_id"))
+    result["deferred"] = False
+    return result
 
 
 def message_l2(project: str, slug: str, text: str, *, expected_dispatch_id: str | None = None,
                expected_session_id: str | None = None, expected_engine: str | None = None) -> dict:
-    """Persist Burak's message and deliver it only to the L2 attempt snapshot he addressed."""
+    """Persist a stable human message, then install that exact message as the sole successor request."""
     text = str(text or "").strip()
     if not text:
         raise T.TransitionError("task message is empty")
-    with _resume_lock(project, slug):
-        task = S.load_task(project, slug)
-        _require_resume_snapshot(task, slug)
-        for label, expected, actual in (
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("engine", expected_engine, l2_engine(task)),
-        ):
-            if expected is not None and str(expected) != str(actual or ""):
-                raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
-        if not task.get("dispatch_id") or not task.get("session_id"):
-            raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
-        if capability_hold := provider_capability_hold(task):
-            raise T.TransitionError(capability_hold)
-        expected = {
-            "expected_dispatch_id": task["dispatch_id"],
-            "expected_session_id": task["session_id"],
-            "expected_agent_id": task.get("agent_id"),
-            "expected_state": task["state"],
-        }
-        message = T.append_task_message(
-            project, slug, "burak", text, actor="burak",
-            expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
-            expected_state=task["state"],
-        )
-        if task["state"] == "blocked":
-            result = _resume_blocked_locked(project, slug, text, **expected)
-        else:
-            result = _resume_session_locked(project, slug, text, **expected)
-        return {**result, "message": message}
+    task = _active_task(project, slug)
+    _require_resume_snapshot(task, slug)
+    for label, expected, actual in (
+        ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+        ("session", expected_session_id, task.get("session_id")),
+        ("engine", expected_engine, l2_engine(task)),
+    ):
+        if expected is not None and str(expected) != str(actual or ""):
+            raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
+    if not task.get("dispatch_id") or not task.get("session_id"):
+        raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
+    if capability_hold := provider_capability_hold(task):
+        raise T.TransitionError(capability_hold)
+    message = T.append_task_message(
+        project, slug, "burak", text, actor="burak",
+        expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
+        expected_state=task["state"])
+    expected = {"expected_dispatch_id": task["dispatch_id"], "expected_session_id": task["session_id"],
+                "expected_agent_id": task.get("agent_id"), "expected_state": task["state"]}
+    if task["state"] == "blocked":
+        result = resume_blocked(project, slug, text, message_id=message["id"], **expected)
+    else:
+        result = resume_session(project, slug, text, message_id=message["id"], **expected)
+    return {**result, "message": message}
 
 
 def resume_due(project: str) -> list[str]:
@@ -733,16 +1384,17 @@ def resume_due(project: str) -> list[str]:
         else:
             answer = "The usage window has reopened; Altitude held you, nothing is wrong with the task."
             prefix = ""
-        res = resume_blocked(project, t["slug"], answer, prefix=prefix)
+        res = resume_blocked(project, t["slug"], answer, prefix=prefix,
+                             message_id=t.get("resume_message_id"))
         if res and res.get("deferred"):
             continue
-        with S.project_lock(project):
-            t2 = S.load_task(project, t["slug"])
+        def clear(t2):
             t2.pop("resume_after", None)
             t2.pop("resume_answer", None)
             t2.pop("resume_prefix", None)
             t2.pop("resume_exact_prompt", None)
-            S.save_task(project, t2)
+            t2.pop("resume_message_id", None)
+        _task_owner_update(project, t["slug"], clear)
         back.append(t["slug"])
     return back
 
@@ -996,7 +1648,14 @@ def poll(project: str) -> list[dict]:
         if engine == "claude":
             a = agents.get(t.get("session_id")) or by_id.get(t.get("agent_id"))
         else:
-            a = engines.codex_worker(t.get("agent_id"), job_root=l2_job_root(project, t["slug"]))
+            t = reconcile_owner(project, t["slug"])
+            projection = owner_projection(project, t)
+            result = (_owner(t, project=project, required=True).get("result") or {})
+            a = ({"id": t.get("agent_id"), "sessionId": t.get("session_id"),
+                  "status": "exited" if projection["terminal"] else "busy",
+                  "state": "done" if projection["terminal"] else "working",
+                  "usage": result.get("usage") or {}, "detail": result.get("error") or "",
+                  "action": result.get("action")} if projection else None)
         live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         prev = S.read_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
@@ -1396,8 +2055,8 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             return notes
 
     if l2_engine(task) == "codex" and task.get("agent_id") and task.get("worktree"):
-        codex_row = engines.codex_worker(task["agent_id"], job_root=l2_job_root(project, slug))
-        if codex_row and codex_row.get("state") == "working":
+        codex_row = owner_projection(project, task)
+        if codex_row and codex_row.get("working"):
             live.append(path_key(task["worktree"]))
 
     def has_live_worker(path: str) -> bool:
@@ -1513,12 +2172,12 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
             continue
         removal_reason = ("task branch content is present in origin/main (squash-equivalent)"
                           if squash_equivalent else "task-owned branch is merged into origin/main")
-        removed_l2_worker = candidate["kind"] == "L2" and bool(task.get("agent_id"))
+        removed_l2_worker = (candidate["kind"] == "L2" and bool(task.get("agent_id"))
+                             and l2_engine(task) == "claude")
         if removed_l2_worker:
             try:
                 engine = l2_engine(task)
-                rm_note = engines.remove_l2_worker(
-                    engine, task["agent_id"], job_root=l2_job_root(project, slug))
+                rm_note = engines.claude_rm(task["agent_id"])
             except (subprocess.SubprocessError, OSError, RuntimeError) as e:
                 reason = f"{engine} worker cleanup failed: {e}"
                 incidents.system_fault("cleanup-worker", f"{project}/{slug}: {reason}", project=project, task=slug)
@@ -1564,3 +2223,9 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
         notes.append(f"removed merged worktree {Path(wt).name}")
     notes.extend(pull_after_done(project, task))
     return notes
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[1] == "--managed-owner":
+        raise SystemExit(_managed_owner(sys.argv[2], sys.argv[3], sys.argv[4]))
+    raise SystemExit("dispatch is not a public command entrypoint")

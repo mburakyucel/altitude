@@ -67,6 +67,11 @@ def _clearance_epoch() -> int:
     return int((value or {}).get("epoch") or 0)
 
 
+def clearance_epoch() -> int:
+    """Public read-only projection of the canonical inactive recovery generation."""
+    return _clearance_epoch()
+
+
 def _reconcile_clearance_audit(value: dict | None) -> None:
     """Project the latest canonical inactive receipt into audit history, idempotently."""
     if not value or value.get("active") is not False:
@@ -490,6 +495,30 @@ def dispatch_hold(project: str, task: dict | None = None) -> str | None:
     return f"recovery hold: {fault.get('kind') or 'system health fault'}; explicit L3 clearance required"
 
 
+def observe_owner_state(project: str, task: dict) -> dict:
+    """Bind an L2 generation to the canonical active episode/revision or inactive epoch."""
+    current = status()
+    if current is None:
+        return {"state": "none", "episode_id": None, "permit_revision": None,
+                "epoch": _clearance_epoch()}
+    repair = current.get("repair") or {}
+    if (task.get("source") != "recovery" or repair.get("project") != project
+            or repair.get("slug") != task.get("slug")):
+        raise ValueError(dispatch_hold(project, task) or "active recovery blocks ordinary owner launch")
+    return {"state": "active", "episode_id": current["episode"],
+            "permit_revision": current["revision"], "epoch": _clearance_epoch()}
+
+
+def owner_state_is_current(project: str, task: dict, physical: dict, epoch: int) -> bool:
+    """Recheck one installed owner generation against the canonical recovery record."""
+    try:
+        observation = observe_owner_state(project, task)
+    except ValueError:
+        return False
+    return (physical.get("recovery_episode_id"), physical.get("recovery_permit_revision"), epoch) == (
+        observation["episode_id"], observation["permit_revision"], observation["epoch"])
+
+
 @contextmanager
 def launch_permission(project: str, task: dict):
     """Keep the final hold check serialized through creation of the background worker."""
@@ -497,6 +526,15 @@ def launch_permission(project: str, task: dict):
         reason = dispatch_hold(project, task)
         if reason:
             raise LaunchHeld(reason)
+        yield
+
+
+@contextmanager
+def owner_launch_permission(project: str, task: dict, physical: dict, epoch: int):
+    """Linearize one owner spawn with canonical recovery episode publication."""
+    with _launch_lock():
+        if not owner_state_is_current(project, task, physical, epoch):
+            raise LaunchHeld("recovery episode or owner launch permit changed")
         yield
 
 

@@ -35,15 +35,13 @@ The recorded baseline is:
 | Service/CI/build support outside runnable-source count | 134 lines / 3 files |
 | Baseline checks | 489 Python tests; 39 web tests; production web build |
 
-The current integration candidate is intentionally expansionary while replacements are
-dormant or only partly adopted: **18,144 permanent runnable lines / 56 files**, comprising **15,122 backend lines / 35
-files**, **2,827 web lines / 16 files**, and **195 web-build lines / 5 files**. The temporary real-state
-preflight is **1,510 lines / 1 file** and is reported separately. Separately counted candidate inputs
-are **498 persona/schema/template lines / 13 files**, **247 support lines / 3 files**, and one
-**294-line test-only cross-runtime contract fixture**; `web/README.md` is **13 lines / 1 file** of
-non-runtime documentation. The candidate must retire at least **5,964
-permanent lines and 13 files overall**, including **6,122 backend lines and 11 backend files**, to meet
-the final target. This is implementation debt, not evidence of simplification.
+The current integration candidate is intentionally expansionary while replacements are dormant or only partly
+adopted. **Mechanical recount required after all Phase 1B.3 integration conflicts are resolved:** replace this
+placeholder with the exact whole-candidate permanent runnable line/file totals, backend subset, web and web-build
+subsets, separately reported temporary preflight/persona-schema-template/support/test-fixture inputs, and the exact
+retirement debt to the final budgets below. Use the normative roster and counting procedure in
+[`07-baseline-and-target.md`](07-baseline-and-target.md); do not carry forward a branch-local delta or the pre-B3
+candidate snapshot. This is implementation debt, not evidence of simplification.
 
 Final budgets are hard review gates:
 
@@ -307,30 +305,38 @@ TTY, same-UID token, `claude --bg` row, or stale PID substitutes for that proof.
 
 ### PRs 1B.1-1B.4: one physical transition, adopted by owner family
 
-PR 1B.1's closed physical record and PR 1B.2's Codex L3 adoption are active candidate source.
-PR 1B.3 L2-owner adoption and PR 1B.4 managed-helper adoption remain planned. Each adoption deletes
-that family's prior PID/job-row/timestamp
-ownership writer and fallback reader before merging. The shared transition is:
+PR 1B.1's closed physical record, PR 1B.2's Codex L3 adoption, and PR 1B.3's Codex L2-owner adoption
+are active candidate source. PR 1B.4 managed-helper adoption remains planned and must delete that
+family's prior PID/job-row/timestamp ownership writer and fallback reader before merging. The shared
+transition is:
 
 ```text
 planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
 ```
 
-The following owner boundary is the planned PR 1B.3 path, not active L2 behavior yet.
-`TaskCommands` alone takes the task lock and serializes `task.json`. It
-stores the deterministic unit, physical generation, provider-session request, and stable message id,
-then compare-and-swaps `planned -> prior_stopped` before releasing the lock. Only that winner sends
-an immutable task-revision/transition-digest request to `WorkerCommands`. WorkerCommands performs or
-reconciles the physical effect and returns a typed receipt; it never writes `task.json` or embedded
-`active_operation`. TaskCommands reacquires the task lock, rejects stale revision/digest/generation,
-and serializes the receipt and any owner binding. No task lock is held during provider work.
+PR 1B.3 makes the active TaskRecord's embedded owner operation the only Codex L2 ownership authority.
+The task-owned `owner_command` seam alone serializes B3 planning, compare-and-swap, typed receipts, and
+projections under the short project lock. Dispatch performs or reconciles Git, manager, and provider effects
+outside that lock and returns only intent-bound typed receipts through the seam; it does not create a sidecar
+owner record or long-held owner lock. Only the `planned -> prior_stopped` winner may spawn, and every observer
+reconciles rather than relaunching.
+
 Resume creates a new physical generation even when the provider conversation id continues. No next
-writer starts until the prior unit is proven empty. Recovery work also persists
-`{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. The active
-PR 1B.2 L3 path already uses its project-lock current-turn CAS and durable receipts; a different
-message receives explicit busy/deferred. Process-local locks remain local optimization only. Unknown legacy ownership
-fails closed instead of being declared empty. A static process inventory must be empty before the
+writer starts until the prior unit is proven empty. The existing timer only schedules deduplicated L2
+reconciliation; provider work and receipt persistence do not run inline in the timer. Each terminal generation is
+retained as bounded TaskRecord evidence with its exact transition, unit, message, event/result identities, result
+hash, and session. Transcript lookup validates that generation roster and derives those paths without scanning a
+legacy provider directory. Recovery work also persists `{episode_id, permit_revision}` and every
+launch/message/result/publication rechecks it. The active PR 1B.2 L3 path already uses its project-lock current-turn
+CAS and durable receipts; a different message receives explicit busy/deferred. Process-local locks remain local
+optimization only. Codex PID/job/timestamp writers and fallback readers are no longer ownership authority; unknown
+legacy ownership fails closed instead of being declared empty. A static process inventory must be empty before the
 next sub-PR; no maintenance claimant exists during this sequence.
+
+PR 1C.1 replaces B3's temporary action/result compatibility seam, PR 1C.5 folds continuation and terminal
+generation handling into settlement, Phase 3B removes session mirrors and compacts migrated journals, and PR 10B
+may delete consumed legacy Claude observation/cleanup evidence only after the successful activation/cutover
+receipts. Until then deployment adoption and issue publication remain behind their separately named dormant gates.
 
 ### PRs 1C.1-1C.5: outcomes and reconciled external effects on v1
 

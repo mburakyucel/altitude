@@ -68,85 +68,14 @@ class TestResumeRebinds(unittest.TestCase):
         self.assertEqual((current["state"], current["dispatch_id"], current["agent_id"]),
                          ("running", f"{slug}-2", "agent-b"))
 
-    def test_resume_binds_task_to_the_new_worker_in_its_worktree(self):
-        wt = Path(_TMP) / "wt-resume"; wt.mkdir(exist_ok=True)
-        S.task_dir("altitude", "resume-me").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "resume-me", "title": "resume-me", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "old-sid", "agent_id": "old",
-                                 "dispatch_id": "resume-me-1", "l2_token": "old-token", "worktree": str(wt)})
-        seen = {}
-        def fake_resume(name, sid, prompt, *, cwd, **kw):
-            seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {}); return {"stdout": "", "stderr": "", "returncode": 0}
-        rows = [{"id": "old", "name": "altitude/resume-me-1", "sessionId": "old-sid", "state": "failed", "startedAt": 1},
-                {"id": "new", "name": "altitude/resume-me-1", "sessionId": "new-sid", "state": "working", "startedAt": 2}]
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-             mock.patch.object(engines, "claude_resume_bg", fake_resume), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree") as validate:
-            res = dispatch.resume_session("altitude", "resume-me", "go")
-        validate.assert_called_once()
-        self.assertEqual(seen["cwd"], str(wt))
-        self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), "altitude--resume-me-1")
-        t = S.load_task("altitude", "resume-me")
-        self.assertEqual((t["agent_id"], t["session_id"]), ("new", "new-sid"))
-        self.assertEqual(t["l2_token"], "old-token", "logical L2 ownership survives a physical worker replacement")
-        self.assertEqual(res["agent"]["id"], "new")
-        stop.assert_called_once_with("old")
-
-    def test_resume_without_worktree_is_a_dispatch_again(self):
-        S.task_dir("altitude", "no-wt").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "no-wt", "title": "no-wt", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "s", "agent_id": "a", "dispatch_id": "no-wt-1",
-                                 "worktree": str(Path(_TMP) / "gone")})
-        with self.assertRaises(T.TransitionError):
-            dispatch.resume_session("altitude", "no-wt", "go")
-
-    def test_resume_without_a_concrete_replacement_never_rebinds(self):
-        wt = Path(_TMP) / "wt-no-replacement"; wt.mkdir(exist_ok=True)
-        S.task_dir("altitude", "no-replacement").mkdir(parents=True, exist_ok=True)
-        original = {"slug": "no-replacement", "title": "no-replacement", "created": S.now(),
-                    "state": "running", "session_id": "old-sid", "agent_id": "old-agent",
-                    "dispatch_id": "no-replacement-1", "l2_token": "old-token", "worktree": str(wt)}
-        S.save_task("altitude", original)
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-             mock.patch.object(engines, "claude_resume_bg", return_value={
-                 "stdout": "started", "stderr": "", "returncode": 0,
-             }), mock.patch.object(engines, "claude_agents", return_value=[]), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"), \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(RuntimeError, "no concrete live worker"):
-                dispatch.resume_session("altitude", "no-replacement", "go")
-
-        current = S.load_task("altitude", "no-replacement")
-        self.assertEqual((current["session_id"], current["agent_id"], current["l2_token"]),
-                         ("old-sid", "old-agent", "old-token"))
-        fault.assert_called_once()
-
-    def test_disabled_legacy_resume_is_held_before_provenance_or_launch(self):
-        wt = Path(_TMP) / "wt-refused-resume"; wt.mkdir(exist_ok=True)
-        S.task_dir("altitude", "refused-resume").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {
-            "slug": "refused-resume", "title": "refused-resume", "created": S.now(), "updated": S.now(),
-            "state": "blocked", "session_id": "old", "agent_id": "old-agent",
-            "dispatch_id": "refused-resume-1", "worktree": str(wt),
-        })
-
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40) as fetch, \
-             mock.patch.object(
-                 dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
-             ) as validate, \
-             mock.patch("altitude.incidents.system_fault") as fault, \
-             mock.patch.object(engines, "claude_resume_bg") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "foreground ownership is unproved"):
-                dispatch.resume_session("altitude", "refused-resume", "go")
-
-        fetch.assert_not_called()
-        validate.assert_not_called()
-        fault.assert_not_called()
+    def test_legacy_claude_owner_cannot_be_resumed(self):
+        wt = Path(_TMP) / "legacy-resume"; wt.mkdir(exist_ok=True)
+        S.task_dir("altitude", "legacy-resume").mkdir(parents=True, exist_ok=True)
+        S.save_task("altitude", {"slug": "legacy-resume", "title": "legacy", "created": S.now(),
+                                 "state": "blocked", "session_id": "old", "agent_id": "old-agent",
+                                 "dispatch_id": "legacy-resume-1", "worktree": str(wt),
+                                 "l2_engine": "claude"})
+        with mock.patch.object(engines, "claude_resume_bg") as launch:
+            with self.assertRaisesRegex(T.TransitionError, "claude autonomous/mutating launch disabled"):
+                dispatch.resume_session("altitude", "legacy-resume", "go")
         launch.assert_not_called()
-
-
-if __name__ == "__main__":
-    unittest.main()

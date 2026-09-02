@@ -561,121 +561,86 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertIsNone(recovery.status()["repair"])
 
     def test_fault_during_git_prep_prevents_fresh_worker_launch(self):
-        ordinary = T.new("altitude", "racy ordinary launch", "request", actor="l3", source="chat")
-        ordinary["state"] = "queued"
-        S.save_task("altitude", ordinary)
+        ordinary = T.new(
+            "altitude", "racy ordinary launch", "request",
+            actor="l3", source="chat", engine="codex",
+        )
 
         def fault_then_return(*args, **kwargs):
             incidents.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
             return "a" * 40
 
-        crossed_spawn_boundary = mock.Mock()
-
-        def guarded_launch(*args, spawn_guard, **kwargs):
-            with spawn_guard:
-                crossed_spawn_boundary()
-            return {"stdout": "", "stderr": "", "returncode": 0, "agent": None}
-
+        worktree = self.repo / ".claude" / "worktrees" / ordinary["slug"]
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+                mock.patch.object(dispatch.github_intake, "ensure_snapshot", return_value=None), \
+                mock.patch.object(dispatch, "build_brief", return_value="exact brief"), \
+                mock.patch.object(dispatch.route, "pick_engine", return_value={
+                    "engine": "codex", "why": "test",
+                }), \
                 mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=fault_then_return), \
-                mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
-                mock.patch.object(engines, "start_l2", side_effect=guarded_launch) as launch:
+                mock.patch.object(dispatch, "_task_worktree", return_value=worktree), \
+                mock.patch.object(engines, "spawn_managed_unit") as launch:
             with self.assertRaisesRegex(T.TransitionError, "recovery hold: fetch-race"):
                 dispatch.run("altitude", ordinary["slug"])
 
-        launch.assert_called_once()
-        crossed_spawn_boundary.assert_not_called()
+        launch.assert_not_called()
         current = S.load_task("altitude", ordinary["slug"])
         self.assertEqual(current["state"], "queued")
-        self.assertIsNone(current.get("dispatching"))
+        self.assertIsNotNone(current.get("dispatching"), "the owner request is durable before Git effects")
+        operation = dispatch._owner(current, project="altitude", required=True)
+        self.assertEqual(operation["preparation"]["stage"], "planned")
+        self.assertIsNone(operation["physical"])
         self.assertEqual(recovery.status()["faults"][-1]["kind"], "fetch-race")
 
-    def test_resume_launch_obeys_hold_but_claimed_repair_can_resume(self):
-        ordinary = T.new("altitude", "ordinary resume", "request", actor="l3", source="chat")
-        ordinary.update({"state": "running", "worktree": str(self.repo), "dispatch_id": "ordinary-resume-1",
-                         "session_id": "ordinary-session", "agent_id": "ordinary-agent"})
-        S.save_task("altitude", ordinary)
+    def test_owner_preparation_obeys_hold_but_claimed_repair_is_authorized(self):
+        ordinary = T.new(
+            "altitude", "ordinary owner", "request",
+            actor="l3", source="chat", engine="codex",
+        )
+        request = dispatch._request("ordinary-message", "ordinary prompt", None, {"engine": "codex"})
+        ordinary, disposition = dispatch._begin_owner_request(
+            "altitude", ordinary["slug"], request,
+            initial={
+                "dispatching": S.now(), "dispatch_id": f"{ordinary['slug']}-1", "attempt": 1,
+                "l2_engine": "codex", "engine_model": None, "routing": {"engine": "codex"},
+                "l2_token": "ordinary-capability",
+            },
+        )
+        self.assertEqual(disposition, "prepare")
         recovery.hold("manual hold", kind="manual", actor="l3")
 
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-                mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(engines, "stop_l2_worker") as stop, \
-                mock.patch.object(engines, "claude_resume_bg") as resume:
-            with self.assertRaisesRegex(T.TransitionError, "recovery hold: manual"):
-                dispatch.resume_session("altitude", ordinary["slug"], "steer")
-        stop.assert_not_called()
-        resume.assert_not_called()
+        ordinary_worktree = self.repo / ".claude" / "worktrees" / ordinary["slug"]
+        with self.assertRaisesRegex(T.TransitionError, "recovery hold: manual"):
+            dispatch._prepare_owner(
+                "altitude", ordinary, worktree=ordinary_worktree,
+                branch=f"worktree-{ordinary['slug']}", base_sha="a" * 40,
+            )
 
-        repair = T.new("altitude", "claimed repair resume", "request", actor="l3", source="recovery")
-        repair.update({"state": "blocked", "worktree": str(self.repo), "dispatch_id": "claimed-repair-resume-1",
-                       "session_id": "repair-session"})
-        S.save_task("altitude", repair)
-        resumed = {"stdout": "", "stderr": "", "returncode": 0}
-        live = [{"name": "altitude/claimed-repair-resume-1", "id": "agent-2", "sessionId": "session-2",
-                 "state": "working", "startedAt": 2}]
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-                mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(engines, "claude_resume_bg", return_value=resumed) as resume, \
-                mock.patch.object(engines, "claude_agents", return_value=live):
-            result = dispatch.resume_session("altitude", repair["slug"], "continue repair")
-        resume.assert_called_once()
-        self.assertEqual(result["agent"]["id"], "agent-2")
-
-    def test_hold_appearing_after_stop_creates_exact_pending_resume(self):
-        task = T.new("altitude", "post stop hold", "request", actor="l3", source="chat")
-        task.update({
-            "state": "running", "worktree": str(self.repo), "dispatch_id": "post-stop-hold-1",
-            "session_id": "post-stop-session", "agent_id": "post-stop-agent", "l2_token": "stable-token",
-        })
-        S.save_task("altitude", task)
-        held = "recovery hold: injected-race; explicit L3 clearance required"
-
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-                mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(recovery, "dispatch_hold", side_effect=[None, held]), \
-                mock.patch.object(engines, "stop_l2_worker", return_value="stopped") as stop, \
-                mock.patch.object(engines, "claude_agents", return_value=[]), \
-                mock.patch.object(engines, "resume_l2") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "injected-race"):
-                dispatch.resume_session("altitude", task["slug"], "exact steering prompt")
-
-        stop.assert_called_once()
-        launch.assert_not_called()
-        pending = S.load_task("altitude", task["slug"])
-        self.assertEqual(pending["state"], "blocked")
-        self.assertEqual(pending["resume_answer"], "exact steering prompt")
-        self.assertTrue(pending["resume_exact_prompt"])
-        self.assertTrue(pending["resume_after"])
-        self.assertIn("injected-race", pending["blocked_reason"])
-
-        seen = {}
-
-        def resumed(engine, name, session_id, prompt, **kwargs):
-            seen["prompt"] = prompt
-            return {"returncode": 0, "stdout": "", "stderr": "", "agent": {
-                "id": "replacement", "sessionId": "replacement-session", "state": "working", "startedAt": 2,
-            }}
-
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-                mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(recovery, "dispatch_hold", return_value=None), \
-                mock.patch.object(engines, "stop_l2_worker", return_value="already stopped"), \
-                mock.patch.object(engines, "resume_l2", side_effect=resumed), \
-                mock.patch.object(engines, "claude_agents", return_value=[{
-                    "id": "replacement", "sessionId": "replacement-session",
-                    "name": "altitude/post-stop-hold-1", "state": "working", "startedAt": 2,
-                }]):
-            retried = dispatch.resume_due("altitude")
-
-        self.assertEqual(retried, [task["slug"]])
-        self.assertEqual(seen["prompt"], "exact steering prompt")
-        resumed_task = S.load_task("altitude", task["slug"])
-        self.assertEqual(resumed_task["state"], "running")
-        self.assertNotIn("resume_exact_prompt", resumed_task)
+        repair = T.new(
+            "altitude", "claimed repair owner", "request",
+            actor="l3", source="recovery", engine="codex",
+        )
+        repair_request = dispatch._request(
+            "repair-message", "repair prompt", None, {"engine": "codex"},
+        )
+        repair, disposition = dispatch._begin_owner_request(
+            "altitude", repair["slug"], repair_request,
+            initial={
+                "dispatching": S.now(), "dispatch_id": f"{repair['slug']}-1", "attempt": 1,
+                "l2_engine": "codex", "engine_model": None, "routing": {"engine": "codex"},
+                "l2_token": "repair-capability",
+            },
+        )
+        self.assertEqual(disposition, "prepare")
+        repair_worktree = self.repo / ".claude" / "worktrees" / repair["slug"]
+        prepared = dispatch._prepare_owner(
+            "altitude", repair, worktree=repair_worktree,
+            branch=f"worktree-{repair['slug']}", base_sha="b" * 40,
+        )
+        operation = dispatch._owner(prepared, project="altitude", required=True)
+        self.assertEqual(operation["preparation"]["stage"], "complete")
+        self.assertEqual(operation["physical"]["recovery_episode_id"], recovery.status()["episode"])
+        self.assertEqual(operation["physical"]["recovery_permit_revision"], recovery.status()["revision"])
 
 
 if __name__ == "__main__":

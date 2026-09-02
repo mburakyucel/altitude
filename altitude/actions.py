@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import config, dispatch, engines, land, l1, recovery, state as S, tasks as T
 
-ACTION_FIELDS = ("dispatch_id", "session_id", "agent_id")
+ACTION_FIELDS = ("dispatch_id", "session_id", "agent_id", "owner_generation")
 MAX_HELPERS = 4
 MAX_HELPER_RESULT_BYTES = engines.RAW_CAPTURE_CAP
 
@@ -103,12 +103,6 @@ def _post_message(project: str, task: dict, record: dict) -> None:
             S.save_task(project, live)
 
 
-def _require_contained_exit(project: str, task: dict) -> None:
-    job_root = dispatch.l2_job_root(project, task["slug"])
-    if not engines.codex_containment_empty(str(task.get("agent_id") or ""), job_root=job_root):
-        raise ActionError(f"{task['slug']}: Codex worker containment is not empty")
-
-
 def _defer_for_recovery(project: str, task: dict, reason: str) -> dict:
     live = S.load_task(project, task["slug"])
     if live.get("state") == "running":
@@ -184,6 +178,7 @@ def _report(action: dict, result: dict, task: dict) -> dict:
 
 
 def _publish(project: str, task: dict, action: dict) -> dict:
+    dispatch.require_owner_permit_current(project, S.load_task(project, task["slug"]))
     proj = config.project(project)
     test_cmd = str(proj.get("test_cmd") or land.DEFAULT_TEST_CMD)
     wants_merge = bool(action.get("merge"))
@@ -213,6 +208,7 @@ def _helpers(project: str, task: dict, action: dict) -> dict:
     records = []
     task_dir = S.task_dir(project, task["slug"])
     for index, helper in enumerate(action.get("helpers") or [], 1):
+        dispatch.require_owner_permit_current(project, S.load_task(project, task["slug"]))
         brief = task_dir / f"helper-request-{task.get('attempt', 0)}-{index}.md"
         S.atomic_write(brief, str(helper["brief"]).rstrip() + "\n")
         name = f"helper-{task.get('attempt', 0)}-{index}"
@@ -261,8 +257,16 @@ def process_l2(project: str, item: dict) -> dict:
         raise ActionError(str(exc)) from exc
     if (task.get("l2_engine") or "claude") != "codex":
         raise ActionError("trusted action broker accepts only contained Codex L2 workers")
-    action = _validate_shape(item.get("action") or (item.get("agent") or {}).get("action"))
-    _require_contained_exit(project, task)
+    try:
+        snapshot = dispatch.require_owner_result(project, task)
+    except T.TransitionError as exc:
+        raise ActionError(str(exc)) from exc
+    task = snapshot["task"]
+    action = _validate_shape(snapshot["result"].get("action"))
+    try:
+        dispatch.require_owner_permit_current(project, task)
+    except T.TransitionError as exc:
+        raise ActionError(str(exc)) from exc
     record = _claim(project, task, action)
     hold = recovery.dispatch_hold(project, S.load_task(project, task["slug"]))
     if hold:
@@ -270,16 +274,19 @@ def process_l2(project: str, item: dict) -> dict:
     try:
         live = S.load_task(project, task["slug"])
         if live.get("state") == "blocked":
+            dispatch.require_owner_permit_current(project, live)
             live = T.resume(project, task["slug"], actor="altd", trusted_action=True,
                             expected_state="blocked", expected_dispatch_id=task.get("dispatch_id"),
                             expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"),
                             expected_pending_identity=_identity(task))
         task = live
+        dispatch.require_owner_permit_current(project, task)
         _post_message(project, task, record)
         kind = action["action"]
         if kind == "publish":
             return _publish(project, task, action)
         if kind == "complete_no_code":
+            dispatch.require_owner_permit_current(project, S.load_task(project, task["slug"]))
             with S.project_lock(project):
                 live = S.load_task(project, task["slug"])
                 if (live.get("state") != "running" or _identity(live) != _identity(task)
@@ -293,6 +300,7 @@ def process_l2(project: str, item: dict) -> dict:
                                          expected_session_id=task.get("session_id"))
             return {"kind": "done", "task": done}
         if kind == "block":
+            dispatch.require_owner_permit_current(project, S.load_task(project, task["slug"]))
             blocked = T.block(project, task["slug"], str(action["blocked_reason"]), actor="l2",
                               expected_state="running", expected_dispatch_id=task.get("dispatch_id"),
                               expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"),
@@ -301,6 +309,7 @@ def process_l2(project: str, item: dict) -> dict:
             return {"kind": "blocked", "task": blocked}
         if kind == "request_helpers":
             return _helpers(project, task, action)
+        dispatch.require_owner_permit_current(project, S.load_task(project, task["slug"]))
         return _resume_same(project, task, "Continue for this exact reason from your previous action: "
                            + str(action["continue_reason"]))
     except (land.LandError, T.TransitionError, OSError, ValueError) as exc:

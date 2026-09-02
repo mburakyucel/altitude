@@ -92,6 +92,10 @@ def _claude_path(session_id: str) -> Path | None:
 
 def _engine_paths(project: str, slug: str, task: dict, events: list[dict]) -> list[tuple[str, str, Path]]:
     engine = str(task.get("l2_engine") or "claude")
+    if engine == "codex":
+        return [("codex", session_id, path)
+                for session_id, path in dispatch.owner_generation_event_paths(project, task)
+                if path.is_file()]
     identities = []
     for ev in [*events, task]:
         sid, aid = str(ev.get("session_id") or ""), str(ev.get("agent_id") or "")
@@ -103,8 +107,6 @@ def _engine_paths(project: str, slug: str, task: dict, events: list[dict]) -> li
     for eng, sid, aid in identities:
         if eng == "claude":
             path = _claude_path(sid)
-        elif eng == "codex" and aid and "/" not in aid and "\\" not in aid:
-            path = dispatch.l2_job_root(project, slug) / f"{aid}.stdout.jsonl"
         else:
             path = None
         if path and path.is_file():

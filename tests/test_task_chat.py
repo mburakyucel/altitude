@@ -13,7 +13,7 @@ from unittest import mock
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-task-chat-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP / "home")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, server, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, server, state as S, tasks as T  # noqa: E402
 
 
 class TestTaskConversation(unittest.TestCase):
@@ -49,7 +49,7 @@ class TestTaskConversation(unittest.TestCase):
 
     def test_burak_message_is_durable_and_fenced_to_the_snapshot_it_resumes(self):
         resumed = {"stdout": "", "stderr": "", "agent": {"id": "agent-new"}}
-        with mock.patch.object(dispatch, "_resume_session_locked", return_value=resumed) as resume:
+        with mock.patch.object(dispatch, "resume_session", return_value=resumed) as resume:
             result = dispatch.message_l2(self.project, self.slug, "Prefer the smaller diff.")
 
         history = T.task_messages(self.project, self.slug)
@@ -58,7 +58,7 @@ class TestTaskConversation(unittest.TestCase):
         self.assertEqual(result["message"]["id"], history[0]["id"])
         self.assertEqual(resume.call_args.args[:3],
                          (self.project, self.slug, "Prefer the smaller diff."))
-        self.assertEqual(resume.call_args.kwargs, {
+        self.assertEqual({key: value for key, value in resume.call_args.kwargs.items() if key != "message_id"}, {
             "expected_dispatch_id": f"{self.slug}-1",
             "expected_session_id": "session-old",
             "expected_agent_id": "agent-old",
@@ -66,7 +66,7 @@ class TestTaskConversation(unittest.TestCase):
         })
 
     def test_live_view_steering_rejects_a_stale_displayed_generation(self):
-        with mock.patch.object(dispatch, "_resume_session_locked") as resume:
+        with mock.patch.object(dispatch, "resume_session") as resume:
             with self.assertRaisesRegex(T.TransitionError, "session changed"):
                 dispatch.message_l2(self.project, self.slug, "stale", expected_dispatch_id=f"{self.slug}-1",
                                     expected_session_id="session-replaced", expected_engine="codex")
@@ -100,7 +100,7 @@ class TestTaskConversation(unittest.TestCase):
         task = S.load_task(self.project, self.slug)
         task["state"] = "done"
         S.save_task(self.project, task)
-        with mock.patch.object(dispatch, "_resume_session_locked") as resume:
+        with mock.patch.object(dispatch, "resume_session") as resume:
             with self.assertRaisesRegex(T.TransitionError, "running or blocked"):
                 dispatch.message_l2(self.project, self.slug, "late steering")
         resume.assert_not_called()
@@ -112,7 +112,7 @@ class TestTaskConversation(unittest.TestCase):
         task["blocked_reason"] = "Need one decision."
         S.save_task(self.project, task)
         resumed = {"stdout": "", "stderr": "", "deferred": True}
-        with mock.patch.object(dispatch, "_resume_blocked_locked", return_value=resumed) as resume:
+        with mock.patch.object(dispatch, "resume_blocked", return_value=resumed) as resume:
             result = dispatch.message_l2(self.project, self.slug, "Use the existing API.")
 
         self.assertTrue(result["deferred"])
@@ -177,76 +177,6 @@ class TestTaskConversation(unittest.TestCase):
                 expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2",
             )
         self.assertEqual(T.task_messages(self.project, self.slug), [])
-
-
-class TestResumeGenerationFence(unittest.TestCase):
-    def test_task_change_during_resume_stops_the_replacement_worker(self):
-        project = "task-chat-resume-race"
-        repo = _TMP / project / "repo"
-        worktree = repo / ".claude" / "worktrees" / "resume-race"
-        worktree.mkdir(parents=True, exist_ok=True)
-        projects = config.load_projects()
-        projects[project] = {"name": project, "path": str(repo)}
-        config.save_projects(projects)
-        S.save_task(project, {
-            "slug": "resume-race", "title": "race", "state": "running",
-            "dispatch_id": "resume-race-1", "session_id": "session-old", "agent_id": "agent-old",
-            "worktree": str(worktree), "created": S.now(),
-        })
-
-        def launch(*_args, **_kwargs):
-            T.reject(project, "resume-race", "cancelled while resuming")
-            return {"stdout": "", "stderr": "", "returncode": 0}
-
-        rows = [{"id": "agent-new", "sessionId": "session-new",
-                 "name": f"{project}/resume-race-1", "state": "working", "startedAt": 2}]
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"), \
-             mock.patch.object(engines, "claude_resume_bg", side_effect=launch), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_rm", return_value="removed"), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop:
-            with self.assertRaisesRegex(T.TransitionError, "generation changed during resume"):
-                dispatch.resume_session(project, "resume-race", "continue")
-
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
-        self.assertEqual(S.load_task(project, "resume-race")["state"], "rejected")
-
-    def test_resume_persistence_failure_stops_the_unowned_replacement_and_holds_recovery(self):
-        project = "task-chat-resume-persist"
-        repo = _TMP / project / "repo"
-        worktree = repo / ".claude" / "worktrees" / "resume-persist"
-        worktree.mkdir(parents=True, exist_ok=True)
-        projects = config.load_projects()
-        projects[project] = {"name": project, "path": str(repo)}
-        config.save_projects(projects)
-        S.save_task(project, {
-            "slug": "resume-persist", "title": "persist", "state": "running",
-            "dispatch_id": "resume-persist-1", "session_id": "session-old", "agent_id": "agent-old",
-            "l2_token": "token-old", "worktree": str(worktree), "created": S.now(),
-        })
-        rows = [{"id": "agent-new", "sessionId": "session-new",
-                 "name": f"{project}/resume-persist-1", "state": "working", "startedAt": 2}]
-        result = {"stdout": "", "stderr": "", "returncode": 0}
-
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"), \
-             mock.patch.object(engines, "claude_resume_bg", return_value=result), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
-             mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")), \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(RuntimeError, "could not bind replacement worker"):
-                dispatch.resume_session(project, "resume-persist", "continue")
-
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
-        current = S.load_task(project, "resume-persist")
-        self.assertEqual((current["agent_id"], current["session_id"], current["l2_token"]),
-                         ("agent-old", "session-old", "token-old"))
-        self.assertEqual(S.read_events(project, "resume-persist")[-1]["kind"], "resume-failed")
-        fault.assert_called_once()
 
 
 if __name__ == "__main__":

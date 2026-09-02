@@ -41,12 +41,11 @@ class TestTemporaryCapacity(unittest.TestCase):
 
     def test_poll_classifies_capacity_before_a_failed_worker_as_died(self):
         task = self._task("capacity-poll")
-        worker = {
-            "id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
-            "detail": engines.TEMPORARY_CAPACITY_TEXT,
-        }
+        worker = {"result": {"usage": {}, "error": engines.TEMPORARY_CAPACITY_TEXT}}
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
-                mock.patch.object(engines, "codex_worker", return_value=worker):
+                mock.patch.object(dispatch, "reconcile_owner", return_value=task), \
+                mock.patch.object(dispatch, "owner_projection", return_value={"terminal": True}), \
+                mock.patch.object(dispatch, "_owner", return_value=worker):
             out = dispatch.poll("capacity")
 
         self.assertEqual(len(out), 1)
@@ -55,12 +54,12 @@ class TestTemporaryCapacity(unittest.TestCase):
 
     def test_codex_failed_quota_message_is_a_provider_hold_not_a_dead_worker(self):
         task = self._task("codex-quota-poll")
-        worker = {
-            "id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
-            "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)",
-        }
+        worker = {"result": {"usage": {},
+                              "error": "You've hit your usage limit · resets 8pm (America/Los_Angeles)"}}
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
-                mock.patch.object(engines, "codex_worker", return_value=worker):
+                mock.patch.object(dispatch, "reconcile_owner", return_value=task), \
+                mock.patch.object(dispatch, "owner_projection", return_value={"terminal": True}), \
+                mock.patch.object(dispatch, "_owner", return_value=worker):
             out = dispatch.poll("capacity")
 
         self.assertEqual(len(out), 1)
@@ -119,22 +118,18 @@ class TestTemporaryCapacity(unittest.TestCase):
         S.save_task("capacity", second)
         seen = {}
 
-        def resume(engine, name, session_id, prompt, **kwargs):
-            seen.update(engine=engine, name=name, session_id=session_id, model=kwargs.get("model"))
-            return {"returncode": 0, "stdout": "", "stderr": "", "agent": {
-                "id": "replacement-worker", "sessionId": session_id, "state": "working", "startedAt": 2,
-            }}
+        def resume(project, slug, answer, prefix="", **kwargs):
+            seen.update(project=project, slug=slug, answer=answer)
+            return {"deferred": False}
 
         with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(engines, "stop_l2_worker", return_value="stopped"), \
-                mock.patch.object(engines, "resume_l2", side_effect=resume), \
+                mock.patch.object(dispatch, "resume_blocked", side_effect=resume), \
                 mock.patch.object(dispatch.route, "pick_engine", side_effect=AssertionError("must not reroute")):
             resumed = dispatch.resume_due("capacity")
 
         self.assertEqual(resumed, [task["slug"]])
-        self.assertEqual((seen["engine"], seen["model"]), ("codex", "gpt-test-stable"))
-        self.assertEqual(seen["session_id"], task["session_id"])
+        self.assertEqual((seen["project"], seen["slug"]), ("capacity", task["slug"]))
 
 
 if __name__ == "__main__":

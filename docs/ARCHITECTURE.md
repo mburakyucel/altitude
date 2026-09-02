@@ -1,6 +1,6 @@
 # Altitude architecture
 
-> **Candidate-source status.** This document describes the current reviewed integration candidate.
+> **Candidate-source status.** This document describes the current Phase 1B.3 integration candidate.
 > Production remains stopped and byte-frozen at
 > `97e11979bdc0814ad5067eab717f999d1c251437`; no ActivationReceipt exists. Sections explicitly
 > labeled dormant are implemented facts with no normal caller. The comprehensive-simplification
@@ -121,16 +121,17 @@ base-owned workflow accepts only same-repository heads, pins its actions and Nod
 read-only repository permission, persists no checkout credential, exposes no token or secret, and
 runs candidate commands under an empty environment with disposable HOME and cache directories.
 
-### Physical ownership foundation and L3 adoption
+### Physical ownership foundation and L3/L2 adoption
 
-`engines.py` defines one closed physical transition. Codex L3 actively uses it in this candidate;
-L2-owner and helper adoption remain planned:
+`engines.py` defines one closed physical transition. Codex L3 and L2 owners actively use it in this
+candidate; managed-helper adoption remains planned:
 `planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete | failed`.
 Its deterministic unit, physical generation, provider-session request, stable message id, and optional
 recovery episode/permit revision are immutable intent protected by one stable digest. Receipts have closed
 stage-specific shapes, and the record revision is derived exactly from its receipts and durable error. L3
-embeds it in `l3.json`; later L2/helper adopters must embed it in their existing authoritative
-aggregate and persist it with the durable state primitives. The transition creates no sidecar
+embeds it in `l3.json`; L2 embeds it in the active TaskRecord; the later helper adopter must embed it
+in its existing authoritative aggregate. Each adopter persists through the durable state primitives.
+The transition creates no sidecar
 record, journal, lock, or artifact family. A recorded pre-spawn error reconciles through
 `launched=false`, `bound=false`, its exact error result, and proven empty before failure, without a
 provider effect. After `prior_stopped`, an empty/collected unit with neither an error nor a durable
@@ -142,7 +143,7 @@ reusing the existing Codex containment mechanics. A read-only reconciliation hel
 with a durable result marker carrying the same intent digest and returns a crash-stage decision; disagreement
 refuses as `ownership_uncertain` rather than guessing or relaunching.
 
-Codex L3 is the first and currently only adopter. `l3.json` embeds the current turn, provider request, deterministic
+Codex L3 is the first adopter. `l3.json` embeds the current turn, provider request, deterministic
 unit, exact service-instance claim/replacement receipt, recovery permit, receipts, and keyed delivery claim;
 each generation has its own result marker as
 non-authoritative output in
@@ -173,7 +174,34 @@ The model cannot read `ALTITUDE_HOME`. The host writes one bounded, aggressively
 containing coordination-safe task facts and recent chat, then grants read access only to that exact regular file and
 the selected checkout. Parent symlinks and changed projection bytes refuse. The Codex adapter caps answer and event
 output while producing it; cap, drain, or timeout terminates the Codex process, after which the outer managed L3 unit
-must be proven empty before settlement. L2 owners and helpers do not consume this L3 adoption yet.
+must be proven empty before settlement. Helpers do not consume the shared transition yet.
+
+Codex L2 ownership is the second adopter. The active TaskRecord embeds one closed owner operation: exact
+prompt/message, Git-preparation receipt, physical transition, bounded result, optional successor, stop intent,
+and the canonical recovery epoch or episode/revision. The task-owned `owner_command` seam is the sole short-lock
+serializer for B3 owner plans, compare-and-swap decisions, receipts, and projections. Dispatch performs or
+reconciles Git, manager, and provider effects outside that lock and returns only typed, intent-bound receipts for
+the seam to persist. Only the `planned -> prior_stopped` winner may spawn; observers reconcile and never relaunch.
+Steering first persists the exact successor and stop intent, then proves the old unit empty before a new generation
+resumes the same Codex thread. Rejection likewise persists cancellation before stop and cannot archive until the
+embedded transition is terminal with an exact empty receipt. The server timer only schedules the existing
+deduplicated L2 reconciliation worker; provider effects and receipt persistence never run inline in the timer.
+
+Each terminal owner is projected into the TaskRecord's bounded generation history with its exact transition,
+managed-unit, message, event/result identities, result hash, and session evidence. Live transcript lookup validates
+that generation roster and derives only those event paths; it does not scan a legacy job directory or infer an
+owner from a PID or timestamp. The active task path is likewise read directly, so archive rename cannot create a
+second claimant or ghost task directory. Task/project APIs omit the prompt, capability, physical record, pending
+action, and deferred answer. Legacy Codex PID/job/timestamp authority and its fallback readers are deleted; legacy
+Claude records remain read-only stopped-state evidence.
+
+Phase 1B.3 is integrated on top of the reviewed Phase 1A and Phase 1B.2 fixes in this candidate. Its pre-rebase
+branch-local line delta is obsolete and intentionally omitted: §04's mechanical whole-candidate count is the only
+accepted accounting basis and must be rerun after all B3 integration conflicts are resolved. No new service, timer,
+endpoint, lock family, dependency, or persistent artifact family is introduced. Phase 1B.4 remains the helper
+adopter. PR 1C.1 replaces the temporary action/result compatibility seam, PR 1C.5 folds continuation and terminal
+generation handling into settlement, Phase 3B removes session mirrors and compacts migrated journals, and PR 10B
+may delete consumed legacy Claude evidence only after the successful activation/cutover receipts.
 
 Phase 1B.2 accounting is intentionally explicit. The initial review snapshot added **361 backend lines**
 (`engines.py` +47, `l3.py` +283, `l3_actions.py` +29, `server.py` +2). Closing the instance-handoff,

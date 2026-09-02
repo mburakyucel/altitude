@@ -10,7 +10,7 @@ from unittest import mock
 _ROOT = Path(tempfile.mkdtemp(prefix="altitude-l2-actions-"))
 os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import actions, config, dispatch, engines, l1, recovery, state as S, tasks as T  # noqa: E402
+from altitude import actions, config, dispatch, l1, recovery, state as S, tasks as T  # noqa: E402
 
 
 class TestL2Actions(unittest.TestCase):
@@ -41,14 +41,30 @@ class TestL2Actions(unittest.TestCase):
 
     def test_missing_action_is_a_schema_error(self):
         task = self.task()
-        with mock.patch.object(engines, "codex_containment_empty", return_value=True):
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {}, "result": {}}):
             with self.assertRaisesRegex(actions.ActionError, "schema-valid action"):
                 actions.process_l2("p", {"task": task, "agent": {"id": "worker-1"}})
+
+    def test_changed_recovery_permit_refuses_before_claiming_any_action_effect(self):
+        task = self.task()
+        action = {"action": "block", "blocked_reason": "stale"}
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {"action": action},
+                                             "result": {"action": action}}), \
+             mock.patch.object(dispatch, "require_owner_permit_current",
+                               side_effect=T.TransitionError("permit changed")):
+            with self.assertRaisesRegex(actions.ActionError, "permit changed"):
+                actions.process_l2("p", self.item(task, action))
+        self.assertNotIn("pending_action", S.load_task("p", task["slug"]))
 
     def test_recovery_held_action_executes_after_clear_without_a_model_resume(self):
         task = self.task()
         action = {"action": "block", "blocked_reason": "needs a user decision", "message": "I need input"}
-        with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {"action": action},
+                                             "result": {"action": action}}), \
+             mock.patch.object(dispatch, "require_owner_permit_current"), \
              mock.patch.object(recovery, "dispatch_hold", side_effect=["recovery fuse", None]), \
              mock.patch.object(dispatch, "resume_session") as resume:
             first = actions.process_l2("p", self.item(task, action))
@@ -64,13 +80,19 @@ class TestL2Actions(unittest.TestCase):
     def test_concurrent_replacement_fences_a_held_action(self):
         task = self.task()
         action = {"action": "block", "blocked_reason": "old action"}
-        with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {"action": action},
+                                             "result": {"action": action}}), \
+             mock.patch.object(dispatch, "require_owner_permit_current"), \
              mock.patch.object(recovery, "dispatch_hold", return_value="recovery fuse"):
             actions.process_l2("p", self.item(task, action))
         held = S.load_task("p", task["slug"])
         held["agent_id"] = "replacement-worker"
         S.save_task("p", held)
-        with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {"action": action},
+                                             "result": {"action": action}}), \
+             mock.patch.object(dispatch, "require_owner_permit_current"), \
              mock.patch.object(recovery, "dispatch_hold", return_value=None):
             with self.assertRaisesRegex(actions.ActionError, "ownership changed"):
                 actions.process_l2("p", self.item(task, action))
@@ -90,6 +112,7 @@ class TestL2Actions(unittest.TestCase):
         result = {"name": "helper-1-1", "role": "implementer", "engine": "codex",
                   "patch": str(patch_path), "summary": "ready", "error": None}
         with mock.patch.object(l1, "load", return_value=None), \
+             mock.patch.object(dispatch, "require_owner_permit_current"), \
              mock.patch.object(l1, "start", return_value=record), \
              mock.patch.object(l1, "wait", return_value={"run": result}), \
              mock.patch.object(dispatch, "resume_session", return_value={"agent": {"id": "worker-2"}}) as resume:
@@ -139,7 +162,10 @@ class TestL2Actions(unittest.TestCase):
             self.assertTrue(phase["settled"], "retry must not reach provenance before self-deploy settles")
             return {"agent": {"id": "worker-2"}}
 
-        with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
+        with mock.patch.object(dispatch, "require_owner_result",
+                               return_value={"task": task, "agent": {"action": action},
+                                             "result": {"action": action}}), \
+             mock.patch.object(dispatch, "require_owner_permit_current"), \
              mock.patch.object(recovery, "dispatch_hold", return_value=None), \
              mock.patch.object(actions.land, "land", side_effect=merged_then_retry), \
              mock.patch.object(dispatch, "pull_after_done", side_effect=settle) as pulled, \

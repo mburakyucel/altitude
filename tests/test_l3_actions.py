@@ -288,8 +288,8 @@ class TestL3Actions(unittest.TestCase):
 
     def test_l3_never_blocks_or_completes_a_live_worker(self):
         task = self.task()
-        live = {"id": "agent-1", "state": "working", "status": "busy"}
-        with mock.patch.object(engines, "codex_worker", return_value=live):
+        live = {"working": True}
+        with mock.patch.object(dispatch, "owner_projection", return_value=live):
             with self.assertRaisesRegex(l3_actions.L3ActionError, "cannot block a live"):
                 l3_actions.apply("p", envelope({"type": "task_block", "slug": task["slug"],
                                                 "reason": "stop"}), action_id="c" * 64)
@@ -297,16 +297,16 @@ class TestL3Actions(unittest.TestCase):
 
         task["state"] = "reported"
         S.save_task("p", task)
-        with mock.patch.object(engines, "codex_worker", return_value=live):
+        with mock.patch.object(dispatch, "owner_projection", return_value=live):
             with self.assertRaisesRegex(l3_actions.L3ActionError, "no live L2"):
                 l3_actions.apply("p", envelope({"type": "task_done", "slug": task["slug"],
                                                 "digest": "done"}), action_id="d" * 64)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
 
-    def test_missing_codex_worker_record_fails_closed(self):
+    def test_missing_codex_owner_operation_fails_closed(self):
         task = self.task(state="reported", l2_engine="codex")
-        with mock.patch.object(engines, "codex_worker", return_value=None):
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "worker record is missing"):
+        with mock.patch.object(dispatch, "owner_projection", return_value=None):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "operation is missing"):
                 l3_actions.apply("p", envelope({"type": "task_done", "slug": task["slug"],
                                                 "digest": "done"}), action_id="9" * 64)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")

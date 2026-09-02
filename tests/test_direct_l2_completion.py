@@ -10,7 +10,7 @@ from unittest import mock
 _ROOT = Path(tempfile.mkdtemp(prefix="altitude-l2-complete-"))
 os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, server, state as S, tasks as T  # noqa: E402
+from altitude import config, server, state as S, tasks as T  # noqa: E402
 
 
 class TestDirectL2Completion(unittest.TestCase):
@@ -73,9 +73,8 @@ class TestDirectL2Completion(unittest.TestCase):
     def test_rejection_stays_active_if_codex_worker_cannot_be_stopped(self):
         task, _ = self.task("Unsafe rejection")
         task["l2_engine"] = "codex"; S.save_task("p", task)
-        with mock.patch.object(engines, "remove_l2_worker", side_effect=RuntimeError("still alive")):
-            with self.assertRaisesRegex(T.TransitionError, "may still be live"):
-                T.reject("p", task["slug"], "cancel")
+        with self.assertRaisesRegex(T.TransitionError, "unknown legacy Codex ownership"):
+            T.reject("p", task["slug"], "cancel")
         self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
         self.assertEqual(S.task_dir("p", task["slug"]).parent, S.tasks_dir("p"))
 

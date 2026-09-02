@@ -1,5 +1,6 @@
 """Task lifecycle — queued, running, blocked, reported, then archived. Every transition goes through here."""
 from __future__ import annotations
+import copy
 import json
 import os
 import re
@@ -43,6 +44,30 @@ def require_owner_provider_capability(task: dict) -> None:
         return
     if hold := owner_provider_capability_hold(task):
         raise TransitionError(hold)
+
+
+def owner_command(project: str, slug: str, decide, validate) -> tuple[dict, object]:
+    """The sole short-lock write seam for the embedded L2 owner operation.
+
+    ``decide`` receives a detached active TaskRecord and returns
+    ``(candidate, result, event)``. Effects never belong in either callback. Legacy lifecycle
+    writers remain frozen until Phase 3; this seam owns only B3 planning/CAS/receipts/projections.
+    """
+    with S.project_lock(project):
+        path = S.tasks_dir(project) / slug / "status.json"
+        task = S.read_json(path)
+        if not task:
+            raise TransitionError(f"{slug}: active task no longer exists")
+        candidate, result, event = decide(copy.deepcopy(task))
+        if not isinstance(candidate, dict) or candidate.get("slug") != slug:
+            raise TransitionError(f"{slug}: invalid owner command result")
+        validate(candidate)
+        if candidate != task:
+            S.save_task(project, candidate)
+            if event:
+                kind, fields = event
+                S.append_event(project, slug, kind, **fields)
+        return candidate, result
 
 
 TASK_MESSAGE_ROLES = ("burak", "l2")
@@ -137,27 +162,11 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     frm = task["state"]
     if to not in TRANSITIONS.get(frm, set()):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
-    stopped = None
-    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
-        from . import engines
-        engine = task.get("l2_engine") or "claude"
-        try:
-            note = engines.remove_l2_worker(
-                engine, task["agent_id"], job_root=S.task_dir(project, task["slug"]) / "l2-engine")
-        except Exception as exc:
-            raise TransitionError(
-                f"{task['slug']}: cannot reject while its {engine} worker may still be live: {exc}"
-            ) from exc
-        stopped = (engine, note)
     task["state"] = to
     if to == "running":
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if stopped:
-        engine, note = stopped
-        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
-                       engine=engine, note=note[:200])
     S.regen_state_md(project)
     return task
 
@@ -221,9 +230,22 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
 
 
 def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
+    snapshot = S.load_task(project, slug)
+    require_owner_provider_capability(snapshot)
+    expected_owner = None
+    if snapshot.get("l2_engine") == "codex":
+        if snapshot.get("active_operation") is None:
+            raise TransitionError(f"{slug}: unknown legacy Codex ownership cannot be rejected safely")
+        from . import dispatch
+        stopped = dispatch.cancel_owner(project, slug, f"task rejected: {reason}")
+        expected_owner = stopped.get("active_operation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
+        if task.get("l2_engine") == "codex":
+            from . import dispatch
+            if task.get("active_operation") != expected_owner or not dispatch.owner_archive_ready(project, task):
+                raise TransitionError(f"{slug}: Codex owner is not terminal and empty")
         task["blocked_reason"] = None
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -354,9 +376,20 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_state: str | None = None, expected_dispatch_id: str | None = None,
          expected_session_id: str | None = None, expected_agent_id: str | None = None,
          expected_l2_token: str | None = None) -> dict:
+    snapshot = S.load_task(project, slug)
+    expected_owner = None
+    if actor != "l2" and snapshot.get("l2_engine") == "codex" and snapshot.get("active_operation"):
+        from . import dispatch
+        exact = dispatch.owner_result_snapshot(project, snapshot)
+        expected_owner = exact["task"].get("active_operation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
+        if expected_owner is not None:
+            from . import dispatch
+            if (task.get("active_operation") != expected_owner
+                    or not dispatch.owner_archive_ready(project, task)):
+                raise TransitionError(f"{slug}: Codex owner changed before terminalization")
         if actor == "l2":
             if (not expected_dispatch_id or not expected_l2_token
                     or task.get("dispatch_id") != expected_dispatch_id
@@ -394,9 +427,20 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
                         expected_agent_id: str | None, expected_session_id: str | None,
                         actor: str = "altd") -> dict:
     """Archive a no-code L2 completion only after its physical worker has exited."""
+    snapshot = S.load_task(project, slug)
+    expected_owner = None
+    if snapshot.get("l2_engine") == "codex" and snapshot.get("active_operation"):
+        from . import dispatch
+        exact = dispatch.owner_result_snapshot(project, snapshot)
+        expected_owner = exact["task"].get("active_operation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
+        if expected_owner is not None:
+            from . import dispatch
+            if (task.get("active_operation") != expected_owner
+                    or not dispatch.owner_archive_ready(project, task)):
+                raise TransitionError(f"{slug}: Codex owner changed before terminalization")
         request = task.get("completion_requested") or {}
         expected = (expected_dispatch_id, expected_agent_id, expected_session_id)
         current = (task.get("dispatch_id"), task.get("agent_id"), task.get("session_id"))
@@ -419,6 +463,11 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
+        task = S.load_task(project, slug)
+        if task.get("l2_engine") == "codex" and task.get("active_operation") is not None:
+            from . import dispatch
+            if not dispatch.owner_archive_ready(project, task):
+                raise TransitionError(f"{slug}: refusing to archive a live Codex owner")
         # Capture the final state/outcome after digest/report creation and before the task moves.
         from . import transcript
         transcript.sync(project, slug)

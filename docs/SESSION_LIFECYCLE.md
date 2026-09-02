@@ -3,7 +3,7 @@
 > **Candidate-source status.** This describes the current integration candidate; production
 > remains stopped and frozen at `97e1197`, with no ActivationReceipt. Claude rows below are read-only
 > legacy evidence/cleanup behavior. New autonomous L3, L2, L1, and helper turns are Codex-only.
-> Durable physical-turn ownership is active for L3; L2-owner and helper adoption remain planned.
+> Durable physical-turn ownership is active for L3 and L2 owners; helper adoption remains planned.
 
 ## Live L2 transcript
 
@@ -11,8 +11,9 @@ The task page stays a concise Burak/L2 conversation. Its opt-in **Live session**
 JSONL and Altitude's task events into one engine-neutral timeline; it does not run a summarizer and never claims
 hidden reasoning. Tool output is bounded in the default timeline and complete observable records can be expanded
 in raw mode. Raw mode remains local and redacts credential-shaped keys and values before data crosses the HTTP
-boundary. The browser supplies no paths: the server derives transcript files only from the registered task and its
-recorded engine, worker, and session identities.
+boundary. The browser supplies no paths: for Codex L2, the server validates the TaskRecord's current and retired
+owner generations and derives only their exact event paths. It never discovers transcript authority from a legacy
+PID/job/timestamp row or by scanning a provider directory.
 
 ## Durable transcript bundles
 
@@ -51,8 +52,8 @@ identities on purpose:
 | --- | --- | --- |
 | `dispatch_id` | one L2 attempt | the task is dispatched again as a new attempt |
 | `l2_engine` | selected engine or retained legacy provider | new attempts select Codex; a legacy Claude value is inert evidence |
-| `session_id` | provider conversation/thread | Codex keeps it across turns; a legacy Claude id is observation only |
-| `agent_id` | current Codex OS worker or retained legacy Claude job | every enabled Codex physical replacement |
+| `session_id` | provider conversation/thread projection | Codex keeps it across turns; authority remains the owner receipt and a legacy Claude id is observation only |
+| `agent_id` | deterministic Codex managed-unit projection or retained legacy Claude job | every enabled Codex physical replacement; it is not ownership authority |
 | `l2_token` | backend ownership fence for the logical L2 attempt | stable for the attempt; old workers are stopped before replacement |
 | `routing` | reason plus quota evidence used at launch | written once with fresh dispatch |
 
@@ -63,8 +64,9 @@ queued task
   ├─ recovery/WIP/lease and Git provenance gates
   ├─ weekly-first Codex observation and configured model choice
   ├─ persist l2_engine + model + reason + raw quota evidence
-  ├─ create the provider session in the isolated task worktree
-  └─ bind its concrete session and worker → running
+  ├─ persist the TaskRecord-owned request and exact Git-preparation receipt
+  ├─ elect one `planned -> prior_stopped` launcher and start its deterministic unit
+  └─ bind the concrete session and worker only from typed receipts → running
 ```
 
 Routing uses Codex's reported seven-day allowance as its primary capacity score; the five-hour
@@ -78,23 +80,22 @@ than a guessed quota relationship.
 
 ## Message and resume
 
-Under the task's resume lock Altitude first validates the exact dispatch/session/state/worker snapshot
-and the selected provider's closed autonomous capability. A disabled provider returns a synchronous
-provider hold without changing task state, conversation, events, incidents, recovery, or workers;
-scheduled retries leave the existing durable retry in place. For an enabled provider Altitude then:
+Altitude first validates the exact dispatch/session/state/worker snapshot and the selected provider's closed
+autonomous capability. A disabled provider returns a synchronous provider hold without changing task state,
+conversation, events, incidents, recovery, or workers; scheduled retries leave the existing durable retry in
+place. For enabled Codex, Burak's message is appended to the durable human conversation with the addressed
+snapshot. A short task-owned compare-and-swap then persists that same message id and prompt as the current owner's
+sole successor before Altitude:
 
-1. appends Burak's message to the durable human conversation with the addressed snapshot;
-2. validates the task worktree/commit provenance;
-3. stops the current physical worker and confirms it is no longer live;
-4. resumes the task's already-selected Codex conversation;
-5. atomically binds the Codex replacement worker while retaining the exact thread id.
-
-This is the existing L2 path. It does not claim the new shared durable physical-transition
-adoption; that remains planned for Phase 1B.3.
+1. validates the task worktree/commit provenance and records its typed preparation receipt;
+2. persists stop intent, stops the current deterministic unit, and proves it empty;
+3. resumes the already-selected Codex thread in a new physical generation;
+4. binds the replacement worker only through its typed physical-transition receipts.
 
 Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
 A failed resume leaves the Codex thread and task evidence available for recovery. No cross-provider
-continuation exists in the current target.
+continuation exists in the current target. No long-held resume/owner flock exists: the task-owned seam serializes
+each short receipt transition, while dispatch performs or reconciles Git, manager, and provider effects unlocked.
 
 Claude launch/resume is disabled for L2, L3, L1, and helpers. Legacy hooks and backend validation
 remain only until stopped-state reconciliation and post-activation deletion; neither is a callable
@@ -167,10 +168,16 @@ dormant until Phase 1C.4 supplies exact-repository replay and a trusted approval
 
 ## Polling, restart, and cleanup
 
-Enabled Codex processes expose the persisted worker row and exact managed-unit ownership evidence. Polling follows
-the persisted `l2_engine`; a disabled legacy Claude row remains inert evidence and cannot be launched or silently
-treated as absent. Read-only inspection may rediscover it only for exact stop/cleanup. A missing or failed enabled
-worker without a valid completion is a system fault, not “still running.”
+Enabled Codex L2 processes expose the TaskRecord's embedded owner operation and exact managed-unit receipts.
+Polling is a pure projection of that record plus the deterministic unit; it never repairs ownership or consults
+a PID/job/timestamp row. A disabled legacy Claude row remains inert evidence and cannot be launched or silently
+treated as absent; read-only inspection may rediscover it only for exact stop/cleanup. Unknown legacy Codex
+ownership, or a missing/failed unit without a valid terminal receipt, fails closed as a system fault.
+
+The service timer schedules L2 reconciliation through the existing deduplicated background runner. It does not run
+provider work or persist owner receipts inline. Completed owner generations are retained as bounded TaskRecord
+evidence for live transcript lookup; the transcript reader validates those identities and hashes instead of
+consulting legacy PID/job/timestamp authority.
 
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.

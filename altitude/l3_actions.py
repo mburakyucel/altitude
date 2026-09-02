@@ -196,20 +196,22 @@ def _note_interrupted(project: str, action_id: str, action: dict, error: BaseExc
 
 
 def _worker_live(project: str, task: dict) -> bool:
-    worker_id = task.get("agent_id")
-    if not worker_id:
-        return False
     engine = task.get("l2_engine") or "claude"
+    worker_id = task.get("agent_id")
     try:
         if engine == "codex":
-            row = engines.codex_worker(worker_id, job_root=dispatch.l2_job_root(project, task["slug"]))
+            projection = dispatch.owner_projection(project, task)
+            if projection is None:
+                raise L3ActionError(
+                    f"cannot prove Codex owner for {task.get('slug')} stopped: operation is missing")
+            return bool(projection["working"])
+        if not worker_id:
+            return False
         else:
             row = next((item for item in engines.claude_agents() if item.get("id") == worker_id), None)
     except Exception as exc:  # noqa: BLE001 -- inability to prove exit must fail closed
         raise L3ActionError(f"cannot prove L2 worker {worker_id} stopped: {exc}") from exc
     if not row:
-        if engine == "codex":
-            raise L3ActionError(f"cannot prove Codex L2 worker {worker_id} stopped: worker record is missing")
         return False
     return row.get("state") not in ("failed", "done", "stopped") and row.get("status") != "exited"
 

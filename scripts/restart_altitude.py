@@ -80,14 +80,15 @@ def require_deployed_checkout() -> None:
 
 
 def worker_is_live(project: str, task: dict, claude_rows: list[dict] | None) -> bool:
-    worker_id = task.get("agent_id")
-    if not worker_id:
-        return False
     if (task.get("l2_engine") or "claude") == "codex":
-        row = engines.codex_worker(worker_id, job_root=dispatch.l2_job_root(project, task["slug"]))
+        row = dispatch.owner_projection(project, task)
         if row is None:
-            raise RestartError(f"cannot prove Codex worker {worker_id} has exited")
+            raise RestartError(f"cannot prove Codex owner for {task.get('slug')} state")
+        return bool(row["working"])
     else:
+        worker_id = task.get("agent_id")
+        if not worker_id:
+            return False
         row = next((item for item in (claude_rows or []) if item.get("id") == worker_id), None)
         if row is None:
             return False

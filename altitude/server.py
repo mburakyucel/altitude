@@ -439,7 +439,7 @@ def resume_pending_actions(project: str) -> None:
     for task in actions.pending(project):
         if task.get("state") not in ("running", "blocked") or recovery.dispatch_hold(project, task):
             continue
-        worker = engines.codex_worker(task.get("agent_id"), job_root=dispatch.l2_job_root(project, task["slug"]))
+        worker = dispatch.owner_projection(project, task)
         action = (task.get("pending_action") or {}).get("action")
         if not action:
             continue
@@ -452,6 +452,14 @@ def reconcile_l3(project: str) -> None:
     l3.reconcile(project, instance_id=_L3_INSTANCE_ID, nonblocking=True)
 
 
+def reconcile_l2(project: str) -> None:
+    """Resume/reconcile L2 owners outside the timer; both paths may persist owner receipts."""
+    for slug in dispatch.resume_due(project):
+        log(f"[{project}/{slug}] resumed: the usage window reopened")
+    for item in dispatch.poll(project):
+        spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
+
+
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
@@ -461,13 +469,10 @@ def tick() -> None:
     for project in list(config.load_projects()):
         try:
             spawn(f"l3-reconcile:{project}", reconcile_l3, project)
+            spawn(f"l2-reconcile:{project}", reconcile_l2, project)
             wake_recovery_l3(project)
             resume_pending_actions(project)
-            for item in dispatch.poll(project):
-                spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
-            for slug in dispatch.resume_due(project):
-                log(f"[{project}/{slug}] resumed: the usage window reopened")
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
@@ -798,7 +803,10 @@ def project_view(name: str) -> dict:
     for t in S.list_tasks(name):
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
-        tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
+        public = {key: value for key, value in t.items()
+                  if key not in {"active_operation", "owner_generations", "l2_token", "pending_action",
+                                 "resume_answer", "resume_message_id"}}
+        tasks.append({**public, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.public_info(name), "busy": l3.busy(name), "tasks": tasks,
@@ -812,7 +820,10 @@ def task_view(project: str, slug: str) -> dict:
     t = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
-    return {**t, "files": files, "messages": T.task_messages(project, slug),
+    public = {key: value for key, value in t.items()
+              if key not in {"active_operation", "owner_generations", "l2_token", "pending_action",
+                             "resume_answer", "resume_message_id"}}
+    return {**public, "files": files, "messages": T.task_messages(project, slug),
             "events": S.read_events(project, slug),
             "report_json": S.read_json(d / "report.json"), "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 

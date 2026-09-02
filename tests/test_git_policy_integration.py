@@ -72,14 +72,24 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
 
 
 class TestDispatchBoundaryOrdering(unittest.TestCase):
-    def test_unsafe_main_refuses_before_task_or_agent_mutation(self):
+    def test_unsafe_main_refuses_after_intent_but_before_process_effect(self):
         task = {
-            "slug": "blocked", "state": "queued", "dispatching": None,
+            "slug": "blocked", "state": "queued", "dispatching": None, "attempt": 0,
+            "engine": "codex", "l2_engine": None, "active_operation": None,
         }
+        def owner_command(_project, _slug, decide, validate):
+            candidate, result, _event = decide(dict(task))
+            validate(candidate)
+            task.clear(); task.update(candidate)
+            return task, result
         with mock.patch.object(dispatch.S, "project_lock", side_effect=lambda _project: contextlib.nullcontext()), \
-             mock.patch.object(dispatch.S, "load_task", return_value=task), \
+             mock.patch.object(dispatch, "_active_task", return_value=task), \
+             mock.patch.object(dispatch.T, "owner_command", side_effect=owner_command), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.config, "project", return_value={}), \
+             mock.patch.object(dispatch.github_intake, "ensure_snapshot", return_value=None), \
+             mock.patch.object(dispatch, "build_brief", return_value="exact brief"), \
+             mock.patch.object(dispatch.config, "project", return_value={"l2_engine": "codex"}), \
+             mock.patch.object(dispatch.route, "pick_engine", return_value={"engine": "codex", "why": "test"}), \
              mock.patch.object(dispatch.config, "project_path", return_value=Path("/tmp/unsafe-main")), \
              mock.patch.object(
                  dispatch.git_policy, "fetch_and_require_exact_base",
@@ -89,14 +99,15 @@ class TestDispatchBoundaryOrdering(unittest.TestCase):
              mock.patch.object(dispatch.S, "save_task") as save, \
              mock.patch.object(dispatch.S, "write_json") as write_json, \
              mock.patch.object(dispatch.T, "brief") as brief, \
-             mock.patch.object(dispatch.engines, "claude_bg") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "main is ahead"):
+             mock.patch.object(dispatch.engines, "spawn_managed_unit") as launch:
+            with self.assertRaisesRegex(dispatch.DispatchFailure, "main is ahead"):
                 dispatch.run("demo", "blocked")
 
         fault.assert_called_once()
-        save.assert_not_called()
-        write_json.assert_not_called()
-        brief.assert_not_called()
+        self.assertEqual(task["active_operation"]["preparation"]["intent"]["base_ref"], "origin/main")
+        self.assertIsNone(task["active_operation"]["preparation"]["receipt"])
+        self.assertTrue(all("transcripts" in str(call.args[0]) for call in write_json.call_args_list))
+        brief.assert_called_once()
         launch.assert_not_called()
 
 

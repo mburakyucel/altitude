@@ -107,19 +107,6 @@ class TestResumeHold(unittest.TestCase):
         self.assertNotIn("resume_answer", task)
         self.assertNotIn("resume_prefix", task)
 
-    def test_non_lease_resume_hold_uses_generic_waiting_wording(self):
-        blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
-        blocked["l2_engine"] = "claude"
-        S.save_task(self.project, blocked)
-        engines.usage_hold = lambda: "2026-01-03T00:00:00+00:00"
-
-        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")):
-            result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue later.")
-
-        waiting = "waiting: usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
-        self.assertEqual(result["waiting"], waiting)
-        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_reason"], waiting)
-
     def test_resume_without_overlap_reattaches_immediately(self):
         self._task("unrelated holder", "running", "altitude/other.py", "2026-01-01T00:00:00+00:00")
         blocked = self._task("free resume", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")

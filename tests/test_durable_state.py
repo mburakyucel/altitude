@@ -521,7 +521,6 @@ class LockOrderTests(unittest.TestCase):
 class LegacyWriterInventoryTests(unittest.TestCase):
     EXPECTED_INVENTORY = {
         "flock": Counter({
-            ("dispatch.py", "_resume_lock"): 2,
             ("dispatch.py", "publication_settlement"): 2,
             ("hooks/edit_count.py", "<module>"): 2,
             ("incidents.py", "_alloc_lock"): 2,
@@ -541,9 +540,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("deployment.py", "upgrade_v1_for_migration"): 1,
             ("dispatch.py", "poll"): 3,
             ("dispatch.py", "pull_after_done"): 1,
-            ("dispatch.py", "session_settings"): 1,
-            ("engines.py", "codex_bg"): 3,
-            ("engines.py", "codex_stop"): 1,
             ("github_intake.py", "ensure_snapshot"): 1,
             ("incidents.py", "system_fault"): 2,
             ("l1.py", "save"): 1,
@@ -569,6 +565,8 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("actions.py", "_helpers"): 1,
             ("config.py", "save_projects"): 1,
             ("digest.py", "text"): 1,
+            ("dispatch.py", "_managed_owner"): 2,
+            ("dispatch.py", "_write_owner_marker"): 1,
             ("incidents.py", "_index_correct"): 1,
             ("incidents.py", "amend_incident"): 1,
             ("incidents.py", "new_incident"): 1,
@@ -588,9 +586,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
                                   ("recovery.py", "_reconcile_clearance_audit"): 1}),
         "read_jsonl": Counter({("l3.py", "_chat_rows"): 1}),
         "writable_open": Counter({
-            ("dispatch.py", "_resume_lock"): 1,
             ("dispatch.py", "publication_settlement"): 1,
-            ("engines.py", "codex_bg"): 2,
             ("engines.py", "drain_events"): 1,
             ("hooks/edit_count.py", "<module>"): 1,
             ("hooks/edit_count.py", "fault"): 1,
@@ -679,7 +675,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
         "stream_mutation": Counter({
             ("state.py", "append_jsonl"): 2,
             ("engines.py", "claude_print"): 1,
-            ("engines.py", "codex_bg"): 1,
             ("engines.py", "drain_events"): 1,
             ("incidents.py", "_index_append"): 1,
             ("incidents.py", "new_incident"): 1,

@@ -615,7 +615,7 @@ class TestRealManagedUnitFixture(unittest.TestCase):
 
 
 class TestAdoptionBoundary(unittest.TestCase):
-    def test_only_l3_adopts_the_physical_api_in_phase_1b2(self):
+    def test_only_l3_and_l2_owner_adopt_the_physical_api_through_phase_1b3(self):
         names = {
             "new_physical_transition", "advance_physical_transition", "note_physical_transition_error",
             "validate_physical_transition", "reconcile_physical_transition",
@@ -635,9 +635,10 @@ class TestAdoptionBoundary(unittest.TestCase):
                     uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.attr}")
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in names:
                     uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.value}")
-        unexpected = [use for use in uses if not use.startswith("altitude/l3.py:")]
-        self.assertEqual(unexpected, [], "Phase 1B.2 has a non-L3 consumer: " + ", ".join(unexpected))
-        self.assertTrue(uses, "Phase 1B.2 must adopt the physical boundary for L3")
+        unexpected = [use for use in uses if not use.startswith(("altitude/l3.py:", "altitude/dispatch.py:"))]
+        self.assertEqual(unexpected, [], "physical API escaped its two owners: " + ", ".join(unexpected))
+        self.assertTrue(any(use.startswith("altitude/l3.py:") for use in uses))
+        self.assertTrue(any(use.startswith("altitude/dispatch.py:") for use in uses))
 
 
 if __name__ == "__main__":

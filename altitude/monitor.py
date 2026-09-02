@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from . import engines, config, state as S
+from . import dispatch, engines, config, state as S
 
 
 def sessions() -> list[dict]:
@@ -34,15 +34,17 @@ def sessions() -> list[dict]:
                 l1_dir = S.task_dir(name, t["slug"]) / "l1"
                 l1_runs = len(list(l1_dir.glob("*.json"))) if l1_dir.is_dir() else 0
                 engine = t.get("l2_engine") or "claude"
+                projection = None
                 if engine == "codex":
-                    row = engines.codex_worker(t.get("agent_id"), job_root=S.task_dir(name, t["slug"]) / "l2-engine")
-                    usage = (row or {}).get("usage") or {}
+                    projection = dispatch.owner_projection(name, t)
+                    usage = ((t.get("active_operation") or {}).get("result") or {}).get("usage") or {}
                     tokens = int(usage.get("input_tokens", 0) or 0)
                     cp = engines.context_percent(tokens, "codex") if tokens else None
                 else:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
-                            "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),
+                            "dispatch_id": t.get("dispatch_id"), "state": t["state"],
+                            "agent": projection if engine == "codex" else live.get("agent"),
                             "l1_runs": l1_runs, "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
                             "context_state": engines.context_state(cp, engine)})

@@ -27,16 +27,12 @@ class TestContextWindow(unittest.TestCase):
         self.assertEqual(engines.context_state(30.0), "act")
         self.assertEqual(engines.context_state(6.3), "ok")
 
-    def test_every_launch_states_the_window_explicitly(self):
+    def test_legacy_claude_settings_remain_read_only_not_an_l2_launch_surface(self):
         env = engines.clean_env()
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
         p = engines.claude_settings()
         self.assertEqual(json.loads(p.read_text()), {"autoCompactWindow": 300_000})
-        T.new("altitude", "ctx-task", "req")
-        sp = dispatch.session_settings("altitude", "ctx-task", "key")
-        st = json.loads(sp.read_text())
-        self.assertEqual(st["autoCompactWindow"], 300_000)
-        self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", st.get("env", {}))
+        self.assertFalse(hasattr(dispatch, "session_settings"))
 
     def test_synthetic_zero_usage_does_not_reset_visible_context(self):
         root = _TMP / "fake-home"; transcript = root / ".claude" / "projects" / "p" / "sid.jsonl"

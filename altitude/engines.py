@@ -21,8 +21,6 @@ from zoneinfo import ZoneInfo
 from . import config, state as S
 
 logger = logging.getLogger(__name__)
-_codex_processes: dict[str, subprocess.Popen] = {}
-
 CODEX_SYSTEMD_PREFIX = "altitude-codex-"
 MANAGED_SYSTEMD_PREFIX = "altitude-worker-"
 SYSTEMD_RUN_BIN = shutil.which("systemd-run") or "systemd-run"
@@ -1036,6 +1034,36 @@ def claude_rm(agent_id: str) -> str:
     return (p.stdout + p.stderr).strip()
 
 
+def _removed_l2_transport(engine: str) -> None:
+    """Keep legacy adapter names fail-closed without restoring a second L2 owner path."""
+    require_autonomous_engine(engine)
+    raise EngineCapabilityError(
+        f"{engine} detached L2 transport removed: use the TaskRecord-owned transition"
+    )
+
+
+def start_l2(engine: str, *_args, **_kwargs) -> dict:
+    _removed_l2_transport(engine)
+
+
+def resume_l2(engine: str, *_args, **_kwargs) -> dict:
+    _removed_l2_transport(engine)
+
+
+def stop_l2_worker(engine: str, *_args, **_kwargs) -> str:
+    _removed_l2_transport(engine)
+
+
+def remove_l2_worker(engine: str, *_args, **_kwargs) -> str:
+    _removed_l2_transport(engine)
+
+
+def codex_worker(_worker_id: str | None, *, job_root: Path) -> None:
+    """Legacy job-root evidence is never authoritative for the durable Codex owner."""
+    del job_root
+    return None
+
+
 class CodexSandboxPreflightError(RuntimeError):
     """A workspace-write turn cannot start because its host sandbox cannot safely write every promised root."""
 
@@ -1272,22 +1300,6 @@ def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
         raise CodexContainmentError(f"Codex containment unit {unit} did not empty: {detail[:500]}")
 
 
-def codex_containment_empty(worker_id: str, *, job_root: Path) -> bool:
-    """True only when a durable background worker's exact systemd service is proven inactive and empty."""
-    try:
-        record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
-    except (OSError, ValueError):
-        logger.exception("Could not read Codex containment record for worker %s", worker_id)
-        return False
-    if not isinstance(record, dict) or not record.get("unit"):
-        return False
-    try:
-        return _codex_unit_empty(str(record["unit"]))
-    except CodexContainmentError:
-        logger.exception("Could not prove Codex containment empty for worker %s", worker_id)
-        return False
-
-
 def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
     """Return every root a workspace-write override promises; malformed overrides are not promises.
 
@@ -1397,70 +1409,6 @@ done
     raise CodexSandboxPreflightError(roots, detail)
 
 
-def _pid_start(pid: int) -> str | None:
-    """Linux process start tick, used to avoid signaling a recycled pid."""
-    try:
-        fields = Path(f"/proc/{int(pid)}/stat").read_text().split()
-        return None if fields[2] == "Z" else fields[21]
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
-    root = Path(job_root)
-    return {
-        "record": root / f"{worker_id}.json",
-        "stdout": root / f"{worker_id}.stdout.jsonl",
-        "stderr": root / f"{worker_id}.stderr.log",
-        "answer": root / f"{worker_id}.answer.md",
-    }
-
-
-def _terminate_spawned_codex(proc: subprocess.Popen, unit: str) -> None:
-    """Fail-closed cgroup cleanup before a Codex worker has a durable owner."""
-    containment_error = None
-    try:
-        _stop_codex_unit(unit)
-    except CodexContainmentError as exc:
-        containment_error = exc
-    # The systemd-run wrapper is not the security boundary, but reaping it avoids a local zombie after the unit is
-    # empty and is useful when systemd-run itself failed before creating the service.
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2)
-    else:
-        proc.wait(timeout=1)
-    if containment_error is not None:
-        raise containment_error
-
-
-def _codex_events(path: Path) -> list[dict]:
-    try:
-        lines = path.read_text(errors="replace").splitlines()
-    except OSError:
-        return []
-    events = []
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(event, dict):
-            events.append(event)
-    return events
-
-
-def _codex_thread(events: list[dict]) -> str | None:
-    for event in events:
-        if event.get("type") == "thread.started":
-            return _codex_session_id(event.get("thread_id"))
-    return None
-
-
 def _codex_session_id(value: object) -> str | None:
     """Accept only a nonempty Codex thread id bounded by encoded wire bytes."""
     if not isinstance(value, str) or not value:
@@ -1469,221 +1417,6 @@ def _codex_session_id(value: object) -> str | None:
         return value if len(value.encode("utf-8")) <= CODEX_PROVIDER_SESSION_ID_CAP else None
     except UnicodeEncodeError:
         return None
-
-
-def _codex_usage(events: list[dict]) -> dict:
-    for event in reversed(events):
-        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
-            return dict(event["usage"])
-    return {}
-
-
-def _codex_action(path: Path) -> dict | None:
-    try:
-        value = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
-
-
-def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
-    """Return one Codex process as the same normalized row shape used for Claude workers."""
-    if not worker_id:
-        return None
-    paths = _codex_paths(job_root, worker_id)
-    record = S.read_json(paths["record"], None)
-    if not isinstance(record, dict):
-        return None
-    events = _codex_events(paths["stdout"])
-    session_id = _codex_thread(events) or record.get("session_id")
-    pid = record.get("pid")
-    unit = str(record.get("unit") or "")
-    containment_error = ""
-    try:
-        empty = bool(unit) and _codex_unit_empty(unit)
-    except CodexContainmentError as exc:
-        # Unknown containment state must never look completed: the trusted broker independently checks the same
-        # durable unit before any action, and dispatch keeps this row in-flight until state is provable.
-        empty = False
-        containment_error = str(exc)
-    alive = not empty
-    completed = next((event for event in reversed(events) if event.get("type") == "turn.completed"), None)
-    failed = next((event for event in reversed(events)
-                   if event.get("type") in ("turn.failed", "error")), None)
-    if record.get("stopped"):
-        state, status = "stopped", "exited"
-    elif alive:
-        state, status = "working", "busy"
-    elif completed:
-        state, status = "done", "exited"
-    else:
-        state, status = "failed", "exited"
-    if empty and worker_id in _codex_processes:
-        proc = _codex_processes.pop(worker_id)
-        try:
-            proc.wait(timeout=0)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-    detail = ""
-    if containment_error:
-        detail = containment_error[:500]
-    elif failed:
-        detail = str(failed.get("message") or failed.get("error") or failed)[:500]
-    elif not alive and not completed:
-        try:
-            detail = paths["stderr"].read_text(errors="replace")[-500:]
-        except OSError:
-            detail = "Codex worker exited without turn.completed"
-    return {
-        "id": worker_id, "sessionId": session_id, "name": record.get("name"), "pid": pid, "unit": unit,
-        "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
-        "startedAt": record.get("started_at"), "engine": "codex", "action": _codex_action(paths["answer"]),
-    }
-
-
-def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
-             persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
-             spawn_guard=None, start_timeout: float = 15.0) -> dict:
-    """Start one detached Codex L2 turn and wait boundedly for its stable thread identity."""
-    extra_config = [*codex_isolation_config(cwd)]
-    if not resume:
-        codex_sandbox_preflight(Path(cwd), extra_config)
-
-    worker_id = uuid.uuid4().hex
-    unit = _codex_unit(worker_id)
-    root = Path(job_root); root.mkdir(parents=True, exist_ok=True)
-    paths = _codex_paths(root, worker_id)
-    schema = config.SCHEMAS / "l2_action.json"
-    if resume:
-        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", str(paths["answer"]),
-               "--output-schema", str(schema), "--skip-git-repo-check", "--ignore-user-config",
-               "--ignore-rules"]
-    else:
-        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", str(paths["answer"]),
-               "--output-schema", str(schema), "-C", str(cwd),
-               "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
-    if model:
-        cmd += ["-m", model]
-    for setting in extra_config:
-        cmd += ["-c", setting]
-    if resume:
-        cmd += [resume, "-"]
-        launch_prompt = prompt
-    else:
-        launch_prompt = (((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE
-                         + "\n\n" + prompt)
-        cmd += ["-"]
-    env = codex_env(extra_env, retain_user_bus=True)
-    child_env = codex_env(extra_env)
-    # Persist the unguessable unit before crossing the spawn boundary. If altd dies between systemd-run and the PID
-    # update, recovery still has the exact cgroup identity needed to stop every descendant.
-    record = {"id": worker_id, "name": name, "pid": None, "pid_start": None, "unit": unit,
-              "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-              "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
-    S.write_json(paths["record"], record)
-    out = open(paths["stdout"], "ab", buffering=0)
-    err = open(paths["stderr"], "ab", buffering=0)
-    try:
-        with spawn_guard if spawn_guard is not None else nullcontext():
-            proc = subprocess.Popen(_codex_service_command(unit, cmd, child_env), cwd=str(cwd),
-                                    stdin=subprocess.PIPE,
-                                    stdout=out, stderr=err, env=env, start_new_session=True)
-            try:
-                proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
-    finally:
-        out.close(); err.close()
-    pid_start = _pid_start(proc.pid)
-    if not pid_start:
-        _terminate_spawned_codex(proc, unit)
-        raise RuntimeError("Codex worker started without a stable process identity")
-    try:
-        record.update({"pid": proc.pid, "pid_start": pid_start})
-        S.write_json(paths["record"], record)
-        _codex_processes[worker_id] = proc
-        deadline = time.monotonic() + start_timeout
-        thread_id = None
-        while time.monotonic() < deadline:
-            events = _codex_events(paths["stdout"])
-            thread_id = _codex_thread(events)
-            if thread_id:
-                break
-            if proc.poll() is not None:
-                break
-            time.sleep(0.05)
-        if not thread_id or (resume and thread_id != resume):
-            try:
-                codex_stop(worker_id, job_root=root)
-            except Exception:  # noqa: BLE001 — report the identity failure, not a secondary stop failure
-                pass
-            row = codex_worker(worker_id, job_root=root) or {}
-            detail = row.get("detail") or ("resumed a different Codex thread" if thread_id else "no thread.started event")
-            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
-        record["session_id"] = thread_id
-        S.write_json(paths["record"], record)
-        return {"stdout": "", "stderr": "", "returncode": 0,
-                "agent": codex_worker(worker_id, job_root=root)}
-    except BaseException:
-        _codex_processes.pop(worker_id, None)
-        _terminate_spawned_codex(proc, unit)
-        raise
-
-
-def codex_stop(worker_id: str, *, job_root: Path) -> str:
-    paths = _codex_paths(job_root, worker_id)
-    record = S.read_json(paths["record"], None)
-    if not isinstance(record, dict):
-        return "Codex worker record already absent"
-    unit = str(record.get("unit") or "")
-    if not unit:
-        raise CodexContainmentError(f"Codex worker {worker_id} has no durable containment unit")
-    _stop_codex_unit(unit)
-    if not _codex_unit_empty(unit):
-        raise CodexContainmentError(f"Codex worker {worker_id} containment unit is still populated")
-    proc = _codex_processes.pop(worker_id, None)
-    if proc is not None:
-        try:
-            proc.wait(timeout=1)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-    record["stopped"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    S.write_json(paths["record"], record)
-    return "Codex worker stopped"
-
-
-def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
-             model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
-    require_autonomous_engine(engine)
-    if engine == "claude":
-        return claude_bg(name, prompt, cwd=cwd, persona=persona, permission_mode="auto", model=model,
-                         settings=settings, extra_env=extra_env, spawn_guard=spawn_guard)
-    if engine == "codex":
-        return codex_bg(name, prompt, cwd=cwd, persona=persona, model=model, extra_env=extra_env,
-                        job_root=job_root, spawn_guard=spawn_guard)
-    raise ValueError(f"unknown L2 engine {engine!r}")
-
-
-def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
-              model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
-    require_autonomous_engine(engine)
-    if engine == "claude":
-        return claude_resume_bg(name, session_id, prompt, cwd=cwd, persona=persona, settings=settings,
-                                model=model, extra_env=extra_env, spawn_guard=spawn_guard)
-    if engine == "codex":
-        return codex_bg(name, prompt, cwd=cwd, resume=session_id, model=model, extra_env=extra_env,
-                        job_root=job_root, spawn_guard=spawn_guard)
-    raise ValueError(f"unknown L2 engine {engine!r}")
-
-
-def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
-    return claude_stop(worker_id) if engine == "claude" else codex_stop(worker_id, job_root=job_root)
-
-
-def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
-    if engine == "claude":
-        return claude_rm(worker_id)
-    return codex_stop(worker_id, job_root=job_root)
 
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
