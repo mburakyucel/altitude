@@ -57,6 +57,10 @@ def _claim(project: str, task: dict, action: dict) -> dict:
     """Fence and durably claim one action before any external or state side effect."""
     with S.project_lock(project):
         live = S.load_task(project, task["slug"])
+        try:
+            T.require_owner_provider_capability(live)
+        except T.TransitionError as exc:
+            raise ActionError(str(exc)) from exc
         if live.get("state") not in ("running", "blocked") or _identity(live) != _identity(task):
             raise ActionError(f"{task['slug']}: L2 ownership changed before action handling")
         existing = live.get("pending_action")
@@ -251,6 +255,10 @@ def _helpers(project: str, task: dict, action: dict) -> dict:
 def process_l2(project: str, item: dict) -> dict:
     """Consume one settled Codex action; returns a small instruction to the server workflow."""
     task = item["task"]
+    try:
+        T.require_owner_provider_capability(task)
+    except T.TransitionError as exc:
+        raise ActionError(str(exc)) from exc
     if (task.get("l2_engine") or "claude") != "codex":
         raise ActionError("trusted action broker accepts only contained Codex L2 workers")
     action = _validate_shape(item.get("action") or (item.get("agent") or {}).get("action"))

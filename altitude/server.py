@@ -73,6 +73,9 @@ def on_l2_finished(project: str, item: dict) -> None:
         log(f"[{project}/{slug}] ignored stale finished worker snapshot {snapshot} → {current}")
         return
     t = live  # include completion/action fields that may have landed after poll took its worker snapshot
+    if hold := T.owner_provider_capability_hold(t):
+        log(f"[{project}/{slug}] ignored disabled-provider L2 result: {hold}")
+        return
 
     def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
         return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"),
@@ -202,6 +205,9 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
     slug = t["slug"]
+    if hold := T.owner_provider_capability_hold(t):
+        log(f"[{project}/{slug}] report promotion held: {hold}")
+        return
     if v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals"):
         report_error = task_error = None
         try:
@@ -288,6 +294,8 @@ def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
+            continue
+        if T.owner_provider_capability_hold(t):
             continue
         report_path = S.task_dir(project, t["slug"]) / "report.json"
         if not report_path.exists():
@@ -672,6 +680,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "only blocked tasks need a user decision"}, 409)
                 choice = ["Resume", "Reject"][int(opt)]
                 if choice == "Resume":
+                    if hold := dispatch.provider_capability_hold(t):
+                        return self._json({"error": hold, "hold": hold,
+                                           "state": t["state"]}, 409)
                     if t.get("session_id"):
                         spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
                     else:

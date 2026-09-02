@@ -35,7 +35,7 @@ class TestL3Actions(unittest.TestCase):
     def task(self, title="Task", state="running", **updates):
         task = T.new("p", title, "request")
         task.update({"state": state, "dispatch_id": f"{task['slug']}-1", "session_id": "session-1",
-                     "agent_id": "agent-1", "l2_engine": "claude", **updates})
+                     "agent_id": "agent-1", "l2_engine": "codex", **updates})
         S.save_task("p", task)
         return task
 
@@ -99,8 +99,8 @@ class TestL3Actions(unittest.TestCase):
 
     def test_l3_never_blocks_or_completes_a_live_worker(self):
         task = self.task()
-        live = [{"id": "agent-1", "state": "working", "status": "busy"}]
-        with mock.patch.object(engines, "claude_agents", return_value=live):
+        live = {"id": "agent-1", "state": "working", "status": "busy"}
+        with mock.patch.object(engines, "codex_worker", return_value=live):
             with self.assertRaisesRegex(l3_actions.L3ActionError, "cannot block a live"):
                 l3_actions.apply("p", envelope({"type": "task_block", "slug": task["slug"],
                                                 "reason": "stop"}), action_id="c" * 64)
@@ -108,7 +108,7 @@ class TestL3Actions(unittest.TestCase):
 
         task["state"] = "reported"
         S.save_task("p", task)
-        with mock.patch.object(engines, "claude_agents", return_value=live):
+        with mock.patch.object(engines, "codex_worker", return_value=live):
             with self.assertRaisesRegex(l3_actions.L3ActionError, "no live L2"):
                 l3_actions.apply("p", envelope({"type": "task_done", "slug": task["slug"],
                                                 "digest": "done"}), action_id="d" * 64)

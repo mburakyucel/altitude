@@ -31,7 +31,7 @@ activation evidence.
 | A06 | Exact candidate conflicted with protected refs | Claiming C while remote advanced to D required a new hidden ref capability | Activation always fetches and activates latest verified remote main; the older-candidate feature is removed. |
 | A07 | Activation failure could restart-loop | `Restart=on-failure` contradicted “start once then remain stopped” | Normal crash self-healing remains; planned activation temporarily suppresses loops until verified and restores policy afterward. |
 | A08 | Repair depended on broken installed code | A candidate could break Makefile/imports and make the next repair command unusable | A stable bootstrap locates a detached reviewed candidate before importing candidate Altitude code and passes explicit targets. |
-| A09 | Claude descendant proof was assumed | `claude --bg` returns a short launcher/job row, not an owned process tree | A foreground supervised-resume feasibility PR is go/no-go. Failure narrows autonomous Claude authority rather than claiming false proof. |
+| A09 | Claude descendant proof was assumed | `claude --bg` returns a short launcher/job row, not an owned process tree | Phase 1A resolved no-go without spending a provider turn: Codex is the sole autonomous target, all Claude launch/resume paths are closed, and activation requires every legacy Claude unit/process empty. |
 | A10 | Global fault/open incident was not atomic | Separate incident and fuse files could leave evidence without a fuse or a fuse with no meaningful evidence | Reserve evidence id; write recovery/fuse first with bounded evidence and pending append; reconcile keyed incident second. |
 | A11 | Partial JSONL replay was invalid | Appending after a truncated tail concatenated two malformed records; parent rename was not fsynced | One keyed append primitive repairs/truncates the final tail, deduplicates ids, fsyncs file; atomic replace fsyncs parent. |
 | A12 | Completion and deployment had duplicate authorities | Task result, completion file, report, verified state, and pending marker could disagree | One task terminal/result receipt, immutable publication receipts, and one DeploymentRecord; duplicate files are removed/derived. |
@@ -99,8 +99,10 @@ These keeps remain justified:
 
 - L3 high-level coordination and direct L2 steering;
 - one L2 with optional bounded managed helpers/reviewer;
-- dual-provider routing with weekly-first observations;
-- Codex containment/inert broker and existing Claude guard until stronger proof;
+- Codex-only weekly-first routing, with Claude telemetry retained only as legacy observation until its
+  stopped-state deletion gate;
+- Codex containment/inert broker; legacy Claude guard/backend checks only until the stopped activation
+  proves every legacy unit/process empty, with no conditional Claude target;
 - trusted Git/PR/check/merge enforcement at all four native hook boundaries, with one portable
   checked-in dispatcher when its installation parity test passes;
 - live transcripts plus bounded durable evidence;
@@ -112,7 +114,8 @@ These keeps remain justified:
 Before the architecture PR is considered settled, a reviewer must confirm:
 
 - `02`, `03`, `04`, and `05` agree on six operations, terminal states, deployment qualification,
-  Claude prerequisite, unknown quota, recovery fencing, and no format selector;
+  the resolved Codex-only target and legacy-empty activation prerequisite, unknown Codex quota,
+  recovery fencing, and no format selector;
 - every blocker and important finding above has an exact target owner and acceptance test;
 - no corrected paragraph depends on a component scheduled later in the migration;
 - numeric baseline commands are reproducible; and

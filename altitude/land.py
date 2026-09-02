@@ -23,7 +23,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config, dispatch, git_policy, state as S
+from . import config, dispatch, git_policy, state as S, tasks as T
 
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
@@ -84,11 +84,15 @@ def _resolve(branch: str, project: str | None) -> tuple[str | None, str | None, 
 def _require_current_publisher(project: str, slug: str, task: dict, authority: dict | None = None) -> None:
     """Fence automated landing to the exact current L2 attempt.
 
-    A hand-run command has no actor (or explicitly names Burak). Every automated
-    caller must be the L2 that owns the task now: L1s and control-plane actors do
-    not publish. Physical worker replacement first proves the old worker stopped;
-    the capability token remains stable only within this dispatch attempt.
+    The target owner's provider capability is checked before any model-controlled
+    actor string. Every automated caller must then be the current L2; an operator
+    may land only an enabled-provider task. Physical worker replacement first
+    proves the old worker stopped; the token is stable only within one dispatch.
     """
+    try:
+        T.require_owner_provider_capability(task)
+    except T.TransitionError as exc:
+        raise LandError(str(exc)) from exc
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     if actor is None or actor == "burak":
         return

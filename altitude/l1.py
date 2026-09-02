@@ -91,6 +91,7 @@ def _alive(pid: int | None) -> bool:
 
 
 def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token: str | None) -> None:
+    T.require_owner_provider_capability(task)
     if task.get("state") != "running":
         raise T.TransitionError(f"{slug}: optional L1s may launch only for the current running L2")
     if not dispatch_id or not l2_token:
@@ -156,6 +157,10 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
                                other_than=author if role == "reviewer" else None)
     if not choice.get("engine"):
         raise T.TransitionError(f"engine hold: {choice['why']}")
+    try:
+        engines.require_autonomous_engine(choice["engine"])
+    except engines.EngineCapabilityError as exc:
+        raise T.TransitionError(f"engine hold: {exc}") from exc
     base = Path(cwd) if cwd else Path(task.get("worktree") or config.project_path(project))
     if role == "implementer":
         task_lease = dispatch.task_paths(project, task)
@@ -276,6 +281,7 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
 
 def exec_run(project: str, slug: str, name: str) -> dict:
     """The detached child: run the engine to completion and close the record — always, whatever broke."""
+    T.require_owner_provider_capability(S.load_task(project, slug))
     rec = load(project, slug, name)
     if not rec:
         raise T.TransitionError(f"no run {name!r}")

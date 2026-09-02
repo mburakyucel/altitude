@@ -16,7 +16,7 @@ PROJECT = "restartdup"
 def register() -> None:
     config.ensure_root()
     projects = config.load_projects()
-    projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "l3_engine": "claude"}
+    projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "l3_engine": "codex"}
     config.save_projects(projects)
 
 
@@ -27,10 +27,13 @@ class TestRotationIsPersistedBeforeTheTurn(unittest.TestCase):
 
     def test_a_restart_mid_turn_does_not_rotate_the_same_session_again(self):
         l3.save_info(PROJECT, {
-            "session_id": "e9aa9612", "rotate_next": True, "context_percent": 91.0, "turns": 12,
+            "engine_last": "codex", "session_id": "e9aa9612", "rotate_next": True,
+            "context_percent": 100.0, "turns": 12,
+            "sessions": {"codex": {"session_id": "e9aa9612", "rotate_next": True,
+                                    "context_percent": 100.0, "turns": 12}},
         })
         seen: dict = {}
-        original = engines.claude_print
+        original = engines.codex_exec
 
         def crash(prompt, **kwargs):
             seen["resume"] = kwargs.get("resume")
@@ -40,21 +43,23 @@ class TestRotationIsPersistedBeforeTheTurn(unittest.TestCase):
         def ok(prompt, **kwargs):
             seen["resume_after_restart"] = kwargs.get("resume")
             return {
-                "text": "hello", "session_id": "f00d1234", "usage": {}, "context_tokens": 1000,
-                "cost": 0.1, "turns": 1, "structured": None, "error": None, "tools": [], "limited": None,
+                "text": "hello", "session_id": "f00d1234", "reported_session_id": "f00d1234",
+                "usage": {"input_tokens": 1000}, "structured": {"message": "hello", "actions": []},
+                "error": None, "returncode": 0, "containment_empty": True,
             }
 
         try:
-            engines.claude_print = crash
+            engines.codex_exec = crash
             with self.assertRaises(RuntimeError):
                 l3.turn(PROJECT, "the turn the restart cut short")
-            engines.claude_print = ok
+            engines.codex_exec = ok
             l3.turn(PROJECT, "the first turn after the restart")
         finally:
-            engines.claude_print = original
+            engines.codex_exec = original
 
         self.assertIsNone(seen["resume"])
         self.assertIsNone(seen["on_disk"]["session_id"])
+        self.assertIsNone(seen["on_disk"]["sessions"]["codex"]["session_id"])
         self.assertFalse(seen["on_disk"]["rotate_next"])
         self.assertEqual(seen["on_disk"]["rotated_from"], "e9aa9612")
         self.assertIsNone(seen["resume_after_restart"])

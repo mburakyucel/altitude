@@ -57,6 +57,11 @@ def l2_engine(task: dict) -> str:
     return task.get("l2_engine") or "claude"
 
 
+def provider_capability_hold(task: dict) -> str | None:
+    """Return the closed provider hold without changing task or recovery state."""
+    return T.owner_provider_capability_hold(task)
+
+
 def l2_job_root(project: str, slug: str) -> Path:
     return S.task_dir(project, slug) / "l2-engine"
 
@@ -245,11 +250,24 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         task = S.load_task(project, slug)
         if task["state"] != "queued":
             raise T.TransitionError(f"{slug} is {task['state']}, not queued")
+        # A provider already persisted on a queued legacy row is ownership
+        # evidence, not a routing suggestion. Never rewrite it to an enabled
+        # provider or perform intake/Git/worktree effects first.
+        T.require_owner_provider_capability(task)
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         held = wip_hold(project, task)
         if held:
             raise T.TransitionError(held)
+        proj = config.project(project)
+        forced_engine = task.get("engine") or proj.get("l2_engine")
+        if model in config.MODEL_ALIASES and not forced_engine:
+            forced_engine = "claude"
+        if forced_engine in config.ENGINES:
+            try:
+                engines.require_autonomous_engine(forced_engine)
+            except engines.EngineCapabilityError as exc:
+                raise T.TransitionError(f"engine hold: {exc}") from exc
     try:
         issue_snapshot = github_intake.ensure_snapshot(project, slug, expected_state="queued")
     except github_intake.IssueIntakeError as exc:
@@ -273,6 +291,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         task = S.load_task(project, slug)
         if task["state"] != "queued":
             raise T.TransitionError(f"{slug} is {task['state']}, not queued")
+        T.require_owner_provider_capability(task)
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         proj = config.project(project)
@@ -283,6 +302,10 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         if not choice.get("engine"):
             raise T.TransitionError(f"engine hold: {choice['why']}")
         engine = choice["engine"]
+        try:
+            engines.require_autonomous_engine(engine)
+        except engines.EngineCapabilityError as exc:
+            raise T.TransitionError(f"engine hold: {exc}") from exc
         selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
                           if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
         task.update({"dispatching": S.now(), "l2_engine": engine, "engine_model": selected_model,
@@ -418,13 +441,16 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     """Stop the current physical worker, then resume its provider conversation with ``text``.
 
     The task dispatch and L2 capability token are logical ownership and stay stable. The physical worker changes on
-    every turn. Claude may also return a replacement session id; Codex keeps its thread id. We never overlap two
+    every enabled Codex turn. Disabled legacy Claude work is held before provenance or stop. We never overlap two
     writers in one worktree, and a running task never silently crosses providers.
     """
     task = S.load_task(project, slug)
     _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
                              expected_session_id=expected_session_id,
                              expected_agent_id=expected_agent_id, expected_state=expected_state)
+    engine = l2_engine(task)
+    if capability_hold := provider_capability_hold(task):
+        raise T.TransitionError(capability_hold)
     if not task.get("l2_token"):
         # Compatibility for sessions dispatched before the worker capability existed. It becomes stable now.
         with S.project_lock(project):
@@ -469,7 +495,6 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     task = current
     text, delivered_issue_digest = _issue_resume_prompt(project, task, text)
     name = f"{project}/{task['dispatch_id']}"
-    engine = l2_engine(task)
     job_root = l2_job_root(project, slug)
     old_worker = task.get("agent_id")
     if old_worker:
@@ -597,6 +622,8 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
     _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
                              expected_session_id=expected_session_id,
                              expected_agent_id=expected_agent_id, expected_state=expected_state)
+    if capability_hold := provider_capability_hold(task):
+        return {"deferred": True, "hold": capability_hold, "waiting": capability_hold}
     if task["state"] == "blocked":
         provider_hold = engines.usage_hold() if l2_engine(task) == "claude" else None
         hold = (f"usage limit: subscription window exhausted, resets {provider_hold}"
@@ -669,6 +696,8 @@ def message_l2(project: str, slug: str, text: str, *, expected_dispatch_id: str 
                 raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
         if not task.get("dispatch_id") or not task.get("session_id"):
             raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
+        if capability_hold := provider_capability_hold(task):
+            raise T.TransitionError(capability_hold)
         expected = {
             "expected_dispatch_id": task["dispatch_id"],
             "expected_session_id": task["session_id"],
@@ -692,6 +721,8 @@ def resume_due(project: str) -> list[str]:
     now, back = S.now(), []
     due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
     for t in sorted(due, key=_resume_order):
+        if provider_capability_hold(t):
+            continue
         if l2_engine(t) == "claude" and engines.usage_hold():
             continue
         if wip_hold(project, t):
@@ -896,11 +927,25 @@ def per_task_hold(hold: str | None) -> bool:
     return bool(hold) and str(hold).startswith(PER_TASK_HOLDS)
 
 
+def _disabled_owner_scope_uncertain(task: dict, paths: list[str]) -> bool:
+    """A disabled writer without one valid narrow lease remains repository-uncertain."""
+    if not provider_capability_hold(task):
+        return False
+    declared = task.get("paths")
+    return (not isinstance(declared, list) or not declared
+            or any(not isinstance(item, str) or not item.strip() for item in declared)
+            or not narrow(paths))
+
+
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     held = recovery.dispatch_hold(project, task)
     if held:
         return held
-    running = [t for t in S.list_tasks(project) if t["state"] == "running"]
+    project_tasks = S.list_tasks(project)
+    # Disabled-provider legacy rows remain protected by their repository lease,
+    # but do not consume the scarce runnable-provider WIP capacity.
+    running = [t for t in project_tasks
+               if t["state"] == "running" and not provider_capability_hold(t)]
     proj = config.project(project)
     if task:
         mine = task_paths(project, task)
@@ -908,16 +953,25 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
         holders = []
         for other in _lease_tasks(project, exclude=task["slug"]):
             pending_resume = other["state"] == "blocked"
-            if pending_resume and mine_pending and _resume_order(other) >= _resume_order(task):
-                continue  # among overlapping queued resumes, the deterministic oldest task proceeds first
-            holders.append({"slug": other["slug"], "paths": task_paths(project, other),
+            other_paths = task_paths(project, other)
+            disabled_owner = provider_capability_hold(other)
+            if disabled_owner and (
+                not narrow(mine) or _disabled_owner_scope_uncertain(other, other_paths)
+            ):
+                return (f"file lease: `{other['slug']}` has disabled-provider ownership with "
+                        "repository-uncertain path scope")
+            if (not disabled_owner and pending_resume and mine_pending
+                    and _resume_order(other) >= _resume_order(task)):
+                continue  # enabled overlapping resumes proceed oldest-first; disabled owners never resume
+            holders.append({"slug": other["slug"], "paths": narrow(other_paths),
                             "pending_resume": pending_resume})
         held = hold_conflict(mine, holders)
         if held:
             return held
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
         return f"WIP limit: {len(running)} running in {project}"
-    total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")
+    total = sum(1 for p in config.load_projects() for t in S.list_tasks(p)
+                if t["state"] == "running" and not provider_capability_hold(t))
     if total >= config.WIP_PER_MACHINE:
         return f"WIP limit: {total} running on this machine"
     return None

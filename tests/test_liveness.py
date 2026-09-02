@@ -78,7 +78,8 @@ class TestResumeRebinds(unittest.TestCase):
             seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {}); return {"stdout": "", "stderr": "", "returncode": 0}
         rows = [{"id": "old", "name": "altitude/resume-me-1", "sessionId": "old-sid", "state": "failed", "startedAt": 1},
                 {"id": "new", "name": "altitude/resume-me-1", "sessionId": "new-sid", "state": "working", "startedAt": 2}]
-        with mock.patch.object(engines, "claude_resume_bg", fake_resume), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+             mock.patch.object(engines, "claude_resume_bg", fake_resume), \
              mock.patch.object(engines, "claude_agents", return_value=rows), \
              mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
@@ -107,9 +108,11 @@ class TestResumeRebinds(unittest.TestCase):
                     "state": "running", "session_id": "old-sid", "agent_id": "old-agent",
                     "dispatch_id": "no-replacement-1", "l2_token": "old-token", "worktree": str(wt)}
         S.save_task("altitude", original)
-        with mock.patch.object(engines, "claude_resume_bg", return_value={
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+             mock.patch.object(engines, "claude_resume_bg", return_value={
                  "stdout": "started", "stderr": "", "returncode": 0,
              }), mock.patch.object(engines, "claude_agents", return_value=[]), \
+             mock.patch.object(engines, "claude_stop", return_value="stopped"), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch("altitude.incidents.system_fault") as fault:
@@ -121,7 +124,7 @@ class TestResumeRebinds(unittest.TestCase):
                          ("old-sid", "old-agent", "old-token"))
         fault.assert_called_once()
 
-    def test_resume_provenance_failure_never_launches_the_engine(self):
+    def test_disabled_legacy_resume_is_held_before_provenance_or_launch(self):
         wt = Path(_TMP) / "wt-refused-resume"; wt.mkdir(exist_ok=True)
         S.task_dir("altitude", "refused-resume").mkdir(parents=True, exist_ok=True)
         S.save_task("altitude", {
@@ -130,16 +133,18 @@ class TestResumeRebinds(unittest.TestCase):
             "dispatch_id": "refused-resume-1", "worktree": str(wt),
         })
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40) as fetch, \
              mock.patch.object(
                  dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
-             ), \
+             ) as validate, \
              mock.patch("altitude.incidents.system_fault") as fault, \
              mock.patch.object(engines, "claude_resume_bg") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "foreign commit"):
+            with self.assertRaisesRegex(T.TransitionError, "foreground ownership is unproved"):
                 dispatch.resume_session("altitude", "refused-resume", "go")
 
-        fault.assert_called_once()
+        fetch.assert_not_called()
+        validate.assert_not_called()
+        fault.assert_not_called()
         launch.assert_not_called()
 
 

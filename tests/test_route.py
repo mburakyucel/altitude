@@ -28,7 +28,9 @@ class TestPickEngine(unittest.TestCase):
 
     def test_override_is_visible_and_unavailable_override_does_not_fallback(self):
         choice = route.pick_engine("l2", forced="claude")
-        self.assertEqual(choice["engine"], "claude")
+        self.assertIsNone(choice["engine"])
+        self.assertIn("capability disabled", choice["why"])
+        self.assertEqual(choice["requested_engine"], "claude")
         self.claude = {"known": True, "five_hour": 100, "seven_day": 10}
         choice = route.pick_engine("l2", forced="claude")
         self.assertIsNone(choice["engine"]); self.assertIn("forced claude", choice["why"])
@@ -37,17 +39,18 @@ class TestPickEngine(unittest.TestCase):
 
     def test_unknown_quotas_use_codex_default_out_loud(self):
         choice = route.pick_engine("l2")
-        self.assertEqual(choice["engine"], config.PRIMARY_DEFAULT_ENGINE)
-        self.assertIn("unknown", choice["why"]); self.assertIn("default policy", choice["why"])
+        self.assertEqual(choice["engine"], "codex")
+        self.assertIn("default policy codex", choice["why"])
+        self.assertIn("capability disabled", choice["why"])
 
-    def test_weekly_headroom_wins_over_short_window_percentage(self):
+    def test_disabled_claude_never_wins_even_with_more_weekly_headroom(self):
         self.claude = {"known": True, "five_hour": 5, "seven_day": 80}
         self.codex = codex(20, short=90)
         choice = route.pick_engine("l2")
-        self.assertEqual(choice["engine"], "codex"); self.assertIn("weekly headroom", choice["why"])
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("capability disabled", choice["why"])
         self.claude = {"known": True, "five_hour": 90, "seven_day": 10}
         self.codex = codex(60, short=5)
-        self.assertEqual(route.pick_engine("l2")["engine"], "claude")
+        self.assertEqual(route.pick_engine("l2")["engine"], "codex")
 
     def test_short_exhaustion_only_rules_out_that_provider(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
@@ -65,7 +68,7 @@ class TestPickEngine(unittest.TestCase):
         self.codex = codex(20, short=10)
         choice = route.pick_engine("reviewer", other_than="codex")
         self.assertEqual(choice["engine"], "codex")
-        self.assertIn("instead of forcing provider diversity", choice["why"])
+        self.assertIn("capability disabled", choice["why"])
 
 
 if __name__ == "__main__":

@@ -52,7 +52,8 @@ class TestHold(unittest.TestCase):
         self.assertEqual(engines.usage_hold(), future)
         self.assertFalse((dispatch.wip_hold("altitude") or "").startswith("usage limit"),
                          "a Claude hold does not globally freeze Codex dispatch")
-        self.assertTrue(engines.claude_print("hi", cwd=Path(_TMP)).get("limited"), "no call is made while held")
+        with self.assertRaisesRegex(engines.EngineCapabilityError, "autonomous/mutating launch disabled"):
+            engines.claude_print("hi", cwd=Path(_TMP))
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")
         self.assertIsNone(engines.usage_hold())
 
@@ -85,7 +86,7 @@ class TestPollAndResume(unittest.TestCase):
 
     def test_resume_due_is_oldest_first_and_wip_throttled(self):
         past = "2026-01-01T00:00:00+00:00"
-        base = {"state": "blocked", "resume_after": past, "updated": S.now()}
+        base = {"state": "blocked", "l2_engine": "codex", "resume_after": past, "updated": S.now()}
         for i, slug in enumerate(("c-newest", "a-oldest", "b-middle")):
             S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
             S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})

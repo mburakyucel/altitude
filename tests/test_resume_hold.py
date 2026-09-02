@@ -57,6 +57,7 @@ class TestResumeHold(unittest.TestCase):
         task = T.new(self.project, title, "request", actor="l3", paths=[path])
         task.update({
             "state": state,
+            "l2_engine": "codex",
             "created": created,
             "dispatch_id": f"{task['slug']}-1",
             "session_id": f"session-{task['slug']}",
@@ -108,9 +109,12 @@ class TestResumeHold(unittest.TestCase):
 
     def test_non_lease_resume_hold_uses_generic_waiting_wording(self):
         blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
+        blocked["l2_engine"] = "claude"
+        S.save_task(self.project, blocked)
         engines.usage_hold = lambda: "2026-01-03T00:00:00+00:00"
 
-        result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue later.")
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")):
+            result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue later.")
 
         waiting = "waiting: usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
         self.assertEqual(result["waiting"], waiting)

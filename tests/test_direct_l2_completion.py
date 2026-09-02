@@ -34,7 +34,7 @@ class TestDirectL2Completion(unittest.TestCase):
                         "origin/main"], cwd=self.repo, check=True)
         task.update({"state": "running", "dispatch_id": f"{task['slug']}-1", "session_id": "session",
                      "agent_id": "worker", "l2_token": "token", "worktree": str(worktree),
-                     "branch": f"worktree-{task['slug']}"})
+                     "branch": f"worktree-{task['slug']}", "l2_engine": "codex"})
         S.save_task("p", task)
         return task, worktree
 

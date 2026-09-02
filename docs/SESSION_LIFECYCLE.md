@@ -34,7 +34,8 @@ with a different `level` and `role`.
 Each read and steering request carries the project, task, dispatch generation, engine, and displayed session. A
 mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Steering ends
 the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
-normally retains its thread id, while Claude retains its resumable session id. Altitude records the old and new
+normally retains its thread id. Historical Claude session ids remain evidence, but disabled Claude work is not
+resumed. Altitude records the old and new
 worker/session identities and renders resume, replacement, compaction, engine-change, and recovery events as
 boundaries underneath the same logical task dispatch. A parser error or incomplete final JSONL record is displayed
 as viewer evidence and retried on the next poll; it never changes task or worker state.
@@ -46,8 +47,8 @@ identities on purpose:
 | --- | --- | --- |
 | `dispatch_id` | one L2 attempt | the task is dispatched again as a new attempt |
 | `l2_engine` | provider for that attempt | only on a fresh attempt, never a transparent resume |
-| `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
-| `agent_id` | current Claude job or Codex OS worker | every physical replacement |
+| `session_id` | provider conversation/thread | Codex keeps it across turns; historical Claude replacements remain evidence |
+| `agent_id` | current provider worker, including a legacy Claude job | every physical replacement |
 | `l2_token` | backend ownership fence for the logical L2 attempt | stable for the attempt; old workers are stopped before replacement |
 | `routing` | reason plus quota evidence used at launch | written once with fresh dispatch |
 
@@ -56,17 +57,17 @@ identities on purpose:
 ```text
 queued task
   ├─ recovery/WIP/lease and Git provenance gates
-  ├─ weekly-first provider decision (or explicit task/project pin)
+  ├─ closed-capability and weekly-quota decision (or explicit enabled pin)
   ├─ persist l2_engine + model + reason + raw quota evidence
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
 
-Routing compares only named seven-day Claude data with a Codex window whose reported duration is
-exactly seven days. A five-hour window is an availability signal, not the main preference score.
-Unknown or incomparable weekly data uses the configured default, currently Codex, and records that
-fact. An exhausted short or weekly window rules out only that provider. If both are unavailable,
-the task stays queued. An explicit provider pin never silently falls back.
+Routing may display historical Claude quota observations, but the closed autonomous capability set
+contains only Codex. A fresh turn therefore selects Codex when its named weekly/short
+windows permit it and otherwise stays held. A Claude pin is explicitly unavailable and never silently
+falls back. Weekly-first comparison remains defined for a future provider only after its complete
+supervision capability has been proven and deliberately enabled.
 
 Altitude does not infer separate Fable and Opus allowances from an account-wide meter. A model pin
 is honored inside the selected provider; model switching requires explicit observable policy rather
@@ -74,23 +75,31 @@ than a guessed quota relationship.
 
 ## Message and resume
 
-Burak's message is first appended to the task's durable human conversation with the exact dispatch,
-session, state, and worker snapshot it addressed. Under the task's resume lock Altitude then:
+Under the task's resume lock Altitude first validates the exact dispatch/session/state/worker snapshot
+and the selected provider's closed autonomous capability. A disabled provider returns a synchronous
+provider hold without changing task state, conversation, events, incidents, recovery, or workers;
+scheduled retries leave the existing durable retry in place. For an enabled provider Altitude then:
 
-1. validates that snapshot and the task worktree/commit provenance;
-2. stops the current physical worker and confirms it is no longer live;
-3. resumes the task's already-selected provider conversation;
-4. atomically binds the replacement worker (and Claude's replacement session id, when it changes).
+1. appends Burak's message to the durable human conversation with the addressed snapshot;
+2. validates the task worktree/commit provenance;
+3. stops the current physical worker and confirms it is no longer live;
+4. resumes the task's already-selected provider conversation;
+5. atomically binds the Codex replacement worker while retaining the exact thread id.
 
 Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
 A failed resume leaves the provider conversation and task evidence available for L3 recovery. A
 cross-provider continuation is a deliberate new attempt based on saved work, not a fake transcript
 resume.
 
-Claude resume uses `claude --bg --resume`. Its L2 contract is direct: the persona may invoke the
-scoped Altitude CLI, while the backend revalidates the task identity, lease, provenance, and merge
-policy before accepting a state change or publication request. Claude hooks add command guardrails
-and telemetry; they are not the backend authority check.
+Claude `--bg` launch/resume is disabled for L2, L3, L1, and helpers. Its short launcher and job row do
+not prove descendant ownership or cgroup emptiness, and a genuine supervised resume/result-spool test
+could not be completed locally without spending a provider turn. The existing backend authority checks,
+hooks, guardrails, status inspection, and legacy-worker stop/remove adapters remain; a legacy Claude
+worker is never stopped merely to attempt a now-disabled replacement. Its task mutation and publication
+boundaries check the target provider before any model-controlled actor environment. No actor variable,
+TTY, or same-user CLI token is claimed as operator authentication: the accepted stopped-production
+activation gate must prove every legacy Claude unit/process empty before this source runs. Read-only
+inspection and physical stop/remove cleanup remain available while the stopped state is reconciled.
 
 Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
 is private task evidence; `thread.started.thread_id` is the session identity and
@@ -107,19 +116,17 @@ broker—not the model process—may then post the human-facing message, land a 
 task, block, continue the same thread, or launch optional helpers. A held action is durable and does
 not spend another model turn merely to wait for recovery.
 
-## L3 sessions and provider changes
+## L3 sessions and provider identity
 
-L3 stores separate Claude and Codex session records. A quota-selected turn resumes only the chosen
-provider's session. When the other provider handled intervening chat, Altitude supplies the missed
-human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
-provider transcript. A Claude limit after text or tool activity never causes the same turn to be
-automatically replayed on Codex because that could duplicate side effects.
+L3 retains separate historical Claude and Codex session records, but new autonomous turns select and
+resume only Codex. The disabled Claude record is neither migrated into Codex nor replayed; durable
+human conversation remains the explicit handoff boundary.
 
 A Codex L3 turn uses the same containment and inert-result pattern, but its filesystem view is
 read-only with respect to durable inputs: it may read the compact Altitude state and the selected project checkout,
 and may write only to an inert disposable runtime directory required by the Codex CLI. Its trusted
-broker applies at most the validated project-coordination action. Claude L3 retains its direct CLI
-contract. Provider selection changes neither L3's project-level responsibility nor L2's end-to-end
+broker applies at most the validated project-coordination action. Provider selection changes neither
+L3's project-level responsibility nor L2's end-to-end
 task ownership.
 
 For contained Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and
@@ -141,8 +148,8 @@ same provider adapter.
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.
 
-After changing provider launch, runtime, or session-resume integration, validate Altitude with one
-tiny real task through the complete L3 → L2 → PR → required checks → merge path. Afterward, the
+After changing enabled provider launch, runtime, or session-resume integration, validate Altitude with one
+tiny real Codex task through the complete L3 → L2 → PR → required checks → merge path. Afterward, the
 operator must verify that no worker remains.
 
 ## Context and prompt-cache evidence

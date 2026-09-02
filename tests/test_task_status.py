@@ -111,6 +111,7 @@ class TestTaskStatus(unittest.TestCase):
             "slug": "task-one", "state": "running", "title": "One status",
             "attempt": 1, "dispatch_id": "task-one-1", "session_id": "sid-1", "agent_id": "aid-1",
             "source": "chat", "hold_merge": None, "blocked_reason": None,
+            "l2_engine": "codex",
             "updated": "2026-08-29T00:00:00+00:00", "worktree": "/tmp/worktree", "branch": "worktree-task-one",
             "paths": ["altitude/status.py", "bin/alt"], "prs": [17],
         }
@@ -125,7 +126,8 @@ class TestTaskStatus(unittest.TestCase):
         other_dir = S.tasks_dir("demo") / "other-task"
         other_dir.mkdir(parents=True)
         S.write_json(other_dir / "status.json", {
-            "slug": "other-task", "state": "running", "paths": ["altitude/server.py"]})
+            "slug": "other-task", "state": "running", "l2_engine": "codex",
+            "paths": ["altitude/server.py"]})
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json", {
             "edits": 7, "files": ["altitude/status.py"]})
         S.write_json(config.MONITOR_DIR / "statusline-test.json", {

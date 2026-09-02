@@ -12,7 +12,8 @@ from altitude import config, engines, incidents, l1, route, state as S
 class TestL1PatchNote(unittest.TestCase):
     def test_final_l1_launch_boundary_rechecks_the_l2_generation(self):
         old = {"state": "running", "source": "chat", "dispatch_id": "task-1",
-               "session_id": "session-1", "agent_id": "agent-1", "l2_token": "token-old"}
+               "session_id": "session-1", "agent_id": "agent-1", "l2_token": "token-old",
+               "l2_engine": "codex"}
         replacement = {**old, "session_id": "session-2", "agent_id": "agent-2",
                        "l2_token": "token-new"}
         crossed = mock.Mock()
@@ -51,13 +52,19 @@ class TestL1PatchNote(unittest.TestCase):
 
                 with ExitStack() as stack:
                     stack.enter_context(mock.patch.object(config, "ROOT", state_root))
+                    if engine == "claude":
+                        # Exercise the retained transport/prompt builder as though the future supervision proof passed;
+                        # the production closed fact remains Codex-only and is covered separately.
+                        stack.enter_context(mock.patch.object(
+                            config, "AUTONOMOUS_ENGINES", ("claude", "codex")
+                        ))
                     stack.enter_context(mock.patch.object(route, "pick_engine", pick_engine))
                     stack.enter_context(mock.patch.object(
                         S, "load_task", return_value={
                             "state": "running", "worktree": str(root), "source": "chat",
                             "paths": ["fixture.txt"],
                             "dispatch_id": "task-1", "session_id": "session-1",
-                            "agent_id": "agent-1", "l2_token": "token-1",
+                            "agent_id": "agent-1", "l2_token": "token-1", "l2_engine": engine,
                         }
                     ))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
@@ -106,7 +113,10 @@ class TestL1PatchNote(unittest.TestCase):
 
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(config, "ROOT", state_root))
+            if engine == "claude":
+                stack.enter_context(mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")))
             stack.enter_context(mock.patch.object(l1, "load", return_value=rec))
+            stack.enter_context(mock.patch.object(S, "load_task", return_value={"l2_engine": engine}))
             stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
             stack.enter_context(mock.patch.object(l1, "save", return_value=None))
             stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="")))

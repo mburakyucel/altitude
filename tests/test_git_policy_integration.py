@@ -79,6 +79,7 @@ class TestDispatchBoundaryOrdering(unittest.TestCase):
         with mock.patch.object(dispatch.S, "project_lock", side_effect=lambda _project: contextlib.nullcontext()), \
              mock.patch.object(dispatch.S, "load_task", return_value=task), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.config, "project", return_value={}), \
              mock.patch.object(dispatch.config, "project_path", return_value=Path("/tmp/unsafe-main")), \
              mock.patch.object(
                  dispatch.git_policy, "fetch_and_require_exact_base",

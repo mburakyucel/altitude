@@ -92,7 +92,7 @@ class TestLeases(unittest.TestCase):
 
     def test_hold_on_overlapping_running_task(self):
         a = T.new("p", "web rebuild", "r", actor="burak", paths=["web/", "altitude/server.py"])
-        a["state"] = "running"; S.save_task("p", a)
+        a.update({"state": "running", "l2_engine": "codex"}); S.save_task("p", a)
         b = T.new("p", "server tweak", "r", actor="burak", paths=["altitude/server.py"])
         c = T.new("p", "docs", "r", actor="burak", paths=["docs/"])
         self.assertIn("file lease", dispatch.wip_hold("p", b))

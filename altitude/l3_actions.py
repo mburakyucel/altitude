@@ -128,6 +128,10 @@ def _worker_live(project: str, task: dict) -> bool:
 
 def _resume_paths(project: str, task: dict, paths: object) -> tuple[list[str], list[str]]:
     """Validate and persist an L3 lease for the exact blocked task generation."""
+    try:
+        T.require_owner_provider_capability(task)
+    except T.TransitionError as exc:
+        raise L3ActionError(str(exc)) from exc
     if not isinstance(paths, list):
         raise L3ActionError("task_resume paths must be an array")
     declared = []
@@ -150,6 +154,10 @@ def _resume_paths(project: str, task: dict, paths: object) -> tuple[list[str], l
         raise L3ActionError("task_resume paths do not declare a file lease")
     with S.project_lock(project):
         live = S.load_task(project, task["slug"])
+        try:
+            T.require_owner_provider_capability(live)
+        except T.TransitionError as exc:
+            raise L3ActionError(str(exc)) from exc
         for label, expected, actual in (
             ("state", "blocked", live.get("state")),
             ("dispatch", task.get("dispatch_id"), live.get("dispatch_id")),
@@ -311,6 +319,10 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
         task = S.load_task(project, _need(slug, "slug"))
         if task.get("state") != "blocked" or not task.get("session_id") or not task.get("agent_id"):
             raise L3ActionError(f"{slug}: task has no exact blocked L2 session to resume")
+        try:
+            T.require_owner_provider_capability(task)
+        except T.TransitionError as exc:
+            raise L3ActionError(str(exc)) from exc
         answer = str(action.get("answer") or action.get("reason") or "Continue from the durable task state.")
         paths = action.get("paths") or []
         persisted = _resume_paths(project, task, paths) if paths else None

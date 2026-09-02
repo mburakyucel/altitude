@@ -115,6 +115,12 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                     "turns": 0, "structured": None, "error": f"engine hold: {choice['why']}", "tools": [],
                     "skipped": False, "completed": False, "_turn_started_at": None, "routing": choice}
         engine = choice["engine"]
+        try:
+            engines.require_autonomous_engine(engine)
+        except engines.EngineCapabilityError as exc:
+            return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
+                    "turns": 0, "structured": None, "error": f"engine hold: {exc}", "tools": [],
+                    "skipped": False, "completed": False, "_turn_started_at": None, "routing": choice}
         proj = config.project(project)
         S.regen_state_md(project)
         inf = info(project)
@@ -269,7 +275,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
 def reset(project: str, reason: str = "manual") -> None:
     inf = info(project)
     sessions = _sessions(inf)
-    engine = inf.get("engine_last") or "claude"
+    engine = inf.get("engine_last") or config.AUTONOMOUS_ENGINES[0]
     sessions.setdefault(engine, {}).update({"rotate_next": True, "rotate_reason": reason})
     inf.update({"rotate_next": True, "rotate_reason": reason})
     save_info(project, inf)

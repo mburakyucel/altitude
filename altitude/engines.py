@@ -482,6 +482,17 @@ def reconcile_physical_transition(record: dict, durable_result_observation: dict
     }
 
 
+class EngineCapabilityError(RuntimeError):
+    """A provider lacks the closed capability required for an autonomous launch."""
+
+
+def require_autonomous_engine(engine: str) -> None:
+    if engine not in config.AUTONOMOUS_ENGINES:
+        raise EngineCapabilityError(
+            f"{engine} autonomous/mutating launch disabled: supervised foreground ownership is unproved"
+        )
+
+
 def codex_isolation_config(cwd: Path, *, writable: bool = True,
                            readable_roots: list[Path] | None = None) -> list[str]:
     """Suppress mutable user/project/plugin sources; managed host policy remains authoritative.
@@ -697,6 +708,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
     restarted server distinguish an in-flight turn from a dead one."""
+    require_autonomous_engine("claude")
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
@@ -839,7 +851,8 @@ def _guarded_spawn(cmd: list[str], *, cwd: Path, env: dict, guard=None) -> subpr
 def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None, persona: Path | None = None,
               permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
               settings: Path | None = None, extra_env: dict | None = None, spawn_guard=None) -> dict:
-    """Start a background session (verified shape). Returns what `claude --bg` printed + the agent row."""
+    """Start a background session (disabled unless Claude has the closed autonomous capability)."""
+    require_autonomous_engine("claude")
     before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--permission-mode", permission_mode]
     if worktree:
@@ -898,6 +911,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
                      permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
                      settings: Path | None = None,
                      extra_env: dict | None = None, spawn_guard=None) -> dict:
+    require_autonomous_engine("claude")
     before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--resume", session_id, "--permission-mode", permission_mode]
     if persona:
@@ -1496,6 +1510,7 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
 
 def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
              model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+    require_autonomous_engine(engine)
     if engine == "claude":
         return claude_bg(name, prompt, cwd=cwd, persona=persona, permission_mode="auto", model=model,
                          settings=settings, extra_env=extra_env, spawn_guard=spawn_guard)
@@ -1507,6 +1522,7 @@ def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
 
 def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
               model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+    require_autonomous_engine(engine)
     if engine == "claude":
         return claude_resume_bg(name, session_id, prompt, cwd=cwd, persona=persona, settings=settings,
                                 model=model, extra_env=extra_env, spawn_guard=spawn_guard)

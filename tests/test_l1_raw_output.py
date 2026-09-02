@@ -58,6 +58,7 @@ class TestL1RawOutput(unittest.TestCase):
         engine_call = response if callable(response) else lambda *_args, **_kwargs: response
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(l1, "load", return_value=rec))
+            stack.enter_context(mock.patch.object(S, "load_task", return_value={"l2_engine": engine}))
             stack.enter_context(mock.patch.object(l1, "runs_dir", return_value=run_dir))
             stack.enter_context(mock.patch.object(l1, "save", return_value=None))
             stack.enter_context(mock.patch.object(l1, "_git", return_value=SimpleNamespace(stdout="")))
@@ -187,7 +188,8 @@ class TestL1RawOutput(unittest.TestCase):
 
         with mock.patch.object(engines, "usage_hold", return_value=None), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: FakeProcess()):
-            result = engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
+            with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")):
+                result = engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
 
         self.assertEqual(result["raw_stdout"], json.dumps(event) + "\n")
         self.assertEqual(result["raw_stderr"], "claude diagnostic\n")
@@ -214,7 +216,8 @@ class TestL1RawOutput(unittest.TestCase):
         with mock.patch.object(engines, "RAW_CAPTURE_CAP", cap), \
              mock.patch.object(engines, "usage_hold", return_value=None), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: FakeProcess()):
-            result = engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
+            with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")):
+                result = engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
 
         rendered = result["raw_stdout"]
         self.assertLessEqual(len(rendered.encode()), cap)

@@ -52,6 +52,10 @@ CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude o
 # Default Claude models. A Codex L1/reviewer uses the Codex CLI's configured model unless its run overrides it.
 MODELS = {"l3": "fable", "l2": "opus", "l1": "opus", "reviewer": "opus"}
 ENGINES = ("claude", "codex")
+# Phase 1A closed capability fact. Claude remains observable for legacy-worker
+# reconciliation, but autonomous/mutating launch is disabled until its complete
+# foreground unit, resume, result-spool, stop, and cgroup-empty contract is proven.
+AUTONOMOUS_ENGINES = ("codex",)
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json

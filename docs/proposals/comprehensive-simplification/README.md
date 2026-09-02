@@ -87,13 +87,18 @@ Archived task -> conservative, non-blocking maintenance/pruning
 - L2 may implement directly or use zero, one, or several optional bounded helpers/reviewers.
 - Work is isolated by task worktree and branch. Every code change reaches `main` through a PR.
 - The current logical task owner is fenced from stale workers and messages.
-- Codex containment and trusted brokerage remain fail-closed. Claude protections remain until an
-  equivalent replacement is proved.
+- Codex containment and trusted brokerage remain fail-closed. The Phase 1A foreground proof was not
+  completed without spending a provider turn, so Codex is the sole autonomous target and no source
+  path launches or resumes Claude; legacy Claude protections remain only for stopped-state evidence
+  and cleanup.
 - Publication verifies scope, provenance, the exact PR head/base pair, applicable checks, merge
   holds, and the merge result.
-- Codex remains the default autonomous engine. Claude remains supported only at the authority level
-  proven by the foreground process-unit prerequisite, with weekly-first routing and no fake
-  cross-provider resume.
+- Codex is the sole autonomous engine. There is no conditional Claude routing or fake cross-provider
+  resume in the accepted target; enabling Claude later requires a separate architecture amendment and
+  real foreground supervision proof.
+- Before any source containing this decision runs in production, the stopped-production activation
+  gate must prove every legacy Claude unit/process empty. Same-UID actor variables, TTYs, and CLI flags
+  are not operator authentication.
 - Incident evidence remains private and durable. A genuinely unsafe shared condition stops launches.
 - L3 retains operational recovery autonomy and may delegate the active episode's single recovery
   L2. Incidents never recursively generate work.

@@ -17,13 +17,13 @@ class TestModels(unittest.TestCase):
         self.assertEqual(config.MODELS["l1"], "opus")             # coding at least Opus
         self.assertEqual(set(config.MODELS), {"l3", "l2", "l1", "reviewer"})
 
-    def test_task_carries_explicit_model_only(self):
+    def test_task_carries_only_an_enabled_provider_model(self):
         t = T.new("p", "plain", "r", actor="burak")
         self.assertIsNone(t.get("model"))
-        t2 = T.new("p", "hard", "r", actor="burak", model="fable")
-        self.assertEqual(t2["model"], "fable")
+        t2 = T.new("p", "hard", "r", actor="burak", engine="codex", model="gpt-test")
+        self.assertEqual((t2["engine"], t2["model"]), ("codex", "gpt-test"))
         with self.assertRaises(T.TransitionError):
-            T.new("p", "bad", "r", actor="burak", model="gpt")
+            T.new("p", "disabled", "r", actor="burak", model="fable")
 
 
 if __name__ == "__main__":

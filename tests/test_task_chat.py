@@ -40,6 +40,7 @@ class TestTaskConversation(unittest.TestCase):
             "dispatch_id": f"{self.slug}-1",
             "session_id": "session-old",
             "agent_id": "agent-old",
+            "l2_engine": "codex",
             "l2_token": "token-old",
             "worktree": str(self.worktree),
             "branch": f"worktree-{self.slug}",
@@ -68,7 +69,7 @@ class TestTaskConversation(unittest.TestCase):
         with mock.patch.object(dispatch, "_resume_session_locked") as resume:
             with self.assertRaisesRegex(T.TransitionError, "session changed"):
                 dispatch.message_l2(self.project, self.slug, "stale", expected_dispatch_id=f"{self.slug}-1",
-                                    expected_session_id="session-replaced", expected_engine="claude")
+                                    expected_session_id="session-replaced", expected_engine="codex")
         resume.assert_not_called()
         self.assertEqual(T.task_messages(self.project, self.slug), [])
 
@@ -199,7 +200,8 @@ class TestResumeGenerationFence(unittest.TestCase):
 
         rows = [{"id": "agent-new", "sessionId": "session-new",
                  "name": f"{project}/resume-race-1", "state": "working", "startedAt": 2}]
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch.object(engines, "claude_resume_bg", side_effect=launch), \
              mock.patch.object(engines, "claude_agents", return_value=rows), \
@@ -228,7 +230,8 @@ class TestResumeGenerationFence(unittest.TestCase):
                  "name": f"{project}/resume-persist-1", "state": "working", "startedAt": 2}]
         result = {"stdout": "", "stderr": "", "returncode": 0}
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch.object(engines, "claude_resume_bg", return_value=result), \
              mock.patch.object(engines, "claude_agents", return_value=rows), \

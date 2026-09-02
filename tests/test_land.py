@@ -100,7 +100,8 @@ class TestLand(unittest.TestCase):
         d = S.tasks_dir("demo") / "fix-x"
         d.mkdir(parents=True)
         (d / "status.json").write_text(json.dumps(
-            {"slug": "fix-x", "state": "running", "paths": ["src", "docs/NOTES.md"]}))
+            {"slug": "fix-x", "state": "running", "l2_engine": "codex",
+             "paths": ["src", "docs/NOTES.md"]}))
         self.remote = self.tmp / "remote.git"
         subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
         self.repo = self.tmp / "repo"
@@ -139,7 +140,8 @@ class TestLand(unittest.TestCase):
     def set_current_l2(self, *, state="running", dispatch_id="fix-x-1", token="current-token"):
         path = S.tasks_dir("demo") / "fix-x" / "status.json"
         task = json.loads(path.read_text())
-        task.update({"state": state, "dispatch_id": dispatch_id, "l2_token": token})
+        task.update({"state": state, "dispatch_id": dispatch_id, "l2_token": token,
+                     "l2_engine": "codex"})
         path.write_text(json.dumps(task))
         self._setenv("ALTITUDE_ACTOR", "l2")
         self._setenv("ALTITUDE_DISPATCH_ID", dispatch_id)
@@ -677,19 +679,23 @@ class TestLand(unittest.TestCase):
 
     def test_resolved_task_with_empty_lease_fails_loudly(self):
         d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
+        (d / "status.json").write_text(json.dumps(
+            {"slug": "fix-x", "state": "running", "l2_engine": "codex", "paths": []}))
         self.leased_change()
         (self.repo / "secrets.env").write_text("x\n")
         cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        p = subprocess.run([sys.executable, str(cli), "land", "--message", "msg", "--wait", "0"],
-                           cwd=self.repo, capture_output=True, text=True)
+        env = {k: v for k, v in os.environ.items() if k not in (
+            "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_DISPATCH_ID", "ALTITUDE_L2_TOKEN")}
+        p = subprocess.run([sys.executable, str(cli), "--project", "demo", "land", "--message", "msg", "--wait", "0"],
+                           cwd=self.repo, capture_output=True, text=True, env=env)
         self.assertNotEqual(p.returncode, 0)
         self.assertIn(f"task demo/fix-x {land.EMPTY_LEASE_MESSAGE}", p.stderr)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 
     def test_explicit_paths_override_empty_task_lease(self):
         d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
+        (d / "status.json").write_text(json.dumps(
+            {"slug": "fix-x", "state": "running", "l2_engine": "codex", "paths": []}))
         self.leased_change()
         res = land.land("fix: explicit lease", cwd=self.repo, wait=0, paths="src")
         self.assertEqual(res["lease"], ["src"])
@@ -697,7 +703,8 @@ class TestLand(unittest.TestCase):
 
     def test_absolute_lease_entry_still_matches(self):
         d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": ["/src"]}))
+        (d / "status.json").write_text(json.dumps(
+            {"slug": "fix-x", "state": "running", "l2_engine": "codex", "paths": ["/src"]}))
         self.leased_change("src/thing.py")
         res = land.land("fix: abs", cwd=self.repo, wait=0)
         self.assertEqual(res["staged"], ["src/thing.py"])
@@ -992,10 +999,12 @@ class TestLand(unittest.TestCase):
         self.no_checks()
         self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
         cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
+        env = {k: v for k, v in os.environ.items() if k not in (
+            "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_DISPATCH_ID", "ALTITUDE_L2_TOKEN")}
         run = subprocess.run(
-            [sys.executable, str(cli), "land", "--message", "fix: cli override", "--wait", "0", "--merge",
+            [sys.executable, str(cli), "--project", "demo", "land", "--message", "fix: cli override", "--wait", "0", "--merge",
              "--test-cmd", "otherrunner -q tests"],
-            cwd=self.repo, capture_output=True, text=True, env=dict(os.environ),
+            cwd=self.repo, capture_output=True, text=True, env=env,
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         result = json.loads(run.stdout)

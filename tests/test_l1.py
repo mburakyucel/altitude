@@ -105,7 +105,8 @@ class TestL1Runs(unittest.TestCase):
             t.update({"worktree": str(worktree), "branch": f"worktree-{slug}", "state": "running",
                       "paths": ["fixture.txt"],
                       "dispatch_id": f"{slug}-1", "session_id": f"session-{slug}",
-                      "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}"})
+                      "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}",
+                      "l2_engine": "codex"})
             S.save_task("altitude", t)
         os.environ.update({"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": "altitude",
                            "ALTITUDE_TASK": slug, "ALTITUDE_DISPATCH_ID": f"{slug}-1",
@@ -131,12 +132,11 @@ class TestL1Runs(unittest.TestCase):
         kinds = [e["kind"] for e in S.read_events("altitude", slug)] if hasattr(S, "read_events") else ["l1-started", "l1-finished"]
         self.assertIn("l1-started", kinds); self.assertIn("l1-finished", kinds)
 
-    def test_run_engine_override_selects_claude_and_pr_is_parsed(self):
+    def test_run_engine_override_refuses_disabled_claude_without_creating_a_run(self):
         slug, brief = self._task("l1-claude")
-        rec = l1.start("altitude", slug, brief, engine="claude")
-        self.assertEqual(rec["engine"], "claude"); self.assertIn("forced", rec["why"])
-        done = _wait_done("altitude", slug, rec["name"])
-        self.assertEqual(done["result"]["pr"], 42)
+        with self.assertRaisesRegex(T.TransitionError, "forced claude.*capability disabled"):
+            l1.start("altitude", slug, brief, engine="claude")
+        self.assertEqual(l1.list_runs("altitude", slug), [])
 
     def test_no_available_engine_does_not_launch_or_fall_through_to_claude(self):
         slug, brief = self._task("l1-engine-hold")

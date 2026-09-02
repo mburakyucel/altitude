@@ -55,7 +55,8 @@ class TestCleanClose(unittest.TestCase):
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "report.json", report)
         task = {"slug": slug, "title": slug, "state": "reported", "created": S.now(),
-                "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47]}
+                "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47],
+                "l2_engine": "codex"}
         if hold_merge:
             task["hold_merge"] = "always-list: release"
         S.save_task(PROJECT, task)

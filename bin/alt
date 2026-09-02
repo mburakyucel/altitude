@@ -36,9 +36,9 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    l1p = sub.add_parser("l1", help="optional L1 runs on either engine: run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
+    l1p = sub.add_parser("l1", help="optional L1 runs on an enabled engine: run / wait / status"); l1s = l1p.add_subparsers(dest="lcmd", required=True)
     lr = l1s.add_parser("run"); lr.add_argument("--brief", required=True); lr.add_argument("--role", default="implementer", choices=("implementer", "reviewer"))
-    lr.add_argument("--engine", choices=("claude", "codex")); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
+    lr.add_argument("--engine", choices=config.AUTONOMOUS_ENGINES); lr.add_argument("--model"); lr.add_argument("--name"); lr.add_argument("--cwd")
     lr.add_argument("--paths", help="comma-separated sublease within the owning task lease")
     lw = l1s.add_parser("wait"); lw.add_argument("name", nargs="?"); lw.add_argument("--timeout", type=int, default=540)
     l1s.add_parser("status")
@@ -46,13 +46,13 @@ def main(argv=None) -> None:
 
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
-    a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
+    a.add_argument("--l2-engine", choices=config.AUTONOMOUS_ENGINES); a.add_argument("--l3-engine", choices=config.AUTONOMOUS_ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
     r = ps.add_parser("remove"); r.add_argument("name")
 
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
-    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise weekly quota routes it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
+    n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.AUTONOMOUS_ENGINES, help="pin this L2; otherwise weekly quota routes it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
     for name in ("show", "events", "messages"):
@@ -153,6 +153,7 @@ def main(argv=None) -> None:
             out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
             t = S.load_task(p, args.slug)
+            T.require_owner_provider_capability(t)
             if t["state"] == "blocked" and t.get("session_id"):
                 answer = args.answer or "Continue from your progress file; finish to *done* and rewrite the report."
                 from altitude import dispatch
@@ -160,7 +161,7 @@ def main(argv=None) -> None:
                 resumed = S.load_task(p, args.slug)
                 if res.get("deferred"):
                     out({"slug": args.slug, "state": "blocked", "deferred": True,
-                         "waiting": resumed.get("blocked_reason")})
+                         "waiting": res.get("waiting") or res.get("hold") or resumed.get("blocked_reason")})
                 else:
                     out({"slug": args.slug, "state": "running", "deferred": False,
                          "agent": (res.get("agent") or {}).get("id")})
@@ -172,6 +173,7 @@ def main(argv=None) -> None:
                 sys.exit("alt task paths: no paths named")
             with S.project_lock(p):
                 task = S.load_task(p, args.slug)
+                T.require_owner_provider_capability(task)
                 previous = task.get("paths") or []
                 task["paths"] = declared
                 S.save_task(p, task)

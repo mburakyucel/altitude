@@ -26,6 +26,25 @@ class TransitionError(Exception):
     pass
 
 
+def owner_provider_capability_hold(task: dict) -> str | None:
+    """Return the one closed hold for mutations on behalf of a task's L2 owner."""
+    from . import engines
+    engine = task.get("l2_engine") or "claude"
+    try:
+        engines.require_autonomous_engine(engine)
+    except engines.EngineCapabilityError as exc:
+        return f"engine hold: {exc}"
+    return None
+
+
+def require_owner_provider_capability(task: dict) -> None:
+    """Fence every trusted mutation performed by or for the current L2 owner."""
+    if task.get("state") == "queued" and not task.get("dispatch_id") and not task.get("l2_engine"):
+        return
+    if hold := owner_provider_capability_hold(task):
+        raise TransitionError(hold)
+
+
 TASK_MESSAGE_ROLES = ("burak", "l2")
 
 
@@ -52,6 +71,7 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
         raise TransitionError("L2 message has no ownership capability")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         allowed_states = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
         if task.get("state") not in allowed_states:
             raise TransitionError(f"{slug}: cannot message L2 in {task.get('state')} state")
@@ -152,6 +172,11 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
     if model in config.MODEL_ALIASES and engine is None:
         engine = "claude"  # a provider-specific model name is itself an explicit provider pin
+    if engine and engine not in config.AUTONOMOUS_ENGINES:
+        raise TransitionError(
+            f"engine {engine!r} has no autonomous/mutating launch capability; choose one of "
+            f"{config.AUTONOMOUS_ENGINES}"
+        )
     config.project(project)
     with S.project_lock(project):
         base = S.slugify(title)
@@ -198,6 +223,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
 def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         task["blocked_reason"] = None
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -207,6 +233,7 @@ def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
 
 def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
     with S.project_lock(project):
+        require_owner_provider_capability(S.load_task(project, slug))
         d = S.task_dir(project, slug)
         S.atomic_write(d / "brief.md", brief_md.rstrip() + "\n")
         S.append_event(project, slug, "brief", by=actor, bytes=len(brief_md))
@@ -220,6 +247,8 @@ def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | Non
         raise TransitionError(f"{slug}: dispatch requires a concrete worker, session, and L2 capability")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if task.get("dispatch_id"):
+            require_owner_provider_capability(task)
         previous_dispatch_id = task.get("dispatch_id")
         if previous_dispatch_id and previous_dispatch_id != dispatch_id:
             from . import transcript
@@ -239,6 +268,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
            expected_block_from: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         if expected_state is not None and task["state"] != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task['state']}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -262,6 +292,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_pending_identity: dict | None = None, updates: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         for label, expected, actual in (
             ("state", expected_state, task.get("state")),
             ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
@@ -285,6 +316,7 @@ def resume(project: str, slug: str, actor: str = "altd", *,
            expected_pending_identity: dict | None = None, **ev) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         for label, expected, actual in (
             ("state", expected_state, task.get("state")),
             ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
@@ -324,6 +356,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_l2_token: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         if actor == "l2":
             if (not expected_dispatch_id or not expected_l2_token
                     or task.get("dispatch_id") != expected_dispatch_id
@@ -363,6 +396,7 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
     """Archive a no-code L2 completion only after its physical worker has exited."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         request = task.get("completion_requested") or {}
         expected = (expected_dispatch_id, expected_agent_id, expected_session_id)
         current = (task.get("dispatch_id"), task.get("agent_id"), task.get("session_id"))
@@ -396,6 +430,7 @@ def _archive(project: str, slug: str) -> None:
 def set_spend(project: str, slug: str, **spend) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        require_owner_provider_capability(task)
         task.setdefault("spend", {}).update(spend)
         S.save_task(project, task)
         return task
@@ -405,6 +440,13 @@ def set_spend(project: str, slug: str, **spend) -> dict:
 
 def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
     """An FYI is a line in the project's inbox.jsonl; the page shows the tail."""
+    if slug:
+        try:
+            target = S.load_task(project, slug)
+        except KeyError:
+            target = None
+        if target is not None:
+            require_owner_provider_capability(target)
     item = {"at": S.now(), "kind": "fyi", "project": project, "slug": slug, "text": text.strip(), "by": actor, "seen": False}
     p = config.project_dir(project) / "inbox.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -448,6 +490,7 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     why = (why or "").strip() or None
     with S.project_lock(project):
         t = S.load_task(project, slug)
+        require_owner_provider_capability(t)
         t["hold_merge"] = why
         S.save_task(project, t)
     S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor)

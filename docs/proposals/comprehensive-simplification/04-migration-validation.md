@@ -283,17 +283,16 @@ or change activation behavior.
 
 ### PR 1A: Claude supervision go/no-go
 
-Prove a foreground Claude transport can run wholly inside a deterministic Claude-specific user unit,
-preserve genuine session resume, spool results, retain the current guard/backend checks, stop/kill
-deterministically, and prove its cgroup descendants empty. If the proof fails or cannot run,
-autonomous or mutating Claude L3/L2/L1/helper roles are disabled; explicitly operator-invoked
-read-only use may remain. No drain or process record may infer emptiness from `claude --bg`, a
-provider row, or a stale PID.
+The proof could not be completed locally without spending a provider turn, so this gate resolved
+no-go: Codex is the sole autonomous L3/L2/L1/helper engine and no source path launches or resumes
+Claude. Legacy Claude observation and physical stop/remove remain only while production is stopped.
+Before this source can run, activation must prove every legacy unit/process empty; no actor variable,
+TTY, same-UID token, `claude --bg` row, or stale PID substitutes for that proof.
 
 ### PRs 1B.1-1B.4: one physical transition, adopted by owner family
 
 PR 1B.1 adds the dormant closed physical record and process-unit reconciliation helper. PR 1B.2
-adopts it for L3 turns (Codex first, then Claude only if 1A passed); PR 1B.3 adopts it for L2 owners;
+adopts it for Codex L3 turns; PR 1B.3 adopts it for Codex L2 owners;
 PR 1B.4 adopts it for managed helpers. Each adoption deletes that family's prior PID/job-row/timestamp
 ownership writer and fallback reader before merging. The shared transition is:
 
@@ -333,7 +332,8 @@ publication receipt into `DeploymentRecord`. Worker reports remain untrusted thr
 
 - Kill around every provider spawn/bind/result/stop/empty boundary; an exact unit is empty or the
   operation refuses.
-- A real tiny Codex resume is mandatory. Claude mutation tests are mandatory only if PR 1A enables it.
+- A real tiny Codex resume is mandatory. Claude tests prove launch/resume is unreachable and legacy
+  targets remain held; there is no conditional Claude mutation acceptance path.
 - Kill around commit/push/PR/check/merge/issue creation; retry reconciles the same marker/effect.
 - Static inventory proves no model process or remote mutation exists without an owning transition.
 - No maintenance acknowledgement or source activation path exists yet.
@@ -792,7 +792,8 @@ Record final production/artifact/writer/timer/dependency counts against Phase 0.
 - all kill/race tests;
 - disposable activation and forward-repair E2E;
 - disposable real tiny Codex L3 -> L2 -> PR/check/merge path;
-- real tiny Claude path only if Phase 1A passed;
+- no real Claude turn; tests instead prove every launch/resume path closed and the activation manifest
+  proves every legacy Claude unit/process empty;
 - task defect, provider outage/reroute, and global recovery E2Es; and
 - restart inspection proving no worker/helper/service process remains unexpectedly.
 

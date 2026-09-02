@@ -29,6 +29,7 @@ class TestReportOpenFindings(unittest.TestCase):
             "title": slug,
             "state": "blocked" if blocked else "reported",
             "created": S.now(),
+            "l2_engine": "codex",
         }
         S.save_task(PROJECT, task)
         directory = S.task_dir(PROJECT, slug)

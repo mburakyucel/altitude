@@ -110,7 +110,11 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
     if forced and forced not in config.ENGINES:
         raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
     quota = quota_snapshot()
-    unavailable = {engine: _unavailable(quota[engine]) for engine in config.ENGINES}
+    unavailable = {
+        engine: (_unavailable(quota[engine]) if engine in config.AUTONOMOUS_ENGINES
+                 else "autonomous/mutating capability disabled: supervised foreground ownership is unproved")
+        for engine in config.ENGINES
+    }
     if forced:
         if unavailable[forced]:
             return {"engine": None, "why": f"forced {forced} is unavailable: {unavailable[forced]}",
@@ -124,7 +128,9 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
     if len(available) == 1:
         engine = available[0]
         other = next(item for item in config.ENGINES if item != engine)
-        return {"engine": engine, "why": f"{other} unavailable: {unavailable[other]}", "quota": quota}
+        return {"engine": engine,
+                "why": f"default policy {engine}; {other} unavailable: {unavailable[other]}",
+                "quota": quota}
 
     weekly = {engine: quota[engine].get("weekly_used") for engine in available}
     comparable = [engine for engine in available if weekly[engine] is not None]

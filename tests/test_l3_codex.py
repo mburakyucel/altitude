@@ -106,34 +106,18 @@ class TestL3Sessions(unittest.TestCase):
         self.assertIn("approve GitHub issue publication 1234567890abcdef12345678", out["text"])
         self.assertEqual(apply.call_args.kwargs["github_issue_source"], source)
 
-    def test_alternating_providers_preserves_both_session_ids(self):
-        choices = [self.choice("claude"), self.choice("codex"), self.choice("claude")]
-        claude_resumes = []
+    def test_disabled_claude_choice_is_held_before_transport_or_state(self):
+        with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
+             mock.patch.object(engines, "claude_print") as claude:
+            out = l3.turn("k", "one")
 
-        def fake_claude(prompt, **kwargs):
-            claude_resumes.append(kwargs.get("resume"))
-            return {"text": "claude answer", "session_id": kwargs.get("resume") or "cl-1", "usage": {},
-                    "context_tokens": 100, "cost": 0.0, "turns": 1, "structured": None, "error": None,
-                    "tools": [], "limited": None}
+        self.assertIn("engine hold", out["error"])
+        self.assertIn("foreground ownership is unproved", out["error"])
+        claude.assert_not_called()
+        self.assertEqual(l3.info("k"), {})
+        self.assertFalse((config.project_dir("k") / "chat.jsonl").exists())
 
-        def fake_codex(_prompt, **kwargs):
-            sid = kwargs.get("resume") or "cx-1"
-            return {"text": "codex answer", "session_id": sid, "reported_session_id": sid, "error": None,
-                    "usage": {"input_tokens": 100},
-                    "structured": {"message": "codex answer", "actions": []}, "returncode": 0,
-                    "containment_empty": True}
-
-        with mock.patch.object(l3, "_select", side_effect=choices), \
-             mock.patch.object(engines, "claude_print", side_effect=fake_claude), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
-            l3.turn("k", "one"); l3.turn("k", "two"); l3.turn("k", "three")
-
-        self.assertEqual(claude_resumes, [None, "cl-1"])
-        sessions = l3.info("k")["sessions"]
-        self.assertEqual(sessions["claude"]["session_id"], "cl-1")
-        self.assertEqual(sessions["codex"]["session_id"], "cx-1")
-
-    def test_codex_first_does_not_migrate_its_thread_into_claude(self):
+    def test_codex_thread_is_not_migrated_when_a_disabled_claude_choice_is_injected(self):
         choices = [self.choice("codex"), self.choice("claude")]
 
         def fake_codex(_prompt, **_kwargs):
@@ -142,20 +126,16 @@ class TestL3Sessions(unittest.TestCase):
                     "structured": {"message": "codex answer", "actions": []}, "returncode": 0,
                     "containment_empty": True}
 
-        def fake_claude(_prompt, **kwargs):
-            self.assertIsNone(kwargs.get("resume"))
-            return {"text": "claude answer", "session_id": "cl-1", "usage": {},
-                    "context_tokens": 100, "cost": 0.0, "turns": 1, "structured": None, "error": None,
-                    "tools": [], "limited": None}
-
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex), \
-             mock.patch.object(engines, "claude_print", side_effect=fake_claude):
-            l3.turn("k", "one"); l3.turn("k", "two")
+             mock.patch.object(engines, "claude_print") as claude:
+            first = l3.turn("k", "one"); second = l3.turn("k", "two")
 
         sessions = l3.info("k")["sessions"]
         self.assertEqual(sessions["codex"]["session_id"], "cx-1")
-        self.assertEqual(sessions["claude"]["session_id"], "cl-1")
+        self.assertNotIn("claude", sessions)
+        self.assertTrue(first["completed"]); self.assertIn("engine hold", second["error"])
+        claude.assert_not_called()
 
     def test_codex_resume_rejects_a_different_thread(self):
         l3.save_info("k", {"sessions": {"codex": {"session_id": "cx-1"}}, "engine_last": "codex"})
@@ -170,16 +150,14 @@ class TestL3Sessions(unittest.TestCase):
         self.assertIn("different thread", out["error"])
         self.assertEqual(l3.info("k")["sessions"]["codex"]["session_id"], "cx-1")
 
-    def test_partial_limited_claude_turn_is_not_replayed_on_codex(self):
-        result = {"text": "I already changed state", "session_id": "cl-1", "usage": {},
-                  "context_tokens": 100, "cost": 0.0, "turns": 1, "structured": None,
-                  "error": "usage limit", "tools": ["Bash"], "limited": "2099-01-01T00:00:00+00:00"}
+    def test_disabled_claude_choice_is_not_replayed_on_codex(self):
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
-             mock.patch.object(engines, "claude_print", return_value=result), \
+             mock.patch.object(engines, "claude_print") as claude, \
              mock.patch.object(engines, "codex_exec") as codex:
             out = l3.turn("k", "do one thing")
+        claude.assert_not_called()
         codex.assert_not_called()
-        self.assertEqual(out["engine"], "claude")
+        self.assertIn("engine hold", out["error"])
 
 
 if __name__ == "__main__":

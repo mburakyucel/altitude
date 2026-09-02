@@ -61,7 +61,7 @@ class TestSystemFault(unittest.TestCase):
         try:
             from altitude import tasks as T
             task = T.new("altitude", "verifier fault test", "request", actor="burak")
-            task["state"] = "running"; S.save_task("altitude", task)
+            task.update({"state": "running", "l2_engine": "codex"}); S.save_task("altitude", task)
             d = S.task_dir("altitude", task["slug"])
             S.write_json(d / "report.json", {"landed": {"prs": [{"number": 1, "merged": True}], "main_runs": [], "deploy": "not-applicable"},
                                              "review": [], "deviations": [], "decisions": [], "fyi": [], "blocked": "", "follow_ups": [],

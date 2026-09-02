@@ -19,8 +19,8 @@
    operation, or hold the affected scope before spending another model turn.
 5. **Task execution, deployment, and maintenance are separate lifecycles.** Merging a task does not
    update the running checkout; archiving a task does not require deleting its worktree.
-6. **Provider differences stop at adapters.** Claude and Codex may launch and resume differently,
-   but expose the same worker state and terminal outcome to the control plane.
+6. **Provider mechanics stop at adapters.** Codex is the sole target launcher/resumer and exposes one
+   worker state and terminal outcome; legacy Claude adapters are observation/cleanup compatibility only.
 7. **Compatibility is a migration, not an architecture.** Every fallback reader has a versioned
    migration and deletion gate.
 8. **Normal views are human views.** Technical event logs, raw state, and transcript detail remain
@@ -33,8 +33,8 @@ The refactor should prefer fewer modules after responsibilities have been remove
 
 ### 1. Application command layer
 
-One trusted in-process command API owns all durable mutations whether the caller is HTTP, CLI,
-Claude, or a Codex action broker. Commands include:
+One trusted in-process command API owns all durable mutations whether the caller is HTTP, operator
+CLI, or a Codex action broker. Commands include:
 
 - register/remove project;
 - create a task from a current L3 action or the active recovery episode's single task claim;
@@ -119,9 +119,8 @@ L3 remains a flexible conversation, not a workflow engine. It may:
 - delegate the active recovery episode's one L2 if code is genuinely necessary.
 
 L3 does not relay ordinary L2 questions, automatically pull backlog issues, close every clean task,
-spawn L1s, or create a chain of healing work. Claude and Codex keep separate provider sessions. A
-provider change receives a bounded human-chat handoff; it is a new provider conversation, never a
-fabricated transcript resume.
+spawn L1s, or create a chain of healing work. Codex owns the sole resumable target session. A retained
+legacy Claude session is evidence only and is never handed off or fabricated into a Codex resume.
 
 All L3 turns are serialized across processes. Either only the service invokes them, with CLI calls
 routed through the service, or an explicit offline operator command proves the service stopped and
@@ -259,28 +258,22 @@ transcript_sources(generation) -> bounded local sources
 
 Provider implementations retain necessary differences:
 
-- Claude keeps its authenticated CLI and current command guard/backend capabilities, but a provider
-  background-job row is not process ownership. Every Claude L3, L2, and managed-helper turn must run
-  as a foreground command inside the deterministic process unit recorded before spawn. Genuine
-  provider resume must work through that foreground form, and Altitude must prove the complete unit
-  empty before replacement, settlement, or terminal state. If foreground managed execution cannot
-  preserve authenticated resume and the current security boundary, autonomous Claude
-  normalized-outcome/publication enablement is a no-go; the system-wide Codex cutover may proceed.
-  Parent exit or provider-job disappearance is never accepted as equivalent evidence.
+- Phase 1A could not prove foreground Claude ownership, genuine resume, result spooling, deterministic
+  stop, and cgroup emptiness locally without spending a provider turn. The accepted target is therefore
+  Codex-only for every autonomous L3, L2, and managed-helper turn. No source path launches or resumes
+  Claude, and no provider-job row or parent exit is accepted as process-empty evidence. Legacy Claude
+  guards/backend checks remain only for stopped-state observation and cleanup until the activation gate
+  proves every legacy unit/process empty; later enablement requires a separate architecture amendment.
 - Codex remains in an explicit permission profile and transient cgroup with scrubbed environment;
   no trusted action is interpreted until the entire containment unit is empty.
 
-Routing consumes provider-neutral observations without pretending the quotas are interchangeable.
-The configured weekly reserve/remaining budget is the primary capacity signal; a currently open
-short/session window does not justify draining a nearly exhausted weekly allowance. Short-window
-capacity, task/provider compatibility, and an explicit user preference are secondary inputs. An
-unknown quota observation remains eligible uncertainty: routing records the missing/stale evidence
-and may prefer a provider with a fresh healthy observation, but it does not invent exhaustion. An
-actual quota/capacity failure from a launch or turn opens a provider hold with its retry condition;
-the other provider remains eligible. L3, L2, and optional helpers use this same policy; provider
-reserves are operator policy rather than per-task orchestration machinery.
+Routing records Codex weekly and short-window observations without inventing exhaustion from unknown
+telemetry. An actual quota/capacity failure opens one provider hold with its retry condition. Claude
+quota may remain visible as legacy observation but is never eligibility; explicit Claude pins fail
+closed rather than falling through. L3, L2, and optional helpers use the same Codex-only capability
+fact, without a conditional dual-provider branch.
 
-Both providers produce the same untrusted internal `WorkerOutcome`. The request may be persisted
+The enabled Codex adapter produces the untrusted internal `WorkerOutcome`. The request may be persisted
 before exit, but trusted settlement cannot act on it until the registered physical process unit is
 proven empty:
 
@@ -309,26 +302,23 @@ never fabricated into a model outcome.
 The transport may differ, but both produce an explicit versioned JSON wire envelope with a checked-in
 schema. Python producers validate before persisting; Python consumers validate before acting; the
 TypeScript client uses an explicit Zod runtime validator at the API boundary.
-Codex returns the inert envelope directly, while Claude uses a validated task command adapter. The
-target is identical semantics and control-plane settlement, not identical sandbox internals.
-Claude's shell guard cannot be deleted until the replacement boundary has been penetration-tested and
-used successfully in real tasks.
+Codex returns the inert envelope directly. Legacy Claude outcome/report adapters remain read-only only
+as long as archived/stopped-state compatibility requires them; they are not target writers. Claude's
+shell guard cannot be deleted before every legacy unit/process is proven empty and its retained evidence
+has a replacement reader.
 
-Steering an L2 stops its current physical process and resumes the same native provider session when
-that provider supports genuine resume. It installs a new fenced generation but does not replay the
-entire transcript as a fabricated prompt. A provider switch or intentional context rotation creates
-a new provider session with a bounded human-readable handoff and is displayed as such. Context and
+Steering an L2 stops its current physical process and resumes the same Codex session. It installs a
+new fenced generation but does not replay the entire transcript as a fabricated prompt. Intentional
+context rotation creates a new Codex session with a bounded human-readable handoff and is displayed as such. Context and
 quota percentages are timestamped provider observations, not task-state authority; revised provider
 measurements may legitimately move upward or downward without implying that the task changed
 sessions.
 
-In the target state, a Claude worker may still edit, test, and send human task replies directly, but
-its publish/complete command only persists an inert outcome request. It does not commit, push, merge,
-or archive while the physical worker can still write. Trusted settlement performs those side effects
-after the whole registered process unit is empty. The existing Claude filesystem/command guard stays
-unless D4 later approves and proves full containment; process ownership is a task-v2 prerequisite,
-not a claim that Claude already has Codex's sandbox. Without both changes, provider outcomes are not
-actually normalized and the same-writer settlement guarantee would be false.
+In the target state no Claude worker edits, replies, publishes, completes, or launches a helper. Every
+legacy Claude task/publication target is held before effects, but same-UID CLI actor/environment values
+are not an operator security boundary. The source may be activated only after the stopped-production
+gate proves every legacy Claude unit/process empty; this prerequisite, plus removal of every Claude
+launch path, is the honest closure for global CLI commands that have no task target.
 
 ### 6. Optional helpers and review
 
@@ -549,9 +539,12 @@ deployment/activation receipt increments the episode revision and mechanically m
 that new revision may wake its supervisor L3 once. An unchanged probe never changes revision or
 spends a model turn. A separately authorized operator action may also resolve/clear the episode.
 
-Repository WIP and fault blast radius are distinct policies. A provider fault does not hold another
-repository or a task already eligible for the other provider; the affected task is rerouted when
-safe. Under D1, an unresolved blocked code task still retains its own repository slot.
+Repository WIP and fault blast radius are distinct policies. A Codex provider fault does not hold
+another repository. A disabled legacy Claude row consumes no runnable-provider WIP, while its exact
+normalized narrow path lease remains protected. Missing, empty, malformed, or wholly narrowed-away
+scope is repository-uncertain and blocks new repository mutation without becoming a global hold;
+uncertain physical ownership also remains protected from mutation or cleanup.
+Under D1, an unresolved blocked Codex task still retains its own repository slot.
 That conservative collision choice is visible and reviewable rather than misreported as a global
 fault.
 

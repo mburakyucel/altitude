@@ -29,13 +29,15 @@ the lightest useful execution shape. Its human-facing conversation is stored sep
 logs, so Burak can steer it directly without routing every exchange through L3. Dispatch and
 session identifiers fence messages and resumes against stale workers.
 
-L1 and reviewer runs are optional, tracked children of the L2 task. Their engine may be selected
-per run. An implementer receives a sublease, leaves the parent commit unchanged, and returns a
+L1 and reviewer runs are optional, tracked children of the L2 task. Their engine is selected from
+the closed autonomous capability set, currently Codex only. An implementer receives a sublease,
+leaves the parent commit unchanged, and returns a
 validated binary patch plus findings to L2. It does not commit, open a PR, or integrate its own
 work. The L2 chooses whether to apply that patch; ownership never transfers.
 
-L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provider choice and keeps
-that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
+L2 and L3 currently run autonomously on Codex. Fresh L2 dispatch records the choice and keeps that
+provider for the attempt. Historical Claude session identity is retained for observation and cleanup,
+but it is not selected or resumed. See
 [Session lifecycle](SESSION_LIFECYCLE.md) for routing, message, resume, context, and cache semantics.
 
 ## Task lifecycle
@@ -52,8 +54,13 @@ queued ─► running ─► reported ─► done/archive
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
 
-Queued tasks wait for WIP, lease, engine availability, and recovery gates. One provider's quota does
-not globally freeze the other. Blocked means the current L2 needs an
+Queued tasks wait for WIP, lease, engine availability, and recovery gates. A disabled provider pin
+fails closed and does not fall through to Codex. Steering or resuming a legacy disabled-provider task
+returns an inert provider hold before conversation, event, task, worker, incident, or recovery mutation.
+Such a row does not consume runnable-provider WIP. Its normalized narrow lease still collides normally;
+missing, empty, malformed, broad-only, or candidate-unknown scope is repository-uncertain and blocks new
+mutation in that repository without freezing another repository.
+Blocked means the current L2 needs an
 answer or an operational hold has a recorded resume time. Deferral is not an active state: durable
 future work belongs in a GitHub issue, and the task exits the active set.
 
@@ -69,8 +76,14 @@ branches cannot be updated outside the guarded landing path. The trusted landing
 lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 
-Claude workers use a direct CLI contract: their scoped requests still cross the same backend
-identity, lease, provenance, and merge-policy checks. Codex workers have no control capability or
+New Claude workers are disabled: the CLI's foreground and resume flags were insufficient to prove
+the required unit ownership, result spool, deterministic stop, and empty cgroup without a real turn.
+The existing hooks, command guard, backend identity/lease/provenance checks, and read-only `alt agents`
+inspection plus physical worker stop/remove remain for legacy evidence and cleanup. A legacy Claude
+task's durable state is mutation-held by target provider, regardless of a caller's actor string. Same-UID
+CLI environment, TTY, or flag values cannot distinguish an operator from an unsandboxed legacy worker, so
+they are not authentication. Production activation of this source therefore requires the external stopped-
+production gate to prove all legacy Claude units/processes empty first. Codex workers have no control capability or
 Git-publication authority. A Codex L2 may write only in its task worktree under an explicit
 permission profile; its Git common directory and Altitude state are outside that writable surface,
 and hosted tools and model-command network access are disabled. The inner Codex sandbox hides host PIDs, while the
@@ -154,7 +167,8 @@ than introduce a behavior selector or a second authority.
 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
 and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
-and telemetry; permission profiles, process containment, and backend validation form the Codex
+and telemetry for legacy Claude evidence; permission profiles, process containment, and backend
+validation form the Codex
 execution boundary. Superseded designs remain in Git history, not in the active tree.
 
 ### Durable I/O foundation

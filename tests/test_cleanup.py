@@ -238,7 +238,8 @@ class TestSelfDeploy(unittest.TestCase):
         (other / "hooks").mkdir(exist_ok=True); (other / "hooks" / "h.py").write_text("# hook\n")
         git("add", "-A", cwd=other); git("commit", "-qm", "code + hook", cwd=other); git("push", "-q", "origin", "main", cwd=other)
         S.task_dir("altitude", "landed").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "landed", "title": "landed", "state": "done", "created": S.now(), "updated": S.now()})
+        S.save_task("altitude", {"slug": "landed", "title": "landed", "state": "done",
+                                      "l2_engine": "codex", "created": S.now(), "updated": S.now()})
         notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
         self.assertTrue((repo / "hooks" / "h.py").exists(), notes)          # hooks deploy by the pull itself
         pend = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {})

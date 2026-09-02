@@ -15,8 +15,14 @@ Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system
   the task's L2.
 - Every code change uses an isolated worktree and branch, then a PR. The L2 may merge after the
   applicable checks and review unless an explicit merge hold says otherwise.
-- Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
-  preserve separate provider sessions; one provider's short-window limit does not freeze the other.
+- Codex is the sole autonomous engine for fresh L2, L3, L1, and reviewer work. Routing still records
+  its quota evidence and refuses an unavailable or disabled explicit pin without silently falling back.
+- Claude's autonomous/mutating capability is closed because foreground unit ownership, genuine resume,
+  result spooling, deterministic stop, and cgroup-empty could not be proven locally without spending a
+  provider turn. Existing Claude rows and workers remain observable and physical stop/remove cleanup stays
+  available, but their durable task rows are target-held and no new Claude turn is launched. This source is
+  not eligible for production activation until the stopped-production gate proves every legacy Claude unit
+  and process empty; same-UID CLI actor/environment strings are explicitly not an operator identity boundary.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
 - A system fault records private evidence and activates the recovery fuse. L3 coordinates
@@ -28,7 +34,8 @@ Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI, `personas/` contains the
 three execution roles plus the optional reviewer, and `schemas/` defines broker actions,
 code-delivery reports, and reviewer reports. `hooks/` supplies Claude-side command guardrails and
-telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
+telemetry for legacy Claude reconciliation. Codex uses explicit permission profiles and whole-process-tree
+containment, then returns
 an inert action for trusted backend validation. `web/` is the React UI built into `web/dist/` for
 the Python server to serve.
 

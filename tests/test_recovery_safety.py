@@ -451,7 +451,8 @@ class TestRecoveryFuse(unittest.TestCase):
             self.assertTrue(guard_active, "Popen is the guarded irreversible boundary")
             return FakeProcess()
 
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+                mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
                 mock.patch.object(engines, "claude_agents", return_value=[]):
             result = engines.claude_bg("altitude/test", "prompt", cwd=self.repo,
                                        settings=self.root / "settings.json", spawn_guard=spawn_guard())
@@ -464,7 +465,8 @@ class TestRecoveryFuse(unittest.TestCase):
         new = {"id": "new", "name": "altitude/retry-1", "state": "working", "status": "busy",
                "sessionId": "new-session", "startedAt": "2026-01-02T00:00:00Z"}
         completed = subprocess.CompletedProcess([], 0, stdout="started", stderr="")
-        with mock.patch.object(engines, "claude_agents", side_effect=[[old], [old, new]]), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+             mock.patch.object(engines, "claude_agents", side_effect=[[old], [old, new]]), \
              mock.patch.object(engines, "_guarded_spawn", return_value=completed):
             result = engines.claude_bg("altitude/retry-1", "prompt", cwd=self.repo,
                                        settings=self.root / "settings.json")
@@ -553,7 +555,8 @@ class TestRecoveryFuse(unittest.TestCase):
         S.save_task("altitude", ordinary)
         recovery.hold("manual hold", kind="manual", actor="l3")
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
                 mock.patch.object(engines, "stop_l2_worker") as stop, \
                 mock.patch.object(engines, "claude_resume_bg") as resume:
@@ -569,7 +572,8 @@ class TestRecoveryFuse(unittest.TestCase):
         resumed = {"stdout": "", "stderr": "", "returncode": 0}
         live = [{"name": "altitude/claimed-repair-resume-1", "id": "agent-2", "sessionId": "session-2",
                  "state": "working", "startedAt": 2}]
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
                 mock.patch.object(engines, "claude_resume_bg", return_value=resumed) as resume, \
                 mock.patch.object(engines, "claude_agents", return_value=live):
@@ -586,10 +590,12 @@ class TestRecoveryFuse(unittest.TestCase):
         S.save_task("altitude", task)
         held = "recovery hold: injected-race; explicit L3 clearance required"
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
                 mock.patch.object(recovery, "dispatch_hold", side_effect=[None, held]), \
                 mock.patch.object(engines, "stop_l2_worker", return_value="stopped") as stop, \
+                mock.patch.object(engines, "claude_agents", return_value=[]), \
                 mock.patch.object(engines, "resume_l2") as launch:
             with self.assertRaisesRegex(T.TransitionError, "injected-race"):
                 dispatch.resume_session("altitude", task["slug"], "exact steering prompt")
@@ -611,7 +617,8 @@ class TestRecoveryFuse(unittest.TestCase):
                 "id": "replacement", "sessionId": "replacement-session", "state": "working", "startedAt": 2,
             }}
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(config, "AUTONOMOUS_ENGINES", ("claude", "codex")), \
+                mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
                 mock.patch.object(recovery, "dispatch_hold", return_value=None), \
                 mock.patch.object(engines, "stop_l2_worker", return_value="already stopped"), \
