@@ -61,7 +61,7 @@ class _CapturedAltitudeImporter(importlib.abc.MetaPathFinder, importlib.abc.Load
 
     @staticmethod
     def _relative(fullname: str) -> str:
-        suffix = fullname.removeprefix("altitude").replace(".", "/")
+        suffix = "/".join(fullname.removeprefix("altitude").split("."))
         return "altitude/__init__.py" if not suffix else f"altitude{suffix}.py"
 
     def find_spec(self, fullname, path=None, target=None):

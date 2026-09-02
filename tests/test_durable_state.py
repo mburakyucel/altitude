@@ -677,7 +677,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("land.py", "land"): 1,
             ("quota_codex.py", "_talk"): 1,
             ("recovery.py", "clear"): 1,
-            ("server.py", "_json"): 1,
+            ("server.py", "_json_bytes"): 1,
             ("server.py", "_file"): 1,
             ("server.py", "_static"): 1,
             ("server.py", "_stream_send"): 1,
