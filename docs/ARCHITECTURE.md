@@ -144,7 +144,11 @@ The next control-plane boundary is defined, but deliberately dormant: `altitude/
 closed Python contracts for worker outcomes, publication scope, quota observations, application
 command results, and task/operational read projections. `web/src/data/contracts.ts` independently
 expresses the matching task/operational wire schemas in the existing Zod runtime validator, and both
-runtimes exercise the same versioned JSON fixtures. No service, broker, API, CLI, or UI path imports
+runtimes exercise the same versioned JSON fixtures. Every WorkerOutcome carries one closed
+`observations` block for untrusted findings, decisions/questions, FYIs, follow-up proposals,
+deviations, usage/spend, and the worker's merge-hold observation. It carries no outcome/effect id,
+trusted verification/publication fact, or human reply; trusted settlement derives identity and
+checks canonical hold state, while replies remain in the task conversation. No service, broker, API, CLI, or UI path imports
 these contracts yet; each later adoption must replace its old producer and consumer together rather
 than introduce a behavior selector or a second authority.
 

@@ -29,6 +29,35 @@ class HelperRequest(TypedDict):
     scope: PublicationScope
 
 
+FindingObservation = TypedDict("FindingObservation", {
+    "summary": str, "severity": Literal["blocker", "important", "optional"],
+    "disposition": Literal["fixed", "dismissed", "open"], "reason": str | None,
+})
+DecisionObservation = TypedDict("DecisionObservation", {
+    "question": str, "answer": str | None, "options": list[str],
+})
+DeviationObservation = TypedDict("DeviationObservation", {"description": str, "reason": str | None})
+UsageObservation = TypedDict("UsageObservation", {
+    "input_tokens": int | None, "cached_input_tokens": int | None,
+    "output_tokens": int | None, "cost_usd": float | None,
+})
+SpendObservation = TypedDict("SpendObservation", {
+    "turns": int | None, "subagent_launches": int | None,
+    "retries": int | None, "reverts": int | None,
+})
+
+
+class OutcomeObservations(TypedDict):
+    findings: list[FindingObservation]
+    decisions: list[DecisionObservation]
+    fyis: list[str]
+    follow_up_proposals: list[str]
+    deviations: list[DeviationObservation]
+    usage: UsageObservation
+    spend: SpendObservation
+    merge_hold: str | None
+
+
 class PublishOutcome(TypedDict):
     version: Literal[1]
     kind: Literal["publish"]
@@ -36,6 +65,7 @@ class PublishOutcome(TypedDict):
     pr_title: str | None
     request_merge: bool
     evidence: list[str]
+    observations: OutcomeObservations
 
 
 class CompleteNoCodeOutcome(TypedDict):
@@ -43,6 +73,7 @@ class CompleteNoCodeOutcome(TypedDict):
     kind: Literal["complete_no_code"]
     digest: str
     evidence: list[str]
+    observations: OutcomeObservations
 
 
 class BlockOutcome(TypedDict):
@@ -50,6 +81,7 @@ class BlockOutcome(TypedDict):
     kind: Literal["block"]
     reason_or_question: str
     resume_condition: str
+    observations: OutcomeObservations
 
 
 class ContinueOutcome(TypedDict):
@@ -57,6 +89,7 @@ class ContinueOutcome(TypedDict):
     kind: Literal["continue"]
     reason: str
     helper_requests: list[HelperRequest]
+    observations: OutcomeObservations
 
 
 WorkerOutcome: TypeAlias = PublishOutcome | CompleteNoCodeOutcome | BlockOutcome | ContinueOutcome
@@ -221,16 +254,68 @@ def _evidence(value: object, at: str) -> None:
         _string(item, f"{at}[{index}]")
 
 
+def _strings(value: object, at: str) -> list[str]:
+    return [cast(str, _string(item, f"{at}[{index}]")) for index, item in enumerate(_array(value, at))]
+
+
+def _nullable_count(value: object, at: str) -> int | None:
+    return None if value is None else _integer(value, at, minimum=0)
+
+
+def _nullable_cost(value: object, at: str) -> float | None:
+    if value is None:
+        return None
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise ContractError(f"{at} must be a finite non-negative number or null")
+    return float(value)
+
+
+def _observations(value: object, at: str) -> OutcomeObservations:
+    record = _object(value, ("findings", "decisions", "fyis", "follow_up_proposals", "deviations",
+                             "usage", "spend", "merge_hold"), at)
+    findings = []
+    for index, item in enumerate(_array(record["findings"], f"{at}.findings")):
+        where = f"{at}.findings[{index}]"; finding = _object(item, ("summary", "severity", "disposition", "reason"), where)
+        _string(finding["summary"], f"{where}.summary")
+        _enum(finding["severity"], ("blocker", "important", "optional"), f"{where}.severity")
+        _enum(finding["disposition"], ("fixed", "dismissed", "open"), f"{where}.disposition")
+        _string(finding["reason"], f"{where}.reason", nullable=True); findings.append(finding)
+    record["findings"] = findings
+    decisions = []
+    for index, item in enumerate(_array(record["decisions"], f"{at}.decisions")):
+        where = f"{at}.decisions[{index}]"; decision = _object(item, ("question", "answer", "options"), where)
+        _string(decision["question"], f"{where}.question"); _string(decision["answer"], f"{where}.answer", nullable=True)
+        decision["options"] = _strings(decision["options"], f"{where}.options"); decisions.append(decision)
+    record["decisions"] = decisions
+    record["fyis"] = _strings(record["fyis"], f"{at}.fyis")
+    record["follow_up_proposals"] = _strings(record["follow_up_proposals"], f"{at}.follow_up_proposals")
+    deviations = []
+    for index, item in enumerate(_array(record["deviations"], f"{at}.deviations")):
+        where = f"{at}.deviations[{index}]"; deviation = _object(item, ("description", "reason"), where)
+        _string(deviation["description"], f"{where}.description"); _string(deviation["reason"], f"{where}.reason", nullable=True)
+        deviations.append(deviation)
+    record["deviations"] = deviations
+    usage = _object(record["usage"], ("input_tokens", "cached_input_tokens", "output_tokens", "cost_usd"), f"{at}.usage")
+    for field in ("input_tokens", "cached_input_tokens", "output_tokens"):
+        usage[field] = _nullable_count(usage[field], f"{at}.usage.{field}")
+    usage["cost_usd"] = _nullable_cost(usage["cost_usd"], f"{at}.usage.cost_usd"); record["usage"] = usage
+    spend = _object(record["spend"], ("turns", "subagent_launches", "retries", "reverts"), f"{at}.spend")
+    for field in spend:
+        spend[field] = _nullable_count(spend[field], f"{at}.spend.{field}")
+    record["spend"] = spend; _string(record["merge_hold"], f"{at}.merge_hold", nullable=True)
+    return cast(OutcomeObservations, record)
+
+
 def validate_worker_outcome(value: object, at: str = "worker_outcome") -> WorkerOutcome:
     if type(value) is not dict:
         raise ContractError(f"{at} must be an object")
     version = _version(value.get("version"), f"{at}.version")
     kind = _enum(value.get("kind"), ("publish", "complete_no_code", "block", "continue"), f"{at}.kind")
     fields = {
-        "publish": ("version", "kind", "commit_message", "pr_title", "request_merge", "evidence"),
-        "complete_no_code": ("version", "kind", "digest", "evidence"),
-        "block": ("version", "kind", "reason_or_question", "resume_condition"),
-        "continue": ("version", "kind", "reason", "helper_requests"),
+        "publish": ("version", "kind", "commit_message", "pr_title", "request_merge", "evidence", "observations"),
+        "complete_no_code": ("version", "kind", "digest", "evidence", "observations"),
+        "block": ("version", "kind", "reason_or_question", "resume_condition", "observations"),
+        "continue": ("version", "kind", "reason", "helper_requests", "observations"),
     }
     record = _object(value, fields[kind], at)
     record["version"] = version
@@ -250,6 +335,7 @@ def validate_worker_outcome(value: object, at: str = "worker_outcome") -> Worker
             _helper(helper, f"{at}.helper_requests[{index}]")
             for index, helper in enumerate(_array(record["helper_requests"], f"{at}.helper_requests"))
         ]
+    record["observations"] = _observations(record["observations"], f"{at}.observations")
     return cast(WorkerOutcome, record)
 
 

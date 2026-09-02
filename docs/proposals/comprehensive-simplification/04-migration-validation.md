@@ -248,6 +248,14 @@ They are dormant types, validators, and fixtures only—no adapter, state writer
 may branch on them in this PR. Later PRs adopt each contract and delete its superseded shape in the
 same increment.
 
+PR 0D.1 corrects the initially omitted WorkerOutcome evidence surface without activating it. Every
+variant requires the same closed, non-authoritative observations block named in 02; human replies
+and trusted-derived outcome/effect identity remain outside it. Shared fixtures must be consumed by
+both Python and Zod. This complete boundary raises the two production contract files' explicit cap
+from 449 to 581 lines (+132): the exact addition is the matching typed block plus two validators, not
+a runtime writer, adapter, compatibility selector, or new artifact family. Any further increase
+requires a new reviewed justification.
+
 ### PR 0E: exact-candidate web CI
 
 Before any web behavior changes, extend remote CI to run web test, typecheck, and production build

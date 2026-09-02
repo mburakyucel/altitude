@@ -19,6 +19,52 @@ export const PublicationScopeSchema = z.union([
   PathScope,
   z.object({ version: z.literal(1), kind: z.literal("policy_derived") }).strict(),
 ]);
+const Count = z.number().int().safe().nonnegative().nullable();
+const OutcomeObservations = z.object({
+  findings: z.array(z.object({
+    summary: Text,
+    severity: z.enum(["blocker", "important", "optional"]),
+    disposition: z.enum(["fixed", "dismissed", "open"]),
+    reason: Text.nullable(),
+  }).strict()),
+  decisions: z.array(z.object({
+    question: Text, answer: Text.nullable(), options: z.array(Text),
+  }).strict()),
+  fyis: z.array(Text),
+  follow_up_proposals: z.array(Text),
+  deviations: z.array(z.object({ description: Text, reason: Text.nullable() }).strict()),
+  usage: z.object({
+    input_tokens: Count, cached_input_tokens: Count, output_tokens: Count,
+    cost_usd: z.number().finite().nonnegative().nullable(),
+  }).strict(),
+  spend: z.object({
+    turns: Count, subagent_launches: Count, retries: Count, reverts: Count,
+  }).strict(),
+  merge_hold: Text.nullable(),
+}).strict();
+const HelperRequest = z.object({
+  role: z.enum(["implementer", "reviewer"]), brief: Text,
+  provider: Provider.nullable(), model: Text.nullable(), scope: PublicationScopeSchema,
+}).strict();
+export const WorkerOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    version: z.literal(1), kind: z.literal("publish"), commit_message: Text,
+    pr_title: Text.nullable(), request_merge: z.boolean(), evidence: z.array(Text),
+    observations: OutcomeObservations,
+  }).strict(),
+  z.object({
+    version: z.literal(1), kind: z.literal("complete_no_code"), digest: Text,
+    evidence: z.array(Text), observations: OutcomeObservations,
+  }).strict(),
+  z.object({
+    version: z.literal(1), kind: z.literal("block"), reason_or_question: Text,
+    resume_condition: Text, observations: OutcomeObservations,
+  }).strict(),
+  z.object({
+    version: z.literal(1), kind: z.literal("continue"), reason: Text,
+    helper_requests: z.array(HelperRequest), observations: OutcomeObservations,
+  }).strict(),
+]);
 export const ProviderQuotaObservationSchema = z.object({
   version: z.literal(1),
   provider: Provider,

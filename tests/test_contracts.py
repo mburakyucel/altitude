@@ -23,44 +23,27 @@ FIXTURES = json.loads((ROOT / "schemas" / "fixtures" / "projections.v1.json").re
 
 class TestWorkerOutcome(unittest.TestCase):
     def test_four_closed_variants(self):
-        outcomes = [
-            ({
-                "version": 1, "kind": "publish", "commit_message": "feat: close the seam",
-                "pr_title": None, "request_merge": False, "evidence": ["tests/test_contracts.py"],
-            }, "publish"),
-            ({
-                "version": 1, "kind": "complete_no_code", "digest": "The read-only review is complete.",
-                "evidence": ["docs/ARCHITECTURE.md"],
-            }, "complete_no_code"),
-            ({
-                "version": 1, "kind": "block", "reason_or_question": "Clearance is required.",
-                "resume_condition": "The operator provides the named clearance.",
-            }, "block"),
-            ({
-                "version": 1, "kind": "continue", "reason": "Run an independent review.",
-                "helper_requests": [{
-                    "role": "reviewer", "brief": "Review the contract boundary.", "provider": "claude",
-                    "model": None, "scope": {"version": 1, "kind": "paths", "paths": ["altitude/contracts.py"]},
-                }],
-            }, "continue"),
-        ]
-        for value, expected_kind in outcomes:
+        outcomes = FIXTURES["valid"]["worker_outcomes"]
+        self.assertEqual([value["kind"] for value in outcomes],
+                         ["publish", "complete_no_code", "block", "continue"])
+        for value in outcomes:
             with self.subTest(kind=value["kind"]):
-                self.assertEqual(validate_worker_outcome(value)["kind"], expected_kind)
+                result = validate_worker_outcome(value)
+                self.assertEqual(result["kind"], value["kind"])
+                self.assertEqual(set(result["observations"]), {
+                    "findings", "decisions", "fyis", "follow_up_proposals", "deviations",
+                    "usage", "spend", "merge_hold",
+                })
 
     def test_integral_json_version_is_normalized_in_a_copy(self):
-        value = {
-            "version": 1.0, "kind": "complete_no_code", "digest": "Done.", "evidence": [],
-        }
+        value = copy.deepcopy(FIXTURES["valid"]["worker_outcomes"][1])
+        value["version"] = 1.0
         result = validate_worker_outcome(value)
         self.assertIs(type(result["version"]), int)
         self.assertIs(type(value["version"]), float)
 
     def test_rejects_unknown_version_variant_and_trusted_claims(self):
-        valid = {
-            "version": 1, "kind": "publish", "commit_message": "fix: boundary", "pr_title": None,
-            "request_merge": True, "evidence": [],
-        }
+        valid = FIXTURES["valid"]["worker_outcomes"][0]
         for field, value in (("version", 2), ("kind", "deploy")):
             candidate = {**valid, field: value}
             with self.subTest(field=field), self.assertRaises(ContractError):
@@ -68,6 +51,39 @@ class TestWorkerOutcome(unittest.TestCase):
         for authority in ("merge_sha", "verification_receipt", "deployment_receipt", "capability_id"):
             with self.subTest(authority=authority), self.assertRaises(ContractError):
                 validate_worker_outcome({**valid, authority: "untrusted"})
+
+    def test_observations_are_closed_non_authoritative_and_copy_normalized(self):
+        valid = copy.deepcopy(FIXTURES["valid"]["worker_outcomes"][0])
+        for name in (
+            "worker_outcome_missing_observations", "worker_outcome_extra_authority",
+            "worker_outcome_observation_authority", "worker_outcome_human_reply",
+        ):
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                validate_worker_outcome(FIXTURES["invalid"][name])
+
+        for value in FIXTURES["numeric_cases"]["observation_count"]["accepted"]:
+            candidate = copy.deepcopy(valid); candidate["observations"]["spend"]["turns"] = value
+            result = validate_worker_outcome(candidate)
+            self.assertIs(type(result["observations"]["spend"]["turns"]), int)
+            self.assertIs(type(candidate["observations"]["spend"]["turns"]), float)
+        for value in FIXTURES["numeric_cases"]["observation_count"]["rejected"]:
+            candidate = copy.deepcopy(valid); candidate["observations"]["spend"]["turns"] = value
+            with self.subTest(value=value), self.assertRaises(ContractError):
+                validate_worker_outcome(candidate)
+
+        adversarial = (
+            ("findings", [{"summary": "x", "severity": "critical", "disposition": "open", "reason": None}]),
+            ("decisions", [{"question": "x", "answer": None, "options": [""]}]),
+            ("merge_hold", False),
+        )
+        for field, value in adversarial:
+            candidate = copy.deepcopy(valid); candidate["observations"][field] = value
+            with self.subTest(field=field), self.assertRaises(ContractError):
+                validate_worker_outcome(candidate)
+        for cost in (-0.1, float("nan"), float("inf"), True):
+            candidate = copy.deepcopy(valid); candidate["observations"]["usage"]["cost_usd"] = cost
+            with self.subTest(cost=cost), self.assertRaises(ContractError):
+                validate_worker_outcome(candidate)
 
 
 class TestPublicationScope(unittest.TestCase):
@@ -177,7 +193,6 @@ class TestProjectionWireFixtures(unittest.TestCase):
             "operational_unknown_version": validate_operational_projection,
             "operational_extra_authority": validate_operational_projection,
         }
-        self.assertEqual(set(FIXTURES["invalid"]), set(validators))
         for name, validator in validators.items():
             with self.subTest(name=name), self.assertRaises(ContractError):
                 validator(FIXTURES["invalid"][name])

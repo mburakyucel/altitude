@@ -44,7 +44,7 @@
 | S07 | **Accepted** | Each fact has one canonical record; views never actuate behavior. |
 | S08 | **Accepted** | Repository WIP is one; task paths are publication scope, not scheduling prediction. |
 | S09 | **Accepted** | GitHub issues hydrate once before queueing and never on resume. |
-| S10 | **Accepted, amended** | Action-specific untrusted contracts plus one shared outcome; no schema may convey trusted verification/deployment facts. |
+| S10 | **Accepted, amended** | Action-specific untrusted contracts plus one shared outcome. Every outcome variant has one closed observations block for findings, decisions/questions, FYIs, follow-ups, deviations, usage/spend, and observed merge hold. Human reply stays in task conversation; trusted code derives outcome/effect identity and rechecks canonical hold/effects. No model schema may convey trusted verification/publication/deployment facts. |
 | S11 | **Accepted** | Remove digest/TTS, edit counts, dead endpoints/fields/hooks, old helper PR parsing, and other enumerated cosmetic/compatibility paths. |
 | S12 | **Accepted** | Chat is high-level L3 intake; Task is direct L2 steering. Direct web/public CLI task creation is removed. |
 | S13 | **Accepted** | Live transcript plus lifecycle/terminal snapshots; no per-event portable-export workflow. |

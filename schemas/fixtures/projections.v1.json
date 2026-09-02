@@ -83,7 +83,83 @@
         "episode_id": "recovery-20260902-01",
         "reason": "Awaiting explicit clearance."
       }
-    }
+    },
+    "worker_outcomes": [
+      {
+        "version": 1,
+        "kind": "publish",
+        "commit_message": "feat: close the contract gap",
+        "pr_title": null,
+        "request_merge": false,
+        "evidence": ["tests/test_contracts.py"],
+        "observations": {
+          "findings": [{
+            "summary": "The old report mixed trusted and untrusted facts.",
+            "severity": "important",
+            "disposition": "fixed",
+            "reason": "Trusted effects move to settlement receipts."
+          }],
+          "decisions": [{
+            "question": "Should the merge hold remain?",
+            "answer": null,
+            "options": ["Retain", "Release"]
+          }],
+          "fyis": ["The boundary remains dormant."],
+          "follow_up_proposals": ["Adopt the outcome in Phase 1C.1."],
+          "deviations": [{"description": "No runtime adapter changed.", "reason": null}],
+          "usage": {
+            "input_tokens": 120,
+            "cached_input_tokens": 80,
+            "output_tokens": 30,
+            "cost_usd": 0.02
+          },
+          "spend": {"turns": 1, "subagent_launches": 0, "retries": 0, "reverts": 0},
+          "merge_hold": "Operator review requested."
+        }
+      },
+      {
+        "version": 1,
+        "kind": "complete_no_code",
+        "digest": "The read-only review is complete.",
+        "evidence": ["docs/ARCHITECTURE.md"],
+        "observations": {
+          "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+          "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+          "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+          "merge_hold": null
+        }
+      },
+      {
+        "version": 1,
+        "kind": "block",
+        "reason_or_question": "Clearance is required.",
+        "resume_condition": "The operator provides the named clearance.",
+        "observations": {
+          "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+          "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+          "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+          "merge_hold": null
+        }
+      },
+      {
+        "version": 1,
+        "kind": "continue",
+        "reason": "Run an independent review.",
+        "helper_requests": [{
+          "role": "reviewer",
+          "brief": "Review the contract boundary.",
+          "provider": "codex",
+          "model": null,
+          "scope": {"version": 1, "kind": "paths", "paths": ["altitude/contracts.py"]}
+        }],
+        "observations": {
+          "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+          "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+          "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+          "merge_hold": null
+        }
+      }
+    ]
   },
   "numeric_cases": {
     "version": {
@@ -97,6 +173,10 @@
     "publication_pr_number": {
       "accepted": [1.0, 42.0, 9007199254740991.0],
       "rejected": [true, 0.0, 1.5, 9007199254740992.0]
+    },
+    "observation_count": {
+      "accepted": [0.0, 42.0, 9007199254740991.0],
+      "rejected": [true, -1.0, 1.5, 9007199254740992.0]
     }
   },
   "invalid": {
@@ -163,6 +243,51 @@
         "episode_id": "recovery-20260902-01",
         "reason": "Awaiting explicit clearance.",
         "clearance_capability": "must-never-cross-the-wire"
+      }
+    },
+    "worker_outcome_missing_observations": {
+      "version": 1,
+      "kind": "complete_no_code",
+      "digest": "Missing the required observation block.",
+      "evidence": []
+    },
+    "worker_outcome_extra_authority": {
+      "version": 1,
+      "kind": "complete_no_code",
+      "digest": "Model identity is forbidden.",
+      "evidence": [],
+      "outcome_id": "model-chosen",
+      "observations": {
+        "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+        "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+        "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+        "merge_hold": null
+      }
+    },
+    "worker_outcome_observation_authority": {
+      "version": 1,
+      "kind": "complete_no_code",
+      "digest": "Trusted facts are forbidden.",
+      "evidence": [],
+      "observations": {
+        "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+        "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+        "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+        "merge_hold": null,
+        "verification_receipt": "untrusted"
+      }
+    },
+    "worker_outcome_human_reply": {
+      "version": 1,
+      "kind": "complete_no_code",
+      "digest": "Conversation stays separate.",
+      "evidence": [],
+      "reply": "This belongs in the task conversation.",
+      "observations": {
+        "findings": [], "decisions": [], "fyis": [], "follow_up_proposals": [], "deviations": [],
+        "usage": {"input_tokens": null, "cached_input_tokens": null, "output_tokens": null, "cost_usd": null},
+        "spend": {"turns": null, "subagent_launches": null, "retries": null, "reverts": null},
+        "merge_hold": null
       }
     }
   }

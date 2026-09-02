@@ -291,6 +291,14 @@ block(reason_or_question, resume_condition)
 continue(reason, optional_helper_requests)
 ```
 
+Every variant also carries one required, closed `observations` block: typed review findings and
+dispositions; decisions/questions; FYIs; follow-up proposals; deviations; normalized usage and
+spend; and the worker's observed merge-hold reason. These values are untrusted settlement input,
+not effect or control authority. Trusted code derives the outcome/effect id and re-reads canonical
+task hold state; the model cannot supply either identity or verification/publication/deployment
+facts. Human reply text stays exclusively in the fenced task conversation rather than being hidden
+inside outcome authority.
+
 These are model-declared outcomes, not the complete worker-status taxonomy. The adapter separately
 normalizes `live`, `clean_exit_without_outcome`, `quota_limited`, `capacity_limited`,
 `provider_failed`, `malformed_outcome`, `process_missing`, and `ownership_uncertain`. Typed command

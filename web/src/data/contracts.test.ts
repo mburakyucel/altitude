@@ -5,6 +5,7 @@ import {
   ProviderQuotaObservationSchema,
   PublicationScopeSchema,
   TaskProjectionSchema,
+  WorkerOutcomeSchema,
 } from "./contracts";
 
 describe("dormant v2 projection wire contracts", () => {
@@ -96,5 +97,54 @@ describe("dormant v2 projection wire contracts", () => {
         retry_at: "2026-09-02T09:00:00+00:00",
       }),
     ).toThrow();
+  });
+});
+
+describe("dormant WorkerOutcome observations", () => {
+  it("accepts every shared outcome variant with one closed observation block", () => {
+    expect(fixtures.valid.worker_outcomes.map((value) => WorkerOutcomeSchema.parse(value).kind))
+      .toEqual(["publish", "complete_no_code", "block", "continue"]);
+  });
+
+  it("rejects missing observations, model identity, trusted facts, and human replies", () => {
+    for (const name of [
+      "worker_outcome_missing_observations",
+      "worker_outcome_extra_authority",
+      "worker_outcome_observation_authority",
+      "worker_outcome_human_reply",
+    ] as const) {
+      expect(() => WorkerOutcomeSchema.parse(fixtures.invalid[name])).toThrow();
+    }
+  });
+
+  it("matches Python safe non-negative count and closed nested-field boundaries", () => {
+    const valid = fixtures.valid.worker_outcomes[0];
+    if (!valid) throw new Error("shared fixture must contain a WorkerOutcome");
+    for (const value of fixtures.numeric_cases.observation_count.accepted) {
+      expect(WorkerOutcomeSchema.parse({
+        ...valid,
+        observations: { ...valid.observations, spend: { ...valid.observations.spend, turns: value } },
+      }).observations.spend.turns).toBe(value);
+    }
+    for (const value of fixtures.numeric_cases.observation_count.rejected) {
+      expect(() => WorkerOutcomeSchema.parse({
+        ...valid,
+        observations: { ...valid.observations, spend: { ...valid.observations.spend, turns: value } },
+      })).toThrow();
+    }
+    expect(() => WorkerOutcomeSchema.parse({
+      ...valid,
+      observations: { ...valid.observations, effect_id: "model-chosen" },
+    })).toThrow();
+    expect(() => WorkerOutcomeSchema.parse({
+      ...valid,
+      observations: { ...valid.observations, merge_hold: false },
+    })).toThrow();
+    for (const cost of [-0.1, Number.NaN, Number.POSITIVE_INFINITY, true]) {
+      expect(() => WorkerOutcomeSchema.parse({
+        ...valid,
+        observations: { ...valid.observations, usage: { ...valid.observations.usage, cost_usd: cost } },
+      })).toThrow();
+    }
   });
 });
