@@ -218,6 +218,32 @@ class TestL3Actions(unittest.TestCase):
         self.assertEqual((config.project_dir("p") / "inbox.jsonl").read_text().splitlines(), lines)
         self.assertFalse(l3_actions._journal_path("p", "2" * 64).exists())  # noqa: SLF001
 
+    def test_terminal_receipt_write_failure_keeps_applied_effect_fenced(self):
+        task = self.task(state="blocked")
+        action = {"type": "task_fyi", "slug": task["slug"], "text": "one durable note"}
+        action_id = "3" * 64
+        real_write = l3_actions._write_journal  # noqa: SLF001
+
+        def fail_complete(path, record):
+            if record.get("status") == "complete":
+                raise OSError("terminal receipt disk failure")
+            return real_write(path, record)
+
+        with mock.patch.object(l3_actions, "_write_journal", side_effect=fail_complete), \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required:.*terminal receipt"):
+            l3_actions.apply("p", envelope(action), action_id=action_id)
+
+        record = S.read_json(l3_actions._journal_path("p", action_id))  # noqa: SLF001
+        self.assertEqual(record["status"], "applying")
+        self.assertIn("terminal receipt disk failure", record["last_error"])
+        inbox = config.project_dir("p") / "inbox.jsonl"
+        before = inbox.read_bytes()
+        with mock.patch.object(T, "fyi") as repeat, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required"):
+            l3_actions.apply("p", envelope(action), action_id=action_id)
+        repeat.assert_not_called()
+        self.assertEqual(inbox.read_bytes(), before)
+
     def test_stale_recovery_precheck_blocks_before_action_claim(self):
         task = self.task(state="blocked")
         action_id = "f" * 64

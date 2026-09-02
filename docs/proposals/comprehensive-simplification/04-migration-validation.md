@@ -36,13 +36,13 @@ The recorded baseline is:
 | Baseline checks | 489 Python tests; 39 web tests; production web build |
 
 The current integration candidate is intentionally expansionary while replacements are
-dormant or only partly adopted: **18,114 permanent runnable lines / 56 files**, comprising **15,092 backend lines / 35
+dormant or only partly adopted: **18,144 permanent runnable lines / 56 files**, comprising **15,122 backend lines / 35
 files**, **2,827 web lines / 16 files**, and **195 web-build lines / 5 files**. The temporary real-state
 preflight is **1,510 lines / 1 file** and is reported separately. Separately counted candidate inputs
 are **498 persona/schema/template lines / 13 files**, **247 support lines / 3 files**, and one
 **294-line test-only cross-runtime contract fixture**; `web/README.md` is **13 lines / 1 file** of
-non-runtime documentation. The candidate must retire at least **5,934
-permanent lines and 13 files overall**, including **6,092 backend lines and 11 backend files**, to meet
+non-runtime documentation. The candidate must retire at least **5,964
+permanent lines and 13 files overall**, including **6,122 backend lines and 11 backend files**, to meet
 the final target. This is implementation debt, not evidence of simplification.
 
 Final budgets are hard review gates:

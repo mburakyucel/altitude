@@ -177,10 +177,16 @@ must be proven empty before settlement. L2 owners and helpers do not consume thi
 
 Phase 1B.2 accounting is intentionally explicit. The initial review snapshot added **361 backend lines**
 (`engines.py` +47, `l3.py` +283, `l3_actions.py` +29, `server.py` +2). Closing the instance-handoff,
-ambiguous-action, producer-cap, exact-stop, recovery-ABA, disclosure, and timer findings brings the final
-backend/CLI delta against `768a47c` to **+948 lines**: `engines.py` +188, `l3.py` +593,
-`l3_actions.py` -10, `recovery.py` +167, `server.py` +12, and `bin/alt` -2. The closed persona adds two net
-lines and the schema is line-neutral; tests are reported separately (**+1,041 net** at this snapshot).
+ambiguous-action, producer-cap, exact-stop, recovery-ABA, disclosure, and timer findings brought the standalone
+`c2606e6` review snapshot to **+948 backend/CLI lines** against `768a47c`: `engines.py` +188,
+`l3.py` +593, `l3_actions.py` -10, `recovery.py` +167, `server.py` +12, and `bin/alt` -2. Post-integration
+receipt, bounded-error, deep-parse, and retirement-fence fixes add 30 logical B2 backend lines (`l3.py` +18 and
+`l3_actions.py` +12), so the current logical B2 delta is **+978** (`l3.py` +611 and `l3_actions.py` +2;
+the other component deltas are unchanged). The closed persona adds two net lines and the schema is line-neutral.
+The seven B2 test modules were +1,041 net at `c2606e6`; their current logical delta is **+1,122 net** after
+81 lines of hostile-test coverage. A separate +3-line Claude safety integration-test adjustment is not B2 test
+accounting. Later manifest/deployment conflict resolutions are likewise excluded here; §04 reports the exact whole
+candidate count.
 There is no new dependency, service, endpoint, timer, selector, or semantic authority. Existing `l3.json`,
 `l3-actions/`, and `l3-codex-runtime/` families are reused; the runtime adds generation-keyed disposable evidence,
 and existing recovery hold/launch locks are reused. The smaller PID/lock-only design was rejected because it could

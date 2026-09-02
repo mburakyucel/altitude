@@ -340,7 +340,7 @@ def _marker(project: str, op: dict, *, required: bool = False) -> tuple[dict | N
     try:
         value = S._strict_json_loads(engines.read_bounded_codex_output(  # noqa: SLF001
             path, _marker_cap(), "durable L3 result marker"))
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, RecursionError) as exc:
         raise L3OwnershipError(str(exc)) from exc
     p = op["physical"]
     if (not isinstance(value, dict) or set(value) != {"version", "transition_id", "process_unit_id",
@@ -364,7 +364,10 @@ def _marker(project: str, op: dict, *, required: bool = False) -> tuple[dict | N
             and result == {"text": "", "structured": None, "returncode": 1, "usage": {},
                            "provider_session_id": None, "error": p["error"]}):
         return value, _observed(p, None)
-    sha = hashlib.sha256(S._canonical_json(value)).hexdigest()  # noqa: SLF001
+    try:
+        sha = hashlib.sha256(S._canonical_json(value)).hexdigest()  # noqa: SLF001
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise L3OwnershipError(f"durable L3 result marker is invalid: {exc}") from exc
     return value, {"present": True, "process_unit_id": p["process_unit_id"],
                    "intent_digest": p["intent_digest"],
                    "result_id": f"l3-codex-runtime/results/{p['generation']}.json",
@@ -373,7 +376,16 @@ def _observed(p: dict, value: dict | None) -> dict | None:
     return ({"present": True, "process_unit_id": p["process_unit_id"], "intent_digest": p["intent_digest"],
              "result_id": "transition:error", "sha256": hashlib.sha256(p["error"].encode()).hexdigest()}
             if p["error"] and (p["receipts"].get("bound") or {}).get("bound") is False else value)
+def _bounded_error(error: object) -> str:
+    value = str(error).strip() or "unknown L3 failure"
+    encoded = value.encode("utf-8", "replace")
+    suffix = b" [truncated]"
+    if len(encoded) <= _RESULT_ERROR_CAP:
+        return value
+    return (encoded[:_RESULT_ERROR_CAP - len(suffix)].decode("utf-8", "ignore").rstrip()
+            + suffix.decode())
 def _error_marker(project: str, op: dict, error: str) -> None:
+    error = op["physical"].get("error") or _bounded_error(error)
     _write_marker(project, op, {"text": "", "structured": None, "returncode": 1, "usage": {},
                                 "provider_session_id": None, "error": error})
 def _write_marker(project: str, op: dict, result: dict) -> None:
@@ -400,7 +412,7 @@ def _write_marker(project: str, op: dict, result: dict) -> None:
         encoded = S._canonical_json(marker) + b"\n"  # noqa: SLF001
         if len(encoded) > _marker_cap():
             raise L3OwnershipError("oversized durable L3 result")
-    except (L3OwnershipError, TypeError, ValueError):
+    except (L3OwnershipError, TypeError, ValueError, RecursionError):
         marker = {"version": 1, "transition_id": p["transition_id"],
                   "process_unit_id": p["process_unit_id"], "intent_digest": p["intent_digest"],
                   "result": failure}
@@ -439,7 +451,7 @@ def _spooled_result(project: str, op: dict) -> dict | None:
         structured = S._strict_json_loads(answer_text)  # noqa: SLF001
         S._canonical_json(structured)  # noqa: SLF001
         l3_actions._validate(structured)  # noqa: SLF001 - same closed trusted-ingestion contract as live delivery
-    except (UnicodeDecodeError, ValueError, TypeError, l3_actions.L3ActionError) as exc:
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError, l3_actions.L3ActionError) as exc:
         raise L3OwnershipError(f"managed L3 preterminal spool is invalid: {exc}") from exc
     expected = {"type": "altitude.l3.spool", "version": 1, "transition_id": p["transition_id"],
                 "process_unit_id": p["process_unit_id"], "intent_digest": p["intent_digest"],
@@ -476,6 +488,7 @@ def _step(project: str, op: dict, expected: str, following: str, receipt: dict) 
         new["physical"], expected, following, receipt)
     return _replace(project, op, new)
 def _fail(project: str, op: dict, error: str) -> dict:
+    error = _bounded_error(error)
     new = _operation(op); new["physical"] = engines.note_physical_transition_error(new["physical"], error)
     new["error"] = error
     return _replace(project, op, new)
@@ -746,7 +759,12 @@ def _empty(error=None, *, skipped=False, routing=None) -> dict:
             "turns": 0, "structured": None, "error": error, "tools": [], "skipped": skipped, "completed": False,
             "_turn_started_at": None, **({"routing": routing} if routing else {})}
 def _retire(project: str, current: dict) -> None:
-    marker, _observed_result = _marker(project, current, required=True)
+    marker, observed_result = _marker(project, current, required=True)
+    expected = current["physical"]["receipts"].get("result_observed")
+    actual = ({"result_id": observed_result["result_id"], "sha256": observed_result["sha256"]}
+              if observed_result else None)
+    if expected != actual:
+        raise L3OwnershipError("settled L3 result changed before retirement")
     with S.project_lock(project):
         inf = _owned_info(project)
         if inf.get("current_turn") != current:
@@ -764,6 +782,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
          instance_id: str | None = None) -> dict:
     """Accept or reconcile one serialized Codex turn; only exact planned recovery may launch."""
     del on_text
+    choice = _select(project)
+    if choice.get("engine") != "codex":
+        return _empty(f"engine hold: only Codex has adopted L3 ownership ({choice.get('why') or 'no route'})",
+                      routing=choice)
     instance_id = _instance(instance_id)
     guard = lock(project)
     if not guard.acquire(blocking=False):
@@ -776,10 +798,6 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                         or existing["delivery"] not in ("complete", "failed")):
                     return _empty("L3 has an unrelated durable turn pending") | {"engine": "codex"}
                 _retire(project, existing)
-            choice = _select(project)
-            if choice.get("engine") != "codex":
-                return _empty(f"engine hold: only Codex has adopted L3 ownership ({choice.get('why') or 'no route'})",
-                              routing=choice)
             if precheck is not None and not precheck():
                 return _empty(skipped=True)
             S.regen_state_md(project)

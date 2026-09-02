@@ -12,7 +12,7 @@ from unittest import mock
 _BOOT = tempfile.mkdtemp(prefix="altitude-claude-capability-bootstrap-")
 os.environ["ALTITUDE_HOME"] = _BOOT
 
-from altitude import actions, config, dispatch, engines, incidents, l1, l3, l3_actions, land, recovery, route, server, state as S, tasks as T  # noqa: E402
+from altitude import actions, config, dispatch, engines, incidents, l1, l3, land, recovery, route, server, state as S, tasks as T  # noqa: E402
 
 
 class TestClaudeCapability(unittest.TestCase):
@@ -213,13 +213,14 @@ class TestClaudeCapability(unittest.TestCase):
         git.assert_not_called()
         github.assert_not_called()
 
-    def test_l3_resume_paths_and_result_brokers_hold_legacy_claude_byte_inert(self):
+    def test_public_resume_and_result_brokers_hold_legacy_claude_byte_inert(self):
         task = self._legacy_task(state="blocked")
         task["paths"] = ["src/old.py"]
         S.save_task("p", task)
         before = self._tree(config.project_dir("p"))
-        with self.assertRaisesRegex(l3_actions.L3ActionError, "engine hold:"):
-            l3_actions._resume_paths("p", task, ["src/new.py"])
+        resumed = dispatch.resume_blocked("p", task["slug"], "continue")
+        self.assertTrue(resumed["deferred"])
+        self.assertIn("engine hold:", resumed["hold"])
 
         with mock.patch.object(server.verify, "verify") as verify, \
              mock.patch.object(server.incidents, "system_fault") as fault, \
@@ -398,12 +399,14 @@ class TestClaudeCapability(unittest.TestCase):
         projects = config.load_projects()
         projects["p"]["l3_engine"] = "claude"
         config.save_projects(projects)
+        before = self._tree(config.project_dir("p"))
         with mock.patch.object(route, "quota_snapshot", return_value=self._healthy_quota()), \
              mock.patch.object(engines, "claude_print") as transport:
             result = l3.turn("p", "hello")
         self.assertIn("engine hold", result["error"])
         transport.assert_not_called()
         self.assertFalse((config.project_dir("p") / "chat.jsonl").exists())
+        self.assertEqual(self._tree(config.project_dir("p")), before)
 
     def test_operator_agents_inspection_remains_read_only(self):
         completed = mock.Mock(returncode=0, stdout=json.dumps([{"id": "legacy"}]), stderr="")

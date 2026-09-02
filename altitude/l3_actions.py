@@ -360,7 +360,19 @@ def _apply(project: str, structured: object, *, action_id: str,
         raise L3ActionError(
             f"reconciliation_required: {action.get('type')} may have crossed its effect boundary: {exc}"
         ) from exc
-    _finish(project, action_id, action, result=result)
+    try:
+        _finish(project, action_id, action, result=result)
+    except (L3ActionError, OSError, TypeError, ValueError) as exc:
+        # The domain effect has already crossed its boundary.  A failed terminal journal write
+        # must leave the action and owning L3 turn fenced as ambiguous; it is never a safe
+        # delivery failure that permits retirement or a fresh turn.
+        try:
+            _note_interrupted(project, action_id, action, exc)
+        except (L3ActionError, OSError, TypeError, ValueError):
+            pass
+        raise L3ActionError(
+            f"reconciliation_required: {action.get('type')} applied but its terminal receipt was not durable: {exc}"
+        ) from exc
     return result
 
 

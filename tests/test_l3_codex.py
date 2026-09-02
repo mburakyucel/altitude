@@ -337,10 +337,10 @@ class TestL3Ownership(unittest.TestCase):
         self.assertEqual(seen["claim"]["replacement"]["from_instance_id"], "dead-instance")
 
     def test_missing_instance_and_wrong_managed_child_claim_fail_before_provider(self):
-        with mock.patch.object(l3, "_select") as select:
+        with mock.patch.object(l3, "_select", return_value=self.choice()) as select:
             with self.assertRaisesRegex(l3.L3OwnershipError, "service instance"):
                 l3.turn("k", "offline")
-        select.assert_not_called(); self.assertFalse(l3.info_path("k").exists())
+        select.assert_called_once_with("k"); self.assertFalse(l3.info_path("k").exists())
 
         op = self.prior_stopped("wrong child")
         with mock.patch.object(engines, "codex_exec") as codex, \
@@ -514,6 +514,19 @@ class TestL3Ownership(unittest.TestCase):
         replay = l3.reconcile("k", instance_id=INSTANCE)
         self.assertIn("ownership_uncertain", replay["error"])
         self.assertEqual(len(self.transitions), 1)
+
+    def test_long_pre_spawn_error_is_one_bounded_proof_and_does_not_wedge(self):
+        with mock.patch.object(engines, "spawn_managed_unit", side_effect=OSError("x" * 700)):
+            failed = self.run_turn("long launch failure")
+
+        self.assertIn("managed L3 launch failed", failed["error"])
+        current = l3.info("k")["current_turn"]
+        self.assertEqual(current["physical"]["stage"], "failed")
+        self.assertLessEqual(len(current["physical"]["error"].encode("utf-8")), l3._RESULT_ERROR_CAP)  # noqa: SLF001
+        marker, _ = l3._marker("k", current, required=True)  # noqa: SLF001
+        self.assertEqual(marker["result"]["error"], current["physical"]["error"])
+        self.assertNotIn("ownership_uncertain", (l3.reconcile("k", instance_id=INSTANCE) or {})["error"])
+        self.assertTrue(self.run_turn("after bounded failure")["completed"])
 
     def test_killed_managed_child_restarts_as_failed_without_relaunch(self):
         inf = l3._owned_info("k", new=True)  # noqa: SLF001
@@ -736,6 +749,30 @@ class TestL3Ownership(unittest.TestCase):
         with self.assertRaisesRegex(l3.L3OwnershipError, "runtime path escapes"):
             l3._marker("k", op)  # noqa: SLF001
 
+        marker.unlink()
+        S.atomic_write(marker, '{"x":' * 1100 + '0' + '}' * 1100)
+        with self.assertRaisesRegex(l3.L3OwnershipError, "recursion|depth"):
+            l3._marker("k", op)  # noqa: SLF001
+
+    def test_deep_bounded_crash_spool_becomes_one_inert_failure(self):
+        op = self.prior_stopped("deep crash spool")
+        paths = l3._prepare_spool("k", op)  # noqa: SLF001
+        S.atomic_write(paths["answer"], '{"message":"unused","actions":[]}')
+        deep = '{"x":' * 1100 + '0' + '}' * 1100
+        with paths["events"].open("a") as stream:
+            stream.write(deep + "\n")
+            stream.write('{"type":"thread.started","thread_id":"cx-deep"}\n')
+            stream.write('{"type":"turn.completed","usage":{}}\n')
+
+        failed = l3.reconcile("k", instance_id=INSTANCE)
+
+        self.assertFalse(failed["completed"])
+        self.assertIn("preterminal spool is invalid", failed["error"])
+        current = l3.info("k")["current_turn"]
+        self.assertEqual(current["physical"]["stage"], "failed")
+        marker, _ = l3._marker("k", current, required=True)  # noqa: SLF001
+        self.assertEqual(marker["result"]["error"], current["physical"]["error"])
+
     def test_marker_writer_matches_reader_for_escaped_answer_and_bounded_session(self):
         op = self.prior_stopped()
         structured = {"message": "\\" * 1000, "actions": []}
@@ -900,6 +937,24 @@ class TestL3Ownership(unittest.TestCase):
         S.write_json(l3._result_path("k"), marker)  # noqa: SLF001
         with self.assertRaisesRegex(l3.L3OwnershipError, "settled L3 result changed"):
             l3._output("k", current)  # noqa: SLF001
+
+    def test_failed_delivery_cannot_retire_a_tampered_provider_session(self):
+        with mock.patch("altitude.l3_actions.apply", side_effect=l3_actions.L3ActionError("refused")):
+            self.run_turn("settled but refused")
+        current = l3.info("k")["current_turn"]
+        marker = S.read_json(l3._result_path("k", current), {})  # noqa: SLF001
+        marker["result"]["provider_session_id"] = "cx-evil"
+        S.write_json(l3._result_path("k", current), marker)  # noqa: SLF001
+
+        with mock.patch.object(engines, "codex_exec") as codex, \
+             mock.patch.object(l3, "_select", return_value=self.choice()):
+            held = l3.turn("k", "must not resume tampered evidence", instance_id=INSTANCE)
+
+        self.assertIn("settled L3 result changed before retirement", held["error"])
+        codex.assert_not_called()
+        self.assertEqual(l3.info("k")["current_turn"]["physical"]["transition_id"],
+                         current["physical"]["transition_id"])
+        self.assertTrue(l3._result_path("k", current).exists())  # noqa: SLF001
 
     def test_corrupt_delivery_replacement_receipt_fails_closed(self):
         self.run_turn()
