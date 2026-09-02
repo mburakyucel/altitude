@@ -8,6 +8,12 @@ Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
 [`design/wireframes/README.md`](design/wireframes/README.md).
 
+The later comprehensive simplification is paused for a module-by-module re-evaluation. Its exact
+current/candidate boundary, saved local branches, low-level flows, and continuation rules are in the
+[`2026-09-02 simplification review checkpoint`](docs/simplification-review/README.md). No
+`simplify/*` implementation branch is the accepted target architecture.
+No next simplification module has been selected; Burak must choose it before implementation.
+
 ## Current operating model
 
 - L3 answers directly or creates one queued task, owned end-to-end by one L2, when concrete execution is warranted.

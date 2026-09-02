@@ -3,6 +3,15 @@
 Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
 description; Git history is the archive.
 
+The comprehensive simplification is paused for a module-by-module review. Before using any
+`simplify/*` branch or changing architecture, read
+`docs/simplification-review/README.md`. No accumulated candidate or WIP branch is an approved
+destination architecture, and no module may be adopted merely because it was previously described
+as reviewed.
+
+No next simplification module has been selected. Ask Burak which module to review next. Do not
+implement or merge it until Burak's decision and the exact scope are recorded in the checkpoint.
+
 ## Roles
 
 - L3 is Burak's project-level point of contact. It uses judgment to answer, coordinate, or create

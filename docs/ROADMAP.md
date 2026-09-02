@@ -1,10 +1,18 @@
 # Roadmap
 
-## Architecture cutover
+## Current runtime stabilization
 
-The simplified architecture and its separately authorized controlled restart are complete and
-verified. Service lifecycle remains separate from ordinary source work and requires explicit
-authorization.
+The earlier stabilization cutover and its separately authorized controlled restart are complete.
+This statement does not approve the later comprehensive simplification proposal or its local
+implementation branches. Service lifecycle remains separate from ordinary source work and requires
+explicit authorization.
+
+## Comprehensive simplification review
+
+The comprehensive simplification is paused for a module-by-module review. No unmerged implementation
+is the accepted target architecture. The exact current/candidate boundary, saved branches, low-level
+flows, and review queue are recorded in the
+[2026-09-02 simplification review checkpoint](simplification-review/README.md).
 
 ## Current product work
 
