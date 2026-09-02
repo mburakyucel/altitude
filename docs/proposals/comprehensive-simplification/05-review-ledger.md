@@ -1,173 +1,99 @@
-# 05 - Review ledger
+# Approved decisions and review ledger
 
-> Draft review aid. Check this ledger against the current-system evidence, proposed architecture,
-> exhaustive component decisions, and migration gates. Approval of one row does not authorize an
-> implementation PR until its dependencies are approved too.
+> Recorded 2026-09-02 from Burak's stated operating model and explicit instruction to remove
+> ambiguity, use independently reviewed module PRs, and merge safe increments. A later change to one
+> of these choices requires an explicit architecture amendment; implementations may not silently
+> choose another behavior.
 
-## Cross-cutting decisions
+## Product decisions
 
-| ID | Proposed decision | Depends on | Why it is not safe in isolation | Evidence of completion |
-| --- | --- | --- | --- | --- |
-| S01 | Faults have advisory/task/project/provider/global scope | Canonical fault record; application commands | Narrowing the fuse before callers are classified could let an uncertain writer continue | Every fault caller is typed; global race tests remain; scoped E2E proves unrelated dispatch continues |
-| S02 | Task dispatch/resume pins fetched `origin/main` without requiring local deployment `main` to match | Worktree validation; publication receipt | Removing the exact-main call without pinning and validating the task base weakens provenance | Dispatch during deployment lag starts from exact fetched SHA; dirty/diverged task worktree still refuses |
-| S03 | Active task states become queued/running/settling/blocked with fixed worker-transition and settlement journals | Normalized outcome; process-unit ownership; archive migration | Deleting `reported` alone would lose launch/steer/closeout crash recovery | Kill/restart at every process and settlement boundary completes once with no duplicate generation/PR/FYI |
-| S04 | One immutable publication receipt per actual attempt; one DeploymentRecord owns activation | Trusted landing; exact check policy; independent verification | Removing reports before canonical receipts exist loses audit; storing mutable deployment on tasks splits truth | Status/archive/cleanup read ordered task receipt references; one activation satisfies many merge receipts by ancestry |
-| S05 | Claude and Codex expose one untrusted `WorkerOutcome` | Provider adapters; S03 | Forcing identical launch/security mechanics would weaken Codex or overbuild Claude; acting before descendant exit leaves a writer | Same fixtures settle equivalently; every provider process unit is empty; Codex containment remains fail-closed |
-| S06 | Scheduler no longer self-deploys or performs forensic cleanup | S02; deployment command; maintenance command | Removing fast-forward without an activation path makes `make restart` unusable; deleting cleanup without retention visibility leaks silently | Merge marks pending; one authorized command activates exact SHA; leftovers are visible and non-blocking |
-| S07 | One canonical record per fact, including non-global holds and deployment | S03/S04/S01 migrations | Deleting projections before consumers move creates missing context; retaining both indefinitely preserves contradictions | Consumer inventory reaches zero for removed fields/files; projections regenerate from task/hold/recovery/deployment authorities |
-| S08 | Default repository WIP is one; paths are publication scope | Project policy migration; L1 contract | Removing lease scheduling while WIP remains >1 can reintroduce collisions | WIP-1 E2E; path enforcement at publication; explicit >1 remains disabled until separately designed |
-| S09 | GitHub issues hydrate during intake only | Trusted command layer; immutable request reference | Deleting resume hydration before all active tasks have snapshots strands them | URL-only task either has snapshot before queueing or fails intake; resume never accesses GitHub for missing context |
-| S10 | Action schemas use action-specific variants and one Outcome definition | S03/S05 | Loosening schemas without broker validation expands untrusted authority | Invalid/extra fields fail; every action has only relevant required fields; live provider test passes |
-| S11 | Remove TTS, edit counts, dead endpoints/fields, old L1 PR handling | Caller/consumer inventory | Cosmetic code can still be a hidden quota or status dependency | Static consumer search is empty; Python/web tests and monitor/route E2E pass |
-| S12 | Chat is L3 intake; Task is L2 conversation | Application commands; UI read models | Removing duplicate UI before canonical surfaces work degrades operator control | No direct `tasks.new` UI path; L3 creates a task; Task steering resumes exact generation |
-| S13 | Transcript snapshots occur at lifecycle boundaries/incrementally | Retention decision; settlement boundaries | Removing per-event sync without terminal capture can lose interrupted evidence | Kill at launch/resume/settlement boundaries retains promised evidence; live transcript still updates |
-| S14 | CLI/HTTP/brokers share one command layer, kernel locks, and a closed typed operation-journal utility | Command inventory; lock order | Partial migration creates two authorities; a lock alone cannot recover process/network effects | Mutation parity and crash tests; no direct state writes; only five fixed journal variants, no workflow DSL |
-| S15 | Active compatibility paths are migrated and deleted; retained audit decoders are isolated/read-only | Versioned migrator; active/archive inventory | Deleting fallbacks before conversion strands evidence; importing historical decoders in active paths preserves ambiguity | Dry-run/applied receipts; zero active compatibility imports/counters; explicit decoder package only where retention requires |
+| ID | Decision | Accepted consequence | Rejected alternative |
+| --- | --- | --- | --- |
+| D1 | **One active top-level L2 per repository.** Cross-project work and helpers inside that task may run concurrently. A blocked task retains the slot except for the explicit recovery-preemption protocol. | Less top-level parallelism; far less scheduling and collision machinery. | Predictive path leases and WIP greater than one. |
+| D2 | **Keep live transcripts and durable lifecycle/terminal snapshots.** Provider-native evidence is retained with the archived task until an operator deletes that archive; no independent retention scheduler is added. | Storage grows with retained archives and remains private. | Per-event portable duplication or a new automated retention service. |
+| D3 | **Keep platform-managed optional helpers/reviewers.** They share the owner/helper process-transition implementation, have bounded subscopes, return patches/findings, and never own publication. | A small helper record remains because it provides provider-neutral visibility and collision control. | Untracked provider-native subagents as the sole helper mechanism. |
+| D4 | **Keep the Claude guard/backend checks and require a supervised foreground feasibility proof before autonomous Claude publication.** If the proof fails, Codex remains the autonomous L2/L1 engine and Claude is not falsely claimed contained. | Claude support may be temporarily narrower than Codex. | Treating the short `claude --bg` launcher as descendant ownership, or removing current guardrails. |
+| D5 | **Activate the latest verified `origin/main` observed at the post-gate revalidation boundary through a detached, operator-authorized runner.** Preflight happens before source swap; an external merge after that boundary remains pending for the next activation; post-swap failure leaves the maintenance gate held and service stopped. | No automatic full-code rollback and no claim that a local gate locks all GitHub writers. | Versioned-release/symlink machinery or a special external branch-lock capability. |
+| D6 | **An explicit Burak request authorizes the exact bounded GitHub issue publication.** Model-originated suggestions remain local drafts. Stable non-secret effect markers provide exactly-once reconciliation. | A second approval phrase is unnecessary when the initiating request is already explicit. | Title/content matching or automatic publication of model suggestions. |
+| D7 | **Remove Inbox as durable control state.** Blocking questions/findings are typed task attention; recent non-blocking FYIs are read from canonical events. | There is no separate seen/unseen acknowledgement queue. | A second completion-adjacent inbox lifecycle. |
 
-## Proposed default choices requiring Burak's review
+## Operational decisions
 
-### D1 - Repository concurrency
+| ID | Decision | Reason |
+| --- | --- | --- |
+| O1 | Unknown quota telemetry is eligible uncertainty, not exhaustion; use the configured default and create a provider hold only after an actual launch/quota failure. | Observability failure must not halt L3 recovery or all providers. |
+| O2 | Weekly comparable allowance is the primary routing score; a short window is an availability gate. | Preserve weekly quota and avoid draining Claude merely because a short session window is open. |
+| O3 | Normal systemd restart-on-crash remains enabled self-healing. Planned activation temporarily suppresses restart loops until exact candidate health succeeds. | Unplanned process crashes and authorized source activation are different events. |
+| O4 | One shared stage/receipt helper supports exactly six closed operation kinds embedded in their domain records: L3 turn, worker transition, settlement, issue publication, recovery transition, and deployment transition. Recovery claim/clearance are fixed subtypes. Cutover publication is a temporary Phase 2 deployment subtype compacted to provenance and deleted; source activation is the sole final subtype. | Count state machines honestly without creating a workflow engine. |
+| O5 | New active task/recovery formats cut over only after their v1 domain is empty. No global runtime format selector or dual active writer is allowed. | A drained domain needs a one-shot cutover receipt, not another state machine. |
+| O6 | Python produces a versioned JSON wire contract and TypeScript validates it with explicit Zod schemas and shared fixtures. | Clear cross-language agreement without code generation or a fictional shared library. |
+| O7 | The final numeric budgets in `04-migration-validation.md` are acceptance gates. | “Simpler” must be measurable and tests cannot hide production growth. |
 
-**Recommendation:** default to one L2 per repository, including Altitude, until a concrete need and a
-reviewed conflict policy justify more. Preserve cross-project concurrency and optional L1 parallelism
-inside the owning task.
+## Simplification decisions
 
-Why: isolated worktrees prevent file races but not two PRs moving the same base. Current predictive
-leases require natural-language parsing, brace expansion, broad-path suppression, resume ordering,
-and two different meanings for scheduling versus publication. WIP one removes most of that machinery.
+| ID | Status | Final meaning |
+| --- | --- | --- |
+| S01 | **Accepted, amended** | Faults use closed effect/blast-radius types. Unknown mappings remain global until characterized; safe-order recovery write closes launch first. |
+| S02 | **Accepted** | Task base validation is separate from installed deployment checkout synchronization. |
+| S03 | **Accepted, amended** | States are `queued/running/settling/blocked/done/rejected`; owner/helper transition and settlement operations are fixed and domain-embedded. |
+| S04 | **Accepted, amended** | Immutable publication receipts distinguish merge contribution from deployment qualification; one DeploymentRecord owns activation. |
+| S05 | **Accepted, conditional on D4** | Outcomes normalize only after complete provider-specific process-empty proof; Codex and Claude security mechanics remain distinct. |
+| S06 | **Accepted** | Scheduler self-deploy and completion-time forensic cleanup are removed after replacement activation/maintenance paths exist. |
+| S07 | **Accepted** | Each fact has one canonical record; views never actuate behavior. |
+| S08 | **Accepted** | Repository WIP is one; task paths are publication scope, not scheduling prediction. |
+| S09 | **Accepted** | GitHub issues hydrate once before queueing and never on resume. |
+| S10 | **Accepted, amended** | Action-specific untrusted contracts plus one shared outcome; no schema may convey trusted verification/deployment facts. |
+| S11 | **Accepted** | Remove digest/TTS, edit counts, dead endpoints/fields/hooks, old helper PR parsing, and other enumerated cosmetic/compatibility paths. |
+| S12 | **Accepted** | Chat is high-level L3 intake; Task is direct L2 steering. Direct web/public CLI task creation is removed. |
+| S13 | **Accepted** | Live transcript plus lifecycle/terminal snapshots; no per-event portable-export workflow. |
+| S14 | **Accepted, amended** | Move command families one at a time over v1 state, deleting each old writer; do not perform one giant control-plane cutover. |
+| S15 | **Accepted, amended** | Drain active domains, switch once, and retain only isolated read-only archive decoders selected by D2. |
 
-Review question: Is concurrent top-level L2 work within one repository a required product capability
-now, or may it be explicitly deferred?
+## Mandatory consistency checks
 
-### D2 - Transcript retention
+Before merging any module PR, its reviewer must answer all applicable questions with source/test
+evidence:
 
-**Recommendation:** keep live transcript viewing and durable boundary/terminal snapshots. Retain
-portable export, but select a finite or operator-managed retention policy rather than making indefinite
-provider-native duplication an implicit guarantee.
+### Authority and process ownership
 
-Review question: Do we need portable provider-native archives for every attempt, or is a redacted
-canonical task timeline plus terminal evidence sufficient?
+- Which single record owns this fact after the PR?
+- Which old writer and active fallback reader are deleted?
+- Can a stale owner/helper generation call this path?
+- Is every prior physical writer provably empty before replacement, settlement, rejection, or archive?
+- For a recovery task, does the generation carry and validate episode/permit revision?
 
-### D3 - Platform-managed L1s
+### External effects and crash behavior
 
-**Recommendation:** retain the current managed helper concept during the core refactor, while removing
-old PR parsing and cleanup coupling. Evaluate native provider subagents only afterward.
+- What stable effect id and deterministic target are written before the effect?
+- How does restart query/reconcile an effect that succeeded before its local receipt?
+- Does JSONL tail repair preserve a valid unterminated row and truncate an invalid partial row?
+- Are atomic replace, append, and parent-directory durability claims matched by tests?
 
-Review question: Must Altitude support cross-provider L1 selection and visible patch capture, or is
-"L2 may use its provider's native subagents" sufficient long term?
+### Publication and deployment
 
-### D4 - Claude authority
-
-**Recommendation:** retain the Claude guard and backend authority checks initially. Normalize only its
-terminal outcome and add mandatory per-worker process-unit ownership/empty proof. Consider a smaller
-allowlisted wrapper or OS-contained Claude later, and remove the shell parser only after the precise
-replacement threat model is approved and proved.
-
-Review question: Is reducing the 1,000-line shell guard worth changing Claude's direct execution
-model, or should that remain accepted provider-specific complexity?
-
-### D5 - Deployment rollback
-
-**Recommendation:** make the authorized operator command own source fast-forward, build, restart, and
-activation proof. Build in a detached candidate first; stop the old service before swapping source.
-A post-swap failure leaves the service stopped and target unsatisfied. Keep source recovery as a
-reviewed revert/fix PR in the first simplification. Add versioned releases only if automatic full-code
-rollback is explicitly required.
-
-Review question: Is a full automatic rollback worth the extra release/symlink machinery, or is
-preflight plus explicit revert acceptable for this local self-hosted service?
-
-### D6 - GitHub issue publication
-
-**Recommendation:** an explicit request from Burak to create an issue is sufficient authorization for
-the bounded trusted broker. A model-originated suggestion remains a draft until approved.
-
-Review question: Do you want every Codex-created issue to require a second exact approval phrase even
-when your triggering message already explicitly requested publication?
-
-### D7 - Project inbox/FYI lifecycle
-
-**Recommendation:** keep FYIs only if they have a real acknowledgement/archive lifecycle. Otherwise
-derive recent notifications from canonical project/task events and remove `inbox.jsonl` plus the unused
-`seen` field. Blocking decisions/questions/findings remain typed task attention either way; Inbox is
-never completion authority.
-
-Review question: Should Inbox be a durable acknowledgement queue, or simply a read model of current
-decisions and recent noteworthy events?
-
-## Reviewer consistency checklist
-
-### Ownership and concurrency
-
-- Can two physical workers ever be current for the same task, and does replacement install a new
-  generation only after the prior writer is proven stopped?
-- Does every message, helper launch, outcome, publication, and resume use the same generation check?
-- Can a crash before/after spawn, bind, session capture, or message delivery be reconciled without a
-  duplicate provider resume or an unregistered writer?
-- If WIP is one, has scheduling lease logic actually been deleted rather than left dormant?
-- If WIP greater than one is retained, is its conflict policy explicit and mechanically tested?
-
-### Provider neutrality and security
-
-- Are role semantics common while provider security boundaries remain separate?
-- Does a provider switch create an explicit new attempt rather than pretending to resume?
-- Can any contained model choose paths, credentials, commands, base refs, tests, or service actions
-  that should be selected by the trusted control plane?
-- Is containment proven empty before any Codex side effect?
-- Has any Claude protection been removed before an equivalent boundary is live?
-
-### Publication and completion
-
-- Is each PR/head/base/check/merge fact owned by its immutable publication receipt and mutable
-  activation truth owned only by the DeploymentRecord?
-- Does settlement survive termination at every external side-effect boundary?
-- Are model-authored claims excluded from trusted verification/publication/deployment receipts?
-- Can helper continuation and a post-merge correction return the same task from settling/blocked to
-  a newly fenced running generation?
-- Can a clean task complete without another L3 turn?
-- Do open findings, decisions, FYIs, follow-ups, or merge holds still reach the correct human?
-- Are required and intentionally skipped checks classified consistently?
+- Are worker/model claims excluded from trusted receipt fields?
+- Can failed checks, unresolved findings, or a merge hold ever become activatable?
+- Is merge independent from installed source/assets/service state?
+- Can the detached bootstrap forward-repair a candidate that broke installed deploy code?
 
 ### Recovery
 
-- Can an advisory or task/project-local failure freeze unrelated projects or providers?
-- Does every global condition represent actual uncertainty about shared safety?
-- Can mechanically resolved conditions reconcile without another model turn?
-- Can L3 still recover autonomously and delegate exactly one repair L2?
-- Does a new global fault stop a recovery L2 that was exempted for an older fault?
-- Can recovery failure recurse into another incident/task/wake?
+- Is the launch fuse written before incident enrichment can fail?
+- Can a scoped failure freeze unrelated work?
+- Can waiting-for-operator spend another model turn without new evidence/revision?
+- Can a recovery fault recurse into another incident, task, or wake?
 
-### State and compatibility
+### Interfaces and reduction
 
-- For each fact, which record is canonical and which views are derived?
-- Do project/provider holds survive restart without duplicating task or UI state?
-- Is every compatibility read paired with a migration and removal release?
-- Can active and archived tasks both be migrated and audited?
-- Are secrets/capabilities absent from logs, transcripts, issues, PRs, and migration reports?
-- Will rejected proposal documents be deleted rather than left beside active architecture?
+- Does every adapter call the same application command?
+- Does the API payload follow the versioned Python/Zod fixture contract?
+- Does remote Node execution retain the sanitized candidate boundary?
+- Do the before/after line, file, artifact, writer, timer, and dependency counts meet the phase budget?
+- Are the active architecture documents updated and stale instructions deleted?
 
-### Operations and UI
+## Review disposition rule
 
-- Can merge, deployment, restart, and maintenance happen independently?
-- Can one activation satisfy several immutable publication receipts while a later merge remains
-  pending, without mutating archived tasks?
-- Can cleanup refusal ever affect task execution?
-- Does `make restart` identify and verify the activated source SHA?
-- Is Chat the high-level L3 surface and Task the detailed L2 surface?
-- Are exact transcripts and diagnostics available without dominating normal conversation views?
-- Does CI cover every retained first-class runtime, including the web UI?
-
-## Approval recording
-
-Before implementation, record for each D1-D7 choice:
-
-```text
-decision:
-rationale:
-accepted consequences:
-rejected alternative:
-reviewer/date:
-```
-
-Then mark each S01-S15 as accepted, amended, deferred, or rejected. Implementation issues should name
-the S IDs they advance, their prerequisite phase, and the exact legacy paths they delete when done.
+An independent reviewer classifies findings as blocker, important, or optional. Blocker and important
+findings must be fixed or explicitly rejected with evidence before merge. Optional cleanup may become
+a GitHub issue only when it is outside the accepted phase and does not leave two authorities or a
+known safety gap. A green test suite does not overrule a valid architectural blocker.

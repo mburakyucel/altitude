@@ -1,78 +1,99 @@
-# Adversarial review and disposition
+# Adversarial review and dispositions
 
-> This document records challenges to the draft. It is not an approval certificate. Reviewers
-> should reproduce the evidence against the linked current-system inventory and source.
+> This is an audit trail, not proof that later implementation matches the design. Every behavior PR
+> still requires independent review against the corrected architecture and migration gates.
 
-## Method and coverage
+## Review method
 
-Three independent passes challenged the assembled proposal from different angles:
+Three independent reviewers traced the proposal at commit `57886cf` against current main `97e1197`:
 
-1. current-flow completeness: whether every present end-to-end flow has a legal target transition
-   and crash boundary;
-2. security and surface reduction: whether every keep/remove decision preserves its invariant and
-   whether new machinery is honestly counted; and
-3. migration/recovery operations: whether cutover, rollback claims, locks, recovery, and deployment
-   remain safe across process death.
+1. core task/L3/L2/publication flows and independently mergeable sequencing;
+2. deployment, recovery, incidents, process ownership, quota, and crash/rollback behavior; and
+3. all 146 tracked files, API/CLI/UI/CI surfaces, state artifacts, security boundaries, and numeric
+   reduction accountability.
 
-The [component register](03-component-decisions.md) was also checked mechanically against the tracked
-tree: every tracked file outside this proposal appears literally in that register, either as its own
-row or in an explicit group. Local Markdown link targets across the pack were resolved against the
-proposal worktree. File coverage is not behavioral proof; the findings below are the behavioral
-cross-check.
+Mechanical checks had already confirmed every tracked file appears in the component ledger and all
+local Markdown links resolve. Reviewers therefore concentrated on behavioral contradictions. The
+first draft was rejected as not implementation-ready. The accepted revision incorporates the
+following dispositions.
 
-## Blocking findings and dispositions
+## Blocking findings
 
-| ID | Challenge | Why the first draft was unsafe/incomplete | Disposition in this revision | Reviewer recheck |
-|---|---|---|---|---|
-| A01 | Worker claims versus trusted facts | `report.json` risked making model-authored check/merge/deployment claims canonical | `WorkerOutcome` is explicitly untrusted; verification, publication, no-code, and deployment facts live only in trusted receipts/records. See [provider outcomes](02-proposed-architecture.md#5-provider-adapters-and-normalized-outcomes), [publication](02-proposed-architecture.md#9-trusted-publication-and-verification), and the [schema ledger](03-component-decisions.md#schemas). | Confirm no model schema can populate trusted receipt fields and old report readers label legacy claims correctly. |
-| A02 | Claude descendant writer proof | Parent/job exit could leave a descendant writing while settlement publishes | Phase 2 now requires a tracked, provably empty process unit for every Claude physical worker while retaining the existing filesystem/command guard. Full filesystem containment remains D4. | Prove nested descendants cannot escape the unit and settlement refuses parent-only exit evidence. |
-| A03 | Crash-safe dispatch and steering | The task states did not represent spawn-before-bind, stop-before-resume, or message delivery ambiguity | A fixed `worker_transition` journal persists deterministic generation/process-unit/message targets before launch and reconciles after crashes. See [task owner](02-proposed-architecture.md#3-task-and-logical-l2-owner). | Kill at every stage; verify one worker, one current generation, one delivery. |
-| A04 | Helper continuation | `continue(helper_requests)` had no `settling -> running` path or durable helper artifacts | The lifecycle now permits a newly fenced generation after idempotent helper completion; helper records own prompt, parent fence, process, and patch/findings only. | Run helper success/failure/restart and ensure the helper never owns publication. |
-| A05 | Settlement idempotency | “Replayable” was asserted without stages for commit/push/PR/check/merge/archive | `SettlementJournal` has a closed stage table with intent and observed receipt around every external effect. | Crash at every stage and verify remote reconciliation rather than duplicate effects. |
-| A06 | Multiple publication attempts | A failed required main check after merge had no legal continuation | Immutable receipt attempts are ordered; the same logical task may block and resume on a fresh base/branch for a corrective attempt. | Inject post-merge failure and prove no receipt mutation or recursive healing task. |
-| A07 | Deployment authority | Mutable deployment status was split among task receipts and a pending file | Task publication receipts are immutable. One per-service `DeploymentRecord` maps many merge receipts to activated SHA by ancestry and retains later merges as pending. | Claim candidate C, land another merge, activate C, and prove only ancestors are satisfied. |
-| A08 | Mixed-release activation | Fast-forward/build failure could leave old Python reading new schemas/personas/hooks | Build and validate a detached candidate first; quiesce/stop the old service before source swap. A post-swap failure leaves the service stopped, gate held, and target failed/unsatisfied. | Fault every pre/post-swap boundary and verify the documented stopped-versus-unchanged result. |
-| A09 | Scoped hold ownership | Project/provider holds had behavior but no durable canonical owner | `operational-holds.json` owns active non-global holds; tasks reference applicable holds. `recovery.json` is global only and UI/project hold files are derived/removed. | Restart with each scope active and verify only its declared blast radius remains held. |
-| A10 | Human attention closeout | Removing `l3_handled` left no durable decision/finding/merge-hold resolution path | Blocking attention is typed task state with resolution reference; non-blocking FYIs are canonical events and D7 affects acknowledgement only. | Crash before/after attention projection/resolution and verify no lost or duplicate action. |
-| A11 | L3 and issue external effects | A cross-process lock did not make a provider turn or `gh issue create` idempotent | Closed `l3_turn` and `issue_publication` journal variants bind human message, session, content/effect id, response, and action receipt. | Kill around provider response and GitHub creation; response/issue appears once. |
-| A12 | Legacy owner migration | Translating live v1 tasks into new authority required inference or a permanent adapter | The migration now drains v1 tasks: finish, reject after stop proof, or preserve useful work in an issue. Fresh tasks alone receive v2 ownership. | Attempt cutover with every v1 active state; all must refuse until deliberately resolved. |
-| A13 | Multi-file migration atomicity | The first plan called distributed file writes atomic and underspecified selector rollback | Importers stage/fsync complete side-by-side state and atomically update one domain in `state-formats.json` last while timers/mutations are disabled. The map preserves already-cut-over domains; its update is that domain's forward-only boundary. | Kill through staging/map update/enablement; never observe mixed writers or regress another domain selector. |
-| A14 | Recovery task claim race | A crash could spend `repair_task_ever` before creating the one allowed task | `recovery_transition(task_claim)` uses one deterministic task id and `claiming -> create/reconcile -> finalized`; crash resumes the same operation. | Kill at both file boundaries and prove exactly one recoverable task id. |
-| A15 | Recovery empty/clearance state | `cleared`/empty episode records added state, while append-then-remove could crash between effects | Active `recovery.json` has only open/repairing/waiting states. `recovery_transition(clearance)` uses one idempotency key to reconcile the receipt and finish removal; clearing is not a lasting episode state. | Kill before/after receipt append and removal; absence means clear only after the exact receipt/migration proof. |
+| ID | Finding | Risk in the rejected draft | Accepted disposition |
+| --- | --- | --- | --- |
+| A01 | Terminal task truth missing | `done/rejected` existed only as archive movement, losing canonical actor/reason/result | Task states include `done` and `rejected`; terminal metadata is durable before archive, which is storage only. |
+| A02 | Deployment bootstrap deadlock | Self-deploy could be removed before an installed command could activate the behind-main checkout | The full detached latest-main activation/forward-repair runner is installed and tested while legacy activation still exists. |
+| A03 | Unqualified merge could activate | A failed post-merge check still contributed an activatable SHA | Merge contribution and qualification are separate; all included receipts must be qualified or explicitly superseded. |
+| A04 | Phase 2 was a giant contradictory cutover | Commands, task schema, providers, settlement, recovery, and projections changed at once while later phases claimed to move the same writers | Command families migrate one at a time over v1 state; process/outcome/settlement land before a drained task-v2 switch. |
+| A05 | Maintenance gate covered only worker launch | L3, HTTP, timers, issue writes, cleanup, or settlement could mutate during activation | One gate covers every mutation/model/timer entry and has a durable quiescence acknowledgement; candidate starts health-only. |
+| A06 | Exact candidate conflicted with protected refs | Claiming C while remote advanced to D required a new hidden ref capability | Activation always fetches and activates latest verified remote main; the older-candidate feature is removed. |
+| A07 | Activation failure could restart-loop | `Restart=on-failure` contradicted “start once then remain stopped” | Normal crash self-healing remains; planned activation temporarily suppresses loops until verified and restores policy afterward. |
+| A08 | Repair depended on broken installed code | A candidate could break Makefile/imports and make the next repair command unusable | A stable bootstrap locates a detached reviewed candidate before importing candidate Altitude code and passes explicit targets. |
+| A09 | Claude descendant proof was assumed | `claude --bg` returns a short launcher/job row, not an owned process tree | A foreground supervised-resume feasibility PR is go/no-go. Failure narrows autonomous Claude authority rather than claiming false proof. |
+| A10 | Global fault/open incident was not atomic | Separate incident and fuse files could leave evidence without a fuse or a fuse with no meaningful evidence | Reserve evidence id; write recovery/fuse first with bounded evidence and pending append; reconcile keyed incident second. |
+| A11 | Partial JSONL replay was invalid | Appending after a truncated tail concatenated two malformed records; parent rename was not fsynced | One keyed append primitive repairs/truncates the final tail, deduplicates ids, fsyncs file; atomic replace fsyncs parent. |
+| A12 | Completion and deployment had duplicate authorities | Task result, completion file, report, verified state, and pending marker could disagree | One task terminal/result receipt, immutable publication receipts, and one DeploymentRecord; duplicate files are removed/derived. |
 
-## Important findings and dispositions
+## Important findings
 
-| ID | Challenge | Disposition | Remaining judgment |
-|---|---|---|---|
-| B01 | Ordinary CLI and service could remain two mutation authorities | The service is the normal command authority. Public direct `task new` is removed; future work can be recorded in GitHub while the service is down. Narrow deployment/recovery inspection commands use the same kernel locks, and diagnostic receipts never expire authority. | Verify no internal worker/recovery command is exposed as a second general intake path. |
-| B02 | The fault classifier risked becoming a new recovery-rule engine | The target has two closed enums—effect result and blast radius—with static mappings owned at trusted boundaries. No runtime rule registry, regex classifier, or model decision is allowed. | Each implementation phase must demonstrate net removal under the reduction accounting. |
-| B03 | WIP one makes a blocked task occupy its repository despite scoped faults | The target states this explicitly as the D1 collision policy, distinguishes it from a global fault, and reroutes the same task when another provider is eligible. | D1 remains a product choice; higher concurrency requires a separate conflict policy. |
-| B04 | Provider routing behavior was preserved only rhetorically | Phase 2 now requires weekly-reserve-first, short-window-secondary, provider-local unknown/exhaustion, explicit preference, and switch/new-session tests. | Review the operator reserve policy, not a new per-task routing schema. |
-| B05 | Project configuration had two possible authorities | `projects.json` is the sole registration/repository/project-policy authority; optional per-project policy files were removed from the target. | Confirm secrets remain references, not embedded project data. |
-| B06 | Migration phases conflicted with small PRs | Dormant definitions/readers/tests may land in small PRs; one narrow writer cutover switches consumers together. Old and new writers never run concurrently. | Implementation issues must name preparatory versus cutover/deletion status. |
-| B07 | S15 made historical evidence readability impossible | S15 now means zero active mutation/resume fallbacks. Selected versioned archive decoders are isolated read-only audit tooling and may remain. | D2/retention decides which decoders are necessary. |
-| B08 | New migration/permanent components were not counted | [Target and migration component budget](03-component-decisions.md#target-and-migration-component-budget) classifies each new responsibility as permanent, temporary, deferred, or audit-only with a size/deletion constraint. | Reject an implementation that adds an unlisted permanent subsystem. |
-| B09 | Frontend was first-class but remote CI could remain Python-only | The component ledger and migration matrix require remote web test/typecheck/build on the exact PR candidate. | The actual workflow change belongs to implementation, not this proposal. |
-| B10 | Top-level “lease” terminology could preserve deleted scheduling logic | Top-level paths are consistently publication scope; only concurrent L1 helper scopes remain subleases. | Static searches form part of the final deletion gate. |
-| B11 | Cleanup risked adding another ownership receipt | Cleanup proof derives from task/generation/publication/Git/process facts and appends an event; no cleanup authority record is added. | Cleanup remains non-critical and conservative. |
-| B12 | D4 assumed only the most elaborate Claude replacement | Phase 8 follows the precisely approved threat model: OS containment or a smaller allowlisted wrapper plus backend authority. | Mandatory process-unit ownership is already Phase 2 and is not optional D4 scope. |
-| B13 | Publication receipt could land without its DeploymentRecord contribution | The SettlementJournal now has an applicable contribution intent/receipt stage keyed by service, receipt id, and merge SHA. Replay accepts the exact existing contribution and refuses conflicts; Phase 1 bootstraps this permanent tail before removing self-deploy. | Kill tests must cover receipt-before-contribution and contribution-before-journal-receipt. |
-| B14 | Atomic state plus audit was asserted across separate files | Each authoritative local transition retains a stable id/revision/event envelope. State is written first; startup and the next locked mutation reconcile the audit row, whose readers deduplicate by transition id. External effects continue to use only the five closed journals. | Prove no next mutation can overtake reconciliation and that truncated JSONL tails cannot erase the logical event. |
+| ID | Finding | Accepted disposition |
+| --- | --- | --- |
+| B01 | Helpers lacked crash-safe launch/bind/result stages | Worker transition supports `subject_kind=owner|helper`; settlement references child helper transitions. |
+| B02 | Recovery bypass revision was not fenced | Recovery generations persist episode id and permit revision; every trusted boundary validates them. |
+| B03 | Global state-format selector added needless machinery | Active v1 domains drain; fresh v2 begins once; old archives use isolated read-only decoders. No selector/dual writer. |
+| B04 | Deployment was semantically an uncounted sixth state machine | Six closed domain-embedded operation kinds are counted honestly; the temporary cutover-publication subtype compacts to provenance and is deleted, leaving source activation as the final deployment transition. |
+| B05 | No numeric simplification target existed | Fixed production/Python/artifact/authority budgets and per-PR before/after accounting are now merge gates. |
+| B06 | “Shared typed projection library” was undefined across Python/TypeScript | One versioned JSON wire contract, Python producers, explicit Zod validators, and committed cross-runtime fixtures. |
+| B07 | Remote web CI might run candidate package scripts with broader authority | Node tests/build retain exact head/base, same-repo, read-only, no-secret, isolated environment controls and static tests. |
+| B08 | Issue publication reconciliation was underspecified | Preserve a stable repository-bound non-secret body marker and query exact repo/marker before create retry. |
+| B09 | Unknown quota policy contradicted working routing | Unknown is recorded uncertainty and remains eligible; actual launch/quota failure creates provider-local hold. |
+| B10 | Waiting-for-operator could spend model quota indefinitely | Only cheap mechanical probes run until input/evidence/deployment changes episode revision; then one L3 wake occurs. |
+| B11 | Incident IDs collide across projects | New immutable UUID is canonical; `(project_id, legacy_id)` is a display alias; importer preserves amendments. |
+| B12 | Recovery supervisor identity was omitted | Episode stores immutable supervisor project; new evidence cannot silently switch project sessions/locks. |
+| B13 | Lock hierarchy arrived after dependent writers | Phase 0 defines/tests the full activation-to-publication lock order before deployment or command writers. |
+| B14 | `restart-pending.json` was incorrectly called a launch fence | It is a derived marker; DeploymentRecord replaces status and the independently proved maintenance gate owns launch quiescence. |
+| B15 | Rollback wording contradicted forward-only data | After a data cutover, only state-compatible forward repair/behavior revert is valid; activation checks supported formats. |
+| B16 | Ledger classifications understated rewrites/migrations | `git_policy`, `state`, restart tool, event filenames, operations, Inbox, restart marker, and ROADMAP rows are corrected. |
+| B17 | Multiple publication attempts lacked fresh corrective workspace ownership | Corrective attempts create a new fenced generation, fresh branch/worktree/base registration, and immutable receipt. |
+| B18 | Recovery preemption conflicted with WIP one | External settlement stabilizes and units empty before explicit `preempted_by_episode`; ordinary task later rebases through new generation. |
+| B19 | Clearance/hold history could add a second active ledger | Domain-embedded keyed clearance reconciles receipt/removal; cleared holds become incident/audit amendments, not active truth. |
+| B20 | Audit state and event files were falsely described as one transaction | State-first transition envelopes plus before-next-mutation reconciliation make events a delayed keyed projection, with kill tests. |
 
-## Remaining review work
+## Reductions confirmed safe to pursue
 
-The findings above have proposed dispositions, not implementation proof. Burak still needs to record
-D1-D7 and S01-S15 in the [review ledger](05-review-ledger.md). A reviewer should reject or amend the
-proposal if any of these statements cannot be made concrete without adding another durable truth,
-timer, workflow language, or authority path.
+The reviewers agreed these removals preserve the desired product mechanisms when their stated
+dependencies land first:
 
-In particular, review these cross-document claims together:
+- predictive top-level path scheduling under repository WIP one;
+- scheduler self-deploy and completion-time forensic cleanup;
+- direct web/public CLI task creation, manual dispatch/verify, and duplicate task-message composers;
+- digest Markdown/audio/TTS, edit-count telemetry, dead approval/administrative fields and routes;
+- old helper PR parsing, report-promotion flags, duplicate hold mirrors, and session mirrors;
+- model-authored trusted verification/publication/deployment facts; and
+- active compatibility writers/readers after drained one-shot cutovers.
 
-- `TaskRecord`, operation journals, and receipts cover every transition in the
-  [current-system flow inventory](01-current-system.md), including abnormal exits;
-- mandatory process ownership plus provider-specific guards/containment preserve security while
-  normalizing outcomes;
-- task publication, deployment activation, recovery, and cleanup remain independent lifecycles;
-- no migration phase resumes an authority contract whose enforcement has been removed; and
-- the final deletion phase removes temporary migration machinery and active compatibility rather
-  than leaving agents to interpret both architectures.
+These keeps remain justified:
+
+- L3 high-level coordination and direct L2 steering;
+- one L2 with optional bounded managed helpers/reviewer;
+- dual-provider routing with weekly-first observations;
+- Codex containment/inert broker and existing Claude guard until stronger proof;
+- trusted Git/PR/check/merge enforcement and hook stubs;
+- live transcripts plus bounded durable evidence;
+- one service and file-backed storage; and
+- primary UI routes, simplified around canonical read models.
+
+## Final re-review checklist
+
+Before the architecture PR is considered settled, a reviewer must confirm:
+
+- `02`, `03`, `04`, and `05` agree on six operations, terminal states, deployment qualification,
+  Claude prerequisite, unknown quota, recovery fencing, and no format selector;
+- every blocker and important finding above has an exact target owner and acceptance test;
+- no corrected paragraph depends on a component scheduled later in the migration;
+- numeric baseline commands are reproducible; and
+- the proposal contains no parallel active architecture or instruction to ignore stale behavior.
+
+Before each implementation merge, rerun the applicable checks from `05-review-ledger.md`. The
+architecture is settled only as a plan; behavior is accepted only when source, tests, runtime
+evidence, and active documentation agree.

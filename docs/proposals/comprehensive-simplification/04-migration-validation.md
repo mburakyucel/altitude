@@ -1,991 +1,674 @@
 # Migration and validation plan
 
-This plan moves Altitude from the current overlapping safety mechanisms to the reduced architecture
-without weakening the properties that matter: one logical owner of a task, an isolated writer,
-trusted publication, fail-closed recovery, and operator-controlled deployment. It is deliberately
-incremental, but it is not a long-lived dual architecture. Each phase introduces one complete
-compatibility boundary, proves it in a release, and deletes the superseded path only after an
-explicit gate.
-
-The autonomy boundary is normative throughout this plan:
-
-- L3 may diagnose and mechanically recover an episode, clear it after objective probes pass, or
-  delegate that episode's one recovery L2 without asking Burak first.
-- An episode may never create a second recovery task, even if the first task fails, is rejected, or
-  uncovers another fault. A fault caused by recovery is evidence in the same episode, not a new
-  healing workflow.
-- Neither L3, L2, a recovery task, a timer, nor a merge may restart or replace the running service.
-  They may record that an operator restart is required. Only a separately authorized operator
-  deployment may perform the restart. It must verify the activated source and web bundle and follow
-  the rollback policy Burak selects in D5.
-
-## Safety properties that may not regress
-
-The migration is stopped if any phase cannot preserve all of these invariants.
-
-1. **One writer.** A task has one logical L2 owner. Replacement stops and proves the old physical
-   worker dead before starting the new worker. Dispatch, session, worker, and capability identities
-   fence every message and state-changing action.
-2. **Repository isolation.** Code work happens only in the task's registered worktree and branch.
-   The Git common directory and protected branch remain outside a model's publication authority.
-   Every accepted commit has task provenance and every change reaches `main` through the guarded PR
-   path.
-3. **Trusted effects.** Model output is a request, not authority. The trusted backend revalidates
-   current identity, task state, publication scope, merge policy, and recovery state immediately
-   before an effect. Contained workers must be empty before their output is interpreted.
-4. **Atomic durable state.** Runtime records are written atomically under the appropriate
-   cross-process lock. Readers either understand a record's schema version or refuse it; they never
-   guess through a partial migration.
-5. **Fail-closed launches.** A global recovery episode is published before launch settlement and is
-   checked at the last worker-launch boundary. A task- or provider-scoped fault blocks only its
-   affected scope, but may not accidentally become permissive.
-6. **Non-fanning recovery.** One episode has one durable supervisor, at most one recovery attempt in
-   flight, capped retry delay, and at most one recovery task ever. Persistent retry remains durable
-   and visible; new evidence cannot fan out sessions or tasks.
-7. **No autonomous service lifecycle.** Merge may add a pending DeploymentRecord contribution; it cannot pull the live
-   source tree or restart the service. Deployment requires an operator action, an idle proof, an
-   exact remote source candidate, a staged web bundle, a new healthy PID, and the selected D5
-   rollback policy.
-8. **Conservative cleanup.** Failure to prove that an artifact is dead leaves it in place. Cleanup
-   uncertainty cannot delete another task's work and is not itself a global system fault.
-9. **Audit continuity.** Existing task, transcript, incident, fault, clearance, PR, and deployment
-   evidence is retained. Simplifying the active representation must not rewrite historical facts.
-
-## Migration rules
-
-These rules prevent a release from combining half of the old behavior with half of the new one.
-
-- A state writer changes only after the same release contains its new reader, validator, and
-  one-shot importer. Dual-read is allowed for one compatibility window; dual-write is not. An
-  importer stages complete side-by-side v2 files, fsyncs them, records counts/hashes, and atomically
-  updates the affected domain entry in one `state-formats.json` selector map last while the service
-  is quiescent. Domains such as `tasks` and `recovery_incidents` can cut over in different phases
-  without deselecting each other. Distributed files are not falsely described as one atomic write.
-- Before an authoritative schema cutover, deploy a compatibility release that can validate/read the
-  new generation while it still writes the old one. The later cutover runs with service mutations
-  and timers stopped. The candidate first starts in migration-hold mode: it validates staged v2
-  directly but cannot run timers, providers, or mutations. Switching the selector is itself the
-  first authoritative v2 mutation and the forward-only boundary. Before it, v1 remains selected;
-  whether prior code can resume still depends on D5 (recommended exact-checkout activation may need
-  a reviewed revert/fix, while versioned releases may restore it). After it, restart/recovery must
-  continue on v2 and never roll state back by dropping facts.
-- A broker contract is selected by the task's persisted `control_contract_version`, never inferred
-  from which code happens to be running. An old contract is not resumed by a release that has
-  removed its enforcement.
-- Small preparatory PRs are encouraged when they are dormant or behavior-preserving: characterization
-  tests, readers, typed definitions, and migration dry-runs may land independently. One narrow writer
-  cutover then switches schema, backend, CLI/API/UI consumers, tests, and documentation together.
-  A compatibility reader may survive one later phase; the old writer may not. This avoids both giant
-  implementation PRs and two simultaneously active architectures.
-- A source merge is not activation. A phase becomes active only when an operator activates an exact
-  remote commit and proves the new process. Under recommended D5, candidate assets are built from a
-  detached checkout, then the old service is stopped before the installed checkout changes; a failed
-  post-swap activation leaves the service stopped rather than running a mixed release. If D5 selects
-  versioned releases, source and assets instead switch as one immutable unit.
-- Destructive compatibility deletion is always a separate release from the behavioral cutover.
-  It requires the deletion gates in this document and retained deployable rollback/revert input.
-- Feature flags are allowed only for a short, explicit shadow comparison. They may not leave two
-  state machines accepting mutations. A cutover flag is persisted once under the migration lock,
-  not selected independently in each process.
-
-### Dependency order
-
-| Phase | Requires | Why the dependency is hard |
-| --- | --- | --- |
-| 0. Baseline | recorded D1-D7 choices and S01-S15 dispositions | A migrator cannot safely infer product policy or approved scope from legacy fields |
-| 1. Publication/deployment activation boundary | Phase 0 | Later merges must have trusted receipts and stop mutating the running checkout automatically |
-| 2. Commands/task/outcome | Phase 1 | Canonical task state can consume the already trusted publication/deployment boundary in one held cutover |
-| 3. Repository WIP/scope | Phase 2 and accepted D1 | Predictive path scheduling cannot disappear before canonical publication scope and sole settlement exist |
-| 4. Typed operations | Phase 2 | Deterministic retry needs the idempotent outcome/receipt journal |
-| 5. Recovery v2 | Phases 2 and 4 | Fault scope cannot narrow until every caller has a typed conservative classification |
-| 6. Cleanup | Phases 1, 2, and 4 | Cleanup becomes non-critical only after deployment and settlement stop depending on it |
-| 7. Projections/surfaces | Phases 2, 5, and 6 | UI/CLI fields are removed only after canonical owners and recovery views exist |
-| 8. Claude authority | Phase 2, Phase 7, approved D4 | Normalized outcomes come first; authority replacement is optional and security-sensitive |
-| 9. Compatibility deletion | every accepted prior phase and a zero-use soak | Deletion is proof of migration, never its first step |
-
-## Phase 0 — baseline, probes, and a migration manifest
-
-### Prerequisites
-
-- Burak records D1-D7 and marks S01-S15 accepted, amended, deferred, or rejected in the review
-  ledger. The phase plan uses the recommended defaults only where the recorded decision agrees. In
-  particular, D2 controls transcript retention, D3 controls
-  long-term managed helpers, D4 controls whether Claude's authority boundary is replaced, D5 selects
-  checkout activation versus versioned releases, D6 selects issue-publication approval, and D7
-  selects Inbox persistence. A phase that depends on an unresolved choice does not start.
-- The current recovery episode, if any, is allowed to finish under the current architecture. Do not
-  clear it merely to begin this migration. No recovery-state format or recovery behavior cutover is
-  allowed while an old episode is active.
-- All active tasks and workers are inventoried by project, including blocked tasks, pending broker
-  actions, L1/reviewer children, Codex containment units, Claude jobs, and worktrees.
-- The deployed commit, running PID, service unit hash, web-bundle hash, runtime schema versions, and
-  pending-restart record are captured in a read-only baseline receipt.
-- The full Python suite and web tests/build pass from a clean exact `origin/main` checkout.
-
-### Changes
-
-Add a versioned, read-only runtime manifest endpoint and a corresponding local inspection command.
-The manifest reports, without secrets:
-
-- activated source SHA and deployment-attempt identifier;
-- runtime-state schema and broker-contract versions;
-- service PID/start time and web-bundle hash;
-- active recovery episode id and schema, if present;
-- counts of active tasks by control-contract version;
-- whether deployment is pending and the target SHA.
-
-Add a migration preflight command that performs no writes by default. It validates every active task,
-worker record, pending action, recovery record, and configured project; lists legacy records; and
-prints the exact phase gates that are open or closed. A separate `--write` mode may exist for later
-operator-run importers, but it is not used in this phase.
-
-Create a small checked-in schema/contract version table, not a dynamic registry or plugin system.
-State records that participate in migration gain an
-explicit version when they are next written; absence means the documented legacy version. Unknown
-versions fail startup with a deterministic configuration exit status rather than being silently
-coerced. The same Phase 0 release updates the systemd unit's `RestartPreventExitStatus` for that
-deterministic refusal so an incompatible state cannot cause a restart loop.
-
-### Validation gate
-
-- Unit tests prove that the manifest describes the code loaded by the running process rather than
-  merely reporting a mutable checkout's current HEAD, and that secrets and absolute private
-  evidence paths are absent.
-- The preflight is run twice against a copied `ALTITUDE_HOME`; its output is identical and the copy
-  has no changed files.
-- Fixtures cover every currently observed legacy task/recovery/incident shape and one deliberately
-  unknown version. The unknown version is refused before HTTP bind or worker polling.
-- Record the baseline receipt. Every later phase compares its observable task and recovery counts to
-  this receipt.
-
-### Rollback/stop conditions
-
-This phase has no state migration. Roll back the code if the manifest cannot identify the exact code
-serving the UI/API, or if preflight changes state. Do not proceed with an unexplained live worker,
-duplicate task owner, malformed active recovery record, dirty deployment checkout, or missing task
-provenance.
-
-## Phase 1 — separate task bases, merge, and operator activation
-
-This phase comes first because every later behavioral change needs a clear activation boundary. It
-removes the current coupling in which task dispatch requires the mutable deployment checkout to be
-exact and post-merge cleanup fast-forwards files underneath a running Python process.
-
-### Exact changes
-
-Bootstrap is explicit because the PR that removes v1 self-deploy is initially landed by v1 code.
-First land and separately activate a behavior-preserving bootstrap PR that adds: the permanent
-trusted PublicationReceipt writer, initial DeploymentRecord writer, the permanent
-SettlementJournal envelope for the final-receipt/deployment-contribution tail, final-boundary
-durable launch gate, and a temporary one-way `legacy_auto | operator_pending` deployment-mode selector. Its own
-merge may still follow the documented legacy fast-forward and therefore requires the existing idle
-hold plus an immediately authorized restart; this is the last acknowledged exception to “merge is
-not activation.” After bootstrap activation, a trusted reconciliation records that bootstrap merge
-and activated SHA, tests the gate, and—while idle—switches the selector to `operator_pending`.
-Rollback of that selector is forbidden. Only then may the narrow self-deploy-removal cutover PR
-merge. Bootstrap code writes its receipt/DeploymentRecord contribution and, because operator mode is
-already selected, cannot fast-forward the checkout.
-
-1. Split `git_policy.fetch_and_require_exact_base` into two explicit policies. Task dispatch/resume
-   fetches the remote and returns an immutable `origin/main` SHA, then validates only the registered
-   task worktree/branch/base against that SHA. The task policy still verifies canonical origin and
-   installed protected-reference/publication hooks; it simply does not require local deployment
-   `main` to equal the remote. Exact local deployment `main` and a clean checkout remain requirements
-   of operator activation and service preflight, not task provenance.
-2. Introduce the permanent trusted `PublicationReceipt` at the existing landing boundary before
-   introducing `DeploymentRecord`. The receipt captures the current mechanically observed task,
-   branch, base/head, scope, checks, PR, merge SHA, merge hold, and deployment target; model report
-   fields are no longer authority for those facts. Change merge completion (`dispatch.pull_after_done`
-   and its callers) to use the SettlementJournal's deployment-contribution intent/receipt stage to
-   update the deployable service's one idempotent `DeploymentRecord`: append that immutable receipt
-   reference and merge SHA, then advance the exact pending target. Replay reconciles the stable
-   service/receipt/merge key before writing, including after a crash between receipt creation and
-   contribution. It no longer pulls the service checkout,
-   swaps a web bundle, edits a unit, or restarts anything. Additional merges retain their ordered
-   provenance; task receipts remain immutable and never carry mutable `pending/activated` state.
-3. Keep `make restart` as the operator deployment command. Under the recommended D5 choice it
-   performs an early idle check, claims candidate `C`, and sets a durable activation gate. From a
-   detached exact candidate it runs read-only preflight/migration validation, discovers a supported
-   Node/pnpm toolchain without a hard-coded patch path, and builds/tests the staged web bundle and
-   unit before changing the installed checkout. It then quiesces timers/mutations, stops the old
-   service, proves the service cgroup empty, fast-forwards the checkout to `C`, installs the staged
-   assets/unit, starts once, and verifies:
-   - a new PID and start time;
-   - the expected source SHA and state-schema compatibility from the manifest API;
-   - API, SPA shell, and static-asset hash health;
-   - no active or newly launched worker crossed the cutover.
-4. Retain pre-source-swap cleanup/rollback of a staged web candidate. Under recommended D5, a failure
-   after installed source changes sets activation `state=failed` with an unsatisfied `target_sha`,
-   bounded diagnostics, and the service stopped; it requires a reviewed revert/fix PR and another
-   authorized activation. The durable activation gate remains set until a healthy activation; it is
-   not cleared merely because the command exited. The command must not claim full-code rollback. If Burak selects automatic full-code rollback in
-   D5, replace this step—not supplement it—with a versioned release containing Python, source assets,
-   unit, and web bundle, an atomic `current` pointer, and verified whole-release restoration. Do not
-   maintain both activation mechanisms.
-5. Preserve the Phase 0 deterministic `RestartPreventExitStatus`; transient runtime crashes may
-   retain bounded systemd restart policy.
-6. After candidate `C` is healthy, append one `ActivationReceipt` and satisfy exactly the pending
-   merge SHAs that are ancestors of `C`. A merge landing after `C` was claimed remains pending. A
-   failed candidate remains both `failed` and unsatisfied. Unit installation and `daemon-reload` are
-   part of the same operator transaction when required.
-7. Import an existing `restart-pending.json` into the canonical deployment record before deleting
-   it. Preserve target SHA, changed components, task/PR references, and time. If the old record cannot
-   identify an exact remote target, activation blocks for operator reconciliation rather than
-   declaring it satisfied.
-
-Before the narrow cutover merges, prove the bootstrap release and `operator_pending` selector are
-active, place the service under its tested durable gate, and prove all workers/L3 turns are idle.
-After merge, allow no launch until a separately authorized `make restart` activates and verifies the
-new code. Merging does not authorize that restart. Once accepted, remove the legacy mode/selector;
-later merges leave both service process and installed checkout unchanged until operator activation.
-
-### Tests and real acceptance
-
-- Bootstrap acceptance: reconcile its own legacy-merged SHA into a trusted receipt/activated record,
-  prove the launch gate at the final worker boundary, switch the one-way operator selector, then land
-  a disposable PR and prove bootstrap code records it without changing the installed checkout. The
-  self-deploy-removal cutover refuses unless all four facts are present.
-- Unit/integration: task dispatch during deployment lag pins fetched `origin/main` while a dirty,
-  diverged, or wrongly based task worktree still refuses. Operator activation rejects a missing
-  source file, stale SHA, dirty installed checkout, wrong `ALTITUDE_HOME`, unsupported state version,
-  malformed unit, and incomplete web bundle before restart.
-- Disposable-service E2E: under recommended D5, prove a pre-swap failure leaves source/service
-  unchanged, a post-swap failure leaves the service stopped with an unsatisfied failed target, then
-  repair through a reviewed revert/fix and activate it. If versioned releases are
-  selected, activate A, fail B, and prove A is restored in full (Python SHA, unit, web, API).
-- Production acceptance, with explicit authorization: activate the phase from an exact SHA; observe
-  a new PID and matching manifest; exercise `/api/overview`, project chat read, task-status read, and
-  the SPA; verify all prior task/recovery records still exist and no worker is live.
-- Merge one harmless documentation-only test PR through the normal path. Prove the service remains
-  on its prior activated SHA, only the canonical deployment record changes, and no pull/restart
-  command appears in the journal. Merge another PR after candidate `C` is claimed and prove
-  activating `C` leaves the later contribution pending.
-
-### Deletion gate
-
-After two successful operator activations, delete scheduler-side checkout fast-forwarding and the
-publication-settlement workaround that exists only to fence that interval. Keep staged web swapping
-and web rollback under recommended D5; delete them only if the selected versioned-release design
-replaces them and a whole-release rollback test passes.
-
-Stop if the running manifest does not exactly match the selected SHA, if a worker appears during the
-idle/activation interval, if failure reporting overstates the selected rollback guarantee, or if any
-merge changes the installed checkout or running process without an operator action.
-
-## Phase 2 — canonical commands, task ownership, outcome, and settlement
-
-This phase creates the smaller architecture's authoritative records before removing any old state.
-It is the dependency for WIP simplification, typed fault actuation, UI removal, and cleanup reduction.
-
-### Exact changes
-
-1. Add one application-command layer for every durable mutation. HTTP, CLI, Claude's validated task
-   adapter, Codex brokers, and timers become authority adapters that call the same command. Each
-   command owns lock acquisition, authority/generation validation, one atomic transition, one audit
-   event, and a typed return value. The service is the ordinary mutation path; narrowly named offline
-   operator commands require it stopped and acquire the same kernel lock. A migrated command has no
-   remaining direct-write route.
-2. Define and version the canonical contracts described in the target architecture:
-   - `TaskRecord` with `queued | running | settling | blocked`, normalized scope, merge hold, current
-     owner generation, `code_allowed`, control-contract/provider policy, ordered publication
-     attempts, final result receipt, and typed attention/block; one `active_operation` reference
-     covers worker transition or settlement rather than parallel flags;
-   - one current `OwnerGeneration` containing attempt, provider/model/route observation,
-     session/worker/process-unit/capability, worktree, branch, and base SHA, validated by one
-     `require_current_generation` operation;
-   - provider-neutral `WorkerStatus` and `WorkerOutcome` variants;
-   - the closed typed operation-journal utility with fixed `l3_turn`, `worker_transition`,
-     `settlement`, `issue_publication`, and `recovery_transition` variants; recovery has only
-     `task_claim` and `clearance` subtypes;
-   - one `SettlementJournal` keyed by outcome/action id and owner generation with fixed intent/receipt
-     stages for workspace snapshot, verification, commit, push, PR, checks, merge, post-merge,
-     final receipt, an applicable idempotent DeploymentRecord contribution, attention/helper
-     continuation, and archive;
-   - immutable `PublicationReceipt`, `VerificationReceipt`, and `NoCodeReceipt` types. Publication
-     owns commit/head/base, changed scope, local/remote checks, PR, merge, merge hold, deployment
-     target identity, and evidence references; mutable deployment state stays in Phase 1's record;
-   - one canonical non-global operational-hold registry; and
-   - one typed operational projection consumed by status, server, CLI, briefs, and UI.
-3. Make `worker_transition` the only physical launch/replace/stop journal. Persist the next
-   generation id, deterministic process-unit name, provider request, and message id before launch.
-   Every start/resume mints a new attempt/worker/capability; genuine resume may retain the native
-   provider session. Reconcile the named unit/result after a crash instead of reissuing resume.
-4. Change both providers' terminal path to journal a strict untrusted outcome. For Claude,
-   publish/complete commands cease performing commit/push/merge/archive while the physical writer
-   can still run. Independently of optional D4 filesystem containment, launch each Claude worker in
-   a tracked process unit whose descendants can be stopped and proven empty; retain the current
-   guard. Codex keeps its stronger containment boundary.
-5. Trusted settlement acts only after the whole registered provider process unit is empty. It
-   advances the fixed journal, reconciles every recorded external target before retry, and writes an
-   immutable receipt. `continue` may launch bounded helpers idempotently and then install a new L2
-   generation; a decision/open finding/merge hold becomes typed blocked attention; clean publication
-   or no-code completion archives mechanically. A failed post-merge requirement preserves the first
-   receipt and may resume the same task for a corrective publication attempt; its new
-   `worker_transition` journals fresh worktree/branch/base registration and reconciliation before
-   installing the generation. Rejection/archive likewise stops and reconciles every task-owned L2
-   and helper process unit before terminal state.
-6. Replace `reported`, `status.json.verified`, `l3_handled`, `completion_requested`, report promotion,
-   and stranded closeout with `settling`, typed attention, and the journal/receipts. Non-blocking FYIs
-   and follow-up proposals append once to canonical events; D7 controls only read acknowledgement.
-7. Make issue hydration a canonical intake command. An explicitly referenced issue must have one
-   validated immutable repository-bound snapshot before the task becomes queued. Resume never
-   fetches missing issue context. Issue publication uses its stable journal/effect id and follows D6.
-8. Convert `schemas/l2_action.json`, `schemas/l3_action.json`, `schemas/report.json`, and review
-   findings to discriminated variants. Model schemas share only untrusted outcome/finding definitions;
-   trusted receipt fields are backend-only. The broker rejects unknown/extra fields and stale
-   generations.
-9. Normalize abnormal provider exits separately from model outcomes and map them to retry/reroute,
-   a canonical scoped hold, task attention, or global ownership fault. Preserve weekly-reserve-first
-   routing, provider-local unknown/exhausted behavior, and the recorded reason/freshness.
-
-### Data migration and compatibility
-
-Do not translate a live legacy ownership contract. Before the authorized idle cutover, every v1 task
-must finish under v1, be explicitly rejected after its worker is proven stopped, or have its useful
-request/progress preserved in a GitHub issue for a future fresh v2 task. Pending broker actions and
-L1/reviewer runs must settle under v1. This deliberately trades a one-time drain for deleting a
-permanent resume adapter and its ambiguous authority.
-
-With no active/resumable v1 task, no L3 turn/helper/action/settlement live, and the service in
-migration-hold mode, the importer:
-
-1. inventories archived `status.json`, reports, `status.json.verified`, action journals, issue
-   snapshots, provider worker records, L1 records, and transcript manifests;
-2. stages exact v2 archive receipts when legacy facts reconcile, retaining the original provider
-   report as explicitly untrusted historical evidence;
-3. indexes ambiguous historical archives behind an isolated versioned read-only audit decoder that
-   is never imported by active dispatch/resume/mutation paths;
-4. writes and fsyncs all side-by-side v2 files plus count/hash migration receipt and validates them;
-5. atomically switches the `tasks` entry in `state-formats.json` last, preserving every other domain
-   entry. That map update is the first task-v2 mutation and makes that domain forward-only; only then
-   may the candidate enable timers/mutations.
-
-Absence inference for legacy provider/capability fields exists only inside the offline archive
-importer. No active task is created with inferred authority, and no component writes old
-report/state fields after selection.
-
-### Tests and real acceptance
-
-- Command parity tests submit every mutation through HTTP, CLI, Claude adapter, Codex broker, and
-  timer where applicable. They assert the same validation, result, state, and audit event. Static
-  search plus tests prove no authority adapter writes task/project/recovery state directly.
-- Kill ordinary local commands after authoritative state/directory rename, during audit append, and
-  before the next mutation. Startup/next-command reconciliation emits the stable transition id;
-  event readers collapse duplicate physical rows, and no applied transition is missing logically.
-- Kill launch/steering before and after transition intent, prior-worker stop, provider spawn, process
-  bind, provider result, session-id capture, and message delivery. Recovery finds the deterministic
-  process unit/result; exactly one current generation and one delivered message remain.
-- Kill settlement before and after process-unit empty proof, local commit, push, PR creation, check
-  observation, remote merge, publication-receipt write, DeploymentRecord-contribution intent,
-  contribution application/receipt, archive move, and FYI projection. Restart completes exactly
-  once with no stranded deployment target, conflicting contribution, duplicate commit/PR/merge/FYI,
-  or model turn.
-- Race stale/current messages, helper requests, outcomes, and publication. Every path calls the same
-  generation check; a stale capability never appears in logs, transcripts, issues, PRs, or API.
-- Reject a task while L2 and several helpers are live or exiting. The terminal transition stops or
-  reconciles every owned process unit/receipt before archive and releases the repository slot only
-  after all are empty.
-- Kill an L3 turn and an issue publication around provider/action/GitHub boundaries; response and
-  issue effect ids apply once. Exercise helper continuation through `settling -> running` with a new
-  L2 generation, and exercise a failed post-merge check followed by a corrective publication in the
-  same task.
-- Run migration fixtures for every archived legacy state, old provider default, old issue envelope,
-  report/`status.json.verified` disagreement, malformed record, selector-map update, and candidate
-  migration-hold startup. Rerun is byte-stable; a failure before the `tasks` entry update leaves task
-  v1 selected, while a failure after it must recover that domain forward on v2. Other domain entries
-  remain byte-identical. An attempted live-v1-task cutover refuses.
-- Real E2E on each enabled provider: fresh task, steering/resume, optional helper, inert outcome,
-  settlement, PR/check/merge, archive, project FYI when warranted, and transcript boundary snapshot.
-  Kill/restart once during settlement in a disposable instance and reconcile the same effect. For
-  Claude, prove the complete process unit—not only the CLI parent/job record—is empty first.
-- Real no-code E2E proves unchanged branch/base and archives from the same outcome machinery.
-- Routing characterization/E2E covers weekly reserve before short-window availability, one provider
-  exhausted/unknown while the other remains eligible, explicit preference, and provider switch as a
-  new session/generation rather than a fabricated resume.
-
-### Deletion gate
-
-After the v1 active set is empty, every archive is converted or explicitly indexed as legacy
-audit-only, and a full release reports zero old-writer/active compatibility reads, delete old task
-state transitions, report promotion, `status.json.verified` authority, stranded-report recovery,
-duplicate generation checks, resume-time issue hydration, and parallel action/report definitions.
-Isolated versioned historical decoders may remain under the selected audit/retention policy; they are
-not active compatibility. Do not delete evidence referenced by receipts or transcript bundles.
-
-Stop if settlement can run while its physical writer is live, an existing remote effect cannot be
-reconciled idempotently, any caller bypasses the command layer, an ambiguous task is guessed into v2,
-or a clean completion still requires an unrelated L3 model turn.
-
-## Phase 3 — one control plane and one active L2 per repository
-
-This phase reduces collision prevention before predictive path scheduling and cleanup machinery are removed. It must
-land after the operator-activation boundary so all callers switch scheduling semantics together.
-
-### Exact changes
-
-1. Route ordinary server chat, recovery attention, worker commands, and mutating CLI requests through
-   Phase 2's application commands. Commands use one documented kernel file-lock order across
-   processes; the lock releases on process death. An owner receipt may aid diagnostics but never
-   expires authority. Narrow offline recovery/deployment commands require the service stopped and
-   acquire the same kernel lock.
-2. Remove `dispatching` timestamp leasing and separate dispatch-claim authority. The command lock
-   serializes the short state transition; the persisted `worker_transition` journal reconciles the
-   long process-launch boundary. All launch paths use that same pair.
-3. Set repository L2 WIP to one, keyed by canonical repository identity rather than project label.
-   `queued` tasks may accumulate, but the repository slot is held by any task that is `running`,
-   `settling`, or `blocked`, or has a pending worker transition, unapplied outcome/publication, or
-   live helper/worker. A stopped `blocked` task still owns its branch and blocks the next task until
-   it is resumed, completed, rejected, or converted to an external issue. There is no silent parking
-   state.
-4. Preserve each task's declared `paths`, but redefine them as trusted publication scope and L1
-   sublease input—not as a scheduler mutex between L2s. A project may require a nonempty normalized
-   scope before code dispatch or explicitly allow undeclared scope; in the latter mode the trusted
-   publisher derives and records actual changed paths and the L2 cannot broaden its authority after
-   editing. A no-code task declares `paths: []` plus `code_allowed: false`.
-5. Keep parallelism across different repositories and bounded L1/reviewer helpers within the one
-   owning L2. Two project configurations that point at the same repository share the WIP gate. L1
-   parent-commit fencing and non-overlapping subleases remain.
-6. Make recovery preemption explicit: an active global episode stops ordinary fresh/resumed launches.
-   First reconcile every ordinary SettlementJournal/external effect to an unambiguous stable
-   block/archive boundary; unresolved commit/push/PR/merge state forbids slot transfer. Then
-   checkpoint, stop, and prove all workers/helpers empty, set `state=blocked` with
-   `blocked.kind=preempted_by_episode`, and temporarily assign the single repository slot to the one
-   recovery L2. The preserved branch/session cannot resume, settle, or publish. After clearance a
-   new `worker_transition` owns base/worktree revalidation and fresh-workspace/rebase preparation
-   before installing a generation. Recovery never overlaps its writer; this is the only blocked-task
-   WIP exception.
-
-### Compatibility and data handling
-
-Phase 2 already requires the v1 active/resumable set to be empty. New v2 tasks persist normalized
-publication scope, `control_contract_version`, and `code_allowed` at creation. Project policy
-explicitly chooses required scope or trusted derivation at publication; the cutover does not infer
-that choice. Historical `BROAD_CLAIMS`, annotations, and brace expansion remain readable only in the
-isolated archive decoder and never enter new scheduling.
-
-### Tests and real acceptance
-
-- Race server chat, CLI chat, and recovery attention in separate processes. Exactly one L3 turn may
-  start; losers receive the current owner/try-again result without writing a second conversation
-  action.
-- Race timer dispatch and a service-routed operator request. Exactly one worker transition/generation
-  is persisted; process death is reconciled without an expiring timestamp lease or duplicate worker.
-- Queue two same-repository tasks with disjoint paths, including a fixture with two project aliases,
-  and prove the second cannot launch. Complete the first and prove the second launches. In another
-  repository, prove a task can run concurrently. Separately place the first task in stopped
-  `blocked` and crash-recovering `settling`; each must continue to hold the repository slot.
-- Inject global recovery while an ordinary task has (a) a live helper, (b) a clean blocked branch,
-  and (c) a settlement crash after remote merge. Preemption refuses (a)/(c) until process/remote
-  reconciliation reaches a stable boundary, then records the typed blocked reason and admits only
-  the recovery task. After clearance, the new worker transition revalidates/rebases or remains
-  visibly conflict-blocked before any ordinary writer starts.
-- Refuse a code-capable task with an empty scope under a require-scope project and any broad
-  ambiguous scope. Under an allow-undeclared project, prove the trusted publisher records actual
-  changes without accepting model-selected scope. Prove a declared no-code task can complete only
-  while Git confirms its branch is unchanged.
-- Real E2E: one tiny task follows L3 -> L2 -> checks -> PR -> merge -> archive while a second task
-  remains queued. Verify one writer, provenance trailers, the publication-scope check, worker
-  emptiness, and a pending contribution in the DeploymentRecord with no service activation.
-
-### Deletion gate
-
-After all live tasks carry normalized publication scopes and a full release has run at repository
-WIP=1,
-delete path-overlap scheduling, broad-claim suppression, pending-resume lease ordering, and their UI
-hold projections. Do not delete publication-scope validation or L1 subleases.
-
-Stop if WIP=1 strands an unidentifiable writer, if a blocked task can be bypassed without an explicit
-terminal transition, if separate processes can create two dispatches, or if two L3 turns can pass the
-same kernel lock/journal boundary.
-
-If D1 rejects repository WIP=1, stop here. Removing predictive lease scheduling then requires a
-separately reviewed concurrency policy and adversarial multi-PR tests; this migration must not assume
-that worktree isolation alone prevents base and publication collisions.
-
-## Phase 4 — typed operational outcomes instead of model retry
-
-The current broad exception paths can turn deterministic publication races, local task errors, and
-optional subsystem failures into another model turn or a global recovery hold. This phase introduces
-typed outcomes before changing recovery scope.
-
-### Exact changes
-
-1. Use two small closed enums rather than a central recovery-rule engine:
-   - boundary-local effect result: `applied | already_applied | retryable_conflict | needs_author`;
-   - fault blast radius: `advisory | task | project | provider | global`.
-
-   Each trusted boundary owns a static exhaustive mapping from its concrete errors to those enums and
-   a deterministic recheck where applicable. There is no runtime rule registration, symptom regex,
-   or model classification. Base/head movement maps to `retryable_conflict`; an exact already-merged
-   PR maps to `already_applied`; publication-scope violations map to task `needs_author`; quota maps
-   to a provider hold; proven project configuration defects map to a project hold; and uncertain
-   ownership/shared-state integrity maps global. A worktree error is task-local only after common
-   Git/other-owner integrity remains proven. TTS/digest/edit telemetry and conservative cleanup
-   refusal are advisory.
-
-2. Split the single `LandError` catch. Base/head movement gets one broker-owned retry with a fresh
-   immutable pair. An already-merged result is reconciled from the remote merge receipt. A missing
-   or violated publication scope blocks directly. Only a content/policy problem that actually needs
-   author judgment resumes L2.
-3. Make every broker action idempotent using its persisted action id plus dispatch identity. A crash
-   after a remote effect but before local finalization replays reconciliation, never the model's
-   request.
-4. Replace generic `except Exception -> system_fault` call sites with an explicit boundary mapping.
-   Unknown exceptions at trusted state/ownership boundaries remain `global_safety`; unknown errors
-   in optional presentation/telemetry paths become local evidence plus a visible degraded flag.
-5. Give provider and verifier outages one durable `retry_at`, one in-flight attempt, capped backoff,
-   and visible escalation. A fresh trusted quota/check observation can make the same hold due again;
-   retries neither wake a model merely to wait nor create parallel timers/tasks.
-
-### Tests and real acceptance
-
-- Fault-inject a PR pair move before merge, after remote merge, and before local receipt write. Each
-  case performs at most one merge, produces one trusted receipt, and consumes no correction turn.
-- Replay every broker action after a simulated process crash. The second application is a read-only
-  reconciliation or returns the prior result.
-- Inject TTS, digest, passive edit telemetry, cleanup, provider, verifier, invalid task branch, and
-  ownership-unknown failures. Assert their exact scope and prove only ownership/shared-state cases
-  trip the global launch gate.
-- Assert one transactional retry and serialized provider/verifier retry: at most one due claim, a
-  delay that reaches but never exceeds its cap, visible escalation, and immediate reconsideration
-  only when fresh trusted availability evidence arrives.
-- Real E2E: move the PR base during a disposable task and prove trusted retry/finalization finishes
-  without another L2 message. Confirm the service stays on its currently activated SHA.
-
-### Deletion gate
-
-Instrument the legacy `system_fault` and broad `LandError` adapters for one release. When every
-caller uses a typed effect result/scope and the adapter count remains zero through the real E2E, delete the
-generic adapters and tests that require model retry for infrastructure outcomes.
-
-Stop if an unknown failure is mapped permissively, a retry can duplicate a remote effect, an
-evidence-only fault hides a worker-ownership uncertainty, or a durable retry can fan out claims,
-timers, model turns, or tasks.
-
-## Phase 5 — recovery episode v2 and canonical fault evidence
-
-This is the behavior cutover that removes healing chains and stale duplicated holds while retaining
-L3's chosen autonomy. It depends on typed outcomes so only true shared-safety failures arrive as
-global recovery episodes.
-
-### Canonical model
-
-Use one versioned canonical episode record under the global recovery lock. It contains:
-
-- `episode_id`, active state (`open | repairing | waiting_operator`), and opened/updated timestamps;
-- bounded references to canonical incident evidence plus causal `origin_episode`/`origin_task`;
-- objective clearance probes (the active file's presence is the global launch gate);
-- L3 supervisor revision, claim, attempts, `next_attempt`, capped-backoff policy, and escalation
-  visibility;
-- null, claiming, or finalized `repair_task_id` operation;
-- `restart_required` as an operator request, never an executable action;
-- and no derived project/UI state.
-
-Clearance appends an immutable receipt and removes `recovery.json` under the lock; `cleared` is not an
-active episode state. The clearance and incident ledgers retain history.
-
-The append-only structured fault/incident ledger is the canonical evidence history. Markdown
-incidents, FYIs, monitor summaries, task/project events, and chat notices become projections that
-carry the canonical evidence id. Projection failure appends at most one bounded advisory event; it
-never records the same fault as a new fault or creates another durable view-state machine. Existing
-Markdown incidents and JSONL ledgers remain immutable historical evidence.
-
-Project `hold.json` stops mirroring the global fuse. Status and UI derive the project view from the
-canonical episode plus task/provider/project holds. There is one source of launch truth.
-
-### Recovery supervisor rules
-
-1. A new global-safety fault atomically opens an episode and closes ordinary launch permission
-   before any L3 work. Repeated or new evidence updates the same open episode and increments its
-   supervisor revision when it materially changes the required response.
-2. The server claims one L3 supervisor turn at a time under the cross-process L3 lock. Failure keeps
-   the same durable wake, schedules one retry with persisted exponential backoff capped at the
-   configured maximum, and never creates another wake/incident/task. Attempts remain visible and
-   cross an operator-escalation threshold, but there is no hard cap that abandons self-healing.
-3. L3 may run allowlisted mechanical reconciliation, clear the episode when its recorded probes
-   pass, or request the episode's one recovery L2. No prior Burak approval is required for
-   these recovery choices.
-4. Recovery task creation uses `recovery_transition(task_claim)`: persist `claiming` with one
-   deterministic task id, create or reconcile exactly that id through the application command, then
-   finalize `repair_task_id`. A crash at either boundary resumes the same operation; it cannot spend
-   the slot without a recoverable target or create a second task. Once finalized, rejection,
-   failure, archive, or later evidence cannot reopen it.
-5. A recovery L2 receives `source=recovery`, `origin_episode`, a narrow scope, and no task-creation or
-   service-lifecycle capability. Backend validation rejects a recovery-task action that attempts to
-   create/delegate work, change the episode id, clear without probes, or invoke service management.
-6. A fault produced by L3 recovery or the recovery task inherits `origin_episode` and is appended to
-   that same episode. It may tighten the global gate, stop a writer whose ownership became unsafe, or
-   move to `waiting_operator`; it may not create another episode/task while the origin episode is
-   open. Material new global evidence invalidates the recovery task's bypass revision. If it can
-   affect writer ownership, containment, or the repair's assumptions, the current repair worker is
-   stopped; otherwise a trusted check or L3 may renew that same task's permit for the new revision.
-   The exemption is never a permanent task-identity bypass.
-7. Mechanical recovery is a closed allowlist of idempotent trusted reconcilers, such as rereading an
-   exact remote merge receipt, expiring an abandoned claim after proving no worker exists, or
-   rebuilding a derived status view. Arbitrary shell commands, source edits, Git publication, unit
-   changes, and service restart are not mechanical recovery.
-8. If healthy behavior requires new code, the single recovery L2 may publish it normally. The merge
-   contributes to the DeploymentRecord; L3 then records `restart_required` and the episode waits for an
-   authorized operator deployment. It does not run `make restart`.
-9. A state that needs Burak's decision or an authorized deployment may show `waiting_operator`, but
-   the same episode remains durable. Safe mechanical probes may continue at capped intervals; L3
-   retries remain one at a time and may recognize that the external condition has changed. Waiting
-   never authorizes the missing action.
-10. Clearance requires named objective probes appropriate to the fault: shared state readable,
-   ownership known, containment empty, task/worktree identity valid, and/or remote receipt settled.
-   L3 may clear after they pass. `recovery_transition(clearance)` uses an
-   episode/revision-derived idempotency key, records `clearing` intent in the active episode, appends
-   or reconciles one clearance receipt, then removes `recovery.json`. Restart resumes the same stages,
-   so a crash cannot duplicate the receipt or leave an unreconcilable active episode. Burak retains
-   the same clearance authority.
-
-### Data migration
-
-Recovery v2 does not cut over while a v1 recovery hold is active. Once no episode is active and no
-recovery task is live:
-
-1. Run the importer under the old recovery, launch, and new migration locks while the service is
-   stopped as part of an authorized release activation.
-2. Validate legacy `recovery-hold.json`, `faults.json`, per-project `hold.json`, incident Markdown,
-   per-project incident ledgers, and the global incident index. Copy historical fault summaries into
-   the new evidence ledger with `legacy_source` and stable content hashes; do not rewrite the source
-   files.
-3. Stage the v2 incident ledger, non-global hold registry, last legacy clearance cursor, and
-   migration receipt side-by-side. With no active episode, stage no `recovery.json`. Fsync and
-   validate counts/hashes, then atomically update only the `recovery_incidents` entry in
-   `state-formats.json`; the already-selected `tasks` entry is unchanged.
-4. Start the new release in migration-hold mode, validate that the selected recovery domain treats
-   absence as globally clear, then enable v2 writes. Legacy files are read-only audit inputs. Derived
-   project holds are ignored only after that domain entry and receipt validate.
-
-The operator command checks this gate against candidate migration logic before it fast-forwards the
-installed checkout or stops the current process. If a v1 episode remains active, activation refuses
-and the current process continues. Do not translate an in-flight attention claim or recovery task by
-inference. An emergency can be handled and cleared under v1, then migrated normally.
-
-### Tests and real acceptance
-
-- Property/race tests interleave fault publication, launch permission, L3 process death, task claim,
-  new evidence, clearance, and process death. No trace admits an ordinary launch after the global
-  gate linearization point or more than one supervisor/repair owner.
-- Assert that a repair task can be created once and only once across failure, rejection, archive,
-  process restart, new fault kinds, and attempted new episode creation with the same origin. Kill
-  between `claiming`, exact task creation, and finalized reference; recovery creates or finds the same
-  task id and never loses or duplicates the slot.
-- Kill clearance before intent, after its keyed receipt append, and before/after active-file removal.
-  Recovery reconciles exactly one receipt and ends with no active episode; it never opens launches
-  merely because one of those filesystem effects partially completed.
-- Add material global evidence while the recovery L2 is live. Prove its old bypass revision no
-  longer authorizes launch/resume; unsafe ownership evidence stops it, while unrelated evidence can
-  only renew the same task after explicit trusted/L3 revalidation.
-- Fail many consecutive L3 attention attempts. Prove there is never more than one claim or one due
-  retry, the delay reaches but never exceeds its cap, escalation becomes visible, and every attempt
-  remains on the same wake/episode. Then supply Burak input and prove it advances that episode, not a
-  new task.
-- Inject each typed fault scope. Task/provider/project faults do not freeze unrelated projects;
-  shared-state/unknown-writer faults do. Escalating scope updates the same canonical episode.
-- Simulate every projection write failing. Canonical evidence and launch behavior remain correct and
-  only a deduplicated advisory event appears.
-- Migration fixtures cover empty history, repeated fault kinds, duplicate legacy index rows, stale
-  derived project holds, clearance history, and malformed input. Re-running a successful importer
-  changes nothing; malformed input leaves no v2 commit marker.
-- Isolated real recovery E2E A: inject a mechanically reconcilable fault, allow L3 to reconcile and
-  clear it without approval, and prove no L2 was created.
-- Isolated real recovery E2E B: inject a fault requiring code, allow L3 to create the episode's one
-  recovery L2, publish/merge its tiny change, then provoke a second fault from that task. Prove a
-  second recovery task is refused, no restart occurs, and the episode waits on the recorded operator
-  deployment if activation is needed.
-- After an explicitly authorized test deployment, prove L3 can run the clearance probes and clear the
-  same episode. Verify one clearance receipt and no orphan worker/cgroup.
-
-### Deletion gate
-
-After at least one mechanical and one delegated recovery acceptance run plus a release with zero
-legacy-read diagnostics, delete v1 attention/repair state, per-project recovery-hold mirrors,
-24-hour incident fan-out logic, and Markdown mutation as an operational dependency. Keep legacy
-evidence files archived and readable by an explicit audit command.
-
-Stop if a new evidence item can be lost after the supervisor says it is handled, if a spent repair
-slot can be reclaimed, if a recovery-origin fault can open a recursive task, if any clearance lacks
-its probes/reason, or if any recovery path can invoke service lifecycle operations.
-
-## Phase 6 — conservative finalization and cleanup
-
-Cleanup is made non-critical only after publication is idempotent and deployment no longer depends
-on the task worktree or live checkout.
-
-### Exact changes
-
-- Define task completion as a durable verified publication/no-code receipt plus archival. Cleanup is
-  not part of completion and cannot change a completed task back into a system fault.
-- Reduce automatic cleanup to one safe case: the exact registered task worktree, its worker proven
-  stopped/containment empty, no dirty or ignored task output, a verified merge/no-code receipt, and
-  branch identity still owned by the archived task. A compare-and-delete lock protects the final
-  removal.
-- Any failed proof emits one bounded `cleanup_deferred` evidence item and leaves the worktree and
-  branch intact. It neither activates recovery nor spends a model turn.
-- Move ambiguous L1/reviewer artifacts, stale branch discovery, squash-equivalence analysis, and
-  old namespace cleanup to an operator-visible `alt prune --dry-run`. Destructive prune requires
-  exact selections and repeats all ownership checks.
-- Remove source fast-forward/restart-pending behavior from cleanup; deployment receipts already own
-  it in Phase 1.
-
-### Tests and real acceptance
-
-- Fault-inject every cleanup proof and filesystem operation. The only allowed outcomes are exact
-  owned removal or intact artifacts plus `cleanup_deferred`.
-- Race cleanup with status reads, transcript export, a stale process record, and a newly created
-  similarly named task. No transcript/evidence or other task path may be removed.
-- Complete and merge a real tiny task, verify archive/transcript before cleanup, verify no worker,
-  then either prove its exact worktree was removed or inspect the specific non-blocking defer reason.
-- Run `alt prune --dry-run` twice and prove it is read-only and stable.
-
-### Deletion gate
-
-After a release shows completion independent of cleanup and all retained artifacts are visible to
-the operator, delete ancestry/squash heuristics and generic cleanup-to-global-fault call sites. Keep
-the final exact ownership/worker/dirty checks; simplification is never permission for broader
-deletion.
-
-Stop on any ambiguous ownership, any cleanup-triggered global hold, any lost transcript/evidence, or
-any difference between dry-run targets and the later revalidated target set.
-
-## Phase 7 — canonical projections, sessions, transcripts, and product surfaces
-
-Only after task, publication, fault, and recovery facts are canonical should the API, CLI, prompts,
-and UI stop exposing the old mechanisms. This phase also removes optional telemetry and dead product
-surfaces whose failures currently participate in operations.
-
-### Exact changes
-
-1. Build overview, project, task, monitor, incident, and transcript read models from the canonical
-   command records. Server handlers, CLI status, `STATE.md`, briefs, and React use the same typed
-   projection library. `STATE.md` remains a regenerable prompt cache, never authority.
-2. Make Chat the only high-level L3 intake and Task the direct L2 conversation. Remove direct web
-   and public CLI task creation, manual dispatch, project approval controls, and any generic action
-   endpoint that bypasses the application command layer. Preserve project registration/removal with explicit
-   confirmation, task steering, merge holds, transcript viewing, archive/evidence inspection, and
-   operator recovery controls.
-3. Make `l3.json.sessions[provider]` the sole L3 provider-session map. Import old top-level/current
-   session mirrors once, retain genuine separate provider continuity, and provide only bounded human
-   chat handoff on a provider change.
-4. Consolidate quota/availability and worker liveness into the operational projection while
-   preserving raw provider observations needed for weekly-first routing. Delete model-edit counts,
-   edit-count hooks/files/readers, raw-agent fields that do not support ownership, the dead
-   statusline-install endpoint, digest Markdown/audio/TTS, its timer, and unused web audio hooks.
-   Presentation/telemetry failure is advisory.
-5. Remove obsolete helper PR fields/parsing and keep helper patch/findings/parent-generation facts.
-   If D3 selects native provider helpers later, treat that as a separate migration with equivalent
-   scope, status, and sole-publisher evidence; do not mix helper contracts in this core cutover.
-6. Apply D2 to transcript retention. Live opt-in viewing, generation fencing, redaction, boundary
-   snapshots, validation, and portable audit remain. A finite/operator-managed retention choice is
-   implemented only for archived evidence and never as part of task cleanup.
-7. Apply D7 in one slice. If Inbox is an acknowledgement queue, add a canonical acknowledged/archive
-   lifecycle and migrate its durable entries. If it is a read model, derive decisions/recent FYIs
-   from canonical events and remove `inbox.jsonl`/unused `seen` state. Do not keep both.
-8. Simplify CLI/internal commands after every caller uses application commands. Public operator and
-   worker commands keep their stable semantics; scheduler/poll/verify/raw-engine operations move to
-   an explicit internal/debug namespace and cannot become a second mutation authority.
-
-### Data migration and compatibility
-
-- Import L3 session mirrors per provider with stable session ids and last-handled human-chat cursor.
-  A conflict between two purported canonical sessions blocks that project's migration.
-- Regenerate projections from canonical task/publication/incident records and compare them to old
-  views. Differences in derived formatting are allowed; missing active tasks, decisions, merge
-  holds, findings, provider limits, or recovery state are not.
-- Historical digest/audio/edit-count/statusline artifacts are inventoried, then treated as
-  disposable only after Burak's retention decision; they are never copied into canonical state.
-- Old transcript schema versions retain explicit read/validate support according to D2. Unknown
-  versions remain private opaque evidence rather than being discarded.
-- Existing project approval is not silently converted into a permanent merge policy. Historical
-  task merge holds remain audit evidence; removed project-level approval is reported in preflight.
-
-### Tests and real acceptance
-
-- Contract-test each read model against API, CLI, prompt, and UI consumers. A canonical fixture must
-  render the same active task, decision, merge hold, fault scope, quota status, and publication
-  receipt everywhere.
-- React route tests cover the primary flows: start in Chat, L3 creates a task, open Task, steer the
-  exact generation, inspect merge/decision/FYI, opt into live transcript, inspect Monitor/recovery,
-  and register/remove a project. Assert removed New Task/Dispatch/approval/digest/audio controls are
-  absent.
-- Switch a real L3 conversation Claude -> Codex -> Claude and prove separate resumable provider
-  sessions plus bounded missed-human-message handoff, with no tool-log replay or fabricated resume.
-- Trigger removed TTS/edit/digest and statusline-install-HTTP equivalents and prove no timer, route,
-  hook fault, file write, or recovery episode exists. The retained quota statusline hook continues
-  to feed routing. Static consumer search must be empty before deletion.
-- Validate/export old and new transcript fixtures, kill at each promised snapshot boundary, and
-  prove secrets/capabilities are absent. Apply the selected archive retention only in a copied home.
-- Exercise the selected Inbox behavior end to end, including acknowledgement/archive if retained or
-  deterministic event-derived disappearance if removed.
-
-### Deletion gate
-
-After one soak release shows zero old-session/view/endpoint/field readers, delete L3 session mirrors,
-duplicate server/status projections, direct web task/dispatch routes, project approval, digest/TTS,
-edit telemetry, dead statusline HTTP code, obsolete helper PR data, and the D7-rejected Inbox path.
-Retain audit-only readers explicitly required by D2 and the migration receipt.
-
-Stop if a primary workflow requires a removed bypass, a provider session is collapsed or guessed,
-a UI projection can disagree with trusted command state, a transcript promise is weakened without
-the D2 decision, or optional observability can still actuate recovery.
-
-## Phase 8 — optional Claude authority replacement
-
-This phase runs only if D4 selects replacing Claude's current authority boundary. The recommended D4
-choice is to defer it: keep the shell guard and trusted backend checks, while Phase 2 already
-normalizes terminal outcome settlement. The guard is complex, but removing it before an equivalent
-boundary is proved would weaken enforcement.
-
-### Exact changes
-
-1. Record the precise approved D4 replacement and its threat model. It may be OS/filesystem
-   containment, or a smaller allowlisted command wrapper plus trusted backend authority; do not
-   assume Codex-identical sandbox internals. Phase 2's process-unit ownership/empty proof remains in
-   either design.
-2. Persist a new `control_contract_version` on fresh dispatch. The trusted broker applies the same
-   untrusted outcome semantics, while provider-specific launch, resume, authentication, transcript,
-   usage, and process observation remain explicit.
-3. Keep Git's protected-reference hooks and backend provenance/merge checks. They protect operator
-   and non-model Git paths too and are not replaced by model containment.
-4. Remove only the authority made unnecessary by the approved replacement. If OS containment is
-   selected, strip direct mutation capability, service-session bus, ambient credentials, and the
-   shell guard. If an allowlisted wrapper is selected, retain the minimal required credential/auth
-   path and prove the backend still owns every durable/Git effect. Passive telemetry remains optional
-   and evidence-only.
-
-### Compatibility and deletion gate
-
-Old Claude tasks are pinned to their prior contract. Before the selected authority cutover, either let them
-finish under a release that still contains the old guard/backend or explicitly stop and redispatch
-them as a new attempt. Never resume a direct-control session after deleting its guard.
-
-If D4 remains deferred, retain `hooks/guard.py`, its tests, and its settings wiring and mark this
-phase deferred; they are accepted provider-specific safety complexity, not dead code. If D4 is
-approved, run shadow evaluation only on inert recorded commands; it must not accept effects. After
-selected-boundary Claude dispatch, resume, helper, publication, blocking, and cancellation E2Es pass
-and the manifest shows no active prior-control task, delete only the guard/session/parser/direct
-routes made redundant by that selected boundary. Retain `reference-transaction`, `pre-push`, and
-trusted backend validation; keep pre-commit/pre-merge hooks if their remaining early feedback is
-worth their small cost.
-
-### Tests and real acceptance
-
-- Run the adversarial suite required by the recorded D4 threat model. OS containment must cover
-  state/Git-common writes, host PID/signalling, nested escape, DBus/service control, credentials,
-  network, malformed action, stale identity, and output before the process unit is empty. A smaller
-  wrapper must prove command/parser bypass resistance plus backend-only Git/state/service effects;
-  both designs prove descendant ownership and empty process unit.
-- Real E2E on each provider: fresh L2, Burak steering/resume, optional L1, PR/check/merge, archive,
-  transcript validation, and containment-empty proof.
-- Crash the broker after worker exit and replay the inert action; prove idempotent finalization.
-- Explicitly attempt `make restart` and `systemctl --user restart altitude` from both worker types;
-  the selected boundary must deny them and the backend must have no lifecycle action to honor.
-
-Stop if Claude requires broader filesystem/process/service authority than the declared adapter, if a
-legacy task can be resumed without its legacy enforcement, or if provider-neutral broker behavior
-diverges for the same action.
-
-## Phase 9 — remove compatibility code and simplify the active documentation
-
-This phase contains no new behavior. It is a deletion release after all accepted prior gates are
-satisfied; explicitly deferred D3/D4/D5 alternatives retain the protections their decisions require.
-
-Delete:
-
-- path-overlap L2 scheduling and broad-claim heuristics;
-- checkout self-deploy/publication settlement; delete web-only rollback only if D5's selected
-  versioned-release mechanism replaces it;
-- generic model retry for infrastructure/transaction outcomes;
-- v1 recovery attention, repair, duplicated project holds, and operational dependence on mutable
-  incident Markdown;
-- automatic complex cleanup and cleanup-triggered global faults;
-- Claude's direct-control shell parser and routes, only if optional Phase 8 was approved and completed;
-- active mutation/resume compatibility readers whose counters remained zero for the required soak;
-- migration-only preflight write modes/importers, shadow counters, temporary format selector, and
-  migration-hold branches after all current state is canonical and receipts are retained.
-
-Keep:
-
-- atomic state writes and project/control/launch locks;
-- task dispatch/session/worker/capability identity fences;
-- isolated worktrees, task provenance, protected Git refs, PR checks, merge holds, and trusted
-  landing;
-- Codex containment, all-provider empty-process-tree proof, inert broker actions, and transcript audit;
-- one active L2 per repository and bounded L1/reviewer children;
-- typed scope/outcome handling, one canonical recovery episode, one autonomous recovery L2 maximum,
-  one-at-a-time durable attention with capped backoff, objective clearance, and clearance history;
-- the canonical DeploymentRecord/activation receipts, operator-only exact-SHA activation, full health verification, honest
-  failure reporting, and the rollback guarantee selected in D5;
-- conservative exact cleanup and durable historical evidence.
-
-Retain isolated versioned read-only decoders required by the selected archive/transcript retention
-policy. They are audit tooling, not active compatibility: dispatch, resume, commands, settlement,
-recovery, and normal projections may not import them.
-
-Update `README.md`, `docs/ARCHITECTURE.md`, `docs/SESSION_LIFECYCLE.md`, schemas, personas, CLI help,
-and operational runbooks in the same deletion release. Superseded designs remain in Git history and
-legacy evidence remains available through the audit reader; the active docs describe only the
-reduced architecture.
-
-## Cross-phase acceptance matrix
-
-No phase is complete on unit tests alone. The following matrix is the minimum release evidence.
-Until the Makefile is consolidated, every implementation PR runs at least:
-
-```sh
-make test
-(cd web && pnpm install --frozen-lockfile && pnpm test && pnpm build)
-git diff --check
+> This plan is executable only after the decisions in `05-review-ledger.md` are recorded. A phase is
+> complete only when its replacement is active, its superseded writer is deleted, its tests pass,
+> and its architecture documentation describes the behavior that actually shipped.
+
+## Completion contract
+
+The refactor is not complete because code moved or a new abstraction exists. It is complete only
+when all of the following are true:
+
+1. Each durable fact and external effect has one named owner.
+2. Every model/provider boundary produces untrusted data; trusted code verifies effects.
+3. One logical L2 owns a task; every physical owner/helper process is fenced and provably stopped.
+4. A code change reaches `main` only through a reviewed PR and mechanically observed checks.
+5. Merge, deployment activation, recovery, and cleanup are separate lifecycles.
+6. No active reader or writer interprets both v1 and v2 task/recovery state.
+7. Failure at every documented crash boundary has a deterministic replay or safe refusal.
+8. The final production surface is measurably smaller than the 2026-09-02 baseline.
+
+The recorded baseline is:
+
+| Surface | Baseline |
+| --- | ---: |
+| Runnable backend, CLI, hooks/guard, and restart tool | 10,695 lines |
+| Non-test web source | 2,683 lines |
+| Web build/config source | 157 lines |
+| Total permanent runnable source | 13,535 lines / 52 files |
+| Personas, schemas, and templates (reported separately) | 496 lines / 13 files |
+| Python tests | 10,258 lines / 54 files |
+| Web tests and harness (reported separately) | 1,097 lines / 10 files |
+| Service/CI/build support outside runnable-source count | 134 lines / 3 files |
+| Baseline checks | 489 Python tests; 39 web tests; production web build |
+
+Final budgets are hard review gates:
+
+- no more than **12,180 permanent runnable lines** (at least 10% net reduction);
+- no more than **9,000 backend/CLI/hook/restart lines** (at least 15% reduction);
+- no more than **47 runnable production files** and **25 permanent named artifact families**;
+- no more than **400 persona/schema/template lines in 10 files** and no more than **250
+  service/CI/build-support lines in 3 files**; these categories cannot absorb runnable complexity;
+- exactly one mutation authority per domain, no more than six mutable control authorities, and
+  exactly six closed durable operation kinds;
+- no new long-lived daemon/permanent service, timer loop, database, workflow DSL, plugin registry,
+  or production dependency; counted transient per-turn process units are permitted;
+- tests may grow and are reported separately; deleting tests to meet a production budget is forbidden.
+
+An artifact family is one independently named persisted path/schema pattern with its own lifecycle or
+reader/writer. Mirrors and caches count if runtime code persists/reads them; multiple files inside
+one provider-worker or transcript bundle count once when they have one lifecycle. Generated
+`web/dist`, dependencies, bytecode, screenshots, external provider-native stores, and the existing
+supervisor-owned system journal do not count; explicitly named per-turn disposable scratch such as
+`l3-codex-runtime/` also does not count because it is recreated and has no durable reader after the
+turn. Altitude-owned TLS material does. The task-record/archive
+bundle is one family because live v2 and immutable legacy task shapes share the same terminal archive
+and operator-deletion lifecycle, even though the legacy decoder is isolated and read-only.
+The baseline families are enumerated, rather than inferred differently per PR:
+
+```text
+projects; project/publication/resume locks; recovery-hold; recovery-clearances; restart-pending;
+global incidents; monitor faults;
+quota/statusline/usage observations; hook-fault drain; edit counts; live-worker cache;
+project STATE; project events; project inbox; project hold; project incidents/Markdown; Claude settings;
+L3 sessions; L3 chat; L3 actions; issue drafts; task status; request; brief; conversation;
+task events; issue snapshot; report; task digest; progress; task Claude settings; helper bundle;
+Codex worker bundle; transcript bundle; worktree/ref/provenance; report.md compatibility; global
+digest/audio; runtime hooks directory; service log; TLS material
 ```
 
-It must also pass required remote Python and web test/typecheck/build checks against the exact candidate
-head/base pair. After the Makefile consolidation, one documented top-level target must run the same
-Python, web-test, typecheck/build, and formatting gates; removing a command is not a simplification
-unless the replacement demonstrably covers it.
+The target families, using the same rule, enumerate and are capped at exactly 25:
 
-| Capability | Automated gate | Real acceptance gate |
-| --- | --- | --- |
-| State and locks | full Python suite; multiprocess race/fault injection; copied-home migration fixtures | manifest/task counts match before and after activation |
-| Normal code path | broker, provenance, scope, PR-pair, idempotence tests | L3 -> L2 -> checks -> PR -> merge -> archive; no service mutation |
-| No-code path | unchanged-branch proof and stale identity tests | small research task completes with no commit/worktree change |
-| Resume/steering | operation-journal kill/race tests for both providers | Burak message replaces physical worker with a new generation while logical task ownership stays fenced |
-| Helpers | parent commit, sublease, patch, and containment tests | one bounded L1/reviewer result returns only to its L2 |
-| Fault scope | exhaustive typed mapping and unknown-boundary tests | local fault leaves unrelated project running; global fault closes launch gate |
-| Recovery | episode model/property tests; serialized capped-backoff retry; one-task-ever tests | one mechanical and one delegated episode; no recursive task/restart |
-| Cleanup | compare-and-delete and adversarial ownership tests | archive/transcript survive; exact worktree removal or safe defer |
-| Deployment | detached candidate, gate, idle, stop-before-swap, health, failed-state, and selected D5 tests | authorized new-PID activation plus the selected failure/revert or full-rollback drill |
-| Process/security boundary | all-provider process-unit tests; Codex adversarial suite; D4-selected Claude suite if approved | real task per enabled engine and no remaining worker/process unit |
+```text
+projects; synchronization locks; operational holds; recovery episode/embedded transition;
+recovery clearances; incidents;
+deployment/maintenance/activation; quota observations; L3 sessions/embedded turn; L3 chat;
+project events; issue publication operation; task record/archive bundle with embedded owner+settlement; request/snapshot;
+generation briefs; task conversation; task events; worker bundle; outcomes; helper bundle; receipts;
+progress; transcript bundle; worktree/ref/provenance; TLS material
+```
 
-For each real E2E, retain a private acceptance receipt containing activated source SHA, project/task,
-dispatch/action ids, PR/merge SHA when applicable, old/new PID for deployment, containment result,
-assertions, and timestamps. Do not put transcript contents, credentials, or private incident detail in
-the receipt.
+If a preserved invariant makes a numeric budget impossible, the PR must identify the exact
+invariant, rejected smaller design, and adjusted number. Silence is failure, not approval.
 
-## Final completion criteria
+## Non-regression properties
 
-The reduced architecture is complete only when all of the following are true:
+Every PR must preserve these properties unless the PR explicitly replaces them with a stronger,
+tested owner:
 
-- the running service reports the exact activated source SHA and web-bundle hash; if D5 selects
-  versioned releases, it also proves all source-controlled assets come from that immutable release;
-- a merge can only add a pending DeploymentRecord contribution, and only an authorized operator activation
-  can change the source SHA loaded by the running service;
-- each repository admits one active L2, while declared paths serve publication scope rather than an L2
-  concurrency algorithm;
-- all trusted boundaries return typed effect results/scopes and the legacy generic-fault/retry counters are zero;
-- global recovery has one canonical episode, one-at-a-time durable L3 supervision with capped
-  backoff and visible escalation, one recovery task ever, no recursive origin, and no
-  service-lifecycle capability;
-- all active workers use a supported persisted control contract, and no removed contract can be
-  resumed;
-- cleanup is outside task correctness and can only remove an exactly proven owned artifact;
-- active mutation/resume compatibility readers report zero use for a complete soak release and
-  deletion gates have been recorded; isolated audit decoders are outside active paths and the
-  selected D5 revert/full-rollback path remains available and tested;
-- the full automated suite, web suite/build, multiprocess races, both recovery E2Es, normal task E2E,
-  enabled-provider E2Es, and the selected operator failure-plus-revert or full-rollback drill all pass.
+- protected branches, task provenance, worktree isolation, scope validation, and merge holds;
+- stale-generation rejection for messages, outcomes, helpers, and publication;
+- fail-closed Codex containment and existing Claude guard/backend validation;
+- weekly-first provider routing; unknown telemetry is uncertainty, not exhaustion;
+- exact transcript access checks and credential-shaped redaction;
+- private durable incident evidence and a launch fuse for uncertain shared-safety faults;
+- operator authorization for planned source activation/restart;
+- GitHub issue hydration before dispatch and explicit authorization for issue publication;
+- one active top-level L2 per repository; optional helpers remain children of that owner.
 
-If any criterion is not met, leave the required audit decoder and prior deployable source available,
-stop at the last proven phase, and record the failed gate. Do not compensate by adding another
-timer, recovery task, state mirror, or automatic restart.
+Normal systemd restart-on-crash remains allowed self-healing. Planned activation is different: the
+activation runner suppresses restart loops until candidate health succeeds. A source merge never
+restarts or updates the installed checkout by itself.
+
+## Change and review protocol
+
+Each implementation PR must contain:
+
+1. the single module/responsibility being changed and the S/D decisions it implements;
+2. its canonical owner before and after;
+3. the old writer/reader/artifact deleted in that PR, or the exact immediately following deletion PR;
+4. focused unit and crash-boundary tests plus the full applicable suites;
+5. before/after production and artifact counts;
+6. active architecture-document changes in the same PR;
+7. an independent reviewer who did not implement the PR; and
+8. a written disposition for every blocker/important review finding before merge.
+
+Preparatory contracts may merge dormant only when they have no writer and no behavior branch. Once
+a writer switches, the old writer is removed immediately. A read-only compatibility projection may
+survive one release if it is labeled derived, has a counter, and has a named next deletion PR.
+
+The merge order below is dependency order. Non-overlapping implementation and review may run in
+parallel, but dependent branches rebase on the actually merged predecessor before final validation.
+
+## Phase 0 — decisions, manifest, locks, and durable primitives
+
+### PR 0A: approve one architecture
+
+- Record D1-D7 and S01-S15 in `05-review-ledger.md`.
+- Amend `02-proposed-architecture.md` and this plan until all reviewed contradictions are removed.
+- Replace the active architecture documents when the first behavior PR merges; do not leave two
+  normative architectures in the active tree.
+- Retain the detailed current-system inventory as non-normative migration evidence only.
+
+### PR 0B: runtime manifest and preflight
+
+Add a read-only manifest reporting exact source SHA, supported state versions, web-bundle hash,
+service unit identity, and build version. Add an offline preflight that reads a copied
+`ALTITUDE_HOME`, inventories active/archived state, reports unknown shapes, and never mutates.
+
+The preflight records:
+
+- active tasks by state and physical worker/provider identity;
+- active recovery episode/holds and incident identities;
+- every legacy artifact family and active consumer count;
+- production lines/files, writer call sites, timer paths, mutation endpoints, and dependencies;
+- installed checkout, remote main, loaded source, unit, and web bundle identity.
+
+Unknown active state blocks every later cutover. Unknown archived state stays accessible only through
+an isolated read-only archive decoder; it is never imported by active dispatch/resume/settlement.
+
+### PR 0C: lock order and durable I/O
+
+Define one lock order before adding any writer:
+
+```text
+activation/maintenance -> recovery -> project -> task -> operation -> Git publication
+```
+
+No reverse acquisition is allowed. Tests deliberately contend every adjacent pair.
+
+Replace scattered JSON/JSONL writes with two small primitives:
+
+- atomic replace: write, fsync file, rename, fsync parent directory;
+- keyed append: under the owner lock, validate the final JSONL record, truncate only a partial final
+  record, append one newline-delimited record, fsync, and deduplicate/reconcile by stable id.
+
+Every local authoritative transition writes state first with a stable transition envelope. The
+audit projection is appended second and reconciled before the next mutation. Event-first is
+forbidden. Power-loss durability is claimed only after the fsync tests pass on the supported
+filesystem; otherwise the documented guarantee is process-crash durability.
+
+### PR 0D: dormant boundary contracts
+
+Define and test the closed, writer-free contracts required by later moves: `WorkerOutcome`,
+publication scope, task/operational projection, provider quota observation, and application-command
+result. Define the versioned JSON task/operational wire fixtures here as well: Python validators own
+the producer schema and the existing TypeScript runtime validator has an explicit matching schema.
+They are dormant types, validators, and fixtures only—no adapter, state writer, or behavior selector
+may branch on them in this PR. Later PRs adopt each contract and delete its superseded shape in the
+same increment.
+
+### PR 0E: exact-candidate web CI
+
+Before any web behavior changes, extend remote CI to run web test, typecheck, and production build
+against the exact sanitized candidate. Preserve `pull_request_target` base ownership, exact
+base/head validation, same-repository-only candidates, read-only permissions, pinned actions,
+`persist-credentials: false`, no secrets/tokens, isolated HOME/state/cache, and `/usr/bin/env -i`
+with a narrow Node/pnpm environment. Static workflow contract tests fail if any boundary regresses.
+
+### Phase 0 gate
+
+- Baseline tests pass: 489 Python, 39 web, typecheck/build.
+- Preflight run twice on a copied home is byte-for-byte stable and changes no input.
+- Manifest identifies loaded code, not merely mutable checkout HEAD.
+- JSONL kill tests cover partial write, missing newline, duplicate id, and state-before-event death.
+- Dormant contracts reject unknown variants and have zero runtime producers or consumers.
+- Remote Python and web checks execute the same exact sanitized candidate under the static boundary.
+- No runtime behavior changes before these facts are recorded.
+
+## Phase 1 — maintenance gate and independent activation runner
+
+Deployment must be safe before self-deployment is removed. This phase runs while legacy self-deploy
+still exists.
+
+### PR 1A: one maintenance gate and minimal deployment authority
+
+Create the minimal per-service `DeploymentRecord` first. It owns the maintenance gate and embedded
+activation operation; it is not introduced later by publication work. Seed its baseline only from
+mechanical evidence: an active service manifest may establish `activated_sha`; a stopped or
+unverifiable service starts with `activated_sha=null` and requires a successful first activation.
+Import any legacy restart-pending marker as bounded `legacy_pending` evidence/blocker, never as a
+launch fence or a qualified contribution.
+
+Add the one durable maintenance/activation gate checked by every current mutation and model-entry path:
+
+- HTTP and CLI mutations;
+- L3 chat/turn start;
+- L2/L1 fresh launch and resume at the final process boundary;
+- worker outcome/settlement/publication;
+- issue creation;
+- recovery changes; and
+- timer dispatch, cleanup, transcript snapshots that mutate, and status regeneration.
+
+Read-only API/health/manifest calls remain available. Gate acquisition stops new intake, disables
+timers, waits for current operations, L3 turns, and all worker/helper units to reach a durable empty
+boundary, then writes an acknowledgement. It never guesses from task labels alone.
+When the service is already stopped, the operator path may acknowledge only after systemd inactivity,
+empty known process units, and no in-flight operation records are mechanically proved.
+
+The new service starts behind the same gate in health-only mode. Mutations/timers enable only after
+the activation receipt is durable and the gate is released.
+
+### PR 1B: detached latest-main activation
+
+Install and exercise the complete activation runner before changing merge behavior. The runner is
+independent of the installed candidate: a stable bootstrap entry point fetches a detached exact
+checkout of the latest verified `origin/main`, runs that candidate's preflight/tests/build, and then
+passes explicit installed-checkout and state-home targets to the candidate deploy tool.
+
+The default deliberately activates the latest verified remote main. It does not claim candidate
+`C` and later install it after remote main advances to `D`; removing that feature avoids a special
+protected-ref capability and a second pending-order policy.
+
+The fixed activation stages, stored inside the already-created `DeploymentRecord`, are:
+
+```text
+claimed -> gate_acknowledged -> candidate_resolved -> candidate_built -> remote_revalidated
+        -> restart_policy_suppressed -> old_service_stopped -> source_assets_installed
+        -> candidate_started_health_only -> verified -> verification_recorded
+        -> restart_policy_restored -> activation_recorded -> complete
+        -> failed_released (only before old_service_stopped; old service/source unchanged)
+        -> failed_held (from old_service_stopped onward; retaining evidence and gate)
+```
+
+The runner:
+
+1. claims the activation attempt, acquires the maintenance gate, and proves acknowledgement;
+2. fetches/resolves the then-latest verified remote main and records hashes/old PID;
+3. prepares detached source, web bundle, service unit, and compatibility proof without importing
+   the installed candidate's Altitude package;
+4. refetches immediately before source change and restarts bounded resolution/build if remote main no
+   longer equals the recorded candidate; after `remote_revalidated`, a later external merge is
+   pending for the next activation because the gate blocks Altitude publication but never claims to
+   control all GitHub writers;
+5. temporarily suppresses systemd restart loops for this activation attempt;
+6. stops the old service and proves its cgroup empty;
+7. fast-forwards the clean installed checkout to the revalidated latest main and installs staged assets;
+8. starts the first health-only generation and verifies PID/start time, source SHA, schema support, API,
+   SPA shell, and bundle hash;
+9. writes pending verification evidence, restores normal crash-restart policy while the gate still
+   forces health-only mode, then atomically records activated SHA, successful receipt/cutovers,
+   contribution satisfaction, enablement, and gate release in one DeploymentRecord replacement;
+10. if the candidate exits after policy restoration but before release, records the bounded systemd
+    restart generation, returns to health-only verification for the new PID, and never releases the
+    gate until the latest generation passes every check; or
+11. before old-service stop, restores its policy, proves old PID/source unchanged, and atomically
+    records `failed_released` plus gate release; from old-service stop onward, leaves the gate held and
+    service stopped when verification or systemd StartLimit is exhausted.
+
+The installed unit and activation receipt fix `StartLimitIntervalSec=120`, `StartLimitBurst=3`, and
+`RestartSec=5`. Immediately before the first candidate start the runner performs and receipts
+`systemctl reset-failed`. Independently, ActivationOperation persists `candidate_generation` and
+allows at most three total candidate generations for the attempt regardless of elapsed time; reaching
+the cap stops the service and records `failed_held`. Fault tests cover reset, each generation, burst
+exhaustion, and slow-spaced crashes beyond 120 seconds.
+
+Forward repair uses a reviewed state-compatible candidate through a documented fallback composed
+only of system Git plus that detached candidate's activation script, even if the installed
+Makefile/imports are broken. No separately installed mutable bootstrap executable or artifact is
+added; normal `make restart` is a convenience that locates and re-execs the detached candidate tool
+before importing Altitude. After any state cutover, a behavior revert
+must retain all selected readers; activation rejects a candidate that cannot read current state.
+
+### Phase 1 tests
+
+- Race every HTTP/CLI/timer/model entry against gate acquisition; no mutation begins after acknowledgement.
+- Kill at every activation stage, including restart-policy changes and receipt/gate release.
+- Deliberately break the candidate Makefile and imports; the stable detached repair path still works.
+- Validate pre-install failure leaves old service/source unchanged.
+- Validate pre-stop failure restores policy and atomically releases the gate as `failed_released`.
+- Validate post-install health failure leaves one held gate, no restart loop, and an exact failed target.
+- Run a disposable full activation E2E; do not use the production service as the experiment.
+
+## Phase 2 — publication and deployment authority
+
+### PR 2A: trusted publication receipt
+
+At the existing landing boundary, write one immutable receipt from mechanically observed Git/GitHub
+facts. Worker reports remain untrusted input. The receipt contains the exact task/generation,
+base/head, scope, commit, PR pair, check verdicts, merge SHA, immutable post-merge observation, and stable
+remote effect id.
+
+Exactly-once remote reconciliation uses queryable markers: task/generation trailers on commits and a
+bounded machine marker in the PR/issue body. Before retrying, trusted code queries the exact
+repository/base/head/marker tuple. Timestamp or title matching is forbidden.
+
+Shadow-compare the receipt with current readers, then move status/archive/cleanup to the receipt and
+delete duplicate trusted report/verified fields.
+
+### PR 2B: extend DeploymentRecord with contribution and qualification
+
+Extend the Phase 1 DeploymentRecord transactionally. A merge contribution and permission to activate
+are different facts:
+
+- every merged publication contributes its immutable receipt and merge SHA;
+- only a successful final qualification marks the contribution deployable;
+- failed main checks, unresolved findings, or a merge hold are activation blockers;
+- a corrective receipt explicitly supersedes the failed receipt without mutating history; and
+- activation refuses unless every contribution between activated SHA and current latest-main target
+  is qualified or explicitly superseded.
+
+Walk the exact first-parent ancestry from `activated_sha` through the candidate. Every commit must be
+covered by a qualified contribution or an immutable operator-provenance receipt stored inside the
+deployment artifact family. An externally written or imported commit is unqualified by default; the
+operator receipt names its exact SHA/range and authorization without fabricating check evidence.
+Bootstrap/import tests cover mixed Altitude and external commits, gaps, rewrites, and conflicting
+receipts.
+
+Import any remaining legacy gap/marker evidence, establish a mechanically verified baseline, and
+refuse activation until that baseline is reconciled. The old `restart-pending.json` is a derived
+compatibility marker, not a launch fence. Delete it in PR 2C after all readers move to DeploymentRecord.
+
+PR 2B also introduces and tests the bounded one-time cutover publisher used by PR 2C. Before PR 2C
+may begin, a separately authorized activation must install this PR 2B release and record its exact
+source/tool hash. The command is available from that installed prior release, is usable only by the
+maintenance-gate owner for the one configured base/head/marker tuple, and has no generic publication
+mode. Its operation is the cutover-publication subtype of the one deployment-transition family,
+embedded in DeploymentRecord and mutually exclusive with source activation:
+
+```text
+claimed -> gate_acknowledged -> pr_revalidated -> merge_observed
+        -> operator_provenance_receipted -> complete
+        -> failed_held (from any pre-complete stage)
+```
+
+Each remote stage stores intent and reconciles the exact repository/base/head/marker before retry.
+
+### PR 2C: last-v1 cutover and self-deploy deletion
+
+No deployment-mode selector is needed. With the service stopped and the maintenance gate
+acknowledged, one explicitly authorized temporary cutover publisher is the gate owner's only allowed
+remote mutation. It revalidates the exact PR/base/head/checks, merges the narrow PR that deletes
+`dispatch.pull_after_done`, scheduler source fast-forward, restart-pending compatibility, and their
+tests/fields **and the temporary cutover publisher itself**, then the still-installed PR 2B command
+writes/reconciles an immutable operator-provenance receipt for the exact merge SHA
+inside the DeploymentRecord artifact family. Regular settlement/publication remains blocked. A
+crash before the receipt is reconciled by the deterministic PR marker and exact merge identity; it
+never repeats the merge or silently qualifies a different SHA. Delete the temporary publisher after
+the cutover receipt is proved; the later activation installs the candidate in which that command is
+already absent.
+
+Before source activation, the installed PR 2B command compacts its completed cutover operation into
+the immutable operator-provenance receipt and atomically clears the active deployment-operation
+field. PR 2C removes the subtype code/schema from the candidate. The final DeploymentRecord accepts
+only source activation; historical cutover truth remains the immutable receipt, not a permanent
+operation variant.
+
+Leave the installed checkout at the already-tested PR 2B release containing the Phase 1 runner and
+the receipted one-time publisher. A later separately authorized
+activation uses that installed runner to fetch, validate, install, and receipt the cutover candidate;
+ordinary systemd `ExecStart` does not substitute for activation.
+
+Test before merge that the new code path changes only receipts/DeploymentRecord and never source,
+assets, units, or service state. After this PR, merge and activation are permanently separate and no
+temporary deployment selector remains.
+
+## Phase 3 — one application-command authority over v1 state
+
+Do not perform a giant command-layer rewrite. Move one command family at a time while the v1 record
+shape remains active. Each PR deletes its old direct writer immediately.
+
+Recommended order:
+
+1. project registration/removal;
+2. task creation, immutable GitHub hydration, and brief creation;
+3. task conversation/steering;
+4. block/resume/reject/merge-hold;
+5. outcome/settlement/publication requests;
+6. fault/hold/recovery changes; and
+7. bounded issue publication.
+
+HTTP, CLI, Claude direct commands, Codex brokers, server timers, and tests call the same in-process
+command. Adapters parse/authorize and return typed results; they never write state themselves.
+Read-only projections may retain v1 response shapes temporarily but cannot actuate behavior.
+
+Each command stores a stable transition id/revision and uses the Phase 0 event reconciliation.
+External effects reference the domain-embedded operation described in the target architecture.
+
+### Phase 3 gate
+
+- Parity tests run every command through all applicable adapters and compare result/state/event.
+- Static inventory proves zero direct writers remain for the migrated family before its PR merges.
+- GitHub/provider kill tests reconcile stable effect ids without another model turn.
+- Public generic `task new` and direct web task creation are removed after L3 intake parity passes.
+
+## Phase 4 — physical process ownership and generation fencing
+
+### PR 4A: Claude go/no-go spike
+
+Prove a foreground Claude transport (`claude --print`/stream JSON or an equivalent supported
+transport) can run wholly inside a deterministic Claude-specific user unit, preserve genuine session
+resume, spool results, and retain current security properties:
+
+- `NoNewPrivileges=yes` unless a reviewed necessity proves otherwise;
+- minimal explicit environment and only required authentication access;
+- current Claude hook/guard and backend capability validation;
+- deterministic stop/kill and descendant-empty proof; and
+- no background job escapes the unit.
+
+If this cannot be proved, Claude remains available only for explicitly operator-invoked read-only
+use; every autonomous or mutating Claude L3/L2/L1/helper role is disabled and Codex remains the
+default. The target must not pretend that a `claude --bg` launcher PID owns the provider's background
+process tree.
+
+### PR 4B: shared worker transitions on v1
+
+Put both providers and every owner/helper process behind one provider-neutral physical record and
+domain-embedded transition with `subject_kind=owner|helper`:
+
+```text
+planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
+```
+
+Intent stores deterministic unit, generation, provider session request, and message/effect id before
+launch. Resume creates a new physical generation even when the provider conversation id continues.
+No next writer starts until the old unit is proven empty.
+
+Recovery tasks also persist `{episode_id, permit_revision}` in their generation. Final launch and
+every trusted message/outcome/publication compare it; renewal creates a new generation.
+
+### Phase 4 tests
+
+- Kill around every owner/helper spawn, bind, message delivery, result, stop, and empty receipt.
+- Race stale/current messages and results; stale capabilities never reach logs, GitHub, or state.
+- Stop an L2 with several helpers; all deterministic units become empty before terminal/archive.
+- Real tiny Codex resume is mandatory. Real tiny Claude L3/L2/helper resume is mandatory only if the
+  feasibility proof enables those autonomous roles.
+
+## Phase 5 — normalized outcomes, settlement, and task v2
+
+### PR 5A: adopt normalized outcomes and settlement on v1
+
+Adopt the strict untrusted `WorkerOutcome` variants introduced dormant in PR 0D and add the fixed
+settlement operation while current task records remain authoritative. Settlement owns verification,
+commit, push, PR, checks, merge,
+post-merge qualification, publication receipt, DeploymentRecord contribution, attention, and archive.
+Every external stage stores intent then observed receipt and reconciles by deterministic target.
+
+Helper continuation references child worker transitions and returns `settling -> running` with a new
+owner generation. A post-merge correction creates a new branch/base/publication attempt in the same
+logical task. It never spawns a recursive healing task.
+
+### PR 5B: gated drain and one-shot task cutover
+
+Before gate acquisition, land dormant v2 API/UI/read-model consumers and prove them against fixed
+fixtures while v1 remains authoritative. They must have no active selection branch yet. The cutover
+then switches every active task reader and writer together under the gate; there is no release in
+which fresh v2 tasks exist behind v1-only consumers.
+
+Acquire and acknowledge the maintenance gate before the final emptiness proof and keep it through
+candidate health-only start/format switch. Before switching:
+
+- finish and archive a v1 task; or
+- stop every owned process, preserve useful work in a GitHub issue/branch, and reject it.
+
+Stop the old service and recheck that no active/resumable v1 task, operation, or helper remains.
+Fresh active tasks then use only
+`task.json` schema v2. Archived `status.json` tasks stay immutable audit evidence through a
+read-only decoder; active code cannot import that decoder. There is no `state-formats.json`, dual
+writer, migration-hold selector, or translated live owner.
+
+The v2 task states are `queued | running | settling | blocked | done | rejected`. `done` and
+`rejected` carry canonical terminal actor/time/reason or result receipt. Moving a terminal directory
+to archive changes storage only, never lifecycle truth.
+
+Before source change, the embedded activation operation records a task-domain cutover intent with
+old/new schema, the empty-domain proof, and candidate SHA. After the health-only candidate proves the
+new reader/writer set, `activation_recorded` appends the immutable task cutover receipt to that same
+ActivationReceipt. A crash before the receipt leaves the gate held; replay reconciles installed SHA,
+PID, health-only mode, and domain emptiness before emitting it or fails closed. The receipt is audit
+evidence, not a runtime format selector.
+
+### PR 5C: delete dead v1 task paths
+
+Remove the already inactive v1 readers, report/verified/reported/dispatching stamps,
+compatibility writers, and obsolete tests. Retain only the isolated archive decoder selected by the
+retention decision.
+
+### Phase 5 tests
+
+- Kill settlement before/after commit, push, PR creation, checks, merge, qualification, publication
+  receipt, deployment contribution, terminal state, attention, and archive.
+- Failed qualification blocks activation until a mechanically linked corrective receipt supersedes it.
+- Reject while owner/helpers exit; archive only after all units are empty.
+- No-code completion refuses a changed worktree.
+- Unknown v2 state refuses before any provider/network effect.
+
+## Phase 6 — concurrency, intake, routing, and scoped faults
+
+### PR 6A: repository WIP one
+
+Set top-level repository WIP to one. Remove predictive scheduling leases, natural-language path
+expansion, broad-path suppression, and resume ordering. Paths remain normalized publication scope.
+Optional helpers may run concurrently only under the owning L2's disjoint subscopes.
+
+A blocked ordinary task retains the repository slot. Recovery may preempt it only after its
+settlement is stable and all owner/helper units are empty; the task becomes
+`blocked(kind=preempted_by_episode)` and rebases through a new generation after clearance.
+
+### PR 6B: intake and routing
+
+- Hydrate GitHub issues once before queueing; immutable snapshot absence fails intake.
+- Unknown quota remains eligible uncertainty and chooses the configured default.
+- Actual launch/quota failure holds only that provider and may route a new generation elsewhere.
+- Persist the selected observation plus policy version/hash, not a mutable reserve policy in tasks.
+- Weekly comparable allowance is primary; short windows are availability gates.
+
+### PR 6C: typed boundary results and non-global holds
+
+Map every current fault caller to closed effect-result and blast-radius enums. Begin conservatively:
+unknown classifications remain global until characterized. Move task/project/provider holds to one
+canonical registry only when their race tests pass. The move is an activation-owned atomic cutover
+under the acknowledged gate with the old service stopped: preserve every active hold's stable id,
+scope, retry evidence, and revision; write/reconcile the import before enabling the new writer;
+record counts/hashes in the ActivationReceipt; and delete every old writer in that same increment.
+Kill/replay proves no lost, duplicate, or briefly absent hold. Observability/cosmetic failures never
+actuate a hold.
+
+## Phase 7 — recovery v2 and incident evidence
+
+Cut over only as a planned activation under the acknowledged maintenance gate, with the old service
+stopped and no active v1 recovery episode or recovery task. Recheck emptiness after stop. Clear/close
+the existing episode through current verified rules first; do not translate a live supervisor or
+permit a v1 fault writer to race the switch.
+
+Use the same activation-owned cutover contract as Phase 5: persist recovery-domain old/new schema,
+empty-episode proof, and candidate SHA as intent before source change; after health-only verification,
+append the immutable recovery cutover receipt inside the ActivationReceipt. Crash replay reconciles
+installed SHA, health-only PID, and domain emptiness while the gate remains held. No active reader
+consults the receipt to select a format.
+
+The v2 episode persists immutable `episode_id`, `supervisor_project`, revision, fault/evidence refs,
+state, optional current repair task, waiting reason, one logical wake id per revision, the current
+physical claim if any, attempt, and durable capped-backoff `retry_at` with no total-attempt cap.
+Opening a global fault is safety-first:
+
+1. reserve a stable evidence id;
+2. atomically write `recovery.json` first with bounded inline evidence and
+   `incident_append_pending`—this is the launch-fuse linearization point;
+3. append/reconcile the keyed incident row; and
+4. clear the pending marker.
+
+Incident identity is a new UUID with `(project_id, legacy_incident_id)` as a display alias. The
+offline importer runs while stopped behind the acknowledged gate, preserves Markdown/amendment
+history, and refuses conflicting base records. Each stable legacy alias is imported by the Phase 0
+keyed idempotent append (or one atomic staged replacement before any v2 writer is enabled). Counts,
+source hashes, and final ledger hash are recorded in the recovery cutover receipt. Kill/replay at
+every row and before/after the receipt neither loses nor duplicates evidence.
+
+Recovery behavior is direct:
+
+- trusted probes/reconciliation run before a model;
+- one persisted supervisor project receives one L3 wake per episode revision;
+- only one physical claim may own that logical wake; abandoned-claim reconciliation preserves the
+  wake id, advances capped backoff, and cannot complete unobserved work;
+- L3 performs operational recovery and may claim exactly zero or one recovery L2 ever per episode;
+  failure, rejection, archive, new evidence, or supervisor replacement never reopens that slot;
+- code repair uses normal L2 ownership/PR/check rules plus episode permit revision;
+- no incident creates a task, rule, persona, or another incident;
+- `waiting_operator` runs only cheap mechanical probes; it does not spend model quota until Burak
+  input, new evidence, or a deployment receipt changes the revision;
+- clearance is a keyed embedded operation: receipt is reconciled, then active episode is removed.
+
+After real deterministic, provider outage/reroute, task defect, and global safety E2Es pass, delete
+legacy recovery attention retries, duplicate project holds, incident indexes, and compatibility
+readers.
+
+Kill tests cover task-claim intent/create/finalize, a failed or rejected first recovery task, new
+evidence after the slot is spent, recursive recovery-origin fault refusal, logical-wake claim and
+abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clearance receipt/removal,
+runtime incident append, every legacy incident import row, and cutover-receipt reconciliation. Every
+case retains one episode, one physical wake claim at a time, and no more than one repair task.
+
+## Phase 8 — product surfaces and conservative cleanup
+
+### PR 8A: one wire contract and projections
+
+Adopt and consolidate the versioned JSON wire schemas introduced dormant in PR 0D. Python produces
+them; TypeScript validates them with its existing runtime validator. There is no fictional
+cross-language library or generated mutable authority. Status, CLI, API, briefs, and UI are read-only
+projections from canonical records.
+
+Chat remains the L3 high-level surface. Task remains direct L2 steering plus opt-in exact transcript.
+Remove direct task creation/manual dispatch, duplicate message endpoints/composers, digest audio,
+write-only edit counts, and dead administrative fields/routes.
+
+Remove Inbox as durable state under D7. Decisions/blockers come from typed task attention; recent
+FYIs come from canonical events and disappear from the main active view when their task is terminal.
+
+Remote CI already runs Python tests and web test/typecheck/build against the exact sanitized PR
+candidate from Phase 0. This PR updates only its contract fixtures if the adopted wire schemas require
+it; it does not introduce a later validation boundary.
+
+### PR 8B: cleanup
+
+Terminal settlement no longer performs forensic worktree deletion. A conservative operator
+maintenance command deletes only a clean, owned worktree with an exact merged receipt and proven
+empty process units. Uncertainty leaves the artifact and emits one audit event; cleanup never opens
+global recovery or blocks new work.
+
+### Phase 8 tests
+
+- Contract fixtures fail closed on unknown versions/extra authority fields.
+- Chat/task/live transcript E2Es preserve steering generation checks.
+- Web remote checks run on the exact candidate.
+- Cleanup refuses dirty, unowned, live, unmerged, or ambiguous artifacts without affecting dispatch.
+
+## Phase 9 — final deletion and documentation
+
+Delete every temporary selector, compatibility writer, active fallback reader, superseded persona,
+schema, hook, endpoint, field, test fixture, and proposal instruction that describes rejected
+behavior. Git history is the archive; active context contains one architecture.
+
+Run static searches for every deleted name and report intentional read-only archive-decoder matches.
+Record final production/artifact/writer/timer/dependency counts against Phase 0. Run:
+
+- full Python suite;
+- web tests, typecheck, and production build;
+- all kill/race tests;
+- disposable activation and forward-repair E2E;
+- real tiny Codex L3 -> L2 -> PR/check/merge path;
+- real tiny Claude path only if Phase 4A passed;
+- task defect, provider outage/reroute, and global recovery E2Es; and
+- restart inspection proving no worker/helper/service process remains unexpectedly.
+
+Do not restart the production Altitude service merely because implementation merged. Activation and
+restart remain a separate explicit operator action.
+
+## Stop conditions
+
+Stop the affected phase and do not merge when:
+
+- a reviewer identifies an unresolved blocker or important contradiction;
+- a PR adds a second authority, unlisted operation kind, timer, service, or compatibility writer;
+- current safety is removed before replacement proof exists;
+- a migration would infer a live worker/session/lease identity;
+- a crash test can duplicate a model/GitHub/service effect;
+- a failed or unresolved merge can become activatable;
+- a candidate cannot forward-repair current state;
+- applicable tests or remote checks are not green; or
+- production/artifact counts grow without an explicitly accepted invariant justification.
+
+Rollback before a state writer cutover means revert the behavior PR. After a one-way data cutover,
+rollback means a state-compatible forward repair or behavior revert retaining selected readers; old
+code that cannot read current state is not a rollback option.

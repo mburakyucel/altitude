@@ -1,10 +1,11 @@
 # Comprehensive simplification proposal
 
-> **Status: draft for Burak's review. This is not the active architecture and authorizes no
-> implementation, task creation, service action, or migration.** The active system remains
+> **Status: reviewed and accepted as the implementation target on 2026-09-02.** Three independent
+> adversarial passes found and corrected deployment, crash-consistency, process-ownership, task-state,
+> migration, and surface-accounting gaps. The active system remains
 > [Architecture](../../ARCHITECTURE.md) plus
-> [Engine and session lifecycle](../../SESSION_LIFECYCLE.md). If this proposal is rejected or
-> superseded, remove it rather than leaving agents to reconcile competing instructions.
+> [Engine and session lifecycle](../../SESSION_LIFECYCLE.md) until each behavior PR updates those
+> documents. The migration is authorized; production activation/restart remains a separate action.
 
 ## Purpose
 
@@ -37,8 +38,8 @@ large or a path is inconvenient. Every proposed simplification must identify:
   surfaces, runtime artifacts, docs/design, and test families.
 - [04 - Migration and validation](04-migration-validation.md): phase ordering, migration gates,
   invariants, verification, real end-to-end tests, stop conditions, and rollback.
-- [05 - Review ledger](05-review-ledger.md): cross-cutting proposal IDs, dependencies, consistency
-  checks, unresolved product choices, and the questions a reviewer should answer.
+- [05 - Review ledger](05-review-ledger.md): recorded product/operational choices, accepted
+  simplifications, and mandatory questions every implementation reviewer must answer.
 - [06 - Adversarial review](06-adversarial-review.md): independent challenges to the first draft,
   their concrete dispositions, and the claims that still need reviewer verification.
 
@@ -85,12 +86,14 @@ Archived task -> conservative, non-blocking maintenance/pruning
   equivalent replacement is proved.
 - Publication verifies scope, provenance, the exact PR head/base pair, applicable checks, merge
   holds, and the merge result.
-- Claude and Codex remain supported for L3 and L2, with weekly-first quota routing and no fake
+- Codex remains the default autonomous engine. Claude remains supported only at the authority level
+  proven by the foreground process-unit prerequisite, with weekly-first routing and no fake
   cross-provider resume.
 - Incident evidence remains private and durable. A genuinely unsafe shared condition stops launches.
 - L3 retains operational recovery autonomy and may delegate the active episode's single recovery
   L2. Incidents never recursively generate work.
-- Service restart remains separately authorized. Source work cannot restart or unmask Altitude.
+- Planned/source-changing activation and restart remain separately authorized. Normal supervisor
+  restart after an unplanned process crash is the explicitly selected self-healing exception.
 - Live L2 transcript visibility remains opt-in and never claims hidden reasoning.
 
 ## Main reduction themes
@@ -121,36 +124,33 @@ variants, independent state writers, timer paths, user-visible mutation paths, c
 branches, and external dependencies. Tests and migration evidence are reported separately so adding
 needed verification cannot disguise production growth.
 
-Temporary compatibility code is allowed only with an owner, counter, and deletion gate in
+Temporary read-only compatibility code is allowed only with an owner, counter, and deletion gate in
 [04 - Migration and validation](04-migration-validation.md). A phase that introduces its replacement
 but does not retire the superseded writer at the stated gate is incomplete. The final target must:
 
 - retain one deployed service process and the existing file-backed storage model;
 - have one application-command authority for durable mutations and no direct HTTP/CLI/model writes;
-- have one canonical task record, current owner generation, active operation/settlement journal, publication receipt, global
-  recovery episode, and incident ledger for their respective facts;
+- have one canonical task record with embedded owner/settlement operation, current owner generation,
+  publication receipt, global recovery episode, and incident ledger for their respective facts;
 - have no scheduler-owned deployment, recursive recovery task, predictive top-level path scheduler,
   cosmetic fault actuator, or compatibility writer;
 - have zero active uses of every fallback reader selected for deletion; and
-- show a net reduction in permanent production code and state/artifact families. Any exception must
-  name the preserved invariant and receive explicit review rather than being hidden as refactoring.
+- meet the numeric production, Python, artifact, authority, and operation budgets in the migration
+  plan. Any exception must name the preserved invariant and receive explicit review.
 
-## Review and decision process
+## Implementation and review process
 
-1. Review the target architecture and unresolved choices before approving individual deletions.
-2. Review the component ledger against the target, not against line-count reduction alone.
-3. Resolve the choices in [05 - Review ledger](05-review-ledger.md).
-4. Amend this proposal until it describes one internally consistent target.
-5. If accepted, merge this documentation as the approved migration plan or move its accepted
-   decisions into the active architecture in the same PR. Do not leave two normative architectures.
-6. Create small implementation issues/PRs from the migration phases. A phase is not complete until
-   its old path and compatibility tests are removed.
-7. After the final phase, replace the active architecture documents with the verified behavior and
-   delete/archive this proposal according to the review decision.
+1. Implement the dependency-ordered module PRs in [04](04-migration-validation.md).
+2. Update the active architecture in every behavior PR and delete superseded instructions.
+3. Require an independent code/architecture review and green applicable checks before each merge.
+4. Delete the replaced writer/reader in the same PR or its named immediately paired deletion PR.
+5. Measure every phase against the fixed baseline and final budgets.
+6. After the final phase, retain one concise active architecture and keep this pack only as
+   non-normative migration evidence, or remove it if it causes context ambiguity.
 
 ## Scope and non-goals
 
-This proposal does not implement the refactor, redesign the visual UI, discard the preserved
-wireframes, select a single model provider, weaken Git/PR/containment controls, automatically drain
-the GitHub backlog, or authorize a restart. It is also not a promise to split every large Python file:
-responsibilities are reduced first; file boundaries follow the resulting ownership model.
+This migration does not redesign the visual UI, discard preserved wireframes, weaken
+Git/PR/containment controls, automatically drain unrelated GitHub backlog, or authorize production
+activation/restart. It is also not a promise to split every large Python file: responsibilities are
+reduced first; file boundaries follow the resulting ownership model.
