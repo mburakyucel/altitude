@@ -196,130 +196,74 @@ with a narrow Node/pnpm environment. Static workflow contract tests fail if any 
 - Remote Python and web checks execute the same exact sanitized candidate under the static boundary.
 - No runtime behavior changes before these facts are recorded.
 
-## Phase 1 — maintenance gate and independent activation runner
+## Phase 1 — physical ownership and reconciled external effects on v1
 
-Deployment must be safe before self-deployment is removed. This phase runs while legacy self-deploy
-still exists.
+Maintenance cannot honestly drain work until every process and remote effect has a durable identity.
+This phase advances those prerequisites. It does not add a maintenance claimant, restart the service,
+or change activation behavior.
 
-### PR 1A: one maintenance gate and minimal deployment authority
+### PR 1A: Claude supervision go/no-go
 
-Create the minimal per-service `DeploymentRecord` first. It owns the maintenance gate and embedded
-activation operation; it is not introduced later by publication work. Seed its baseline only from
-mechanical evidence: an active service manifest may establish `activated_sha`; a stopped or
-unverifiable service starts with `activated_sha=null` and requires a successful first activation.
-Import any legacy restart-pending marker as bounded `legacy_pending` evidence/blocker, never as a
-launch fence or a qualified contribution.
+Prove a foreground Claude transport can run wholly inside a deterministic Claude-specific user unit,
+preserve genuine session resume, spool results, retain the current guard/backend checks, stop/kill
+deterministically, and prove its cgroup descendants empty. If the proof fails or cannot run,
+autonomous or mutating Claude L3/L2/L1/helper roles are disabled; explicitly operator-invoked
+read-only use may remain. No drain or process record may infer emptiness from `claude --bg`, a
+provider row, or a stale PID.
 
-Add the one durable maintenance/activation gate checked by every current mutation and model-entry path:
+### PR 1B: one physical transition for every model process
 
-- HTTP and CLI mutations;
-- L3 chat/turn start;
-- L2/L1 fresh launch and resume at the final process boundary;
-- worker outcome/settlement/publication;
-- issue creation;
-- recovery changes; and
-- timer dispatch, cleanup, transcript snapshots that mutate, and status regeneration.
-
-Read-only API/health/manifest calls remain available. Gate acquisition stops new intake, disables
-timers, waits for current operations, L3 turns, and all worker/helper units to reach a durable empty
-boundary, then writes an acknowledgement. It never guesses from task labels alone.
-When the service is already stopped, the operator path may acknowledge only after systemd inactivity,
-empty known process units, and no in-flight operation records are mechanically proved.
-
-The new service starts behind the same gate in health-only mode. Mutations/timers enable only after
-the activation receipt is durable and the gate is released.
-
-### PR 1B: detached latest-main activation
-
-Install and exercise the complete activation runner before changing merge behavior. The runner is
-independent of the installed candidate: a stable bootstrap entry point fetches a detached exact
-checkout of the latest verified `origin/main`, runs that candidate's preflight/tests/build, and then
-passes explicit installed-checkout and state-home targets to the candidate deploy tool.
-
-The default deliberately activates the latest verified remote main. It does not claim candidate
-`C` and later install it after remote main advances to `D`; removing that feature avoids a special
-protected-ref capability and a second pending-order policy.
-
-The fixed activation stages, stored inside the already-created `DeploymentRecord`, are:
+Put L3 turns, L2 owners, and helpers for every enabled provider behind one provider-neutral physical
+record embedded in its owning domain:
 
 ```text
-claimed -> gate_acknowledged -> candidate_resolved -> candidate_built -> remote_revalidated
-        -> restart_policy_suppressed -> old_service_stopped -> source_assets_installed
-        -> candidate_started_health_only -> verified -> verification_recorded
-        -> restart_policy_restored -> activation_recorded -> complete
-        -> failed_released (only before old_service_stopped; old service/source unchanged)
-        -> failed_held (from old_service_stopped onward; retaining evidence and gate)
+planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
 ```
 
-The runner:
+Intent stores a deterministic unit, physical generation, provider-session request, and stable message
+id before launch. Resume creates a new physical generation even when the provider conversation id
+continues. No next writer starts until the prior unit is proven empty. Recovery work also persists
+`{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. L3 receives a
+durable current-turn claim; in-memory locks remain local optimization only. Unknown legacy ownership
+fails closed instead of being declared empty.
 
-1. claims the activation attempt, acquires the maintenance gate, and proves acknowledgement;
-2. fetches/resolves the then-latest verified remote main and records hashes/old PID;
-3. prepares detached source, web bundle, service unit, and compatibility proof without importing
-   the installed candidate's Altitude package;
-4. refetches immediately before source change and restarts bounded resolution/build if remote main no
-   longer equals the recorded candidate; after `remote_revalidated`, a later external merge is
-   pending for the next activation because the gate blocks Altitude publication but never claims to
-   control all GitHub writers;
-5. temporarily suppresses systemd restart loops for this activation attempt;
-6. stops the old service and proves its cgroup empty;
-7. fast-forwards the clean installed checkout to the revalidated latest main and installs staged assets;
-8. starts the first health-only generation and verifies PID/start time, source SHA, schema support, API,
-   SPA shell, and bundle hash;
-9. writes pending verification evidence, restores normal crash-restart policy while the gate still
-   forces health-only mode, then atomically records activated SHA, successful receipt/cutovers,
-   contribution satisfaction, enablement, and gate release in one DeploymentRecord replacement;
-10. if the candidate exits after policy restoration but before release, records the bounded systemd
-    restart generation, returns to health-only verification for the new PID, and never releases the
-    gate until the latest generation passes every check; or
-11. before old-service stop, restores its policy, proves old PID/source unchanged, and atomically
-    records `failed_released` plus gate release; from old-service stop onward, leaves the gate held and
-    service stopped when verification or systemd StartLimit is exhausted.
+### PR 1C: normalized outcomes, settlement, and remote-effect reconciliation on v1
 
-The installed unit and activation receipt fix `StartLimitIntervalSec=120`, `StartLimitBurst=3`, and
-`RestartSec=5`. Immediately before the first candidate start the runner performs and receipts
-`systemctl reset-failed`. Independently, ActivationOperation persists `candidate_generation` and
-allows at most three total candidate generations for the attempt regardless of elapsed time; reaching
-the cap stops the service and records `failed_held`. Fault tests cover reset, each generation, burst
-exhaustion, and slow-spaced crashes beyond 120 seconds.
+Adopt the dormant strict `WorkerOutcome` and a fixed task settlement operation while v1 task records
+remain authoritative. Settlement owns verification, commit, push, PR creation, checks, merge,
+post-merge qualification, attention, and archive. Every external stage stores intent before the
+effect, then records mechanically observed results. Queryable task/generation markers reconcile
+ambiguous commit, PR, merge, and GitHub-issue retries; timestamp/title matching is forbidden.
 
-Forward repair uses a reviewed state-compatible candidate through a documented fallback composed
-only of system Git plus that detached candidate's activation script, even if the installed
-Makefile/imports are broken. No separately installed mutable bootstrap executable or artifact is
-added; normal `make restart` is a convenience that locates and re-execs the detached candidate tool
-before importing Altitude. After any state cutover, a behavior revert
-must retain all selected readers; activation rejects a candidate that cannot read current state.
+Write one immutable publication receipt containing the exact generation, base/head, scope, commit,
+PR pair, check verdicts, merge SHA, post-merge observation, and stable remote effect id. Issue
+publication uses explicit user authority and a similarly bounded embedded operation. Direct CLI
+landing enters the same task settlement; there is no unrecorded publication path. Worker reports
+remain untrusted. Helper continuation creates a new owner generation and never a recursive healing
+task.
 
-### Phase 1 tests
+### Phase 1 gate
 
-- Race every HTTP/CLI/timer/model entry against gate acquisition; no mutation begins after acknowledgement.
-- Kill at every activation stage, including restart-policy changes and receipt/gate release.
-- Deliberately break the candidate Makefile and imports; the stable detached repair path still works.
-- Validate pre-install failure leaves old service/source unchanged.
-- Validate pre-stop failure restores policy and atomically releases the gate as `failed_released`.
-- Validate post-install health failure leaves one held gate, no restart loop, and an exact failed target.
-- Run a disposable full activation E2E; do not use the production service as the experiment.
+- Kill around every provider spawn/bind/result/stop/empty boundary; an exact unit is empty or the
+  operation refuses.
+- A real tiny Codex resume is mandatory. Claude mutation tests are mandatory only if PR 1A enables it.
+- Kill around commit/push/PR/check/merge/issue creation; retry reconciles the same marker/effect.
+- Static inventory proves no model process or remote mutation exists without an owning transition.
+- No maintenance acknowledgement or source activation path exists yet.
 
-## Phase 2 — publication and deployment authority
+## Phase 2 — deployment contribution and qualification authority
 
-### PR 2A: trusted publication receipt
+### PR 2A: minimal DeploymentRecord and truthful baseline
 
-At the existing landing boundary, write one immutable receipt from mechanically observed Git/GitHub
-facts. Worker reports remain untrusted input. The receipt contains the exact task/generation,
-base/head, scope, commit, PR pair, check verdicts, merge SHA, immutable post-merge observation, and stable
-remote effect id.
+Create one strict per-service `DeploymentRecord`, but no maintenance claimant or activation runner.
+Seed `activated_sha` only from a mechanically identified active-service manifest. A stopped or
+unverifiable service starts with `activated_sha=null`. Import restart-pending data only as bounded
+`legacy_pending` evidence/blocker, never as activation truth, a launch fence, or a qualified
+contribution. Source staging and ordinary startup cannot change `activated_sha`.
 
-Exactly-once remote reconciliation uses queryable markers: task/generation trailers on commits and a
-bounded machine marker in the PR/issue body. Before retrying, trusted code queries the exact
-repository/base/head/marker tuple. Timestamp or title matching is forbidden.
+### PR 2B: contribution and qualification
 
-Shadow-compare the receipt with current readers, then move status/archive/cleanup to the receipt and
-delete duplicate trusted report/verified fields.
-
-### PR 2B: extend DeploymentRecord with contribution and qualification
-
-Extend the Phase 1 DeploymentRecord transactionally. A merge contribution and permission to activate
-are different facts:
+A merge contribution and permission to activate are different facts:
 
 - every merged publication contributes its immutable receipt and merge SHA;
 - only a successful final qualification marks the contribution deployable;
@@ -335,53 +279,17 @@ operator receipt names its exact SHA/range and authorization without fabricating
 Bootstrap/import tests cover mixed Altitude and external commits, gaps, rewrites, and conflicting
 receipts.
 
-Import any remaining legacy gap/marker evidence, establish a mechanically verified baseline, and
-refuse activation until that baseline is reconciled. The old `restart-pending.json` is a derived
-compatibility marker, not a launch fence. Delete it in PR 2C after all readers move to DeploymentRecord.
+Import remaining legacy gap/marker evidence, establish a mechanically verified baseline, and refuse
+eligibility until it is reconciled. The old `restart-pending.json` is a derived compatibility marker,
+not a launch fence. This phase records eligibility only; it cannot build, install, stop, start, or
+acknowledge maintenance.
 
-PR 2B also introduces and tests the bounded one-time cutover publisher used by PR 2C. Before PR 2C
-may begin, a separately authorized activation must install this PR 2B release and record its exact
-source/tool hash. The command is available from that installed prior release, is usable only by the
-maintenance-gate owner for the one configured base/head/marker tuple, and has no generic publication
-mode. Its operation is the cutover-publication subtype of the one deployment-transition family,
-embedded in DeploymentRecord and mutually exclusive with source activation:
+### Phase 2 gate
 
-```text
-claimed -> gate_acknowledged -> pr_revalidated -> merge_observed
-        -> operator_provenance_receipted -> complete
-        -> failed_held (from any pre-complete stage)
-```
-
-Each remote stage stores intent and reconciles the exact repository/base/head/marker before retry.
-
-### PR 2C: last-v1 cutover and self-deploy deletion
-
-No deployment-mode selector is needed. With the service stopped and the maintenance gate
-acknowledged, one explicitly authorized temporary cutover publisher is the gate owner's only allowed
-remote mutation. It revalidates the exact PR/base/head/checks, merges the narrow PR that deletes
-`dispatch.pull_after_done`, scheduler source fast-forward, restart-pending compatibility, and their
-tests/fields **and the temporary cutover publisher itself**, then the still-installed PR 2B command
-writes/reconciles an immutable operator-provenance receipt for the exact merge SHA
-inside the DeploymentRecord artifact family. Regular settlement/publication remains blocked. A
-crash before the receipt is reconciled by the deterministic PR marker and exact merge identity; it
-never repeats the merge or silently qualifies a different SHA. Delete the temporary publisher after
-the cutover receipt is proved; the later activation installs the candidate in which that command is
-already absent.
-
-Before source activation, the installed PR 2B command compacts its completed cutover operation into
-the immutable operator-provenance receipt and atomically clears the active deployment-operation
-field. PR 2C removes the subtype code/schema from the candidate. The final DeploymentRecord accepts
-only source activation; historical cutover truth remains the immutable receipt, not a permanent
-operation variant.
-
-Leave the installed checkout at the already-tested PR 2B release containing the Phase 1 runner and
-the receipted one-time publisher. A later separately authorized
-activation uses that installed runner to fetch, validate, install, and receipt the cutover candidate;
-ordinary systemd `ExecStart` does not substitute for activation.
-
-Test before merge that the new code path changes only receipts/DeploymentRecord and never source,
-assets, units, or service state. After this PR, merge and activation are permanently separate and no
-temporary deployment selector remains.
+- Publication and qualification have one mechanically observed receipt path.
+- Every first-parent ancestry gap blocks activation eligibility.
+- DeploymentRecord has no activation operation and no maintenance owner yet.
+- Legacy checkout fast-forward is staging divergence, never loaded-source truth.
 
 ## Phase 3 — one application-command authority over v1 state
 
@@ -412,64 +320,98 @@ External effects reference the domain-embedded operation described in the target
 - GitHub/provider kill tests reconcile stable effect ids without another model turn.
 - Public generic `task new` and direct web task creation are removed after L3 intake parity passes.
 
-## Phase 4 — physical process ownership and generation fencing
+## Phase 4 — one maintenance gate and independent activation runner
 
-### PR 4A: Claude go/no-go spike
+Process ownership, remote-effect reconciliation, qualification, and application commands now exist,
+so drain evidence is mechanical rather than inferred. Legacy self-deploy still exists, but no
+temporary restart adapter is added: PR 4A's gate is dormant until PR 4B's detached runner becomes its
+first and only production claimant.
 
-Prove a foreground Claude transport (`claude --print`/stream JSON or an equivalent supported
-transport) can run wholly inside a deterministic Claude-specific user unit, preserve genuine session
-resume, spool results, and retain current security properties:
+### PR 4A: complete admission closure
 
-- `NoNewPrivileges=yes` unless a reviewed necessity proves otherwise;
-- minimal explicit environment and only required authentication access;
-- current Claude hook/guard and backend capability validation;
-- deterministic stop/kill and descendant-empty proof; and
-- no background job escapes the unit.
+Extend DeploymentRecord with one maintenance latch and the approved activation-operation slot. Every
+mutation/model/effect ingress takes a shared admission before any recovery/project/task/operation/Git
+lock and holds it through its durable result. Exclusive acquisition is writer-preferring, waits for
+shared holders, proves every Phase 1 unit and effect operation empty/reconciled, then writes one
+acknowledgement. It never guesses from task labels, provider rows, quiet time, or bare PIDs.
+Shared-to-exclusive upgrade is forbidden.
 
-If this cannot be proved, Claude remains available only for explicitly operator-invoked read-only
-use; every autonomous or mutating Claude L3/L2/L1/helper role is disabled and Codex remains the
-default. The target must not pretend that a `claude --bg` launcher PID owns the provider's background
-process tree.
+HTTP/CLI adapters, command boundaries, L3/L2/L1 final process boundaries, settlement/issue effects,
+recovery changes, timers, cleanup, mutating snapshots, quota caches, and external hooks all
+participate. Read-only health/manifest/static/status calls remain available and byte-stable. Hidden
+mutating reads are made pure or classified as mutations. An acknowledged gate starts the service in
+health-only mode; timers/mutations enable only when activation receipt and gate release are recorded
+atomically.
 
-### PR 4B: shared worker transitions on v1
+### PR 4B: detached latest-main activation
 
-Put both providers and every owner/helper process behind one provider-neutral physical record and
-domain-embedded transition with `subject_kind=owner|helper`:
+Install and exercise the complete activation runner. It fetches a detached exact checkout of the
+latest qualified `origin/main`, runs that candidate's preflight/tests/build, and passes explicit
+installed-checkout/state-home targets to the candidate deploy tool. `make restart` only locates and
+re-execs this detached tool before importing candidate code.
 
 ```text
-planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
+claimed -> gate_acknowledged -> candidate_resolved -> candidate_built -> remote_revalidated
+        -> restart_policy_suppressed -> old_service_stopped -> source_assets_installed
+        -> candidate_started_health_only -> verified -> verification_recorded
+        -> restart_policy_restored -> activation_recorded -> complete
+        -> failed_released (only before old_service_stopped; old source/service unchanged)
+        -> failed_held (from old_service_stopped onward; retaining evidence and gate)
 ```
 
-Intent stores deterministic unit, generation, provider session request, and message/effect id before
-launch. Resume creates a new physical generation even when the provider conversation id continues.
-No next writer starts until the old unit is proven empty.
+The runner stages source/web/unit compatibility without importing installed code, refetches before
+source change, and restarts resolution/build if remote main advanced. After revalidation, later
+external merges wait for the next activation. It suppresses restart loops, stops the old service and
+proves its cgroup empty, installs the exact staged assets, starts health-only, verifies
+PID/start/source/schema/API/SPA/bundle, restores normal crash policy, and atomically records
+activation, satisfied contributions, enablement, and gate release.
 
-Recovery tasks also persist `{episode_id, permit_revision}` in their generation. Final launch and
-every trusted message/outcome/publication compare it; renewal creates a new generation.
+Before old-service stop, failure restores policy, proves the old generation unchanged, and records
+`failed_released`. From old-service stop onward, failure leaves the service stopped and gate held.
+The installed unit fixes `StartLimitIntervalSec=120`, `StartLimitBurst=3`, `RestartSec=5`; the runner
+receipts `reset-failed` and caps each attempt at three candidate generations. Forward repair uses
+system Git plus a reviewed state-compatible detached candidate even if installed imports/Makefile are
+broken. No separately installed mutable bootstrap or second deployment selector exists.
 
 ### Phase 4 tests
 
-- Kill around every owner/helper spawn, bind, message delivery, result, stop, and empty receipt.
-- Race stale/current messages and results; stale capabilities never reach logs, GitHub, or state.
-- Stop an L2 with several helpers; all deterministic units become empty before terminal/archive.
-- Real tiny Codex resume is mandatory. Real tiny Claude L3/L2/helper resume is mandatory only if the
-  feasibility proof enables those autonomous roles.
+- Race every admitted entry against exclusive claim; no mutation starts after acknowledgement.
+- Unknown L3/L2/helper ownership or external-effect state refuses drain.
+- Kill every activation, restart-policy, receipt, and gate stage.
+- Break installed imports/Makefile; detached forward repair still works.
+- Pre-stop failure preserves old source/service; post-stop failure leaves one held gate and no loop.
+- Run a disposable activation E2E; never use the production service as the experiment.
 
-## Phase 5 — normalized outcomes, settlement, and task v2
+## Phase 5 — last self-deploy cutover
 
-### PR 5A: adopt normalized outcomes and settlement on v1
+### PR 5A: bounded one-time cutover publisher
 
-Adopt the strict untrusted `WorkerOutcome` variants introduced dormant in PR 0D and add the fixed
-settlement operation while current task records remain authoritative. Settlement owns verification,
-commit, push, PR, checks, merge,
-post-merge qualification, publication receipt, DeploymentRecord contribution, attention, and archive.
-Every external stage stores intent then observed receipt and reconciles by deterministic target.
+The installed PR 4B release contains one explicitly authorized publisher for one configured
+repository/base/head/marker tuple. It is usable only by the acknowledged maintenance owner and has no
+generic publication mode:
 
-Helper continuation references child worker transitions and returns `settling -> running` with a new
-owner generation. A post-merge correction creates a new branch/base/publication attempt in the same
-logical task. It never spawns a recursive healing task.
+```text
+claimed -> gate_acknowledged -> pr_revalidated -> merge_observed
+        -> operator_provenance_receipted -> complete -> failed_held
+```
 
-### PR 5B: gated drain and one-shot task cutover
+It merges the narrow candidate that deletes `dispatch.pull_after_done`, scheduler checkout
+fast-forward, restart-pending compatibility, their tests/fields, and the temporary publisher itself.
+Regular settlement remains blocked. The still-installed command reconciles the exact merge by marker,
+writes immutable operator provenance, compacts the operation, and never repeats or silently qualifies
+a different SHA. A later separately authorized Phase 4 activation installs the candidate in which the
+command is absent. Merge and activation are then permanently separate.
+
+### Phase 5 gate
+
+- Before later activation, publication changes receipts/DeploymentRecord only, never source/assets/
+  unit/service.
+- Static search proves self-deploy, restart-pending, and temporary-publisher code absent in candidate.
+- Historical cutover truth is an immutable receipt, not a permanent operation variant.
+
+## Phase 6 — one-shot task v2 cutover
+
+### PR 6A: gated drain and one-shot task cutover
 
 Before gate acquisition, land dormant v2 API/UI/read-model consumers and prove them against fixed
 fixtures while v1 remains authoritative. They must have no active selection branch yet. The cutover
@@ -499,24 +441,21 @@ ActivationReceipt. A crash before the receipt leaves the gate held; replay recon
 PID, health-only mode, and domain emptiness before emitting it or fails closed. The receipt is audit
 evidence, not a runtime format selector.
 
-### PR 5C: delete dead v1 task paths
+### PR 6B: delete dead v1 task paths
 
 Remove the already inactive v1 readers, report/verified/reported/dispatching stamps,
 compatibility writers, and obsolete tests. Retain only the isolated archive decoder selected by the
 retention decision.
 
-### Phase 5 tests
+### Phase 6 tests
 
-- Kill settlement before/after commit, push, PR creation, checks, merge, qualification, publication
-  receipt, deployment contribution, terminal state, attention, and archive.
-- Failed qualification blocks activation until a mechanically linked corrective receipt supersedes it.
 - Reject while owner/helpers exit; archive only after all units are empty.
 - No-code completion refuses a changed worktree.
 - Unknown v2 state refuses before any provider/network effect.
 
-## Phase 6 — concurrency, intake, routing, and scoped faults
+## Phase 7 — concurrency, intake, routing, and scoped faults
 
-### PR 6A: repository WIP one
+### PR 7A: repository WIP one
 
 Set top-level repository WIP to one. Remove predictive scheduling leases, natural-language path
 expansion, broad-path suppression, and resume ordering. Paths remain normalized publication scope.
@@ -526,7 +465,7 @@ A blocked ordinary task retains the repository slot. Recovery may preempt it onl
 settlement is stable and all owner/helper units are empty; the task becomes
 `blocked(kind=preempted_by_episode)` and rebases through a new generation after clearance.
 
-### PR 6B: intake and routing
+### PR 7B: intake and routing
 
 - Hydrate GitHub issues once before queueing; immutable snapshot absence fails intake.
 - Unknown quota remains eligible uncertainty and chooses the configured default.
@@ -534,7 +473,7 @@ settlement is stable and all owner/helper units are empty; the task becomes
 - Persist the selected observation plus policy version/hash, not a mutable reserve policy in tasks.
 - Weekly comparable allowance is primary; short windows are availability gates.
 
-### PR 6C: typed boundary results and non-global holds
+### PR 7C: typed boundary results and non-global holds
 
 Map every current fault caller to closed effect-result and blast-radius enums. Begin conservatively:
 unknown classifications remain global until characterized. Move task/project/provider holds to one
@@ -545,14 +484,14 @@ record counts/hashes in the ActivationReceipt; and delete every old writer in th
 Kill/replay proves no lost, duplicate, or briefly absent hold. Observability/cosmetic failures never
 actuate a hold.
 
-## Phase 7 — recovery v2 and incident evidence
+## Phase 8 — recovery v2 and incident evidence
 
 Cut over only as a planned activation under the acknowledged maintenance gate, with the old service
 stopped and no active v1 recovery episode or recovery task. Recheck emptiness after stop. Clear/close
 the existing episode through current verified rules first; do not translate a live supervisor or
 permit a v1 fault writer to race the switch.
 
-Use the same activation-owned cutover contract as Phase 5: persist recovery-domain old/new schema,
+Use the same activation-owned cutover contract as Phase 6: persist recovery-domain old/new schema,
 empty-episode proof, and candidate SHA as intent before source change; after health-only verification,
 append the immutable recovery cutover receipt inside the ActivationReceipt. Crash replay reconciles
 installed SHA, health-only PID, and domain emptiness while the gate remains held. No active reader
@@ -600,9 +539,9 @@ abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clea
 runtime incident append, every legacy incident import row, and cutover-receipt reconciliation. Every
 case retains one episode, one physical wake claim at a time, and no more than one repair task.
 
-## Phase 8 — product surfaces and conservative cleanup
+## Phase 9 — product surfaces and conservative cleanup
 
-### PR 8A: one wire contract and projections
+### PR 9A: one wire contract and projections
 
 Adopt and consolidate the versioned JSON wire schemas introduced dormant in PR 0D. Python produces
 them; TypeScript validates them with its existing runtime validator. There is no fictional
@@ -620,21 +559,21 @@ Remote CI already runs Python tests and web test/typecheck/build against the exa
 candidate from Phase 0. This PR updates only its contract fixtures if the adopted wire schemas require
 it; it does not introduce a later validation boundary.
 
-### PR 8B: cleanup
+### PR 9B: cleanup
 
 Terminal settlement no longer performs forensic worktree deletion. A conservative operator
 maintenance command deletes only a clean, owned worktree with an exact merged receipt and proven
 empty process units. Uncertainty leaves the artifact and emits one audit event; cleanup never opens
 global recovery or blocks new work.
 
-### Phase 8 tests
+### Phase 9 tests
 
 - Contract fixtures fail closed on unknown versions/extra authority fields.
 - Chat/task/live transcript E2Es preserve steering generation checks.
 - Web remote checks run on the exact candidate.
 - Cleanup refuses dirty, unowned, live, unmerged, or ambiguous artifacts without affecting dispatch.
 
-## Phase 9 — final deletion and documentation
+## Phase 10 — final deletion and documentation
 
 Delete every temporary selector, compatibility writer, active fallback reader, superseded persona,
 schema, hook, endpoint, field, test fixture, and proposal instruction that describes rejected
@@ -648,7 +587,7 @@ Record final production/artifact/writer/timer/dependency counts against Phase 0.
 - all kill/race tests;
 - disposable activation and forward-repair E2E;
 - real tiny Codex L3 -> L2 -> PR/check/merge path;
-- real tiny Claude path only if Phase 4A passed;
+- real tiny Claude path only if Phase 1A passed;
 - task defect, provider outage/reroute, and global recovery E2Es; and
 - restart inspection proving no worker/helper/service process remains unexpectedly.
 

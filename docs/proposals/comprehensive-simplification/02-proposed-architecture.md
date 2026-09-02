@@ -71,7 +71,7 @@ embedded in the record that already owns the lifecycle rather than stored as a f
 authority. The target has exactly six named operation families: L3 turn, owner/helper worker
 transition, task settlement, issue publication, recovery transition, and deployment transition.
 Recovery task claim and clearance are fixed subtypes of the one recovery-transition family.
-During Phase 2 migration only, the one-time self-deploy cutover publication is a fixed temporary
+During Phase 5 migration only, the one-time self-deploy cutover publication is a fixed temporary
 subtype of deployment transition; it compacts to provenance and is deleted. The final deployment
 transition has only source activation.
 Settlement contains its commit/push/PR/check/merge/deployment-qualification stages; it
