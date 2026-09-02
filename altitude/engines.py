@@ -49,6 +49,9 @@ _CODEX_SAFE_ENV = {
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends; L1 applies the same default cap to the artifacts it exposes.
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
+CODEX_ANSWER_CAP = 2 * 1024 * 1024
+CODEX_EVENT_CAP = 8 * 1024 * 1024
+CODEX_PROVIDER_SESSION_ID_CAP = 1024  # UTF-8 bytes
 CODEX_PATCH_NOTE = (
     "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
     "cannot create its bwrap namespace under this host's AppArmor policy. For every edit, call the shell command "
@@ -89,6 +92,106 @@ class PhysicalTransitionError(RuntimeError):
 
 class ManagedUnitError(RuntimeError):
     """A managed process unit could not be observed or made provably empty."""
+
+
+def read_bounded_codex_output(path: Path, limit: int, label: str) -> str:
+    """Read completed Codex output without permitting an unbounded allocation."""
+    source = Path(path)
+    try:
+        if source.stat().st_size > limit:
+            raise RuntimeError(f"{label} exceeds {limit} bytes")
+        with source.open("rb") as stream:
+            raw = stream.read(limit + 1)
+    except OSError as exc:
+        raise RuntimeError(f"cannot read {label}: {exc}") from exc
+    if len(raw) > limit:
+        raise RuntimeError(f"{label} exceeds {limit} bytes")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{label} is not valid UTF-8") from exc
+
+
+def _run_codex_to_bounded_spools(argv: list[str], *, cwd: Path, env: dict[str, str], timeout: int,
+                                 event_spool: Path, answer_path: Path, on_start=None,
+                                 on_abort=None) -> subprocess.CompletedProcess:
+    """Drain Codex incrementally and stop it as soon as either declared output crosses its cap."""
+    initial = event_spool.stat().st_size if event_spool.exists() else 0
+    if initial > CODEX_EVENT_CAP:
+        raise RuntimeError(f"Codex event spool exceeds {CODEX_EVENT_CAP} bytes")
+    proc = subprocess.Popen(argv, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+    if on_start:
+        on_start(proc.pid)
+    overflow = threading.Event()
+    errors: list[BaseException] = []
+    stderr = _BoundedRawCapture()
+
+    def drain_events() -> None:
+        written = initial
+        try:
+            with event_spool.open("ab", buffering=0) as stream:
+                while chunk := proc.stdout.read(65536):
+                    if written + len(chunk) > CODEX_EVENT_CAP:
+                        overflow.set()
+                        continue
+                    stream.write(chunk); written += len(chunk)
+                os.fsync(stream.fileno())
+        except BaseException as exc:  # noqa: BLE001 - relay the exact drain failure to the owner thread
+            errors.append(exc); overflow.set()
+
+    def drain_stderr() -> None:
+        try:
+            while chunk := proc.stderr.read(65536):
+                stderr.add(chunk.decode("utf-8", errors="replace"))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc); overflow.set()
+
+    readers = [threading.Thread(target=drain_events), threading.Thread(target=drain_stderr)]
+    for reader in readers:
+        reader.start()
+    deadline, exceeded, timed_out = time.monotonic() + timeout, None, False
+    while proc.poll() is None:
+        try:
+            if answer_path.exists() and answer_path.stat().st_size > CODEX_ANSWER_CAP:
+                exceeded = f"Codex answer exceeds {CODEX_ANSWER_CAP} bytes"
+            elif overflow.is_set():
+                exceeded = f"Codex event spool exceeds {CODEX_EVENT_CAP} bytes"
+        except OSError as exc:
+            errors.append(exc); exceeded = f"cannot inspect Codex bounded output: {exc}"
+        if exceeded or time.monotonic() >= deadline:
+            timed_out = not exceeded
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill(); proc.wait(timeout=5)
+            if on_abort:
+                on_abort()
+            break
+        time.sleep(0.01)
+    for reader in readers:
+        reader.join(timeout=5)
+    if any(reader.is_alive() for reader in readers):
+        proc.kill(); proc.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=5)
+        proc.stdout.close(); proc.stderr.close()
+        raise RuntimeError("Codex output drain did not stop with its process")
+    proc.stdout.close(); proc.stderr.close()
+    if errors:
+        raise RuntimeError(f"Codex output drain failed: {errors[0]}")
+    if exceeded or overflow.is_set():
+        raise RuntimeError(exceeded or f"Codex event spool exceeds {CODEX_EVENT_CAP} bytes")
+    if timed_out:
+        raise subprocess.TimeoutExpired(argv, timeout)
+    if answer_path.exists() and answer_path.stat().st_size > CODEX_ANSWER_CAP:
+        raise RuntimeError(f"Codex answer exceeds {CODEX_ANSWER_CAP} bytes")
+    S._fsync_directory(event_spool.parent)  # noqa: SLF001 - shared durability primitive
+    stderr_text, stderr_truncated = stderr.render()
+    result = subprocess.CompletedProcess(argv, proc.returncode, None, stderr_text)
+    result.stderr_truncated = stderr_truncated
+    return result
 
 
 def _physical_json(value):
@@ -1068,6 +1171,37 @@ def observe_managed_unit(unit: str) -> dict:
     }
 
 
+def prove_altitude_service_replacement(prior_instance: str, current_instance: str) -> dict:
+    """Prove systemd replaced one altd invocation before it may resume a claimed delivery."""
+    def identity(value: str) -> tuple[int, str]:
+        parts = str(value or "").split(":", 2)
+        if len(parts) != 3 or parts[0] != "altd" or not parts[1].isdigit() or not parts[2]:
+            raise ManagedUnitError("L3 service instance is not bound to pid and systemd invocation")
+        return int(parts[1]), parts[2]
+    _prior_pid, prior_invocation = identity(prior_instance)
+    current_pid, current_invocation = identity(current_instance)
+    if prior_instance == current_instance or prior_invocation == current_invocation:
+        raise ManagedUnitError("L3 delivery replacement requires a different service invocation")
+    cmd = [SYSTEMCTL_BIN, "--user", "show", "altitude.service", "--property=LoadState",
+           "--property=ActiveState", "--property=SubState", "--property=ControlGroup",
+           "--property=MainPID", "--property=InvocationID"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
+                                env=codex_env(retain_user_bus=True))
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ManagedUnitError(f"cannot inspect altitude.service replacement: {exc}") from exc
+    props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    required = {"LoadState", "ActiveState", "SubState", "ControlGroup", "MainPID", "InvocationID"}
+    population = _cgroup_population(props.get("ControlGroup") or "") if result.returncode == 0 else "unknown"
+    if (result.returncode != 0 or set(props) < required or props["LoadState"] != "loaded"
+            or props["ActiveState"] != "active" or props["MainPID"] != str(current_pid)
+            or props["InvocationID"] != current_invocation or population != "populated"):
+        raise ManagedUnitError("cannot prove the exact replacement altitude.service generation active")
+    return {"unit": "altitude.service", "invocation_id": current_invocation, "main_pid": current_pid,
+            "active_state": props["ActiveState"], "sub_state": props["SubState"],
+            "control_group": props["ControlGroup"], "population": population}
+
+
 def spawn_managed_unit(transition: dict, command: list[str], *, cwd: Path,
                        launcher_env: dict[str, str], child_env: dict[str, str],
                        stdin=None, stdout=None, stderr=None) -> subprocess.Popen:
@@ -1322,9 +1456,19 @@ def _codex_events(path: Path) -> list[dict]:
 
 def _codex_thread(events: list[dict]) -> str | None:
     for event in events:
-        if event.get("type") == "thread.started" and event.get("thread_id"):
-            return str(event["thread_id"])
+        if event.get("type") == "thread.started":
+            return _codex_session_id(event.get("thread_id"))
     return None
+
+
+def _codex_session_id(value: object) -> str | None:
+    """Accept only a nonempty Codex thread id bounded by encoded wire bytes."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return value if len(value.encode("utf-8")) <= CODEX_PROVIDER_SESSION_ID_CAP else None
+    except UnicodeEncodeError:
+        return None
 
 
 def _codex_usage(events: list[dict]) -> dict:
@@ -1547,7 +1691,8 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                effort: str | None = None, extra_env: dict | None = None,
                fault_context: dict[str, str] | None = None, resume: str | None = None,
                on_start=None, contain: bool | None = None,
-               readable_roots: list[Path] | None = None) -> dict:
+               readable_roots: list[Path] | None = None, answer_path: Path | None = None,
+               event_spool: Path | None = None) -> dict:
     """Codex headless (optional L1 implementers/reviewers) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from
     the `turn.completed` events on stdout. Workspace-write turns are contained by default; ``contain=True`` also
@@ -1582,13 +1727,18 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                     "usage": {}, "error": error,
                     "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
                     "raw_stderr_truncated": False}
-    with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
-        out_path = outf.name
+    temporary_output = answer_path is None
+    if temporary_output:
+        with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
+            out_path = Path(outf.name)
+    else:
+        out_path = Path(answer_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
     if resume:
-        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", out_path, "--skip-git-repo-check",
+        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", str(out_path), "--skip-git-repo-check",
                "--ignore-user-config", "--ignore-rules"]
     else:
-        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", out_path, "-C", str(cwd),
+        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", str(out_path), "-C", str(cwd),
                "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
     if schema:
         cmd += ["--output-schema", str(schema)]
@@ -1601,12 +1751,35 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
     contained = sandbox == "workspace-write" if contain is None else contain
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}") if contained else None
     containment_error = None
+    if event_spool:
+        Path(event_spool).parent.mkdir(parents=True, exist_ok=True)
     try:
         env = codex_env(extra_env, retain_user_bus=bool(unit))
         child_env = codex_env(extra_env)
         argv = cmd + ([resume, prompt] if resume else [prompt])
         contained_argv = _codex_service_command(unit, argv, child_env) if unit else argv
-        if on_start:
+        if event_spool:
+            def abort_bounded_unit() -> None:
+                if not unit:
+                    return
+                _stop_codex_unit(unit)
+                if not _codex_unit_empty(unit):
+                    raise CodexContainmentError(
+                        f"{unit} remained populated after bounded producer failure")
+            try:
+                p = _run_codex_to_bounded_spools(
+                    contained_argv, cwd=cwd, env=env, timeout=timeout, event_spool=Path(event_spool),
+                    answer_path=out_path, on_start=on_start, on_abort=abort_bounded_unit)
+            except BaseException as exc:
+                if unit:
+                    try:
+                        abort_bounded_unit()
+                    except CodexContainmentError as stop_exc:
+                        raise CodexContainmentError(
+                            f"bounded Codex producer failed and {unit} could not be proven empty: {stop_exc}"
+                        ) from exc
+                raise
+        elif on_start:
             proc = subprocess.Popen(contained_argv, cwd=str(cwd), stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL, env=env,
                                     start_new_session=True)
@@ -1623,8 +1796,8 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             p = subprocess.CompletedProcess(contained_argv, proc.returncode, stdout, stderr)
         else:
             try:
-                p = subprocess.run(contained_argv, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                                   stdin=subprocess.DEVNULL, env=env)
+                p = subprocess.run(contained_argv, cwd=str(cwd), text=True, timeout=timeout,
+                                   stdin=subprocess.DEVNULL, env=env, capture_output=True)
             except subprocess.TimeoutExpired:
                 if unit:
                     _stop_codex_unit(unit)
@@ -1637,25 +1810,39 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                     raise CodexContainmentError(f"Codex containment unit {unit} remained populated after the turn")
             except CodexContainmentError as exc:
                 containment_error = str(exc)
-        text = Path(out_path).read_text() if Path(out_path).exists() else ""
+        if event_spool:
+            p = subprocess.CompletedProcess(
+                p.args, p.returncode,
+                read_bounded_codex_output(Path(event_spool), CODEX_EVENT_CAP, "Codex event spool"),
+                p.stderr,
+            )
+        if out_path.exists():
+            with open(out_path, "rb") as answer:
+                os.fsync(answer.fileno())
+            S._fsync_directory(out_path.parent)  # noqa: SLF001 - shared durability primitive
+        text = (read_bounded_codex_output(out_path, CODEX_ANSWER_CAP, "Codex answer")
+                if out_path.exists() else "")
     finally:
-        try:
-            os.unlink(out_path)
-        except OSError:
-            pass
+        if temporary_output:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
     structured = None
     try:
-        structured = json.loads(text)
+        structured = S._strict_json_loads(text) if schema else json.loads(text)  # noqa: SLF001
     except ValueError:
         pass
     usage, messages, session_id, reported_session_id = {}, [], resume, None
     for line in (p.stdout or "").splitlines():
         try:
-            ev = json.loads(line)
+            ev = S._strict_json_loads(line)  # noqa: SLF001
         except ValueError:
             continue
-        if ev.get("type") == "thread.started" and ev.get("thread_id"):
-            session_id = reported_session_id = str(ev["thread_id"])
+        if ev.get("type") == "thread.started":
+            reported_session_id = _codex_session_id(ev.get("thread_id"))
+            if reported_session_id is not None:
+                session_id = reported_session_id
         elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
             usage = dict(ev["usage"])
         elif ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
@@ -1672,7 +1859,8 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
             "unit": unit, "containment_empty": (not containment_error) if unit else None,
             "error": containment_error or (None if p.returncode == 0 else p.stderr.strip()[:500]),
             "raw_stdout": p.stdout or "", "raw_stderr": p.stderr or "",
-            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+            "raw_stdout_truncated": False,
+            "raw_stderr_truncated": bool(getattr(p, "stderr_truncated", False))}
 
 
 def context_percent(context_tokens: int, engine: str = "claude") -> float:

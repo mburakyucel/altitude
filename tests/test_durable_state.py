@@ -548,9 +548,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("incidents.py", "system_fault"): 2,
             ("l1.py", "save"): 1,
             ("l3.py", "save_info"): 1,
-            ("l3_actions.py", "_claim"): 1,
-            ("l3_actions.py", "_finish"): 1,
-            ("l3_actions.py", "_github_issue_approve"): 1,
             ("l3_actions.py", "_github_issue_draft"): 1,
             ("quota_codex.py", "refresh"): 1,
             ("recovery.py", "attach_incident"): 1,
@@ -562,6 +559,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("recovery.py", "l3_attention_is_current"): 1,
             ("recovery.py", "release_failed_claim"): 1,
             ("recovery.py", "request_l3_attention"): 1,
+            ("recovery.py", "clear"): 1,
             ("server.py", "dispatch_waiting"): 2,
             ("server.py", "install_statusline"): 1,
             ("state.py", "save_task"): 1,
@@ -574,6 +572,10 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("incidents.py", "_index_correct"): 1,
             ("incidents.py", "amend_incident"): 1,
             ("incidents.py", "new_incident"): 1,
+            ("l3.py", "_prepare_spool"): 2,
+            ("l3.py", "_write_context"): 1,
+            ("l3.py", "_write_marker"): 1,
+            ("l3_actions.py", "_write_journal"): 1,
             ("state.py", "regen_state_md"): 1,
             ("state.py", "write_json"): 1,
             ("tasks.py", "brief"): 1,
@@ -582,12 +584,14 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("tasks.py", "new"): 1,
             ("transcript.py", "sync"): 2,
         }),
-        "append_jsonl": Counter(),
-        "read_jsonl": Counter(),
+        "append_jsonl": Counter({("l3.py", "chat_log"): 1,
+                                  ("recovery.py", "_reconcile_clearance_audit"): 1}),
+        "read_jsonl": Counter({("l3.py", "_chat_rows"): 1}),
         "writable_open": Counter({
             ("dispatch.py", "_resume_lock"): 1,
             ("dispatch.py", "publication_settlement"): 1,
             ("engines.py", "codex_bg"): 2,
+            ("engines.py", "drain_events"): 1,
             ("hooks/edit_count.py", "<module>"): 1,
             ("hooks/edit_count.py", "fault"): 1,
             ("incidents.py", "_alloc_lock"): 1,
@@ -596,11 +600,9 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("incidents.py", "new_incident"): 2,
             ("l1.py", "_spawn"): 1,
             ("l1.py", "start"): 1,
-            ("l3.py", "chat_log"): 1,
             ("land.py", "land"): 1,
             ("recovery.py", "_launch_lock"): 1,
             ("recovery.py", "_lock"): 1,
-            ("recovery.py", "clear"): 2,
             ("server.py", "log"): 1,
             ("state.py", "append_event"): 1,
             ("state.py", "append_jsonl"): 3,
@@ -635,10 +637,11 @@ class LegacyWriterInventoryTests(unittest.TestCase):
         }),
         "path_move_remove": Counter({
             ("scripts/restart_altitude.py", "publish_and_restart"): 6,
-            ("recovery.py", "clear"): 2,
+            ("recovery.py", "clear"): 1,
             ("server.py", "tls_init"): 2,
             ("engines.py", "codex_sandbox_preflight"): 1,
             ("engines.py", "codex_exec"): 1,
+            ("l3.py", "_retire"): 4,
             ("land.py", "_ensure_pr"): 1,
             ("land.py", "_candidate"): 1,
             ("land.py", "land"): 1,
@@ -663,7 +666,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("dispatch.py", "cleanup_after_done"): 1,
             ("engines.py", "note_usage_limit"): 1,
             ("l1.py", "_codex_sandbox_stop"): 1,
-            ("l3_actions.py", "_resume_paths"): 1,
             ("quota_codex.py", "_epoch_iso"): 1,
             ("recovery.py", "claim_l3_attention"): 1,
             ("recovery.py", "fail_l3_attention"): 1,
@@ -678,12 +680,11 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("state.py", "append_jsonl"): 2,
             ("engines.py", "claude_print"): 1,
             ("engines.py", "codex_bg"): 1,
+            ("engines.py", "drain_events"): 1,
             ("incidents.py", "_index_append"): 1,
             ("incidents.py", "new_incident"): 1,
-            ("l3.py", "chat_log"): 1,
             ("land.py", "land"): 1,
             ("quota_codex.py", "_talk"): 1,
-            ("recovery.py", "clear"): 1,
             ("server.py", "_json_bytes"): 1,
             ("server.py", "_file"): 1,
             ("server.py", "_static"): 1,
@@ -697,7 +698,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("tasks.py", "fyi"): 1,
             ("tasks.py", "append_task_message"): 1,
             ("hooks/edit_count.py", "fault"): 1,
-            ("bin/alt", "main"): 1,
         }),
         "temp_create": Counter({
             ("engines.py", "codex_exec"): 1,
@@ -1018,9 +1018,14 @@ class LegacyWriterInventoryTests(unittest.TestCase):
                 }),
             ))
 
-    def test_dormant_jsonl_primitive_has_no_runtime_consumer(self):
+    def test_b2_keyed_jsonl_adoptions_are_closed_and_inventoried(self):
         repository = Path(__file__).parents[1]
-        self.assertEqual(self._dormant_references(repository), [])
+        refs = self._dormant_references(repository)
+        self.assertEqual([(path, name) for path, _line, name in refs], [
+            ("altitude/l3.py", "state.read_jsonl"),
+            ("altitude/l3.py", "state.append_jsonl"),
+            ("altitude/recovery.py", "state.append_jsonl"),
+        ])
 
 
 if __name__ == "__main__":

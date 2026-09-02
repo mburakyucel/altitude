@@ -592,9 +592,9 @@ The embedded recovery-clearance operation uses an episode/revision-derived idemp
 records intent in the still-active episode, then atomically replaces it with the canonical
 `state=inactive` record. That record retains a monotonic epoch plus the exact cleared episode,
 revision, prior epoch, and clearance-receipt digest. It next appends or reconciles exactly one keyed
-clearance audit row before the next recovery mutation. A crash resumes those stages. The audit row is
-history, never launch authority. Even a no-active-episode launch observation binds the exact inactive
-epoch, preventing a stale clear observation from surviving a hold-and-clear cycle.
+clearance audit row before the next recovery mutation. A crash resumes the audit projection from the
+inactive authority. The audit row is history, never launch authority. Even a no-active-episode launch
+observation binds the exact inactive epoch, so `none -> hold -> clear` cannot pass an old permit.
 
 `waiting_operator` permits only named read-only mechanical probes and reconciliation of already
 recorded effects. It cannot run another model turn, start/resume a worker, publish, mutate source or
@@ -872,7 +872,7 @@ Target durable artifacts are intentionally few:
 ALTITUDE_HOME/
   projects.json                    # sole registration + repository/project policy authority
   operational-holds.json           # keyed active task-ref/project/provider holds; absent/empty when clear
-  recovery.json                    # active episode or inactive monotonic epoch + clearance reference
+  recovery.json                    # active episode or closed inactive monotonic epoch + latest clearance receipt
   monitor/recovery-hold.lock       # retain current recovery lock inode/path; no split-lock rename
   monitor/recovery-launch.lock     # retain current launch lock inode/path
   recovery-clearances.jsonl

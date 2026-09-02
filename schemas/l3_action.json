@@ -13,7 +13,7 @@
         "additionalProperties": false,
         "required": ["type", "slug", "title", "text", "reason", "request", "digest", "answer", "source", "engine", "model", "paths", "hold_merge", "merge_hold", "incident", "labels"],
         "properties": {
-          "type": {"type": "string", "enum": ["new_task", "task_done", "task_block", "task_resume", "task_fyi", "task_hold_merge", "github_issue", "github_issue_approve", "incident_new", "incident_amend", "recovery_hold", "recovery_clear"]},
+          "type": {"type": "string", "enum": ["new_task", "task_done", "task_block", "task_fyi", "task_hold_merge", "github_issue", "incident_new", "incident_amend"]},
           "slug": {"type": ["string", "null"]},
           "title": {"type": ["string", "null"]},
           "text": {"type": ["string", "null"], "description": "Text for task_fyi or github_issue. For new_task, use request."},
@@ -22,7 +22,7 @@
           "digest": {"type": ["string", "null"]},
           "answer": {"type": ["string", "null"]},
           "source": {"type": ["string", "null"], "enum": ["chat", "recovery", null]},
-          "engine": {"type": ["string", "null"], "enum": ["claude", "codex", null]},
+          "engine": {"type": ["string", "null"], "enum": ["codex", null]},
           "model": {"type": ["string", "null"]},
           "paths": {"type": "array", "items": {"type": "string"}},
           "hold_merge": {"type": ["string", "null"]},

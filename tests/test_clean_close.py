@@ -70,7 +70,7 @@ class TestCleanClose(unittest.TestCase):
         turns = []
         logs = []
         original_turn, original_log = l3.turn, server.log
-        l3.turn = lambda project, header, trigger: turns.append((project, header, trigger)) or {}
+        l3.turn = lambda project, header, trigger, **_kwargs: turns.append((project, header, trigger)) or {}
         server.log = lambda message: logs.append(message)
         try:
             server.report_turn(PROJECT, task, verdict)
@@ -129,6 +129,10 @@ class TestCleanClose(unittest.TestCase):
                 self.assertEqual(len(turns), 1)
                 self.assertEqual(turns[0][0], PROJECT)
                 self.assertEqual(turns[0][2], "report-landed")
+                self.assertIn("at most one schema-supported task action", turns[0][1])
+                self.assertIn("Task resume is unavailable", turns[0][1])
+                self.assertNotIn("`alt task done`", turns[0][1])
+                self.assertNotIn("block/resume", turns[0][1])
                 self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], expected_state)
                 self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
                 self.assertFalse(any("clean report closed by altd" in line for line in logs))

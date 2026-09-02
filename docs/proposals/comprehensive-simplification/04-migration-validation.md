@@ -35,14 +35,14 @@ The recorded baseline is:
 | Service/CI/build support outside runnable-source count | 134 lines / 3 files |
 | Baseline checks | 489 Python tests; 39 web tests; production web build |
 
-The clarity candidate based on `a1d42e8` is intentionally expansionary while replacements are
-dormant: **17,184 permanent runnable lines / 56 files**, comprising **14,162 backend lines / 35
+The current integration candidate is intentionally expansionary while replacements are
+dormant or only partly adopted: **18,114 permanent runnable lines / 56 files**, comprising **15,092 backend lines / 35
 files**, **2,827 web lines / 16 files**, and **195 web-build lines / 5 files**. The temporary real-state
 preflight is **1,510 lines / 1 file** and is reported separately. Separately counted candidate inputs
-are **496 persona/schema/template lines / 13 files**, **247 support lines / 3 files**, and one
+are **498 persona/schema/template lines / 13 files**, **247 support lines / 3 files**, and one
 **294-line test-only cross-runtime contract fixture**; `web/README.md` is **13 lines / 1 file** of
-non-runtime documentation. The candidate must retire at least **5,004
-permanent lines and 13 files overall**, including **5,162 backend lines and 11 backend files**, to meet
+non-runtime documentation. The candidate must retire at least **5,934
+permanent lines and 13 files overall**, including **6,092 backend lines and 11 backend files**, to meet
 the final target. This is implementation debt, not evidence of simplification.
 
 Final budgets are hard review gates:
@@ -307,16 +307,17 @@ TTY, same-UID token, `claude --bg` row, or stale PID substitutes for that proof.
 
 ### PRs 1B.1-1B.4: one physical transition, adopted by owner family
 
-PR 1B.1 adds the dormant closed physical record and process-unit reconciliation helper. PR 1B.2
-adopts it for Codex L3 turns; PR 1B.3 adopts it for Codex L2 owners;
-PR 1B.4 adopts it for managed helpers. Each adoption deletes that family's prior PID/job-row/timestamp
+PR 1B.1's closed physical record and PR 1B.2's Codex L3 adoption are active candidate source.
+PR 1B.3 L2-owner adoption and PR 1B.4 managed-helper adoption remain planned. Each adoption deletes
+that family's prior PID/job-row/timestamp
 ownership writer and fallback reader before merging. The shared transition is:
 
 ```text
 planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
 ```
 
-For an owner transition, `TaskCommands` alone takes the task lock and serializes `task.json`. It
+The following owner boundary is the planned PR 1B.3 path, not active L2 behavior yet.
+`TaskCommands` alone takes the task lock and serializes `task.json`. It
 stores the deterministic unit, physical generation, provider-session request, and stable message id,
 then compare-and-swaps `planned -> prior_stopped` before releasing the lock. Only that winner sends
 an immutable task-revision/transition-digest request to `WorkerCommands`. WorkerCommands performs or
@@ -325,9 +326,9 @@ reconciles the physical effect and returns a typed receipt; it never writes `tas
 and serializes the receipt and any owner binding. No task lock is held during provider work.
 Resume creates a new physical generation even when the provider conversation id continues. No next
 writer starts until the prior unit is proven empty. Recovery work also persists
-`{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. L3 receives a
-durable current-turn CAS; a different message receives explicit busy/deferred. Process-local locks
-remain local optimization only. Unknown legacy ownership
+`{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. The active
+PR 1B.2 L3 path already uses its project-lock current-turn CAS and durable receipts; a different
+message receives explicit busy/deferred. Process-local locks remain local optimization only. Unknown legacy ownership
 fails closed instead of being declared empty. A static process inventory must be empty before the
 next sub-PR; no maintenance claimant exists during this sequence.
 
@@ -718,7 +719,7 @@ through successful activation. Kill/replay proves no lost, duplicate, or briefly
 ### PRs 8A-8D: one recovery cutover, built in reviewable slices
 
 - **8A — dormant recovery/incident contracts:** strict v2 episode, logical wake/physical claim,
-  clearance, UUID incident/amendment, and cutover-receipt validators plus fixed fixtures; no writer.
+  clearance/inactive epoch, UUID incident/amendment, and cutover-receipt validators plus fixed fixtures; no writer.
 - **8B — stopped-state importer:** import legacy Markdown/amendments/indexes and frozen clear recovery
   state into a staged keyed ledger plus a canonical inactive recovery epoch, with row-level
   kill/replay tests. It cannot enable v2 or delete
@@ -730,7 +731,7 @@ through successful activation. Kill/replay proves no lost, duplicate, or briefly
 - **8C.3 — recovery task and permit:** implement at-most-one recovery L2, waiting-operator behavior,
   and episode permit fencing with fixture-only callers; keep v1 unchanged.
 - **8C.4 — dormant clearance:** implement keyed clearance receipt and active-to-inactive transition
-  against fixtures only; keep
+  against fixtures only while preserving the current inactive-epoch ABA fence; keep
   v1 runtime clearance unchanged.
 - **8D — activation hook and closure:** attach the single recovery/incident import-and-switch to the
   parent ActivationOperation, switch all runtime callers to the complete v2 command set in this one
@@ -746,7 +747,7 @@ current verified rules before the freeze; do not translate a live supervisor or 
 writer to race the switch.
 
 Use the same activation-owned cutover contract as Phase 6: persist recovery-domain old/new schema,
-empty-episode proof, and candidate SHA as intent before source change; after health-only verification,
+inactive-epoch/no-active-episode proof, and candidate SHA as intent before source change; after health-only verification,
 append the immutable recovery cutover receipt inside the ActivationReceipt. Crash replay reconciles
 installed SHA, domain emptiness, and the process condition required by the parent stage while the gate
 remains held: zero service PIDs before `candidate_started_health_only`, then one exact health-only
@@ -784,7 +785,8 @@ Recovery behavior is direct:
   input, new evidence, or a deployment receipt changes the revision;
 - clearance is a keyed embedded operation: reconcile its receipt, then replace the active episode
   with a canonical `state=inactive` record. The record retains a monotonic epoch, cleared episode
-  and revision, prior epoch, and receipt digest. A no-active permit binds that epoch.
+  and revision, prior epoch, and receipt digest; then reconcile the audit row. A no-active permit
+  binds that epoch, and Phase 8/v2 must preserve the ABA fence.
 
 PR 8D deletes legacy active recovery attention retries, duplicate project-hold writers, and
 incident-index writers together only after the complete candidate E2Es pass. Real-state importers and isolated audit
@@ -793,8 +795,7 @@ may delete them.
 
 Kill tests cover task-claim intent/create/finalize, a failed or rejected first recovery task, new
 evidence after the slot is spent, recursive recovery-origin fault refusal, logical-wake claim and
-abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clearance
-active-to-inactive transition,
+abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clearance receipt/inactive epoch,
 runtime incident append, every legacy incident import row, and cutover-receipt reconciliation. Every
 case retains one episode, one physical wake claim at a time, and no more than one repair task.
 

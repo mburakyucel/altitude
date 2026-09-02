@@ -1,7 +1,7 @@
 # Altitude architecture
 
-> **Candidate-source status.** This document describes the reviewed source candidate based on
-> `a1d42e85c8586137b1635f481cb5da362b8b3e1d`. Production remains stopped and byte-frozen at
+> **Candidate-source status.** This document describes the current reviewed integration candidate.
+> Production remains stopped and byte-frozen at
 > `97e11979bdc0814ad5067eab717f999d1c251437`; no ActivationReceipt exists. Sections explicitly
 > labeled dormant are implemented facts with no normal caller. The comprehensive-simplification
 > pack describes planned target behavior, not behavior activated by this source.
@@ -41,9 +41,10 @@ leaves the parent commit unchanged, and returns a
 validated binary patch plus findings to L2. It does not commit, open a PR, or integrate its own
 work. The L2 chooses whether to apply that patch; ownership never transfers.
 
-L2 and L3 currently run autonomously on Codex. Fresh L2 dispatch records the choice and keeps that
-provider for the attempt. Historical Claude session identity is retained for observation and cleanup,
-but it is not selected or resumed. See
+Enabled autonomous roles run on Codex; Claude launch paths are byte-inert after the Phase 1A
+NO-GO. Fresh L2 dispatch records one provider choice and keeps that provider for the attempt. L3
+keeps the canonical resumable Codex conversation. Historical Claude session identity remains
+read-only observation/cleanup evidence and is never selected or resumed. See
 [Session lifecycle](SESSION_LIFECYCLE.md) for routing, message, resume, context, and cache semantics.
 
 ## Task lifecycle
@@ -82,14 +83,11 @@ branches cannot be updated outside the guarded landing path. The trusted landing
 lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 
-New Claude workers are disabled: the CLI's foreground and resume flags were insufficient to prove
-the required unit ownership, result spool, deterministic stop, and empty cgroup without a real turn.
-The existing hooks, command guard, backend identity/lease/provenance checks, and read-only `alt agents`
-inspection plus physical worker stop/remove remain for legacy evidence and cleanup. A legacy Claude
-task's durable state is mutation-held by target provider, regardless of a caller's actor string. Same-UID
-CLI environment, TTY, or flag values cannot distinguish an operator from an unsandboxed legacy worker, so
-they are not authentication. Production activation of this source therefore requires the external stopped-
-production gate to prove all legacy Claude units/processes empty first. Codex workers have no control capability or
+Legacy Claude rows, hooks, and process records remain only as read-only stopped-state evidence and
+for exact stop/cleanup. No autonomous path launches or resumes Claude; the retained backend checks
+cannot be used as a routing or mutation fallback. Same-UID environment, TTY, and caller flags are
+not operator authentication. Activation must prove every legacy Claude unit/process empty. Codex
+workers have no control capability or
 Git-publication authority. A Codex L2 may write only in its task worktree under an explicit
 permission profile; its Git common directory and Altitude state are outside that writable surface,
 and hosted tools and model-command network access are disabled. The inner Codex sandbox hides host PIDs, while the
@@ -109,11 +107,10 @@ while nested bwrap initializes inside the dedicated service. The outer launcher 
 the Codex child starts from an empty environment rebuilt from a narrow allowlist, with that bus, its runtime socket
 tree, ambient service credentials, and scoped L2 capabilities removed. A deterministic host canary verifies that the
 inner sandbox cannot see or signal a known host PID; the trusted host can still stop the whole cgroup.
-A GitHub-issue action can save only the exact current user message under a title quoted from it. In
-the current candidate it remains a private draft until Burak sends the exact draft-specific approval
-phrase; secret-shaped content is still refused. Target decision D6 will treat Burak's initial exact
-bounded publication request as authorization only when PR 1C.4 adopts that command and deletes this
-second-phrase rule.
+A GitHub-issue action can save only the exact current user message under a title quoted from it. It
+remains a private draft: this candidate has no publication-approval action. Publication stays
+dormant until Phase 1C.4 supplies exact-repository replay and a trusted command; secret-shaped
+content is still refused.
 L1 implementers receive narrower write subleases; the
 trusted wrapper verifies that their parent commit did not move and captures their changes as a
 patch for the owning L2 to evaluate.
@@ -124,15 +121,16 @@ base-owned workflow accepts only same-repository heads, pins its actions and Nod
 read-only repository permission, persists no checkout credential, exposes no token or secret, and
 runs candidate commands under an empty environment with disposable HOME and cache directories.
 
-### Dormant physical-ownership foundation
+### Physical ownership foundation and L3 adoption
 
-`engines.py` now defines one closed physical transition for later L3, L2-owner, and helper adoption:
+`engines.py` defines one closed physical transition. Codex L3 actively uses it in this candidate;
+L2-owner and helper adoption remain planned:
 `planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete | failed`.
 Its deterministic unit, physical generation, provider-session request, stable message id, and optional
 recovery episode/permit revision are immutable intent protected by one stable digest. Receipts have closed
-stage-specific shapes, and the record revision is derived exactly from its receipts and durable error. Each
-caller will embed the transition in its existing
-authoritative aggregate and persist it with the durable state primitives; the transition creates no sidecar
+stage-specific shapes, and the record revision is derived exactly from its receipts and durable error. L3
+embeds it in `l3.json`; later L2/helper adopters must embed it in their existing authoritative
+aggregate and persist it with the durable state primitives. The transition creates no sidecar
 record, journal, lock, or artifact family. A recorded pre-spawn error reconciles through
 `launched=false`, `bound=false`, its exact error result, and proven empty before failure, without a
 provider effect. After `prior_stopped`, an empty/collected unit with neither an error nor a durable
@@ -142,8 +140,56 @@ result is ambiguous—the launch may have run and exited—so reconciliation ret
 Provider-neutral managed-unit helpers expose exact manager/cgroup observation and whole-unit spawn/stop while
 reusing the existing Codex containment mechanics. A read-only reconciliation helper correlates the exact unit
 with a durable result marker carrying the same intent digest and returns a crash-stage decision; disagreement
-refuses as `ownership_uncertain` rather than guessing or relaunching. This foundation is deliberately dormant: no production L3,
-L2, helper, server, CLI, or timer path consumes it yet, and all current provider behavior remains unchanged.
+refuses as `ownership_uncertain` rather than guessing or relaunching.
+
+Codex L3 is the first and currently only adopter. `l3.json` embeds the current turn, provider request, deterministic
+unit, exact service-instance claim/replacement receipt, recovery permit, receipts, and keyed delivery claim;
+each generation has its own result marker as
+non-authoritative output in
+the existing disposable L3 runtime family. A generation-keyed answer/event spool is preterminal crash evidence:
+its host-written header binds the physical intent, it can become the sole marker only after the unit is empty and
+the event stream proves one complete turn, and it is deleted after terminal delivery is retired. At the
+`prior_stopped` crash window, that exact bounded spool is checked after unit emptiness and promoted before the
+generic ambiguity decision; no spool remains ambiguous, while an incomplete or mismatched spool becomes an inert
+failure and never causes relaunch. Each turn gets a new physical generation even when it resumes the
+same provider thread. A process-local lock reduces duplicate callbacks; project-lock compare-and-swap elects the
+sole `planned -> prior_stopped` launcher and every receipt/delivery transition. No long-held turn flock or second
+owner exists. The timer schedules reconciliation through the existing deduplicated background runner, so provider
+or delivery work never runs inline in the timer. A replacement records an explicit service-manager-proven delivery
+handoff; it reconciles receipts but never relaunches the ambiguous `prior_stopped` boundary. Failed turns retain
+their proven-empty unit and exact provider thread as the next turn's prior physical/session owner. Every turn binds
+either the exact active recovery episode/revision/claim or the canonical inactive recovery epoch; the managed child
+and broker recheck it before launch/message, result persistence, delivery, and each short local mutation. Browser
+APIs receive only scalar session telemetry, never the
+request, physical transition, or recovery claim. Unknown legacy ownership, an ambiguous collected unit, a changed
+result, or a stale recovery observation fails closed. Delivery reuses the existing keyed action record and chat row:
+absent/complete evidence resumes mechanically, while an ambiguous non-reconcilable `applying` action remains the
+same `reconciliation_required` fence. B2 deliberately exposes no reset/disposition command; Phase 3 must add its
+trusted command before activation. Remote issue publication, task resume, recovery repair delegation, and L3
+recovery hold/clear are likewise rejected before action claim until 1C.4/B3/Phase 3G supplies their final authority
+boundaries.
+
+The model cannot read `ALTITUDE_HOME`. The host writes one bounded, aggressively redacted disposable projection
+containing coordination-safe task facts and recent chat, then grants read access only to that exact regular file and
+the selected checkout. Parent symlinks and changed projection bytes refuse. The Codex adapter caps answer and event
+output while producing it; cap, drain, or timeout terminates the Codex process, after which the outer managed L3 unit
+must be proven empty before settlement. L2 owners and helpers do not consume this L3 adoption yet.
+
+Phase 1B.2 accounting is intentionally explicit. The initial review snapshot added **361 backend lines**
+(`engines.py` +47, `l3.py` +283, `l3_actions.py` +29, `server.py` +2). Closing the instance-handoff,
+ambiguous-action, producer-cap, exact-stop, recovery-ABA, disclosure, and timer findings brings the final
+backend/CLI delta against `768a47c` to **+948 lines**: `engines.py` +188, `l3.py` +593,
+`l3_actions.py` -10, `recovery.py` +167, `server.py` +12, and `bin/alt` -2. The closed persona adds two net
+lines and the schema is line-neutral; tests are reported separately (**+1,041 net** at this snapshot).
+There is no new dependency, service, endpoint, timer, selector, or semantic authority. Existing `l3.json`,
+`l3-actions/`, and `l3-codex-runtime/` families are reused; the runtime adds generation-keyed disposable evidence,
+and existing recovery hold/launch locks are reused. The smaller PID/lock-only design was rejected because it could
+silently relaunch ambiguous work; post-read caps, whole-home access, and ordinary failed action rows could
+respectively retain a live process, disclose credentials, and repeat an ambiguous mutation. PR 1C.4 deletes duplicate action-effect
+state, PR 1C.5 deletes L3 closeout flags, and Phase 3B removes session mirrors and compacts migrated journals.
+Those named deletions must recover this temporary growth under the final hard gates: at most 12,180 permanent
+runnable lines, 9,000 backend/CLI/hook/restart lines, 43 runnable files including 24 backend files,
+and 25 artifact families.
 
 ### Dormant deployment authority
 
@@ -184,12 +230,19 @@ projection neither decides that the candidate is latest remote main nor performs
 
 System faults are deduplicated into private incident evidence and activate a global recovery fuse.
 The launch permit is checked for both fresh and resumed work, including the final launch boundary.
-Ordinary work stays held while recovery is active. L3 may claim one recovery task; a second repair
-is refused. Incident records are evidence only and never create tasks, personas, or follow-up work.
+Ordinary work stays held while recovery is active. The current L3 recovery turn may inspect and
+coordinate, but recovery-task delegation is dormant until Phase 3 supplies the exact episode command;
+it returns one needed corrective task or proposal as a human-readable recommendation instead.
+Incident records are evidence only and never create tasks, personas, or follow-up work.
 Separately, the active fuse carries one durable, deduplicated L3 attention request. The
 server runs at most one recovery turn for it at a time, retains failed turns with bounded backoff, and
-audits successful handling. After stability returns, L3 triages the evidence: narrow corrective follow-up
-is an FYI, while broad architecture, policy, or system work is preserved for Burak as a proposal or issue.
+audits successful handling. The turn leaves the fuse active and reports the next bounded coordination
+or recommendation to Burak; it cannot publish an issue, delegate repair, or clear recovery in this phase.
+The canonical recovery record is never deleted on clearance: it atomically becomes a closed inactive record with
+a monotonic epoch and the exact latest clearance receipt, then projects that receipt idempotently into the audit
+JSONL. Proven-none L3 turns bind the epoch, so `none -> hold -> clear` cannot masquerade as unchanged state.
+Material active evidence advances the one episode revision and invalidates old claims. The history is audit only;
+it never actuates a launch or mutation.
 
 The service lifecycle is separate from source changes. Production is currently stopped and frozen;
 the planned comprehensive cutover has not run. Ordinary source changes never start, stop, mask,
@@ -219,9 +272,10 @@ than introduce a behavior selector or a second authority.
 
 Runtime files live under `ALTITUDE_HOME`. Active architecture documents label candidate, dormant,
 planned, and activated behavior explicitly. Hooks supply temporary Claude-side command guardrails
-and telemetry for legacy Claude evidence; permission profiles, process containment, and backend
-validation form the Codex
-execution boundary. Superseded designs remain in Git history, not in the active tree.
+and telemetry only for read-only legacy Claude observation, stop, and cleanup; they are not an
+active launch or command boundary. Permission profiles, process containment, and backend validation
+form the Codex execution boundary.
+Superseded designs remain in Git history, not in the active tree.
 
 ### Durable I/O foundation
 

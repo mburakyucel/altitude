@@ -21,9 +21,9 @@ call it. **Planned** means it is not implemented. None of these terms means depl
 | Status | Candidate contents |
 | --- | --- |
 | Frozen production | Commit `97e11979bdc0814ad5067eab717f999d1c251437`; service stopped; state frozen; no `ActivationReceipt` |
-| Active candidate source | Exact-candidate remote web CI and Codex-only autonomous-engine closure |
-| Implemented but dormant | Durable I/O primitives; boundary contracts; physical-transition foundation; runtime manifest/preflight; DeploymentRecord baseline, contribution, and qualification facts |
-| Planned | L3/L2/helper adoption after the physical foundation; settlement effects; application commands; task v2; scoped holds; recovery v2; projections/cleanup; activation runner and real-state cutovers |
+| Active candidate source | Exact-candidate remote web CI; Codex-only autonomous-engine closure; durable L3 physical-turn ownership/delivery; inactive recovery epoch fencing |
+| Implemented but dormant | Durable I/O primitives; boundary contracts; shared physical-transition foundation for later L2/helper adoption; runtime manifest/preflight; DeploymentRecord baseline, contribution, and qualification facts |
+| Planned | L2/helper physical-transition adoption; settlement effects; application commands; task v2; scoped holds; full recovery v2 cutover; projections/cleanup; activation runner and real-state cutovers |
 | Production activation | Not performed and not authorized by any source merge or this proposal |
 
 The [active architecture](../../ARCHITECTURE.md) identifies current candidate behavior and labels every

@@ -1,9 +1,11 @@
-"""An L3 session rotation is durable before a conversational turn starts."""
+"""L3 rotation and physical intent are durable before the managed effect."""
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-restart-turn-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -11,62 +13,63 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, engines, l3, state as S  # noqa: E402
 
 PROJECT = "restartdup"
-
-
-def register() -> None:
-    config.ensure_root()
-    projects = config.load_projects()
-    projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "l3_engine": "codex"}
-    config.save_projects(projects)
+INSTANCE = "restart-test-instance"
 
 
 class TestRotationIsPersistedBeforeTheTurn(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        register()
+        config.ensure_root()
+        projects = config.load_projects()
+        projects[PROJECT] = {"name": PROJECT, "path": config.ROOT.as_posix(), "l3_engine": "codex"}
+        config.save_projects(projects)
 
-    def test_a_restart_mid_turn_does_not_rotate_the_same_session_again(self):
+    def test_rotation_and_new_generation_exist_before_spawn(self):
         l3.save_info(PROJECT, {
-            "engine_last": "codex", "session_id": "e9aa9612", "rotate_next": True,
-            "context_percent": 100.0, "turns": 12,
-            "sessions": {"codex": {"session_id": "e9aa9612", "rotate_next": True,
-                                    "context_percent": 100.0, "turns": 12}},
+            "l3_ownership_version": 1, "engine_last": "codex", "session_id": "old-thread",
+            "rotate_next": True, "context_percent": 100.0, "turns": 12,
+            "sessions": {"codex": {"session_id": "old-thread", "rotate_next": True,
+                                    "context_percent": 100.0, "turns": 12,
+                                    "process_unit_id": engines.deterministic_process_unit(
+                                        "l3", PROJECT, "old")}},
         })
-        seen: dict = {}
-        original = engines.codex_exec
+        seen = {}
 
-        def crash(prompt, **kwargs):
-            seen["resume"] = kwargs.get("resume")
+        def empty(unit):
+            return {"process_unit_id": unit, "load_state": "not-found", "active_state": "inactive",
+                    "sub_state": "dead", "control_group": "", "population": "empty", "empty": True}
+
+        def spawn(transition, command, **_kwargs):
+            seen["transition"] = transition
             seen["on_disk"] = l3.info(PROJECT)
-            raise RuntimeError("altd restarted mid-turn")
+            l3._managed_codex(command[-3], command[-2], command[-1])  # noqa: SLF001
+            return mock.Mock(pid=7, wait=mock.Mock(return_value=0))
 
-        def ok(prompt, **kwargs):
-            seen["resume_after_restart"] = kwargs.get("resume")
-            return {
-                "text": "hello", "session_id": "f00d1234", "reported_session_id": "f00d1234",
-                "usage": {"input_tokens": 1000}, "structured": {"message": "hello", "actions": []},
-                "error": None, "returncode": 0, "containment_empty": True,
-            }
+        codex_result = {
+            "text": "hello", "session_id": "new-thread", "reported_session_id": "new-thread",
+            "usage": {"input_tokens": 1000}, "structured": {"message": "hello", "actions": []},
+            "error": None, "returncode": 0, "containment_empty": True,
+        }
 
-        try:
-            engines.codex_exec = crash
-            with self.assertRaises(RuntimeError):
-                l3.turn(PROJECT, "the turn the restart cut short")
-            engines.codex_exec = ok
-            l3.turn(PROJECT, "the first turn after the restart")
-        finally:
-            engines.codex_exec = original
+        def codex(*_args, **kwargs):
+            S.atomic_write(kwargs["answer_path"], json.dumps(codex_result["structured"]))
+            with kwargs["event_spool"].open("a") as stream:
+                stream.write('{"type":"thread.started","thread_id":"new-thread"}\n')
+                stream.write('{"type":"turn.completed","usage":{"input_tokens":1000}}\n')
+            return codex_result
 
-        self.assertIsNone(seen["resume"])
-        self.assertIsNone(seen["on_disk"]["session_id"])
+        with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "test", "quota": {}}), \
+             mock.patch.object(engines, "observe_managed_unit", side_effect=empty), \
+             mock.patch.object(engines, "spawn_managed_unit", side_effect=spawn), \
+             mock.patch.object(engines, "codex_exec", side_effect=codex):
+            out = l3.turn(PROJECT, "turn after rotation", instance_id=INSTANCE)
+
+        self.assertTrue(out["completed"])
+        self.assertEqual(seen["transition"]["provider_session_request"], {"kind": "fresh"})
         self.assertIsNone(seen["on_disk"]["sessions"]["codex"]["session_id"])
-        self.assertFalse(seen["on_disk"]["rotate_next"])
-        self.assertEqual(seen["on_disk"]["rotated_from"], "e9aa9612")
-        self.assertIsNone(seen["resume_after_restart"])
-        rotations = [event for event in S.read_project_log(PROJECT)
-                     if event.get("kind") == "l3-rotate" and event.get("old") == "e9aa9612"]
-        self.assertEqual(len(rotations), 1)
-        self.assertEqual(l3.info(PROJECT)["session_id"], "f00d1234")
+        self.assertEqual(seen["on_disk"]["sessions"]["codex"]["rotated_from"], "old-thread")
+        self.assertEqual(seen["on_disk"]["current_turn"]["physical"]["stage"], "prior_stopped")
+        self.assertEqual(l3.info(PROJECT)["session_id"], "new-thread")
         self.assertEqual(l3.info(PROJECT)["turns"], 1)
 
 

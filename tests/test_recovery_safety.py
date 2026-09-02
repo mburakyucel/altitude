@@ -56,7 +56,8 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertIsNone(second)
         attention = recovery.l3_attention_due("altitude")
         self.assertIsNotNone(attention)
-        self.assertEqual(attention["revision"], 1)
+        self.assertEqual(attention["revision"], recovery.status()["revision"])
+        self.assertGreaterEqual(attention["revision"], 1)
         self.assertEqual([row["kind"] for row in attention["faults"]], ["test-health"])
         self.assertEqual(S.list_tasks("altitude"), [])
 
@@ -87,12 +88,16 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("first-health", calls[0][1])
         self.assertIn("second-health", calls[0][1])
+        self.assertIn("return one precise corrective task or proposal as a human-readable recommendation", calls[0][1])
+        self.assertIn("Leave the recovery fuse active", calls[0][1])
+        self.assertNotIn("delegate the episode", calls[0][1])
+        self.assertNotIn("GitHub issue for Burak", calls[0][1])
         self.assertEqual(calls[0][2], "system-recovery")
         self.assertIsNone(recovery.l3_attention_due("altitude"))
         self.assertIsNotNone(recovery.status(), "a successful L3 turn must not clear the fuse")
         history = [row for row in S.read_project_log("altitude") if row.get("kind") == "recovery-turn-handled"]
         self.assertEqual(len(history), 1)
-        self.assertEqual(history[0]["revision"], 1)
+        self.assertEqual(history[0]["revision"], recovery.status()["revision"])
         self.assertEqual(S.list_tasks("altitude"), [])
 
     def test_failed_recovery_turn_retries_the_same_wake_with_backoff(self):
@@ -139,6 +144,44 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertIsNotNone(new)
         self.assertNotEqual(new["episode"], old["episode"])
 
+    def test_inactive_epoch_closes_none_hold_clear_aba(self):
+        none0 = recovery.observe_l3_state("altitude")
+        self.assertEqual(none0["epoch"], 0)
+        recovery.hold("first", kind="first")
+        recovery.clear("first cleared", actor="burak")
+        none1 = recovery.observe_l3_state("altitude")
+        self.assertEqual(none1["epoch"], 1)
+        self.assertFalse(recovery.l3_state_is_current("altitude", none0))
+        self.assertTrue(recovery.l3_state_is_current("altitude", none1))
+        recovery.hold("second", kind="second")
+        recovery.clear("second cleared", actor="burak")
+        self.assertEqual(recovery.observe_l3_state("altitude")["epoch"], 2)
+        self.assertFalse(recovery.l3_state_is_current("altitude", none1))
+
+    def test_inactive_epoch_receipt_tamper_and_rollback_fail_closed(self):
+        recovery.hold("fault", kind="fault")
+        recovery.clear("cleared", actor="burak")
+        inactive = S.read_json(recovery.hold_path())
+        for mutate in (
+            lambda row: row["clearance"].__setitem__("reason", "tampered"),
+            lambda row: row.__setitem__("epoch", 0),
+        ):
+            bad = json.loads(json.dumps(inactive)); mutate(bad); S.write_json(recovery.hold_path(), bad)
+            with self.assertRaisesRegex(ValueError, "inactive recovery record"):
+                recovery.observe_l3_state("altitude")
+        S.write_json(recovery.hold_path(), inactive)
+
+    def test_clear_state_precedes_audit_and_next_mutation_repairs_missing_row(self):
+        recovery.hold("fault", kind="fault")
+        with mock.patch.object(S, "append_jsonl", side_effect=OSError("audit unavailable")), \
+             self.assertRaisesRegex(OSError, "audit unavailable"):
+            recovery.clear("cleared", actor="burak")
+        self.assertIsNone(recovery.status())
+        inactive = S.read_json(recovery.hold_path())
+        recovery.hold("later fault", kind="later")
+        rows = S.read_jsonl(recovery.clearance_history_path(), key_field="id")
+        self.assertEqual(rows, [inactive["clearance"]])
+
     def test_recovery_turn_exception_does_not_file_a_recursive_workflow_fault(self):
         incidents.system_fault("test-health", "engine supervision failed", project="altitude")
         with mock.patch.object(server.l3, "turn", side_effect=RuntimeError("model unavailable")):
@@ -148,7 +191,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(S.list_tasks("altitude"), [])
         self.assertEqual(recovery.status()["l3_attention"]["attempts"], 1)
 
-    def test_fault_arriving_during_a_turn_joins_the_same_episode_without_another_turn(self):
+    def test_fault_arriving_during_a_turn_invalidates_it_and_makes_a_new_wake_due(self):
         incidents.system_fault("first-health", "first failure", project="altitude")
         prompts = []
 
@@ -162,11 +205,10 @@ class TestRecoveryFuse(unittest.TestCase):
             server.run_recovery_turn("altitude")
 
         attention = recovery.status()["l3_attention"]
-        self.assertEqual(attention["revision"], 1)
-        self.assertEqual(attention["handled_revision"], 1)
+        self.assertGreater(attention["revision"], attention["handled_revision"])
         self.assertEqual([row["kind"] for row in attention["faults"]], ["first-health", "second-health"])
         self.assertEqual(len(prompts), 1)
-        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        self.assertIsNotNone(recovery.l3_attention_due("altitude"))
         self.assertEqual(S.list_tasks("altitude"), [])
 
     def test_clear_during_precheck_skips_without_recreating_the_episode(self):
@@ -269,7 +311,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(len(handled), 1)
         self.assertIsNone(recovery.l3_attention_due("altitude"))
 
-    def test_new_fault_kind_does_not_bypass_a_failed_turn_backoff(self):
+    def test_new_fault_kind_invalidates_the_failed_turn_and_becomes_due(self):
         incidents.system_fault("first-health", "first failure", project="altitude")
         with mock.patch.object(server.l3, "turn", return_value={"error": "capacity", "skipped": False}):
             server.run_recovery_turn("altitude")
@@ -278,11 +320,11 @@ class TestRecoveryFuse(unittest.TestCase):
         incidents.system_fault("second-health", "second failure", project="altitude")
         after = recovery.status()["l3_attention"]
 
-        self.assertEqual(after["revision"], 1)
+        self.assertGreater(after["revision"], before["revision"])
         self.assertEqual(after["attempts"], before["attempts"])
-        self.assertEqual(after["next_attempt"], before["next_attempt"])
+        self.assertIsNone(after["next_attempt"])
         self.assertEqual([row["kind"] for row in after["faults"]], ["first-health", "second-health"])
-        self.assertIsNone(recovery.l3_attention_due("altitude"))
+        self.assertIsNotNone(recovery.l3_attention_due("altitude"))
 
     def test_one_explicit_repair_is_allowed_until_l3_clears(self):
         recovery.hold("runtime ownership is uncertain", kind="ownership", actor="l3")
@@ -295,7 +337,7 @@ class TestRecoveryFuse(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only L3 or Burak"):
             recovery.clear("looks fine", actor="altd")
 
-        cleared = recovery.clear("ownership reconciled\nand the repair PR verified", actor="l3")
+        cleared = recovery.clear("ownership reconciled\nand the repair PR verified", actor="burak")
         self.assertTrue(cleared["cleared"])
         self.assertIsNone(recovery.status())
         history_text = recovery.clearance_history_path().read_text()

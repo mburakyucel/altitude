@@ -1,8 +1,9 @@
 # Engine and session lifecycle
 
-> **Candidate-source status.** This describes the source candidate based on `a1d42e8`; production
+> **Candidate-source status.** This describes the current integration candidate; production
 > remains stopped and frozen at `97e1197`, with no ActivationReceipt. Claude rows below are read-only
 > legacy evidence/cleanup behavior. New autonomous L3, L2, L1, and helper turns are Codex-only.
+> Durable physical-turn ownership is active for L3; L2-owner and helper adoption remain planned.
 
 ## Live L2 transcript
 
@@ -36,13 +37,12 @@ reject unknown versions, and future L3, L1, reviewer, and recovery bundles can u
 with a different `level` and `role`.
 
 Each read and steering request carries the project, task, dispatch generation, engine, and displayed session. A
-mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Steering ends
-the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
-normally retains its thread id. Historical Claude session ids remain evidence, but disabled Claude work is not
-resumed. Altitude records the old and new
-worker/session identities and renders resume, replacement, compaction, engine-change, and recovery events as
-boundaries underneath the same logical task dispatch. A parser error or incomplete provider-native JSONL record is displayed
-as viewer evidence and retried on the next poll; it never changes task or worker state.
+mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Enabled steering
+ends the current physical Codex turn and resumes that thread in a newly owned worker. Historical Claude session and
+worker ids remain read-only observation/stop/cleanup evidence and cannot be resumed or converted into Codex. Altitude
+records the old and new Codex worker/session identities and renders resume, replacement, compaction, and recovery
+events as boundaries underneath the same logical task dispatch. A parser error or incomplete provider-native JSONL record is
+displayed as viewer evidence and retried on the next poll; it never changes task or worker state.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
 identities on purpose:
@@ -50,9 +50,9 @@ identities on purpose:
 | Field | Meaning | Changes when |
 | --- | --- | --- |
 | `dispatch_id` | one L2 attempt | the task is dispatched again as a new attempt |
-| `l2_engine` | provider for that attempt | only on a fresh attempt, never a transparent resume |
-| `session_id` | provider conversation/thread | Codex keeps it across turns; historical Claude replacements remain evidence |
-| `agent_id` | current provider worker, including a legacy Claude job | every physical replacement |
+| `l2_engine` | selected engine or retained legacy provider | new attempts select Codex; a legacy Claude value is inert evidence |
+| `session_id` | provider conversation/thread | Codex keeps it across turns; a legacy Claude id is observation only |
+| `agent_id` | current Codex OS worker or retained legacy Claude job | every enabled Codex physical replacement |
 | `l2_token` | backend ownership fence for the logical L2 attempt | stable for the attempt; old workers are stopped before replacement |
 | `routing` | reason plus quota evidence used at launch | written once with fresh dispatch |
 
@@ -61,17 +61,16 @@ identities on purpose:
 ```text
 queued task
   ├─ recovery/WIP/lease and Git provenance gates
-  ├─ closed-capability and weekly-quota decision (or explicit enabled pin)
+  ├─ weekly-first Codex observation and configured model choice
   ├─ persist l2_engine + model + reason + raw quota evidence
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
 
-Routing may display historical Claude quota observations, but the closed autonomous capability set
-contains only Codex. A fresh turn therefore selects Codex when its named weekly/short
-windows permit it and otherwise stays held. A Claude pin is explicitly unavailable and never silently
-falls back. Weekly-first comparison remains defined for a future provider only after its complete
-supervision capability has been proven and deliberately enabled.
+Routing uses Codex's reported seven-day allowance as its primary capacity score; the five-hour
+window is an availability signal. Unknown telemetry is recorded as uncertainty and remains eligible,
+while an actual quota/capacity launch failure creates a Codex-local hold. An explicit legacy Claude
+pin fails closed and never falls through or becomes eligible.
 
 Altitude does not infer separate Fable and Opus allowances from an account-wide meter. A model pin
 is honored inside the selected provider; model switching requires explicit observable policy rather
@@ -87,23 +86,20 @@ scheduled retries leave the existing durable retry in place. For an enabled prov
 1. appends Burak's message to the durable human conversation with the addressed snapshot;
 2. validates the task worktree/commit provenance;
 3. stops the current physical worker and confirms it is no longer live;
-4. resumes the task's already-selected provider conversation;
+4. resumes the task's already-selected Codex conversation;
 5. atomically binds the Codex replacement worker while retaining the exact thread id.
 
-Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
-A failed resume leaves the provider conversation and task evidence available for L3 recovery. A
-cross-provider continuation is a deliberate new attempt based on saved work, not a fake transcript
-resume.
+This is the existing L2 path. It does not claim the new shared durable physical-transition
+adoption; that remains planned for Phase 1B.3.
 
-Claude `--bg` launch/resume is disabled for L2, L3, L1, and helpers. Its short launcher and job row do
-not prove descendant ownership or cgroup emptiness, and a genuine supervised resume/result-spool test
-could not be completed locally without spending a provider turn. The existing backend authority checks,
-hooks, guardrails, status inspection, and legacy-worker stop/remove adapters remain; a legacy Claude
-worker is never stopped merely to attempt a now-disabled replacement. Its task mutation and publication
-boundaries check the target provider before any model-controlled actor environment. No actor variable,
-TTY, or same-user CLI token is claimed as operator authentication: the accepted stopped-production
-activation gate must prove every legacy Claude unit/process empty before this source runs. Read-only
-inspection and physical stop/remove cleanup remain available while the stopped state is reconciled.
+Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
+A failed resume leaves the Codex thread and task evidence available for recovery. No cross-provider
+continuation exists in the current target.
+
+Claude launch/resume is disabled for L2, L3, L1, and helpers. Legacy hooks and backend validation
+remain only until stopped-state reconciliation and post-activation deletion; neither is a callable
+worker or operator-authentication path. Activation must prove every legacy Claude unit/process empty;
+read-only inspection and exact stop/cleanup remain available until that proof.
 
 Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
 is private task evidence; `thread.started.thread_id` is the session identity and
@@ -120,18 +116,42 @@ broker—not the model process—may then post the human-facing message, land a 
 task, block, continue the same thread, or launch optional helpers. A held action is durable and does
 not spend another model turn merely to wait for recovery.
 
-## L3 sessions and provider identity
+## L3 sessions and physical turns
 
-L3 retains separate historical Claude and Codex session records, but new autonomous turns select and
-resume only Codex. The disabled Claude record is neither migrated into Codex nor replayed; durable
-human conversation remains the explicit handoff boundary.
+Autonomous L3 is Codex-only. Every accepted message installs one closed current-turn operation in
+`l3.json` before chat append, unit launch, or model work. A resumed Codex thread still gets a new
+physical generation and deterministic managed unit; the previous unit must be proven empty first.
+The process-local lock only reduces contention. Project-lock compare-and-swap elects the only launcher and every
+later receipt across service processes; there is no long-held turn
+flock. `l3.json` and its exact receipts are authoritative. Every operation names the exact service instance; a
+replacement may reconcile delivery only after manager proof and a persisted handoff. The timer only schedules the
+existing deduplicated background reconcile, so planned launch or slow delivery never holds up the timer loop.
 
 A Codex L3 turn uses the same containment and inert-result pattern, but its filesystem view is
-read-only with respect to durable inputs: it may read the compact Altitude state and the selected project checkout,
-and may write only to an inert disposable runtime directory required by the Codex CLI. Its trusted
-broker applies at most the validated project-coordination action. Provider selection changes neither
-L3's project-level responsibility nor L2's end-to-end
-task ownership.
+read-only with respect to durable inputs: it may read one bounded host-generated redacted projection and the
+selected project checkout, but not `ALTITUDE_HOME`,
+and may write only to an inert disposable scratch directory required by the Codex CLI. The trusted
+wrapper writes the intent-bound result marker outside that model-writable scratch. Only after the exact
+result is observed and the managed unit is proven empty may the broker append the keyed response and
+apply at most one validated project-coordination action. A replacement may start the exact operation only while
+it remains safely pre-effect at `planned`; once `prior_stopped` is durable, ambiguity refuses rather than relaunches.
+Recovery turns bind the episode, permit revision, and claim; ordinary turns bind the canonical inactive epoch.
+Both are rechecked before message, launch, result persistence, result delivery, and each enabled local action.
+
+Codex writes each generation's final answer and JSON events to a predeclared host spool outside scratch. The
+event header binds that spool to the persisted intent. If the wrapper dies before creating the result marker, a
+replacement waits for unit emptiness and accepts only one complete, valid turn; partial evidence fails inertly.
+This inspection also precedes the otherwise ambiguous `prior_stopped` decision: an exact completed spool repairs
+forward without relaunch, no spool remains `ownership_uncertain`, and oversized, partial, or mismatched evidence
+fails inertly. The spool is recovery evidence, not a second result authority, and is removed only after terminal
+delivery retires.
+
+Answer and event caps are enforced while Codex is still producing them. Overflow, timeout, or drain failure
+terminates Codex; the managed wrapper exits and the exact outer generation must then be stopped/proven empty before
+failure settlement. An interrupted non-reconcilable action remains `applying` and fences the current turn. B2 has
+no disposition/reset API: Phase 3 must add the trusted command before activation. Remote issue publication, task
+resume, recovery repair delegation, and L3 recovery hold/clear are rejected before claim until 1C.4/B3/Phase 3G
+supplies their final boundaries.
 
 The target L3 prompt receives one generation-keyed redacted projection: bounded recent human chat;
 each active task's title, state, blocked reason, direct question, merge hold, and publication
@@ -142,19 +162,15 @@ For contained Codex turns, the user DBus and runtime directory exist only in the
 are unset before Codex starts. The child receives an allowlisted environment; ambient tokens, API keys, SSH agents,
 Git credential helpers, and the L2 capability are absent. A deterministic host canary checks that its inner sandbox
 cannot see or signal a known host PID. A model-requested GitHub issue cannot contain synthesized private context: the broker
-stores only the exact current chat message, with a title quoted from it, as a private draft. In this
-candidate, publication still requires a second exact, draft-specific approval message from Burak.
-Target decision D6 removes that second phrase only when the issue-publication command adopts the
-initial exact bounded request as authorization. Secret-shaped content remains a hard refusal.
+stores only the exact current chat message, with a title quoted from it, as a private draft. Publication remains
+dormant until Phase 1C.4 supplies exact-repository replay and a trusted approval command.
 
 ## Polling, restart, and cleanup
 
-Legacy Claude jobs and Codex processes normalize to the same read model: worker id, provider session id,
-PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. After an
-`altd` restart, Claude is rediscovered through its job registry and Codex through its private task
-record plus validated PID start time and containment unit. A missing or failed worker without a
-valid completion is a system fault, not “still running.” Rejection and post-merge cleanup use the
-same provider adapter.
+Enabled Codex processes expose the persisted worker row and exact managed-unit ownership evidence. Polling follows
+the persisted `l2_engine`; a disabled legacy Claude row remains inert evidence and cannot be launched or silently
+treated as absent. Read-only inspection may rediscover it only for exact stop/cleanup. A missing or failed enabled
+worker without a valid completion is a system fault, not “still running.”
 
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.
@@ -167,13 +183,14 @@ and a successful ActivationReceipt.
 
 ## Context and prompt-cache evidence
 
-For Claude, context is the newest genuine assistant usage record: input plus cache-read plus
-cache-creation tokens. Synthetic all-zero limit records are ignored. For Codex, the latest
+Legacy Claude context/cache records are read-only observation, stop, and cleanup evidence; they do
+not describe an active launch or resume mechanism. For Codex, the latest
 `turn.completed.usage.input_tokens` drives an approximate percentage against the configured context
 window; reported `cached_input_tokens` is retained separately.
 
-A provider session id records which provider conversation Altitude asks to resume. That documented
-resume behavior does not prove a cache hit or imply any undocumented prompt-cache guarantee.
+A Codex session id records which thread Altitude asks to resume; a legacy Claude session id is
+read-only evidence. Documented Codex resume behavior does not prove a cache hit or imply any
+undocumented prompt-cache guarantee.
 Altitude reports cache-token fields only when the provider emits them and otherwise makes no claim
 about cache reuse. Physical worker replacement and provider-session continuity are therefore shown
 as separate facts.

@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,7 +18,7 @@ _ROOT = Path(tempfile.mkdtemp(prefix="altitude-process-ownership-"))
 os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from altitude import engines  # noqa: E402
+from altitude import config, engines, state as S  # noqa: E402
 
 
 def json_bytes(value: dict) -> bytes:
@@ -501,9 +502,120 @@ class TestManagedUnit(unittest.TestCase):
         ), self.assertRaisesRegex(engines.ManagedUnitError, "unit unknown"):
             engines.stop_managed_unit(unit)
 
+    def test_bounded_producer_exception_stops_exact_containment_before_propagating(self):
+        answer, events = _ROOT / "bounded.answer", _ROOT / "bounded.events"
+        with mock.patch.object(engines, "_run_codex_to_bounded_spools",
+                               side_effect=RuntimeError("bounded overflow")), \
+             mock.patch.object(engines, "_stop_codex_unit") as stop, \
+             mock.patch.object(engines, "_codex_unit_empty", return_value=True) as empty, \
+             mock.patch.object(engines, "read_bounded_codex_output") as read, \
+             self.assertRaisesRegex(RuntimeError, "bounded overflow"):
+            engines.codex_exec("inert", cwd=_ROOT, contain=True,
+                               answer_path=answer, event_spool=events)
+        self.assertRegex(stop.call_args.args[0], r"^altitude-codex-sync-.*\.service$")
+        empty.assert_called_with(stop.call_args.args[0]); read.assert_not_called()
 
-class TestDormantBoundary(unittest.TestCase):
-    def test_new_physical_api_has_no_runtime_consumer(self):
+
+class TestRealManagedUnitFixture(unittest.TestCase):
+    """Exercise the real user manager/cgroup boundary without invoking a provider."""
+
+    @classmethod
+    def setUpClass(cls):
+        probe = subprocess.run(
+            [engines.SYSTEMCTL_BIN, "--user", "show-environment"], capture_output=True, text=True,
+            env=engines.codex_env(retain_user_bus=True), timeout=10)
+        if probe.returncode != 0:
+            raise unittest.SkipTest("no usable user systemd manager for physical fixture")
+
+    def operation(self, tag: str) -> dict:
+        record = engines.new_physical_transition(
+            transition_id=f"fixture-{tag}-{os.getpid()}", subject_kind="l3", subject_id=f"fixture-{tag}",
+            generation=f"fixture-{tag}-{os.getpid()}", provider="codex",
+            provider_session_request={"kind": "fresh"}, message_id=f"message-{tag}")
+        self.assertTrue(engines.observe_managed_unit(record["process_unit_id"])["empty"])
+        return engines.advance_physical_transition(
+            record, "planned", "prior_stopped", {"previous_process_unit_id": None, "empty": True})
+
+    def test_real_spawn_bind_result_stop_empty_and_timeout(self):
+        root = Path(tempfile.mkdtemp(prefix="altitude-managed-fixture-"))
+        ready, release, result_path = root / "ready", root / "release", root / "result"
+        record = self.operation("complete")
+        script = ("from pathlib import Path; import sys,time; ready,release,result=map(Path,sys.argv[1:]); "
+                  "ready.write_text('ready'); "
+                  "\nwhile not release.exists(): time.sleep(.01)\n"
+                  "result.write_text('provider-result')")
+        proc = engines.spawn_managed_unit(
+            record, [sys.executable, "-c", script, str(ready), str(release), str(result_path)], cwd=root,
+            launcher_env=engines.codex_env(retain_user_bus=True),
+            child_env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        try:
+            for _ in range(300):
+                if ready.exists():
+                    break
+                if proc.poll() is not None:
+                    self.fail(f"managed fixture exited before binding: {proc.returncode}")
+                threading.Event().wait(.01)
+            self.assertTrue(ready.exists())
+            self.assertFalse(engines.observe_managed_unit(record["process_unit_id"])["empty"])
+            record = engines.advance_physical_transition(record, "prior_stopped", "spawned", {
+                "process_unit_id": record["process_unit_id"], "launched": True})
+            record = engines.advance_physical_transition(record, "spawned", "bound", {
+                "bound": True, "physical_worker_id": record["process_unit_id"],
+                "provider_session_id": "fixture-session"})
+            release.write_text("go")
+            proc.wait(timeout=10)
+            self.assertEqual(result_path.read_text(), "provider-result")
+            record = engines.advance_physical_transition(record, "bound", "result_observed", {
+                "result_id": "fixture/result", "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest()})
+            empty = engines.stop_managed_unit(record["process_unit_id"])
+            record = engines.advance_physical_transition(record, "result_observed", "empty", empty)
+            record = engines.advance_physical_transition(record, "empty", "complete", {"status": "complete"})
+            self.assertEqual(record["stage"], "complete")
+        finally:
+            release.write_text("go")
+            try:
+                engines.stop_managed_unit(record["process_unit_id"])
+            except engines.ManagedUnitError:
+                pass
+            if proc.poll() is None:
+                proc.wait(timeout=10)
+
+        timeout_record = self.operation("timeout")
+        sleeper = engines.spawn_managed_unit(
+            timeout_record, [sys.executable, "-c", "import time; time.sleep(30)"], cwd=root,
+            launcher_env=engines.codex_env(retain_user_bus=True),
+            child_env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        with self.assertRaises(subprocess.TimeoutExpired):
+            sleeper.wait(timeout=.05)
+        empty = engines.stop_managed_unit(timeout_record["process_unit_id"])
+        self.assertTrue(empty["empty"])
+        sleeper.wait(timeout=10)
+
+    def test_real_bounded_overflow_stops_child_after_launcher_is_terminated(self):
+        root = Path(tempfile.mkdtemp(prefix="altitude-bounded-unit-"))
+        fake = root / "codex-fixture"
+        S.atomic_write(fake, "#!/usr/bin/python3\nimport os,time\nos.write(1,b'x'*8192)\ntime.sleep(30)\n")
+        fake.chmod(0o700)
+        answer, events, units = root / "answer", root / "events", []
+        original = engines._codex_service_command  # noqa: SLF001
+
+        def capture(unit, argv, env):
+            units.append(unit)
+            return original(unit, argv, env)
+
+        with mock.patch.object(config, "CODEX_BIN", str(fake)), \
+             mock.patch.object(engines, "CODEX_EVENT_CAP", 128), \
+             mock.patch.object(engines, "_codex_service_command", side_effect=capture), \
+             self.assertRaisesRegex(RuntimeError, "event spool exceeds 128"):
+            engines.codex_exec("inert", cwd=root, contain=True, timeout=15,
+                               answer_path=answer, event_spool=events)
+        self.assertEqual(len(units), 1)
+        self.assertTrue(engines._codex_unit_empty(units[0]))  # noqa: SLF001 - exact inner fixture unit
+        self.assertLessEqual(events.stat().st_size, 128)
+
+
+class TestAdoptionBoundary(unittest.TestCase):
+    def test_only_l3_adopts_the_physical_api_in_phase_1b2(self):
         names = {
             "new_physical_transition", "advance_physical_transition", "note_physical_transition_error",
             "validate_physical_transition", "reconcile_physical_transition",
@@ -523,7 +635,9 @@ class TestDormantBoundary(unittest.TestCase):
                     uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.attr}")
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in names:
                     uses.append(f"{path.relative_to(production.parent)}:{node.lineno}:{node.value}")
-        self.assertEqual(uses, [], "Phase 1B.1 must remain dormant: " + ", ".join(uses))
+        unexpected = [use for use in uses if not use.startswith("altitude/l3.py:")]
+        self.assertEqual(unexpected, [], "Phase 1B.2 has a non-L3 consumer: " + ", ".join(unexpected))
+        self.assertTrue(uses, "Phase 1B.2 must adopt the physical boundary for L3")
 
 
 if __name__ == "__main__":

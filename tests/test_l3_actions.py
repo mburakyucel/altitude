@@ -1,9 +1,11 @@
 """Codex L3 actions are one-at-a-time, owner-fenced, and durably idempotent."""
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,11 +13,14 @@ from unittest import mock
 _ROOT = Path(tempfile.mkdtemp(prefix="altitude-l3-actions-"))
 os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, l3_actions, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, l3_actions, recovery, state as S, tasks as T  # noqa: E402
 
 
 def envelope(action):
-    return {"message": "handled", "actions": [action]}
+    defaults = {"slug": None, "title": None, "text": None, "reason": None, "request": None,
+                "digest": None, "answer": None, "source": None, "engine": None, "model": None,
+                "paths": [], "hold_merge": None, "merge_hold": None, "incident": None, "labels": []}
+    return {"message": "handled", "actions": [{**defaults, **action}]}
 
 
 class TestL3Actions(unittest.TestCase):
@@ -24,6 +29,8 @@ class TestL3Actions(unittest.TestCase):
         self.repo.mkdir(exist_ok=True)
         config.ensure_root()
         config.save_projects({"p": {"name": "p", "path": str(self.repo)}})
+        recovery.hold_path().unlink(missing_ok=True)
+        recovery.clearance_history_path().unlink(missing_ok=True)
         for directory in (S.tasks_dir("p"), S.archive_dir("p"), config.project_dir("p") / "l3-actions"):
             if directory.exists():
                 for path in sorted(directory.rglob("*"), reverse=True):
@@ -31,6 +38,16 @@ class TestL3Actions(unittest.TestCase):
                         path.unlink()
                     elif path.is_dir():
                         path.rmdir()
+        real_apply = l3_actions.apply
+        def apply_bound(project, value, **kwargs):
+            if "recovery_observation" not in kwargs:
+                kwargs["recovery_observation"] = recovery.observe_l3_state(project)
+            return real_apply(project, value, **kwargs)
+        self.apply_patch = mock.patch.object(l3_actions, "apply", side_effect=apply_bound)
+        self.apply_patch.start()
+
+    def tearDown(self):
+        self.apply_patch.stop()
 
     def task(self, title="Task", state="running", **updates):
         task = T.new("p", title, "request")
@@ -88,6 +105,54 @@ class TestL3Actions(unittest.TestCase):
             l3_actions.apply("p", value, action_id="a" * 64)
         self.assertEqual(list((config.project_dir("p") / "l3-actions").glob("*.json")), [])
 
+    def test_python_ingestion_matches_closed_schema_types_before_claim(self):
+        invalid = [
+            {"type": "task_hold_merge", "slug": "x", "merge_hold": "false"},
+            {"type": "new_task", "title": "x", "request": "y", "model": {}},
+            {"type": "incident_new", "incident": {"id": None, "title": "x", "task": None,
+             "what": "w", "evidence": "e", "cause": "c", "tags": [1], "status": None}},
+            {"type": "task_fyi", "slug": "x", "text": ["not", "text"]},
+            {"type": "new_task", "title": "x", "request": "y", "engine": "claude"},
+        ]
+        for index, action in enumerate(invalid):
+            action_id = f"{index + 1:x}" * 64
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "unknown L3 action"):
+                l3_actions.apply("p", envelope(action), action_id=action_id)
+            self.assertFalse(l3_actions._journal_path("p", action_id).exists())  # noqa: SLF001
+
+    def test_corrupt_existing_action_journal_is_never_overwritten(self):
+        action = envelope({"type": "task_fyi", "slug": "x", "text": "note"})
+        for index, raw in enumerate(("", "[]", "x" * 70000)):
+            action_id = f"{index + 10:x}" * 64
+            path = l3_actions._journal_path("p", action_id)  # noqa: SLF001
+            S.atomic_write(path, raw); before = path.read_bytes()
+            with self.assertRaises(l3_actions.L3ActionError):
+                l3_actions.apply("p", action, action_id=action_id)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_schema_valid_oversized_action_is_rejected_before_journal_or_effect(self):
+        action_id = "f" * 64
+        value = envelope({"type": "task_fyi", "slug": "missing", "text": "x" * 70000})
+        with mock.patch.object(l3_actions, "_execute") as execute, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reserved terminal headroom"):
+            l3_actions.apply("p", value, action_id=action_id)
+        execute.assert_not_called()
+        self.assertFalse(l3_actions._journal_path("p", action_id).exists())  # noqa: SLF001
+
+    def test_near_boundary_action_always_has_room_for_terminal_receipt(self):
+        action_id = "e" * 64
+        action = envelope({"type": "task_fyi", "slug": "bounded", "text": ""})["actions"][0]
+        candidate = {"id": action_id, "at": S.now(), "status": "applying", "action": action}
+        room = l3_actions._JOURNAL_APPLYING_CAP - len(  # noqa: SLF001
+            l3_actions._journal_text(candidate).encode("utf-8")) - 16  # noqa: SLF001
+        action["text"] = "x" * room
+        self.assertIsNone(l3_actions._claim("p", action_id, action))  # noqa: SLF001
+        l3_actions._finish("p", action_id, action, result=[{  # noqa: SLF001
+            "type": "task_fyi", "slug": "bounded"}])
+        path = l3_actions._journal_path("p", action_id)  # noqa: SLF001
+        self.assertLessEqual(path.stat().st_size, l3_actions._JOURNAL_CAP)  # noqa: SLF001
+        self.assertEqual(S.read_json(path)["status"], "complete")
+
     def test_completed_action_replays_its_result_without_repeating_side_effect(self):
         task = self.task(state="blocked")
         value = envelope({"type": "task_fyi", "slug": task["slug"], "text": "one durable note"})
@@ -96,6 +161,104 @@ class TestL3Actions(unittest.TestCase):
         self.assertEqual(first, second)
         lines = (config.project_dir("p") / "inbox.jsonl").read_text().splitlines()
         self.assertEqual(len(lines), 1)
+
+    def test_interrupted_actions_reconcile_only_with_domain_native_markers(self):
+        safe = {"type": "github_issue", "title": "Stable draft", "text": "Stable draft request", "labels": []}
+        safe_id = "7" * 64
+        S.write_json(l3_actions._journal_path("p", safe_id), {  # noqa: SLF001
+            "id": safe_id, "at": S.now(), "status": "applying", "action": envelope(safe)["actions"][0],
+        })
+        result = l3_actions.apply("p", envelope(safe), action_id=safe_id,
+                                  github_issue_source="Stable draft request")
+        self.assertTrue(result[0]["pending_review"])
+        self.assertEqual(S.read_json(l3_actions._journal_path("p", safe_id))["status"], "complete")  # noqa: SLF001
+
+        unsafe = {"type": "task_fyi", "slug": "missing", "text": "ambiguous note"}
+        unsafe_id = "8" * 64
+        S.write_json(l3_actions._journal_path("p", unsafe_id), {  # noqa: SLF001
+            "id": unsafe_id, "at": S.now(), "status": "applying", "action": envelope(unsafe)["actions"][0],
+        })
+        with mock.patch.object(l3_actions, "_execute") as execute, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required"):
+            l3_actions.apply("p", envelope(unsafe), action_id=unsafe_id)
+        execute.assert_not_called()
+
+    def test_ambiguous_action_has_no_b2_disposition_escape(self):
+        action = {"type": "task_fyi", "slug": "missing", "text": "ambiguous note"}
+        action_id = "6" * 64
+        S.write_json(l3_actions._journal_path("p", action_id), {  # noqa: SLF001
+            "id": action_id, "at": S.now(), "status": "applying", "action": envelope(action)["actions"][0],
+        })
+        self.assertFalse(hasattr(l3_actions, "resolve_reconciliation"))
+        with mock.patch.object(l3_actions, "_execute") as execute, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required"):
+            l3_actions.apply("p", envelope(action), action_id=action_id)
+        execute.assert_not_called()
+
+    def test_partial_local_mutation_remains_applying_and_fences_a_fresh_action_id(self):
+        task = self.task(state="blocked")
+        action = {"type": "task_fyi", "slug": task["slug"], "text": "one durable note"}
+        real_fyi = T.fyi
+
+        def mutate_then_fail(*args, **kwargs):
+            real_fyi(*args, **kwargs)
+            raise l3_actions.L3ActionError("event projection failed after inbox append")
+
+        with mock.patch.object(T, "fyi", side_effect=mutate_then_fail), \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required"):
+            l3_actions.apply("p", envelope(action), action_id="1" * 64)
+        record = S.read_json(l3_actions._journal_path("p", "1" * 64))  # noqa: SLF001
+        self.assertEqual(record["status"], "applying"); self.assertIn("projection", record["last_error"])
+        lines = (config.project_dir("p") / "inbox.jsonl").read_text().splitlines()
+
+        with mock.patch.object(T, "fyi") as repeat, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "reconciliation_required"):
+            l3_actions.apply("p", envelope(action), action_id="1" * 64)
+        repeat.assert_not_called()
+        self.assertEqual((config.project_dir("p") / "inbox.jsonl").read_text().splitlines(), lines)
+        self.assertFalse(l3_actions._journal_path("p", "2" * 64).exists())  # noqa: SLF001
+
+    def test_stale_recovery_precheck_blocks_before_action_claim(self):
+        task = self.task(state="blocked")
+        action_id = "f" * 64
+        inbox = config.project_dir("p") / "inbox.jsonl"
+        before = inbox.read_bytes() if inbox.exists() else b""
+        with self.assertRaisesRegex(l3_actions.L3ActionError, "stale permit"):
+            l3_actions.apply(
+                "p", envelope({"type": "task_fyi", "slug": task["slug"], "text": "do not append"}),
+                action_id=action_id, effect_precheck=lambda: (_ for _ in ()).throw(RuntimeError("stale permit")),
+            )
+        self.assertFalse((config.project_dir("p") / "l3-actions" / f"{action_id}.json").exists())
+        self.assertEqual(inbox.read_bytes() if inbox.exists() else b"", before)
+
+    def test_local_mutation_permission_drains_before_hold_returns(self):
+        task = self.task(state="blocked")
+        observation = recovery.observe_l3_state("p")
+        entered, release, applied = threading.Event(), threading.Event(), []
+        real_fyi = T.fyi
+        def mutate_then_wait(*args, **kwargs):
+            result = real_fyi(*args, **kwargs); entered.set(); release.wait(2); return result
+        action = envelope({"type": "task_fyi", "slug": task["slug"], "text": "before hold"})
+        worker = threading.Thread(target=lambda: applied.append(l3_actions.apply(
+            "p", action, action_id="c" * 64, recovery_observation=observation)))
+        with mock.patch.object(T, "fyi", side_effect=mutate_then_wait):
+            worker.start(); self.assertTrue(entered.wait(1))
+            holder = threading.Thread(target=lambda: recovery.hold("race", kind="race"))
+            holder.start()
+            for _ in range(100):
+                if recovery.status(): break
+                threading.Event().wait(.005)
+            self.assertIsNotNone(recovery.status()); self.assertTrue(holder.is_alive())
+            release.set(); worker.join(2); holder.join(2)
+        self.assertEqual(len(applied), 1)
+        inbox = (config.project_dir("p") / "inbox.jsonl").read_text().splitlines()
+        with mock.patch.object(T, "fyi") as stale, \
+             self.assertRaisesRegex(l3_actions.L3ActionError, "stale"):
+            l3_actions.apply("p", envelope({"type": "task_fyi", "slug": task["slug"], "text": "stale"}),
+                action_id="d" * 64, recovery_observation=observation,
+                effect_precheck=lambda: (_ for _ in ()).throw(RuntimeError("stale recovery observation")))
+        stale.assert_not_called()
+        self.assertEqual((config.project_dir("p") / "inbox.jsonl").read_text().splitlines(), inbox)
 
     def test_l3_never_blocks_or_completes_a_live_worker(self):
         task = self.task()
@@ -122,165 +285,46 @@ class TestL3Actions(unittest.TestCase):
                                                 "digest": "done"}), action_id="9" * 64)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
 
-    def test_resume_requires_and_fences_the_exact_blocked_session(self):
-        task = self.task(state="blocked")
-        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}) as resume:
-            result = l3_actions.apply(
-                "p", envelope({"type": "task_resume", "slug": task["slug"], "answer": "continue"}),
-                action_id="e" * 64,
-            )
-        self.assertFalse(result[0]["deferred"])
-        resume.assert_called_once_with(
-            "p", task["slug"], "continue", prefix="L3: ", expected_state="blocked",
-            expected_dispatch_id=task["dispatch_id"], expected_session_id="session-1", expected_agent_id="agent-1",
-        )
+    def test_remote_publication_and_recovery_commands_are_dormant_before_claim(self):
+        for index, kind in enumerate(("github_issue_approve", "recovery_hold", "recovery_clear", "task_resume")):
+            action_id = f"{index + 1:x}" * 64
+            before = recovery.hold_path().read_bytes() if recovery.hold_path().exists() else None
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "unknown L3 action"):
+                l3_actions.apply("p", envelope({"type": kind, "digest": "a" * 24,
+                                                "reason": "not active"}), action_id=action_id)
+            self.assertFalse(l3_actions._journal_path("p", action_id).exists())  # noqa: SLF001
+            self.assertEqual(recovery.hold_path().read_bytes() if recovery.hold_path().exists() else None, before)
 
-        missing = self.task(title="No session", state="blocked", session_id=None, agent_id=None)
-        with mock.patch.object(T, "resume") as unsafe_resume:
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "no exact blocked L2 session"):
-                l3_actions.apply(
-                    "p", envelope({"type": "task_resume", "slug": missing["slug"], "answer": "continue"}),
-                    action_id="f" * 64,
-                )
-        unsafe_resume.assert_not_called()
+    def test_active_recovery_cannot_create_an_ordinary_or_repair_task(self):
+        held = recovery.hold("fault", kind="fault")
+        recovery.request_l3_attention("p", kind="fault")
+        claim = recovery.claim_l3_attention("p")
+        observation = recovery.observe_l3_state("p", {
+            "episode_id": held["episode"], "permit_revision": claim["revision"], "claim": claim["claim"]})
+        for index, source in enumerate((None, "chat", "recovery")):
+            action_id = f"{index + 5:x}" * 64
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "recovery repair delegation"):
+                l3_actions.apply("p", envelope({"type": "new_task", "title": "repair", "request": "repair",
+                                                "source": source}), action_id=action_id,
+                                 recovery_observation=observation)
+            self.assertFalse(l3_actions._journal_path("p", action_id).exists())  # noqa: SLF001
+        self.assertEqual(S.list_tasks("p"), [])
 
-    def test_resume_persists_journaled_paths_before_dispatch(self):
-        task = self.task(state="blocked", paths=[])
-        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
-                  "paths": ["altitude/l3_actions.py", "tests/test_l3_actions.py"]}
-
-        def resume(*_args, **_kwargs):
-            self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
-            return {"deferred": False}
-
-        with mock.patch.object(dispatch, "resume_blocked", side_effect=resume):
-            l3_actions.apply("p", envelope(action), action_id="0" * 63 + "1")
-
-        self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
-
-    def test_resume_paths_refuse_collision_without_mutating_or_dispatching(self):
-        task = self.task(state="blocked", paths=["existing.py"])
-        self.task(title="Holder", state="running", paths=["src/shared.py"])
-        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
-                  "paths": ["src/shared.py"]}
-
-        with mock.patch.object(dispatch, "resume_blocked") as resume:
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "file lease"):
-                l3_actions.apply("p", envelope(action), action_id="0" * 63 + "2")
-
-        resume.assert_not_called()
-        self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
-
-    def test_resume_paths_roll_back_when_exact_resume_is_refused(self):
-        task = self.task(state="blocked", paths=["existing.py"])
-        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
-                  "paths": ["src/new.py"]}
-
-        with mock.patch.object(dispatch, "resume_blocked",
-                               side_effect=T.TransitionError("session changed")):
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "session changed"):
-                l3_actions.apply("p", envelope(action), action_id="0" * 63 + "3")
-
-        self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
-
-    def test_resume_paths_preserve_the_existing_task_lease(self):
-        task = self.task(state="blocked", paths=["existing.py"])
-        action = {"type": "task_resume", "slug": task["slug"], "paths": ["src/new.py"]}
-
-        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}):
-            l3_actions.apply("p", envelope(action), action_id="0" * 63 + "7")
-
-        self.assertEqual(S.load_task("p", task["slug"])["paths"],
-                         ["existing.py", "src/new.py"])
-
-    def test_resume_paths_reject_non_relative_entries(self):
-        task = self.task(state="blocked", paths=[])
-        for index, invalid in enumerate(("../outside.py", "/absolute.py", "src//empty.py"), 4):
-            action = {"type": "task_resume", "slug": task["slug"], "paths": [invalid]}
-            with mock.patch.object(dispatch, "resume_blocked") as resume:
-                with self.assertRaisesRegex(l3_actions.L3ActionError, "invalid repo-relative path"):
-                    l3_actions.apply("p", envelope(action), action_id="0" * 63 + str(index))
-            resume.assert_not_called()
-            self.assertEqual(S.load_task("p", task["slug"])["paths"], [])
-
-    def test_github_issue_content_marker_prevents_duplicate_across_turns(self):
-        created_body = []
-
-        def run(args, **_kwargs):
-            if args[:4] == ["gh", "issue", "list", "--state"]:
-                rows = [{"url": "https://example.test/1", "body": created_body[0]}] if created_body else []
-                return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
-            self.assertEqual(args[:3], ["gh", "issue", "create"])
-            created_body.append(args[args.index("--body") + 1])
-            return subprocess.CompletedProcess(args, 0, "https://example.test/1\n", "")
-
-        action = {"type": "github_issue", "title": "Architecture note", "text": "Preserve this idea", "labels": []}
-        source = "Please Preserve this idea as an Architecture note"
-        action["text"] = source
-        draft = l3_actions.apply("p", envelope(action), action_id="1" * 64, github_issue_source=source)
-        key = draft[0]["id"]
-        approval_source = f"approve github issue publication {key}"
-        approval = {"type": "github_issue_approve", "digest": key}
-        with mock.patch.object(l3_actions.subprocess, "run", side_effect=run) as process:
-            first = l3_actions.apply("p", envelope(approval), action_id="2" * 64,
-                                     github_issue_source=approval_source)
-            second = l3_actions.apply("p", envelope(approval), action_id="3" * 64,
-                                      github_issue_source=approval_source)
-        self.assertTrue(draft[0]["pending_review"])
-        self.assertFalse(first[0]["reused"])
-        self.assertTrue(second[0]["reused"])
-        self.assertEqual(sum(call.args[0][:3] == ["gh", "issue", "create"] for call in process.call_args_list), 1)
-
-    def test_github_issue_cannot_publish_hidden_or_security_sensitive_context(self):
+    def test_github_issue_draft_cannot_include_hidden_context(self):
         safe_source = "Please preserve the sidecar transcript audit idea"
         hidden = {"type": "github_issue", "title": "sidecar transcript audit idea",
                   "text": safe_source + "\nprivate model-added detail", "labels": []}
-        with mock.patch.object(l3_actions.subprocess, "run") as process:
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "exact current user message"):
-                l3_actions.apply("p", envelope(hidden), action_id="7" * 64,
-                                 github_issue_source=safe_source)
-        process.assert_not_called()
-
-        sensitive = "Please create a credential issue for API key: sk-abcdefghijklmnopqrstuvwxyz123456"
-        action = {"type": "github_issue", "title": "credential issue", "text": sensitive, "labels": []}
-        draft = l3_actions.apply("p", envelope(action), action_id="8" * 64,
-                                 github_issue_source=sensitive)
-        key = draft[0]["id"]
-        approval = {"type": "github_issue_approve", "digest": key}
-        with mock.patch.object(l3_actions.subprocess, "run") as process:
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "may contain a secret"):
-                l3_actions.apply("p", envelope(approval), action_id="6" * 64,
-                                 github_issue_source=f"approve github issue publication {key}")
-        process.assert_not_called()
+        with self.assertRaisesRegex(l3_actions.L3ActionError, "exact current user message"):
+            l3_actions.apply("p", envelope(hidden), action_id="7" * 64,
+                             github_issue_source=safe_source)
 
     def test_security_mechanism_issue_is_private_until_exact_human_approval(self):
         source = "the sandbox lets a worker stop Altitude through the user bus"
         action = {"type": "github_issue", "title": "sandbox lets a worker stop Altitude",
                   "text": source, "labels": []}
-        with mock.patch.object(l3_actions.subprocess, "run") as process:
-            result = l3_actions.apply("p", envelope(action), action_id="5" * 64,
-                                      github_issue_source=source)
-        process.assert_not_called()
+        result = l3_actions.apply("p", envelope(action), action_id="5" * 64,
+                                  github_issue_source=source)
         self.assertTrue(result[0]["pending_review"])
-
-    def test_common_secret_formats_remain_hard_refused_after_approval(self):
-        examples = [
-            "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
-            "AIzaSyD-abcdefghijklmnopqrstuvwxyz1234567",
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnopqrstuvwxyz123456",
-        ]
-        for index, secret in enumerate(examples):
-            source = f"Please create token example issue {secret}"
-            action = {"type": "github_issue", "title": "token example issue", "text": source, "labels": []}
-            draft = l3_actions.apply("p", envelope(action), action_id=f"{index + 1:x}" * 64,
-                                     github_issue_source=source)
-            key = draft[0]["id"]
-            approval = {"type": "github_issue_approve", "digest": key}
-            with mock.patch.object(l3_actions.subprocess, "run") as process:
-                with self.assertRaisesRegex(l3_actions.L3ActionError, "may contain a secret"):
-                    l3_actions.apply("p", envelope(approval), action_id=f"{index + 10:x}" * 64,
-                                     github_issue_source=f"approve github issue publication {key}")
-            process.assert_not_called()
 
 
 if __name__ == "__main__":

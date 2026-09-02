@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import fcntl
-import json
-import os
+import hashlib
 import secrets
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -30,6 +29,52 @@ def launch_lock_path():
 
 def clearance_history_path():
     return config.MONITOR_DIR / "recovery-clearances.jsonl"
+
+
+def _record() -> dict | None:
+    """Read the one recovery authority, including its inactive high-water form."""
+    value = S.read_json(hold_path(), None)
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("active"), bool):
+        raise ValueError("unknown recovery record; migrate it before activation")
+    epoch = value.get("epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+        raise ValueError("recovery record has no canonical monotonic epoch; migrate it before activation")
+    if value["active"]:
+        if (not isinstance(value.get("episode"), str) or not value["episode"]
+                or isinstance(value.get("revision"), bool)
+                or not isinstance(value.get("revision"), int) or value["revision"] < 1):
+            raise ValueError("active recovery hold has no canonical episode revision; clear it before activation")
+    else:
+        receipt = value.get("clearance")
+        keys = {"id", "at", "by", "reason", "since", "episode", "revision", "repair", "faults",
+                "l3_attention", "prior_epoch"}
+        if (set(value) != {"active", "epoch", "clearance"} or not isinstance(receipt, dict)
+                or set(receipt) != keys or receipt.get("prior_epoch") != epoch - 1
+                or not isinstance(receipt.get("episode"), str) or not receipt["episode"]
+                or isinstance(receipt.get("revision"), bool)
+                or not isinstance(receipt.get("revision"), int) or receipt["revision"] < 1
+                or not isinstance(receipt.get("id"), str) or not receipt["id"]
+                or receipt["id"] != hashlib.sha256(S._canonical_json({  # noqa: SLF001
+                    "kind": "recovery-clearance-v2", **{k: v for k, v in receipt.items() if k != "id"}})).hexdigest()):
+            raise ValueError("unknown inactive recovery record; migrate it before activation")
+    return value
+
+
+def _clearance_epoch() -> int:
+    value = _record()
+    return int((value or {}).get("epoch") or 0)
+
+
+def _reconcile_clearance_audit(value: dict | None) -> None:
+    """Project the latest canonical inactive receipt into audit history, idempotently."""
+    if not value or value.get("active") is not False:
+        return
+    receipt = value["clearance"]
+    if not isinstance(receipt.get("id"), str) or not receipt["id"]:
+        raise ValueError("inactive recovery record has no stable clearance receipt")
+    S.append_jsonl(clearance_history_path(), receipt, key_field="id")
 
 
 def _clean(value: object, limit: int = 300) -> str:
@@ -65,8 +110,18 @@ class LaunchHeld(RuntimeError):
 
 
 def status() -> dict | None:
-    value = S.read_json(hold_path(), None)
-    return value if isinstance(value, dict) and value.get("active") else None
+    value = _record()
+    return value if value and value["active"] else None
+
+
+def _advance(current: dict) -> None:
+    """Invalidate every consumer of the prior episode snapshot after material fault evidence changes."""
+    current["revision"] += 1
+    attention = current.get("l3_attention")
+    if isinstance(attention, dict):
+        attention.update({"revision": current["revision"], "updated": S.now(), "next_attempt": None})
+        attention.pop("claim", None)
+        attention.pop("claimed", None)
 
 
 def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
@@ -79,8 +134,15 @@ def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
     # Do not wait for the launch barrier before publishing. flock waiters are not FIFO: if an ordinary launch
     # queued ahead of this fault, it could otherwise acquire the barrier and spawn before the hold became visible.
     with _lock():
-        current = status() or {"active": True, "since": S.now(), "episode": secrets.token_urlsafe(12),
-                               "faults": [], "repair": None}
+        record = _record()
+        _reconcile_clearance_audit(record)
+        current = record if record and record["active"] else None
+        if current is None:
+            current = {"active": True, "since": S.now(), "episode": secrets.token_urlsafe(12),
+                       "revision": 1, "epoch": int((record or {}).get("epoch") or 0),
+                       "faults": [], "repair": None}
+        else:
+            _advance(current)
         now = S.now()
         matches = [row for row in current.get("faults") or [] if row.get("kind") == kind]
         other = [row for row in current.get("faults") or [] if row.get("kind") != kind]
@@ -91,6 +153,10 @@ def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
                  "incident": incident or previous_incident, "by": actor}
         current.update({"active": True, "updated": now})
         current["faults"] = [*other[-19:], fault]
+        attention = current.get("l3_attention")
+        if isinstance(attention, dict):
+            attention["faults"] = [{"kind": row.get("kind"), "incident": row.get("incident")}
+                                   for row in current["faults"][-20:]]
         S.write_json(hold_path(), current)
     # A launcher that yielded from launch_permission before publication is already committed to spawning. Wait
     # only for that short spawn boundary to settle. Every queued launcher rechecks the now-published hold first.
@@ -106,13 +172,20 @@ def attach_incident(kind: str, incident: str) -> dict | None:
     if not kind or not incident:
         return status()
     with _lock():
-        current = status()
+        current = _record()
+        _reconcile_clearance_audit(current)
+        current = current if current and current["active"] else None
         if not current:
             return None
         faults = current.get("faults") or []
         for row in reversed(faults):
             if row.get("kind") == kind:
                 row["incident"] = incident
+                _advance(current)
+                attention = current.get("l3_attention")
+                if isinstance(attention, dict):
+                    attention["faults"] = [{"kind": item.get("kind"), "incident": item.get("incident")}
+                                           for item in faults[-20:]]
                 current["updated"] = S.now()
                 S.write_json(hold_path(), current)
                 break
@@ -129,10 +202,13 @@ def request_l3_attention(project: str | None, *, kind: str, incident: str | None
     kind, incident = _clean(kind, 100), _clean(incident, 80) or None
     project = _clean(project, 100) or None
     with _lock():
-        current = status()
+        current = _record()
+        _reconcile_clearance_audit(current)
+        current = current if current and current["active"] else None
         if not current:
             return None
-        episode = _clean(current.get("episode") or current.get("since"), 40)
+        episode = current["episode"]
+        revision = current["revision"]
         attention = current.get("l3_attention")
         if not isinstance(attention, dict) or attention.get("episode") != episode:
             attention = {
@@ -140,16 +216,23 @@ def request_l3_attention(project: str | None, *, kind: str, incident: str | None
                 "project": project,
                 "requested": S.now(),
                 "updated": S.now(),
-                "revision": 1,
+                "revision": revision,
                 "handled_revision": 0,
                 "attempts": 0,
                 "next_attempt": None,
                 "faults": [],
             }
+        else:
+            attention["revision"] = revision
         if attention.get("project") is None and project:
             attention["project"] = project
         faults = list(attention.get("faults") or [])
         existing = next((row for row in faults if row.get("kind") == kind), None)
+        changed = existing is None or bool(incident and not existing.get("incident"))
+        if changed and isinstance(current.get("l3_attention"), dict):
+            _advance(current)
+            revision = current["revision"]
+            attention["revision"] = revision
         if existing is None:
             faults.append({"kind": kind, "incident": incident})
         elif incident and not existing.get("incident"):
@@ -199,7 +282,8 @@ def l3_attention_due(project: str, *, now: datetime | None = None) -> dict | Non
     """Return a bounded wake snapshot when this project's active episode is due."""
     current = status()
     attention = (current or {}).get("l3_attention")
-    if not isinstance(attention, dict) or attention.get("project") != project:
+    if (not isinstance(attention, dict) or attention.get("project") != project
+            or attention.get("revision") != (current or {}).get("revision")):
         return None
     revision = int(attention.get("revision") or 0)
     if revision <= int(attention.get("handled_revision") or 0):
@@ -214,9 +298,11 @@ def claim_l3_attention(project: str) -> dict | None:
     """Atomically claim a due wake across server processes; an abandoned claim expires after the turn timeout."""
     now = datetime.now(timezone.utc)
     with _lock():
-        current = status()
+        current = _record()
+        current = current if current and current["active"] else None
         attention = (current or {}).get("l3_attention")
-        if not isinstance(attention, dict) or attention.get("project") != project:
+        if (not isinstance(attention, dict) or attention.get("project") != project
+                or attention.get("revision") != (current or {}).get("revision")):
             return None
         revision = int(attention.get("revision") or 0)
         if revision <= int(attention.get("handled_revision") or 0):
@@ -234,9 +320,11 @@ def claim_l3_attention(project: str) -> dict | None:
 def l3_attention_is_current(project: str, episode: str, revision: int, claim: str) -> bool:
     """Fence a delayed wake and renew its lease at the post-L3-lock model-start boundary."""
     with _lock():
-        current = status()
+        current = _record()
+        current = current if current and current["active"] else None
         attention = (current or {}).get("l3_attention")
-        valid = bool(isinstance(attention, dict) and attention.get("project") == project
+        valid = bool(isinstance(attention, dict) and current.get("revision") == revision
+                     and attention.get("project") == project
                      and attention.get("episode") == episode and int(attention.get("revision") or 0) == revision
                      and int(attention.get("handled_revision") or 0) < revision and attention.get("claim") == claim)
         if not valid:
@@ -248,13 +336,54 @@ def l3_attention_is_current(project: str, episode: str, revision: int, claim: st
         return True
 
 
+def observe_l3_state(project: str, identity: dict | None = None) -> dict:
+    """Return the one closed recovery snapshot every L3 physical operation must bind."""
+    with _lock():
+        current = status()
+        if identity is None:
+            if current is not None:
+                raise ValueError("active recovery requires the exact claimed L3 attention snapshot")
+            return {"state": "none", "episode_id": None, "permit_revision": None,
+                    "claim": None, "epoch": _clearance_epoch()}
+        if not isinstance(identity, dict) or set(identity) != {"episode_id", "permit_revision", "claim"}:
+            raise ValueError("recovery identity must contain only episode_id, permit_revision, and claim")
+        episode, revision, claim = (identity["episode_id"], identity["permit_revision"], identity["claim"])
+        attention = (current or {}).get("l3_attention")
+        if (not isinstance(episode, str) or not episode or isinstance(revision, bool)
+                or not isinstance(revision, int) or revision < 1 or not isinstance(claim, str) or not claim
+                or current is None or current.get("revision") != revision
+                or not isinstance(attention, dict) or attention.get("project") != project
+                or attention.get("episode") != episode or attention.get("revision") != revision
+                or attention.get("claim") != claim or int(attention.get("handled_revision") or 0) >= revision):
+            raise ValueError("recovery episode or launch permit changed during L3 turn")
+        return {"state": "active", "episode_id": episode, "permit_revision": revision,
+                "claim": claim, "epoch": _clearance_epoch()}
+
+
+def l3_state_is_current(project: str, observation: dict) -> bool:
+    """Recheck an installed none/active snapshot; active checks also renew the exact wake lease."""
+    if not isinstance(observation, dict) or set(observation) != {
+            "state", "episode_id", "permit_revision", "claim", "epoch"}:
+        return False
+    if observation.get("state") == "none":
+        if any(observation.get(key) is not None for key in ("episode_id", "permit_revision", "claim")):
+            return False
+        with _lock():
+            return status() is None and observation.get("epoch") == _clearance_epoch()
+    if observation.get("state") != "active":
+        return False
+    return l3_attention_is_current(project, observation.get("episode_id"),
+                                   observation.get("permit_revision"), observation.get("claim"))
+
+
 def fail_l3_attention(project: str, episode: str, revision: int, claim: str, error: str) -> bool:
     """Leave the same wake pending with bounded exponential backoff."""
     with _lock():
         current = status()
         attention = (current or {}).get("l3_attention")
         if (not isinstance(attention, dict) or attention.get("project") != project
-                or attention.get("episode") != episode or attention.get("claim") != claim):
+                or attention.get("episode") != episode or attention.get("claim") != claim
+                or (current or {}).get("revision") != revision):
             return False
         if int(attention.get("revision") or 0) != revision:
             return False
@@ -281,7 +410,8 @@ def complete_l3_attention(project: str, episode: str, revision: int, claim: str)
         current = status()
         attention = (current or {}).get("l3_attention")
         if (not isinstance(attention, dict) or attention.get("project") != project
-                or attention.get("episode") != episode or attention.get("claim") != claim):
+                or attention.get("episode") != episode or attention.get("claim") != claim
+                or (current or {}).get("revision") != revision):
             return False
         if int(attention.get("revision") or 0) != revision:
             return False
@@ -370,7 +500,26 @@ def launch_permission(project: str, task: dict):
         yield
 
 
-def clear(reason: str, *, actor: str) -> dict:
+@contextmanager
+def l3_launch_permission(project: str, observation: dict):
+    """Linearize one L3 spawn with hold publication while honoring its exact installed snapshot."""
+    with _launch_lock():
+        if not l3_state_is_current(project, observation):
+            raise LaunchHeld("recovery episode or launch permit changed before L3 provider launch")
+        yield
+
+
+@contextmanager
+def l3_effect_permission(project: str, observation: dict):
+    """Linearize one short local mutation with recovery-hold publication."""
+    with _launch_lock():
+        if not l3_state_is_current(project, observation):
+            raise LaunchHeld("recovery episode or launch permit changed before L3 mutation")
+        yield
+
+
+def clear(reason: str, *, actor: str, project: str | None = None,
+          expected_l3: dict | None = None) -> dict:
     """Clear the fuse explicitly; never restart or unmask the service."""
     if actor not in ("l3", "burak"):
         raise ValueError("only L3 or Burak may clear a recovery hold")
@@ -378,15 +527,33 @@ def clear(reason: str, *, actor: str) -> dict:
     if not reason:
         raise ValueError("recovery clearance requires a reason")
     with _lock():
-        current = status()
+        current = _record()
+        _reconcile_clearance_audit(current)
+        current = current if current and current["active"] else None
         if not current:
             raise ValueError("no active recovery hold")
+        if actor == "l3":
+            attention = current.get("l3_attention")
+            expected = expected_l3 or {}
+            if (not isinstance(expected, dict) or set(expected) != {
+                    "state", "episode_id", "permit_revision", "claim", "epoch"}
+                    or expected.get("state") != "active" or not isinstance(attention, dict)
+                    or isinstance(expected.get("permit_revision"), bool)
+                    or not isinstance(expected.get("permit_revision"), int)
+                    or attention.get("project") != project
+                    or (current.get("episode"), current.get("revision"), attention.get("claim")) !=
+                    (expected.get("episode_id"), expected.get("permit_revision"), expected.get("claim"))
+                    or attention.get("revision") != expected.get("permit_revision")
+                    or int(attention.get("handled_revision") or 0) >= expected.get("permit_revision", 0)):
+                raise ValueError("L3 recovery clearance does not match the exact active episode revision and claim")
         repair = current.get("repair") or None
         record = {
             "at": S.now(),
             "by": actor,
             "reason": reason,
             "since": _clean(current.get("since"), 40),
+            "episode": current["episode"],
+            "revision": current["revision"],
             "repair": ({"project": _clean(repair.get("project"), 100),
                         "slug": _clean(repair.get("slug"), 160)} if repair else None),
             "faults": [
@@ -400,19 +567,19 @@ def clear(reason: str, *, actor: str) -> dict:
                 "revision": int(current["l3_attention"].get("revision") or 0),
                 "handled_revision": int(current["l3_attention"].get("handled_revision") or 0),
             } if isinstance(current.get("l3_attention"), dict) else None),
+            "prior_epoch": current["epoch"],
         }
-        history = clearance_history_path()
-        history.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(history, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        hold_path().unlink()
+        record["id"] = hashlib.sha256(S._canonical_json(  # noqa: SLF001
+            {"kind": "recovery-clearance-v2", **record})).hexdigest()
+        inactive = {"active": False, "epoch": current["epoch"] + 1, "clearance": record}
+        S.write_json(hold_path(), inactive)
+        _reconcile_clearance_audit(inactive)
     for project in config.load_projects():
         project_hold = config.project_dir(project) / "hold.json"
         value = S.read_json(project_hold, None)
         if isinstance(value, dict) and str(value.get("reason") or "").startswith("recovery hold"):
             project_hold.unlink(missing_ok=True)
     return {"cleared": True, "at": S.now(), "by": actor, "reason": reason,
+            "episode": current["episode"], "revision": current["revision"],
+            "epoch": inactive["epoch"],
             "repair": current.get("repair")}

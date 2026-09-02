@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import secrets
 import ssl
 import subprocess
 import threading
@@ -27,6 +28,7 @@ _UNAVAILABLE_MANIFEST_BYTES = json.dumps({
     "identity_error_fields": ["startup_snapshot"],
 }, sort_keys=True, separators=(",", ":")).encode()
 _RUNTIME_MANIFEST_BYTES: bytes | None = None
+_L3_INSTANCE_ID = f"altd:{os.getpid()}:{os.environ.get('INVOCATION_ID') or secrets.token_hex(16)}"
 
 
 def log(msg: str) -> None:
@@ -67,7 +69,7 @@ def start_l3(project: str) -> None:
     l3.turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
                      "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
                      "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
-            trigger="start")
+            trigger="start", instance_id=_L3_INSTANCE_ID)
 
 
 def on_l2_finished(project: str, item: dict) -> None:
@@ -280,13 +282,15 @@ def report_turn(project: str, t: dict, v: dict) -> None:
     header = (f"Report landed for `{slug}`: verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
               f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
               f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n\n"
-              "Handle the report: write a concise digest and use `alt task done`, or block/resume with the exact gap; "
-              "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
+              "Handle the report with at most one schema-supported task action: `task_done`, `task_block`, "
+              "`task_fyi`, or `task_hold_merge`. Do not run an Altitude command. Task resume is unavailable in "
+              "this phase; if resume is needed, state that exact needed action in the human-readable reply. "
+              "Record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
               "a repair task or healing workflow. "
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
-    res = l3.turn(project, header, trigger="report-landed")
+    res = l3.turn(project, header, trigger="report-landed", instance_id=_L3_INSTANCE_ID)
     if not (res or {}).get("completed") or (res or {}).get("error"):
         detail = (res or {}).get("error") or "L3 turn did not complete"
         log(f"[{project}/{slug}] report turn unfinished: {detail}")  # not stamped: stranded-report retry owns it
@@ -386,17 +390,19 @@ def run_recovery_turn(project: str) -> None:
         ) or "system health fault"
         prompt = (
             f"Altitude recovery needs your attention for the active recovery episode. Fault evidence: {faults}. "
-            "Inspect the current recovery status and actual task/session state. Do not create routine work or a chain of "
-            "healing tasks. If code is genuinely needed, delegate the episode's single recovery L2. Never restart or "
-            "unmask Altitude without Burak's separate explicit authorization. Keep the fuse active until health is "
-            "verified. After stability returns, triage the incident evidence: report a narrow corrective follow-up as "
-            "an FYI, and preserve broad architecture, policy, or system work as a proposal or GitHub issue for Burak."
+            "Inspect the bounded recovery projection and actual task/session state. Do not create a task, GitHub issue, "
+            "or chain of healing work: recovery delegation and publication are dormant in this phase. If code is "
+            "genuinely needed, return one precise corrective task or proposal as a human-readable recommendation for "
+            "Burak. Never restart, unmask, hold, or clear Altitude from this turn. Leave the recovery fuse active and "
+            "report only the coordination or evidence Burak needs next."
         )
         result = l3.turn(
             project,
             prompt,
             trigger="system-recovery",
             precheck=lambda: recovery.l3_attention_is_current(project, episode, revision, claim),
+            recovery_identity={"episode_id": episode, "permit_revision": revision, "claim": claim},
+            instance_id=_L3_INSTANCE_ID,
         )
         if result.get("skipped"):
             return
@@ -441,6 +447,11 @@ def resume_pending_actions(project: str) -> None:
         spawn(f"pending-action:{project}:{task['slug']}", on_l2_finished, project, item)
 
 
+def reconcile_l3(project: str) -> None:
+    """Reconcile in the existing deduplicated worker pool; the timer never runs provider effects inline."""
+    l3.reconcile(project, instance_id=_L3_INSTANCE_ID, nonblocking=True)
+
+
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
@@ -449,6 +460,7 @@ def tick() -> None:
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
+            spawn(f"l3-reconcile:{project}", reconcile_l3, project)
             wake_recovery_l3(project)
             resume_pending_actions(project)
             for item in dispatch.poll(project):
@@ -657,7 +669,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "digest":
                 return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
             if api == "chat" and len(parts) > 2:
-                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
+                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.public_info(parts[2])})
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
@@ -738,7 +750,7 @@ class Handler(BaseHTTPRequestHandler):
                                    "deferred": bool(res.get("deferred")),
                                    "stdout": res.get("stdout"), "stderr": res.get("stderr")})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
-                l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
+                l3.reset(o["project"], "reset from the page", instance_id=_L3_INSTANCE_ID); return self._json({"ok": True})
             if api == "chat":
                 project, text = o["project"], (o.get("text") or "").strip()
                 if not text:
@@ -747,7 +759,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "L3 is busy; try again in a moment"}, 409)
                 self._stream_open()
                 send = lambda t: self._stream_send({"t": t})  # noqa: E731
-                res = l3.turn(project, text, trigger="chat", on_text=send)
+                res = l3.turn(project, text, trigger="chat", on_text=send, instance_id=_L3_INSTANCE_ID)
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}})
                 self._stream_close()
                 return
@@ -773,7 +785,7 @@ def overview() -> dict:
         if p["managed"]:
             ts = S.list_tasks(p["name"])
             p["counts"] = {s: sum(1 for t in ts if t["state"] == s) for s in S.STATES}
-            p["l3"] = l3.info(p["name"])
+            p["l3"] = l3.public_info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "fyis": digest.fyis(30), "wip": digest.wip(), "quota": monitor.quota(),
             "now": S.now()}
@@ -789,7 +801,7 @@ def project_view(name: str) -> dict:
         tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
-    return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
+    return {"name": name, "config": proj, "l3": l3.public_info(name), "busy": l3.busy(name), "tasks": tasks,
             "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
