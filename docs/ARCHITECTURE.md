@@ -91,6 +91,12 @@ L1 implementers receive narrower write subleases; the
 trusted wrapper verifies that their parent commit did not move and captures their changes as a
 patch for the owning L2 to evaluate.
 
+Remote PR checks execute Python and web test/typecheck/build in independent checkouts of the same
+exact candidate SHA. The
+base-owned workflow accepts only same-repository heads, pins its actions and Node version, has
+read-only repository permission, persists no checkout credential, exposes no token or secret, and
+runs candidate commands under an empty environment with disposable HOME and cache directories.
+
 ## Recovery
 
 System faults are deduplicated into private incident evidence and activate a global recovery fuse.

@@ -94,3 +94,116 @@ jobs:
             PYTHONNOUSERSITE=1 \
             CI=true \
             /usr/bin/python3 -m unittest discover tests
+
+  web:
+    name: Remote tests / Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPECTED_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      BASE_REPOSITORY: ${{ github.repository }}
+      CANDIDATE_REPOSITORY: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name || github.repository }}
+      BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+
+    steps:
+      - name: Validate event identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          is_sha() {
+            test "${#1}" -eq 40
+            case "$1" in
+              *[!0-9a-f]*) return 1 ;;
+            esac
+          }
+
+          is_sha "$EXPECTED_SHA"
+          is_sha "$BASE_SHA"
+          is_sha "$WORKFLOW_SHA"
+
+          if test "$GITHUB_EVENT_NAME" = pull_request_target; then
+            test "$WORKFLOW_SHA" = "$BASE_SHA"
+            test "$CANDIDATE_REPOSITORY" = "$BASE_REPOSITORY"
+          else
+            test "$GITHUB_EVENT_NAME" = push
+            test "$GITHUB_REF" = refs/heads/main
+            test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          fi
+
+      - name: Checkout exact candidate
+        id: candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # releases/v4, resolved 2026-08-30
+        with:
+          repository: ${{ env.BASE_REPOSITORY }}
+          ref: ${{ env.EXPECTED_SHA }}
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+          lfs: false
+
+      - name: Verify exact checkout
+        shell: bash
+        env:
+          CHECKOUT_SHA: ${{ steps.candidate.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$CHECKOUT_SHA" = "$EXPECTED_SHA"
+          test "$(/usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
+            -C candidate rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Select pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4, resolved 2026-09-02
+        with:
+          node-version: 24.14.0
+          check-latest: false
+
+      - name: Install pinned pnpm without repository credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-pnpm-tool.XXXXXX")
+          npm_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-npm-home.XXXXXX")
+          npm_cache=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-npm-cache.XXXXXX")
+          /usr/bin/chmod 0700 "$tool_home" "$npm_home" "$npm_cache"
+          node_bin=$(/usr/bin/dirname "$(command -v node)")
+          /usr/bin/env -i \
+            PATH="$node_bin:/usr/local/bin:/usr/bin:/bin" \
+            HOME="$npm_home" \
+            NPM_CONFIG_CACHE="$npm_cache" \
+            NPM_CONFIG_USERCONFIG=/dev/null \
+            CI=true \
+            npm install --global --prefix "$tool_home" --ignore-scripts pnpm@10.34.5
+          test "$("$tool_home/bin/pnpm" --version)" = 10.34.5
+          echo "PNPM_BIN=$tool_home/bin/pnpm" >> "$GITHUB_ENV"
+
+      - name: Run web checks without repository credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-web-home.XXXXXX")
+          cache_home=$(/usr/bin/mktemp -d "$RUNNER_TEMP/altitude-web-cache.XXXXXX")
+          /usr/bin/chmod 0700 "$test_home" "$cache_home"
+          node_bin=$(/usr/bin/dirname "$(command -v node)")
+          /usr/bin/env -i \
+            PATH="$node_bin:/usr/local/bin:/usr/bin:/bin" \
+            HOME="$test_home" \
+            node -e 'const p=require("./candidate/web/package.json"); if(p.packageManager!=="pnpm@10.34.5") process.exit(1)'
+
+          cd candidate/web
+          run_pnpm() {
+            /usr/bin/env -i \
+              PATH="$node_bin:/usr/local/bin:/usr/bin:/bin" \
+              HOME="$test_home" \
+              XDG_CACHE_HOME="$cache_home" \
+              NPM_CONFIG_USERCONFIG=/dev/null \
+              CI=true \
+              "$PNPM_BIN" "$@"
+          }
+          run_pnpm install --frozen-lockfile --ignore-scripts
+          run_pnpm test
+          run_pnpm typecheck
+          run_pnpm build
