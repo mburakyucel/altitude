@@ -171,7 +171,7 @@ The Python server owns state transitions and JSON APIs. The React app provides I
 Chat, and Monitor navigation plus project/task detail routes. Task chat is a human-readable Burak/L2
 conversation; operational events remain an audit detail.
 
-The next control-plane boundary is defined, but deliberately dormant: `altitude/contracts.py` owns
+`altitude/contracts.py` owns
 closed Python contracts for worker outcomes, publication scope, quota observations, application
 command results, and task/operational read projections. `web/src/data/contracts.ts` independently
 expresses the matching task/operational wire schemas in the existing Zod runtime validator, and both
@@ -179,9 +179,40 @@ runtimes exercise the same versioned JSON fixtures. Every WorkerOutcome carries 
 `observations` block for untrusted findings, decisions/questions, FYIs, follow-up proposals,
 deviations, usage/spend, and the worker's merge-hold observation. It carries no outcome/effect id,
 trusted verification/publication fact, or human reply; trusted settlement derives identity and
-checks canonical hold state, while replies remain in the task conversation. No service, broker, API, CLI, or UI path imports
-these contracts yet; each later adoption must replace its old producer and consumer together rather
-than introduce a behavior selector or a second authority.
+checks canonical hold state, while replies remain in the task conversation. The enabled Codex L2
+adapter now accepts exactly a human-readable `message` plus that one `WorkerOutcome`; the old parallel
+action, report-control, and provider-specific outcome fields are not accepted. Activation is ordered after
+Phase 1B.2/1B.3: the broker consumes only their closed settled-owner snapshot (exact project/task,
+generation/transition, durable result id/hash, terminal-empty evidence, and recovery permit), never legacy
+dispatch/session/agent/action fallback identity. The task stores only `{id, stage}` in `outcome_ref`; immutable
+canonical claim/stage rows live in trusted-keyed `outcomes.jsonl`. Claim state is saved before its row. A crash in
+that gap can reconstruct the row only from the same exact settled owner result, and reject/archive cannot discard it.
+The claim fences unrelated task messages, steering, and resume before their process or conversation effects. Its
+human reply uses a deterministic outcome-derived message id, so replay is one append rather than duplicate speech.
+Reject and non-L2 terminalization cancel only pre-effect claims; an effecting claim must reconcile, and archive checks
+that the reference is `complete` or `cancelled`. Outcome/provider bytes and journal reads are bounded. Observations remain
+labeled untrusted evidence: only the immutable outcome artifact preserves them; reports and L3 control prompts
+exclude them, and they never populate verifier, merge, deployment, terminalization, review, or attention fields. Other contracts remain dormant
+until their named owner adopts them. Each adoption replaces its old producer and consumer
+together rather than introducing a behavior selector or a second authority.
+
+Phase 1C.1 source/artifact accounting against `f38c9c9` is exact for production and wire sources:
+
+| source | added | removed | responsibility change |
+| --- | ---: | ---: | --- |
+| `altitude/actions.py` | 305 | 135 | exact owner-result validation, canonical outcome claim/stages, fencing, bounded reads, and normalized broker replace pending-action identity/fallbacks |
+| `altitude/contracts.py` | 5 | 3 | enabled helper policy is Codex or null with at most four helpers |
+| `altitude/dispatch.py` | 26 | 11 | resume/steer gates honor the claimed outcome id before effects |
+| `altitude/tasks.py` | 25 | 20 | deterministic conversation append and terminal claim cancellation/archive assertion replace `pending_action` checks |
+| `altitude/server.py` | 2 | 7 | held retries use the exact outcome reference, not Codex job/action fallback reads |
+| `schemas/l2_action.json`, `web/src/data/contracts.ts`, `personas/l2_codex.md` | 138 | 67 | one closed provider wire envelope and exact Python/Zod/provider parity |
+
+The production/wire total is 501 additions and 243 removals (net +258). The sole new durable family is the task-local
+immutable `outcomes.jsonl`; `status.json` carries only its id/stage reference, and `conversation.jsonl` remains the
+existing human log. Deleted authorities/readers are `pending_action`, dispatch/session/agent outcome identity,
+item/action fallbacks, Codex job/containment reads in held retry, random broker reply ids, and direct conversation
+stream writes. The net growth is the closed validation and crash/race fencing needed before later settlement PRs;
+it does not add a process, publication, deployment, or maintenance authority.
 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
 and documentation describe only the current behavior. Hooks supply Claude-side command guardrails

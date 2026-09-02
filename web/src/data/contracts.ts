@@ -44,7 +44,7 @@ const OutcomeObservations = z.object({
 }).strict();
 const HelperRequest = z.object({
   role: z.enum(["implementer", "reviewer"]), brief: Text,
-  provider: Provider.nullable(), model: Text.nullable(), scope: PublicationScopeSchema,
+  provider: z.literal("codex").nullable(), model: Text.nullable(), scope: PublicationScopeSchema,
 }).strict();
 export const WorkerOutcomeSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -62,7 +62,7 @@ export const WorkerOutcomeSchema = z.discriminatedUnion("kind", [
   }).strict(),
   z.object({
     version: z.literal(1), kind: z.literal("continue"), reason: Text,
-    helper_requests: z.array(HelperRequest), observations: OutcomeObservations,
+    helper_requests: z.array(HelperRequest).max(4), observations: OutcomeObservations,
   }).strict(),
 ]);
 export const ProviderQuotaObservationSchema = z.object({

@@ -51,7 +51,8 @@ TASK_MESSAGE_ROLES = ("burak", "l2")
 def append_task_message(project: str, slug: str, role: str, text: str, *,
                         expected_dispatch_id: str, expected_session_id: str | None = None,
                         expected_state: str | None = None, expected_l2_token: str | None = None,
-                        actor: str | None = None) -> dict:
+                        actor: str | None = None, message_id: str | None = None,
+                        expected_outcome_id: str | None = None) -> dict:
     """Append one human-facing task message for the exact current L2 dispatch.
 
     The conversation is an append-only JSONL artifact separate from operational events and
@@ -89,8 +90,17 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
                 f"{slug}: task changed from {expected_state} to {task.get('state')} "
                 "before the message was recorded"
             )
+        outcome_ref = task.get("outcome_ref")
+        if outcome_ref and (expected_outcome_id is None or outcome_ref.get("id") != expected_outcome_id
+                            or outcome_ref.get("stage") in ("complete", "cancelled")):
+            raise TransitionError(f"{slug}: a claimed worker outcome fences task conversation effects")
+        if expected_outcome_id is not None and not outcome_ref:
+            raise TransitionError(f"{slug}: worker outcome claim disappeared before its reply")
+        message_id = message_id or uuid.uuid4().hex
+        if not isinstance(message_id, str) or not message_id:
+            raise TransitionError("task message id is empty")
         message = {
-            "id": uuid.uuid4().hex,
+            "id": message_id,
             "at": S.now(),
             "role": role,
             "text": text,
@@ -98,12 +108,7 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
             "session_id": task.get("session_id"),
             "by": actor or role,
         }
-        path = S.task_dir(project, slug) / "conversation.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as stream:
-            stream.write(json.dumps(message, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        S.append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", message, key_field="id")
         S.append_event(project, slug, "task-message", message_id=message["id"], role=role,
                        dispatch_id=task["dispatch_id"], by=message["by"])
         return message
@@ -221,6 +226,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
 
 
 def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
+    from . import actions
+    actions.cancel_claimed_outcome(project, slug)
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
@@ -289,7 +296,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
 def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_state: str | None = None, expected_dispatch_id: str | None = None,
           expected_session_id: str | None = None, expected_agent_id: str | None = None,
-          expected_pending_identity: dict | None = None, updates: dict | None = None) -> dict:
+          updates: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
@@ -301,10 +308,6 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         ):
             if expected is not None and expected != actual:
                 raise TransitionError(f"{slug}: {label} changed before block ({expected!r} → {actual!r})")
-        if expected_pending_identity is not None:
-            pending = task.get("pending_action") or {}
-            if pending.get("identity") != expected_pending_identity:
-                raise TransitionError(f"{slug}: pending action changed before block")
         task.update(updates or {})
         task["blocked_reason"] = reason
         return _move(project, task, "blocked", actor, reason=reason)
@@ -313,7 +316,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
 def resume(project: str, slug: str, actor: str = "altd", *,
            expected_state: str | None = None, expected_dispatch_id: str | None = None,
            expected_session_id: str | None = None, expected_agent_id: str | None = None,
-           expected_pending_identity: dict | None = None, **ev) -> dict:
+           **ev) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
@@ -325,10 +328,6 @@ def resume(project: str, slug: str, actor: str = "altd", *,
         ):
             if expected is not None and expected != actual:
                 raise TransitionError(f"{slug}: {label} changed before resume ({expected!r} → {actual!r})")
-        if expected_pending_identity is not None:
-            pending = task.get("pending_action") or {}
-            if pending.get("identity") != expected_pending_identity:
-                raise TransitionError(f"{slug}: pending action changed before resume")
         task["blocked_reason"] = None
         return _move(project, task, "running", actor, **ev)
 
@@ -354,6 +353,9 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_state: str | None = None, expected_dispatch_id: str | None = None,
          expected_session_id: str | None = None, expected_agent_id: str | None = None,
          expected_l2_token: str | None = None) -> dict:
+    if actor != "l2":
+        from . import actions
+        actions.cancel_claimed_outcome(project, slug)
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
@@ -406,7 +408,6 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
         _require_no_code_change(task)
         digest = str(request.get("digest") or "")
         task.pop("completion_requested", None)
-        task.pop("pending_action", None)
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
         if digest:
@@ -419,6 +420,9 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
+        ref = S.load_task(project, slug).get("outcome_ref")
+        if ref and ref.get("stage") not in ("complete", "cancelled"):
+            raise TransitionError(f"{slug}: claimed outcome must reconcile or cancel before archive")
         # Capture the final state/outcome after digest/report creation and before the task moves.
         from . import transcript
         transcript.sync(project, slug)
@@ -477,7 +481,8 @@ def decisions(project: str) -> list[dict]:
     out = []
     for t in S.list_tasks(project):
         if (t["state"] == "blocked" and not t.get("resume_after")
-                and not t.get("pending_action")):  # operational waits are not user decisions
+                and (t.get("outcome_ref") or {}).get("stage")
+                not in ("claimed", "message_posted", "effecting")):  # operational waits are not user decisions
             out.append({"project": project, "slug": t["slug"], "title": t["title"],
                         "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
                         "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",

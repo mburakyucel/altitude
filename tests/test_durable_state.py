@@ -579,8 +579,12 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("tasks.py", "new"): 1,
             ("transcript.py", "sync"): 2,
         }),
-        "append_jsonl": Counter(),
-        "read_jsonl": Counter(),
+        "append_jsonl": Counter({
+            ("actions.py", "_claim"): 1,
+            ("actions.py", "_advance"): 1,
+            ("tasks.py", "append_task_message"): 1,
+        }),
+        "read_jsonl": Counter({("actions.py", "_read_outcomes"): 1}),
         "writable_open": Counter({
             ("dispatch.py", "_resume_lock"): 1,
             ("dispatch.py", "publication_settlement"): 1,
@@ -604,7 +608,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("state.py", "atomic_write"): 1,
             ("state.py", "ordered_file_lock"): 1,
             ("state.py", "project_log"): 1,
-            ("tasks.py", "append_task_message"): 1,
             ("tasks.py", "fyi"): 1,
             ("transcript.py", "export"): 1,
         }),
@@ -691,7 +694,6 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("state.py", "project_log"): 1,
             ("state.py", "atomic_write"): 1,
             ("tasks.py", "fyi"): 1,
-            ("tasks.py", "append_task_message"): 1,
             ("hooks/edit_count.py", "fault"): 1,
             ("bin/alt", "main"): 1,
         }),
@@ -985,9 +987,14 @@ class LegacyWriterInventoryTests(unittest.TestCase):
                 }),
             ))
 
-    def test_dormant_jsonl_primitive_has_no_runtime_consumer(self):
+    def test_jsonl_primitive_has_only_the_named_outcome_adopter(self):
         repository = Path(__file__).parents[1]
-        self.assertEqual(self._dormant_references(repository), [])
+        self.assertEqual([(path, name) for path, _line, name in self._dormant_references(repository)], [
+            ("altitude/actions.py", "state.read_jsonl"),
+            ("altitude/actions.py", "state.append_jsonl"),
+            ("altitude/actions.py", "state.append_jsonl"),
+            ("altitude/tasks.py", "state.append_jsonl"),
+        ])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Dormant, closed v2 boundary contracts; no runtime path imports this module yet."""
+"""Closed v2 boundary contracts; each becomes active only through its named owner."""
 from __future__ import annotations
 
 import math
@@ -24,7 +24,7 @@ PublicationScope: TypeAlias = PathsPublicationScope | PolicyDerivedPublicationSc
 class HelperRequest(TypedDict):
     role: Literal["implementer", "reviewer"]
     brief: str
-    provider: Provider | None
+    provider: Literal["codex"] | None
     model: str | None
     scope: PublicationScope
 
@@ -243,7 +243,7 @@ def _helper(value: object, at: str) -> HelperRequest:
     _enum(record["role"], ("implementer", "reviewer"), f"{at}.role")
     _string(record["brief"], f"{at}.brief")
     if record["provider"] is not None:
-        _enum(record["provider"], ("claude", "codex"), f"{at}.provider")
+        _enum(record["provider"], ("codex",), f"{at}.provider")
     _string(record["model"], f"{at}.model", nullable=True)
     record["scope"] = validate_publication_scope(record["scope"], f"{at}.scope")
     return cast(HelperRequest, record)
@@ -335,6 +335,8 @@ def validate_worker_outcome(value: object, at: str = "worker_outcome") -> Worker
             _helper(helper, f"{at}.helper_requests[{index}]")
             for index, helper in enumerate(_array(record["helper_requests"], f"{at}.helper_requests"))
         ]
+        if len(record["helper_requests"]) > 4:
+            raise ContractError(f"{at}.helper_requests permits at most 4 helpers")
     record["observations"] = _observations(record["observations"], f"{at}.observations")
     return cast(WorkerOutcome, record)
 

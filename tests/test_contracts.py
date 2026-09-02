@@ -85,6 +85,11 @@ class TestWorkerOutcome(unittest.TestCase):
             with self.subTest(cost=cost), self.assertRaises(ContractError):
                 validate_worker_outcome(candidate)
 
+        continued = copy.deepcopy(FIXTURES["valid"]["worker_outcomes"][-1])
+        continued["helper_requests"] *= 5
+        with self.assertRaisesRegex(ContractError, "at most 4"):
+            validate_worker_outcome(continued)
+
 
 class TestPublicationScope(unittest.TestCase):
     def test_declared_and_policy_derived_variants(self):
@@ -97,7 +102,7 @@ class TestPublicationScope(unittest.TestCase):
         )
 
     def test_rejects_non_normalized_duplicate_and_self_broadened_scope(self):
-        invalid_paths = ("/absolute", "a/../b", "a//b", "a\\b", "folder/", "./file", "nul\0path")
+        invalid_paths = ("/absolute", "a/../b", "a//b", "a\\b", "folder/", "./file", "nul\0path", "   ")
         for path in invalid_paths:
             with self.subTest(path=path), self.assertRaises(ContractError):
                 validate_publication_scope({"version": 1, "kind": "paths", "paths": [path]})
@@ -244,11 +249,13 @@ class TestProjectionWireFixtures(unittest.TestCase):
         with self.assertRaises(ContractError):
             validate_operational_projection(operational)
 
-    def test_contracts_are_not_imported_by_runtime_paths(self):
+    def test_only_the_enabled_l2_adapter_imports_the_python_contracts(self):
         python_import = re.compile(r"(?:from\s+\.contracts\s+import|from\s+\.\s+import[^\n]*\bcontracts\b|import\s+altitude\.contracts)")
         for path in sorted((ROOT / "altitude").glob("*.py")):
-            if path.name != "contracts.py":
-                self.assertIsNone(python_import.search(path.read_text()), path)
+            if path.name in ("contracts.py", "actions.py"):
+                continue
+            self.assertIsNone(python_import.search(path.read_text()), path)
+        self.assertIn("contracts.validate_worker_outcome", (ROOT / "altitude" / "actions.py").read_text())
 
         web_import = re.compile(r"from\s+['\"][^'\"]*contracts['\"]")
         for path in sorted((ROOT / "web" / "src").rglob("*.ts*")):

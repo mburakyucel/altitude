@@ -147,4 +147,17 @@ describe("dormant WorkerOutcome observations", () => {
       })).toThrow();
     }
   });
+
+  it("matches the enabled Codex/null helper policy and four-helper bound", () => {
+    const continued = fixtures.valid.worker_outcomes[3];
+    if (!continued || continued.kind !== "continue") throw new Error("continue fixture is required");
+    const helper = continued.helper_requests[0];
+    if (!helper) throw new Error("helper fixture is required");
+    expect(WorkerOutcomeSchema.parse({ ...continued, helper_requests: Array(4).fill(helper) }).kind)
+      .toBe("continue");
+    expect(() => WorkerOutcomeSchema.parse({ ...continued, helper_requests: Array(5).fill(helper) })).toThrow();
+    expect(() => WorkerOutcomeSchema.parse({
+      ...continued, helper_requests: [{ ...helper, provider: "claude" }],
+    })).toThrow();
+  });
 });

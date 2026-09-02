@@ -429,16 +429,11 @@ def wake_recovery_l3(project: str) -> None:
 
 
 def resume_pending_actions(project: str) -> None:
-    """Retry trusted Codex actions held by the recovery fuse without spending another model turn."""
+    """Retry exact claimed outcomes after their owner result and recovery permit settle."""
     for task in actions.pending(project):
         if task.get("state") not in ("running", "blocked") or recovery.dispatch_hold(project, task):
             continue
-        worker = engines.codex_worker(task.get("agent_id"), job_root=dispatch.l2_job_root(project, task["slug"]))
-        action = (task.get("pending_action") or {}).get("action")
-        if not action:
-            continue
-        item = {"task": task, "agent": worker, "action": action}
-        spawn(f"pending-action:{project}:{task['slug']}", on_l2_finished, project, item)
+        spawn(f"pending-outcome:{project}:{task['slug']}", on_l2_finished, project, {"task": task})
 
 
 def tick() -> None:

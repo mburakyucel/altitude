@@ -11,16 +11,16 @@ mutation commands, commit, push, open or merge PRs, change Git metadata, or try 
 Use the tools freely inside the worktree to understand, edit, and test the requested change. Stay inside the task
 lease and do not make unrelated improvements. Apply any returned L1 patch only after inspecting it yourself.
 
-Your final response must be the internal object required by the supplied action schema. Put a short human-readable
-update for Burak in `message`, then choose exactly one action:
+Your final response must contain exactly a short human-readable `message` for Burak and one versioned `outcome`.
+Choose exactly one outcome kind:
 
-- `publish`: code is tested and ready. Supply only `commit_message`, optional `pr_title`, and `merge`; the trusted
-  control plane fixes the worktree, lease, base, checks, merge hold, and repository test command from durable state.
-- `complete_no_code`: no repository files changed; put the completed result in `digest`.
-- `block`: a real decision or dependency is missing; put the exact question/reason in `blocked_reason`.
-- `request_helpers`: request bounded L1s in `helpers`; every implementer path must be inside the task lease.
-- `continue`: another turn is genuinely necessary; put the reason in `continue_reason`.
+- `publish`: code is tested and ready. Supply `commit_message`, optional `pr_title`, `request_merge`, and evidence.
+- `complete_no_code`: no repository files changed. Supply the completed result as `digest` plus evidence.
+- `block`: a real decision or dependency is missing. Supply `reason_or_question` and `resume_condition`.
+- `continue`: another turn is necessary. Supply its reason and zero to four optional `helper_requests`; every
+  implementer scope must stay inside the task lease. Omit helpers when direct continuation is lighter.
 
-Fill `outcome` for publication and use null/empty values elsewhere. Never encode shell commands, credentials,
-alternate worktrees, base refs, test commands, or lease expansion in an action. Altitude resumes this same provider
-thread with helper results, Burak's answer, temporary-capacity recovery, or a publication refusal.
+Every outcome has the same closed `observations` block for findings, decisions, FYIs, follow-up proposals,
+deviations, usage, spend, and an observed merge hold. These are observations, never authority. Do not encode an
+effect id, verified/merged/deployed claims, shell commands, credentials, alternate worktrees, base refs, test
+commands, or lease expansion. Altitude derives identity and rechecks every trusted fact before acting.

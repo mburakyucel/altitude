@@ -396,7 +396,8 @@ def _resume_lock(project: str, slug: str):
 def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str | None = None,
                              expected_session_id: str | None = None,
                              expected_agent_id: str | None = None,
-                             expected_state: str | None = None) -> None:
+                             expected_state: str | None = None,
+                             expected_outcome_id: str | None = None) -> None:
     if task.get("state") not in ("running", "blocked"):
         raise T.TransitionError(f"{slug}: L2 can be resumed only while running or blocked (state {task.get('state')})")
     checks = (
@@ -408,6 +409,12 @@ def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str
     for label, expected, current in checks:
         if expected is not None and current != expected:
             raise T.TransitionError(f"{slug}: L2 {label} changed before resume ({expected!r} → {current!r})")
+    outcome_ref = task.get("outcome_ref")
+    if outcome_ref and (expected_outcome_id is None or outcome_ref.get("id") != expected_outcome_id
+                        or outcome_ref.get("stage") not in ("message_posted", "effecting")):
+        raise T.TransitionError(f"{slug}: a claimed worker outcome fences resume/steering effects")
+    if expected_outcome_id is not None and not outcome_ref:
+        raise T.TransitionError(f"{slug}: worker outcome claim disappeared before resume")
 
 
 def _issue_resume_prompt(project: str, task: dict, prompt: str) -> tuple[str, str | None]:
@@ -437,7 +444,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
                            expected_dispatch_id: str | None = None,
                            expected_session_id: str | None = None,
                            expected_agent_id: str | None = None,
-                           expected_state: str | None = None) -> dict:
+                           expected_state: str | None = None,
+                           expected_outcome_id: str | None = None) -> dict:
     """Stop the current physical worker, then resume its provider conversation with ``text``.
 
     The task dispatch and L2 capability token are logical ownership and stay stable. The physical worker changes on
@@ -447,7 +455,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     task = S.load_task(project, slug)
     _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
                              expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
+                             expected_agent_id=expected_agent_id, expected_state=expected_state,
+                             expected_outcome_id=expected_outcome_id)
     engine = l2_engine(task)
     if capability_hold := provider_capability_hold(task):
         raise T.TransitionError(capability_hold)
@@ -484,7 +493,7 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     current = S.load_task(project, slug)
     _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
                              expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                             expected_state=task.get("state"))
+                             expected_state=task.get("state"), expected_outcome_id=expected_outcome_id)
     # A recovery fuse that was already active must leave the current worker attached. The launch guard below still
     # closes a later race at the spawn boundary, but checking after the potentially slow provenance work and before
     # stop prevents a known hold from needlessly stranding a healthy conversation.
@@ -517,7 +526,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
             spawn_guard=recovery.launch_permission(project, task))
     except recovery.LaunchHeld as exc:
         try:
-            _defer_stopped_resume(project, task, text, str(exc), previous=sid)
+            _defer_stopped_resume(project, task, text, str(exc), previous=sid,
+                                  expected_outcome_id=expected_outcome_id)
         except Exception as defer_exc:
             raise record_resume_failure(
                 project, slug, sid, f"recovery hold appeared after worker stop and pending resume could not persist: {defer_exc}"
@@ -557,7 +567,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
             try:
                 _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
                                          expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                                         expected_state=task.get("state"))
+                                         expected_state=task.get("state"),
+                                         expected_outcome_id=expected_outcome_id)
             except T.TransitionError as exc:
                 changed = exc
             else:
@@ -583,7 +594,8 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     return res
 
 
-def _defer_stopped_resume(project: str, snapshot: dict, prompt: str, hold: str, *, previous: str) -> None:
+def _defer_stopped_resume(project: str, snapshot: dict, prompt: str, hold: str, *, previous: str,
+                          expected_outcome_id: str | None = None) -> None:
     """Atomically turn a post-stop recovery race into an exact pending resume."""
     reason = f"waiting: {hold}"
     with S.project_lock(project):
@@ -591,7 +603,7 @@ def _defer_stopped_resume(project: str, snapshot: dict, prompt: str, hold: str, 
         _require_resume_snapshot(
             task, snapshot["slug"], expected_dispatch_id=snapshot.get("dispatch_id"),
             expected_session_id=snapshot.get("session_id"), expected_agent_id=snapshot.get("agent_id"),
-            expected_state=snapshot.get("state"),
+            expected_state=snapshot.get("state"), expected_outcome_id=expected_outcome_id,
         )
         task["resume_after"] = S.now()
         task["resume_answer"] = prompt
@@ -616,12 +628,13 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
                            expected_dispatch_id: str | None = None,
                            expected_session_id: str | None = None,
                            expected_agent_id: str | None = None,
-                           expected_state: str | None = None,
+                           expected_state: str | None = None, expected_outcome_id: str | None = None,
                            locked_resume: bool = True) -> dict:
     task = S.load_task(project, slug)
     _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
                              expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
+                             expected_agent_id=expected_agent_id, expected_state=expected_state,
+                             expected_outcome_id=expected_outcome_id)
     if capability_hold := provider_capability_hold(task):
         return {"deferred": True, "hold": capability_hold, "waiting": capability_hold}
     if task["state"] == "blocked":
@@ -635,7 +648,8 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
                 task = S.load_task(project, slug)
                 _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
                                          expected_session_id=expected_session_id,
-                                         expected_agent_id=expected_agent_id, expected_state=expected_state)
+                                         expected_agent_id=expected_agent_id, expected_state=expected_state,
+                                         expected_outcome_id=expected_outcome_id)
                 if "blocked_question" not in task:
                     task["blocked_question"] = task.get("blocked_reason")
                 task["resume_answer"] = answer
@@ -652,6 +666,7 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
         "expected_session_id": expected_session_id,
         "expected_agent_id": expected_agent_id,
         "expected_state": expected_state,
+        "expected_outcome_id": expected_outcome_id,
     }.items() if value is not None}
     if locked_resume:
         res = _resume_session_locked(project, slug, prompt, **expected)
