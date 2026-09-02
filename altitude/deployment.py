@@ -1,4 +1,9 @@
-"""Dormant per-service deployment authority and one-time baseline import."""
+"""Dormant deployment baseline, contribution, and qualification authority.
+
+This module records facts only.  It cannot build, install, stop, start, or activate a
+service.  Eligibility is a pure projection over one exact first-parent chain supplied
+by a later trusted activation runner.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -10,7 +15,8 @@ from pathlib import Path, PurePosixPath
 
 from . import config, state as S
 
-SCHEMA = "altitude.deployment/v1"
+SCHEMA_V1 = "altitude.deployment/v1"
+SCHEMA = "altitude.deployment/v2"
 RUNTIME_MANIFEST_SCHEMA = "altitude.runtime-manifest/v2"
 LEGACY_PENDING_BLOCKER = "legacy_restart_pending_unreconciled"
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
@@ -22,6 +28,31 @@ _MANIFEST_FIELDS = {
     "expected_commit", "identity_errors", "valid", "loaded_source", "executed_source",
     "installed_checkout", "installation_identity", "remote_main", "state", "service_unit",
     "web_bundle", "prior_install_manifest_sha256", "bootstrap_evidence", "manifest_sha256",
+}
+_RECORD_FIELDS = {
+    "schema_version", "service", "repository", "activated_sha",
+    "bootstrap_anchor", "legacy_pending", "legacy_reconciliation",
+    "contributions", "qualifications", "operator_coverage", "satisfied_contributions",
+    "record_sha256",
+}
+_V1_RECORD_FIELDS = {
+    "schema_version", "service", "repository", "activated_sha",
+    "bootstrap_anchor", "legacy_pending", "record_sha256",
+}
+_CONTRIBUTION_FIELDS = {
+    "id", "publication_receipt_id", "publication_receipt_sha256", "merge_sha", "observed_at",
+}
+_QUALIFICATION_FIELDS = {
+    "id", "contribution_id", "observed_at", "main_check", "open_findings",
+    "merge_hold", "decision", "supersedes",
+}
+_COVERAGE_FIELDS = {
+    "id", "start_exclusive", "end_inclusive", "commit_count", "commits_sha256",
+    "observed_at", "reason", "authorization",
+}
+_LEGACY_RECONCILIATION_FIELDS = {
+    "id", "evidence_sha256", "observed_at", "anchor_sha", "head_sha",
+    "commit_count", "commits_sha256", "coverage_sha256",
 }
 
 
@@ -147,6 +178,138 @@ def _authorization(value: object) -> dict:
     return out
 
 
+def _timestamp(value: object, label: str) -> str:
+    text = _text(value, label, 80)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DeploymentError(f"{label} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise DeploymentError(f"{label} must include an offset")
+    return text
+
+
+def _identifier(value: object, label: str) -> str:
+    text = _text(value, label, 160)
+    if any(character.isspace() for character in text):
+        raise DeploymentError(f"{label} must not contain whitespace")
+    return text
+
+
+def _commit_list_digest(commits: list[str]) -> str:
+    return hashlib.sha256(json.dumps(
+        commits, separators=(",", ":"), ensure_ascii=True,
+    ).encode()).hexdigest()
+
+
+def _contribution(value: object) -> dict:
+    row = _exact(value, _CONTRIBUTION_FIELDS, "deployment contribution")
+    _digest(row.get("id"), "contribution id")
+    _identifier(row.get("publication_receipt_id"), "publication receipt id")
+    _digest(row.get("publication_receipt_sha256"), "publication receipt sha256")
+    _sha(row.get("merge_sha"), "contribution merge sha")
+    _timestamp(row.get("observed_at"), "contribution observed_at")
+    expected = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+        "publication_receipt_id": row["publication_receipt_id"],
+        "merge_sha": row["merge_sha"],
+    })).hexdigest()
+    if row["id"] != expected:
+        raise DeploymentError("contribution id does not match its immutable facts")
+    return row
+
+
+def _qualification(value: object) -> dict:
+    row = _exact(value, _QUALIFICATION_FIELDS, "deployment qualification")
+    _digest(row.get("id"), "qualification id")
+    _digest(row.get("contribution_id"), "qualification contribution id")
+    _timestamp(row.get("observed_at"), "qualification observed_at")
+    main = _exact(row.get("main_check"), {"status", "head_sha", "evidence_sha256"},
+                  "qualification main_check")
+    if main.get("status") not in ("passed", "failed", "unavailable"):
+        raise DeploymentError("qualification main_check status is invalid")
+    _sha(main.get("head_sha"), "qualification main_check head sha")
+    _digest(main.get("evidence_sha256"), "qualification main_check evidence sha256")
+    findings = _exact(row.get("open_findings"), {"count", "evidence_sha256"},
+                      "qualification open_findings")
+    count = findings.get("count")
+    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 10_000:
+        raise DeploymentError("qualification open finding count is invalid")
+    _digest(findings.get("evidence_sha256"), "qualification finding evidence sha256")
+    hold = _exact(row.get("merge_hold"), {"held", "reason"}, "qualification merge_hold")
+    if not isinstance(hold.get("held"), bool):
+        raise DeploymentError("qualification merge_hold held must be boolean")
+    reason = hold.get("reason")
+    if hold["held"]:
+        _text(reason, "qualification merge hold reason", 500)
+    elif reason is not None:
+        raise DeploymentError("an unheld qualification cannot carry a merge hold reason")
+    decision = row.get("decision")
+    expected_decision = ("eligible" if main["status"] == "passed" and count == 0
+                         and hold["held"] is False else "blocked")
+    if decision != expected_decision:
+        raise DeploymentError("qualification decision contradicts its evidence")
+    supersedes = row.get("supersedes")
+    if (not isinstance(supersedes, list) or len(supersedes) > 128
+            or supersedes != sorted(set(supersedes))):
+        raise DeploymentError("qualification supersedes must be sorted unique ids")
+    for item in supersedes:
+        _digest(item, "superseded qualification id")
+    if decision != "eligible" and supersedes:
+        raise DeploymentError("only an eligible corrective qualification may supersede a blocker")
+    expected = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+        key: row[key] for key in _QUALIFICATION_FIELDS - {"id"}
+    })).hexdigest()
+    if row["id"] != expected:
+        raise DeploymentError("qualification id does not match its immutable facts")
+    return row
+
+
+def _coverage(value: object) -> dict:
+    row = _exact(value, _COVERAGE_FIELDS, "operator coverage")
+    _digest(row.get("id"), "operator coverage id")
+    _sha(row.get("start_exclusive"), "operator coverage start")
+    _sha(row.get("end_inclusive"), "operator coverage end")
+    count = row.get("commit_count")
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 10_000:
+        raise DeploymentError("operator coverage commit_count is invalid")
+    _digest(row.get("commits_sha256"), "operator coverage commits sha256")
+    _timestamp(row.get("observed_at"), "operator coverage observed_at")
+    _text(row.get("reason"), "operator coverage reason", 500)
+    _authorization(row.get("authorization"))
+    expected = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+        key: row[key] for key in _COVERAGE_FIELDS - {"id"}
+    })).hexdigest()
+    if row["id"] != expected:
+        raise DeploymentError("operator coverage id does not match its immutable facts")
+    return row
+
+
+def _legacy_reconciliation(value: object, pending: dict | None) -> dict | None:
+    if value is None:
+        return None
+    row = _exact(value, _LEGACY_RECONCILIATION_FIELDS, "legacy reconciliation")
+    _digest(row.get("id"), "legacy reconciliation id")
+    _digest(row.get("evidence_sha256"), "legacy reconciliation evidence sha256")
+    _timestamp(row.get("observed_at"), "legacy reconciliation observed_at")
+    _sha(row.get("anchor_sha"), "legacy reconciliation anchor sha")
+    _sha(row.get("head_sha"), "legacy reconciliation head sha")
+    count = row.get("commit_count")
+    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 100_000:
+        raise DeploymentError("legacy reconciliation commit_count is invalid")
+    _digest(row.get("commits_sha256"), "legacy reconciliation commits sha256")
+    _digest(row.get("coverage_sha256"), "legacy reconciliation coverage sha256")
+    if (pending is None or pending.get("status") != "recognized"
+            or row["evidence_sha256"] != pending.get("evidence_sha256")
+            or row["head_sha"] != pending.get("head")):
+        raise DeploymentError("legacy reconciliation does not bind the imported evidence")
+    expected = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+        key: row[key] for key in _LEGACY_RECONCILIATION_FIELDS - {"id", "observed_at"}
+    })).hexdigest()
+    if row["id"] != expected:
+        raise DeploymentError("legacy reconciliation id does not match its immutable facts")
+    return row
+
+
 def _operator_anchor(manifest: dict, declaration: object) -> tuple[None, dict]:
     declared = _exact(declaration, {"evidence_limitation", "authorization"},
                       "operator provenance")
@@ -257,11 +420,9 @@ def _anchor(value: object) -> dict:
     return anchor
 
 
-def validate_record(value: object) -> dict:
-    record = _exact(value, {"schema_version", "service", "repository", "activated_sha",
-                            "bootstrap_anchor", "legacy_pending", "record_sha256"},
-                    "DeploymentRecord")
-    if record.get("schema_version") != SCHEMA:
+def _validate_baseline(value: object, *, schema: str, fields: set[str]) -> tuple[dict, dict | None]:
+    record = _exact(value, fields, "DeploymentRecord")
+    if record.get("schema_version") != schema:
         raise DeploymentError("DeploymentRecord schema is unsupported")
     service = _exact(record.get("service"), {"id", "unit"}, "service identity")
     repository = _exact(record.get("repository"), {"id", "checkout"}, "repository identity")
@@ -289,6 +450,63 @@ def validate_record(value: object) -> dict:
             raise DeploymentError("legacy_pending status/error is invalid")
     if record.get("record_sha256") != _canonical_hash(record, "record_sha256"):
         raise DeploymentError("DeploymentRecord hash does not match its contents")
+    return record, pending
+
+
+def validate_v1_record(value: object) -> dict:
+    """Validate the exact dormant Phase 2A shape; it is accepted only by the upgrader."""
+    record, _pending = _validate_baseline(value, schema=SCHEMA_V1, fields=_V1_RECORD_FIELDS)
+    return deepcopy(record)
+
+
+def validate_record(value: object) -> dict:
+    record, pending = _validate_baseline(value, schema=SCHEMA, fields=_RECORD_FIELDS)
+    _legacy_reconciliation(record.get("legacy_reconciliation"), pending)
+    contributions = record.get("contributions")
+    qualifications = record.get("qualifications")
+    coverage = record.get("operator_coverage")
+    satisfied = record.get("satisfied_contributions")
+    if not isinstance(contributions, list) or len(contributions) > 10_000:
+        raise DeploymentError("DeploymentRecord contributions must be a bounded array")
+    if not isinstance(qualifications, list) or len(qualifications) > 20_000:
+        raise DeploymentError("DeploymentRecord qualifications must be a bounded array")
+    if not isinstance(coverage, list) or len(coverage) > 10_000:
+        raise DeploymentError("DeploymentRecord operator_coverage must be a bounded array")
+    if satisfied != []:
+        raise DeploymentError("Phase 2B DeploymentRecord satisfied_contributions must be empty")
+    contribution_ids, merge_shas, receipt_ids = set(), set(), set()
+    contribution_by_id = {}
+    for item in contributions:
+        row = _contribution(item)
+        if row["id"] in contribution_ids or row["merge_sha"] in merge_shas:
+            raise DeploymentError("DeploymentRecord contains a duplicate contribution or merge sha")
+        receipt_id = row["publication_receipt_id"]
+        if receipt_id in receipt_ids:
+            raise DeploymentError("DeploymentRecord contains a reused publication receipt id")
+        contribution_ids.add(row["id"]); merge_shas.add(row["merge_sha"]); receipt_ids.add(receipt_id)
+        contribution_by_id[row["id"]] = row
+    if any(item not in contribution_ids for item in satisfied):
+        raise DeploymentError("satisfied contribution does not exist in this record")
+    qualification_ids = set()
+    prior_qualifications = {}
+    for item in qualifications:
+        row = _qualification(item)
+        if row["id"] in qualification_ids or row["contribution_id"] not in contribution_ids:
+            raise DeploymentError("qualification identity or contribution reference is invalid")
+        if row["main_check"]["head_sha"] != contribution_by_id[row["contribution_id"]]["merge_sha"]:
+            raise DeploymentError("qualification main check does not name its contribution merge sha")
+        for replaced in row["supersedes"]:
+            if (replaced not in prior_qualifications
+                    or prior_qualifications[replaced]["decision"] != "blocked"
+                    or prior_qualifications[replaced]["contribution_id"] == row["contribution_id"]):
+                raise DeploymentError("qualification supersedes an unknown, later, or same-contribution receipt")
+        qualification_ids.add(row["id"]); prior_qualifications[row["id"]] = row
+    coverage_ids = set()
+    for item in coverage:
+        row = _coverage(item)
+        if row["id"] in coverage_ids:
+            raise DeploymentError("DeploymentRecord contains duplicate operator coverage")
+        coverage_ids.add(row["id"])
     return deepcopy(record)
 
 
@@ -306,6 +524,32 @@ def load(service_id: str, *, root: Path | None = None) -> dict | None:
     if record["service"]["id"] != service_id:
         raise DeploymentError("DeploymentRecord service identity differs from its path")
     return record
+
+
+def upgrade_v1_for_migration(service_id: str, *, root: Path | None = None) -> dict:
+    """Atomically extend the dormant Phase 2A record; normal reads never auto-migrate."""
+    path = record_path(service_id, root=root)
+    with S.ordered_file_lock(path.with_suffix(".lock"), S.LockLevel.ACTIVATION_MAINTENANCE):
+        raw = S.read_json(path, None)
+        if raw is None:
+            raise DeploymentError(f"DeploymentRecord for {service_id} is not initialized")
+        if isinstance(raw, dict) and raw.get("schema_version") == SCHEMA:
+            current = validate_record(raw)
+            if current["service"]["id"] != service_id:
+                raise DeploymentError("DeploymentRecord service identity differs from its path")
+            return current
+        prior = validate_v1_record(raw)
+        if prior["service"]["id"] != service_id:
+            raise DeploymentError("DeploymentRecord service identity differs from its path")
+        upgraded = {key: deepcopy(value) for key, value in prior.items() if key != "record_sha256"}
+        upgraded.update({
+            "schema_version": SCHEMA, "legacy_reconciliation": None,
+            "contributions": [], "qualifications": [], "operator_coverage": [],
+            "satisfied_contributions": [],
+        })
+        upgraded["record_sha256"] = _canonical_hash(upgraded, "record_sha256")
+        validate_record(upgraded); S.write_json(path, upgraded)
+        return deepcopy(upgraded)
 
 
 def initialize_for_migration(
@@ -327,7 +571,9 @@ def initialize_for_migration(
     candidate = {
         "schema_version": SCHEMA, "service": service, "repository": repository,
         "activated_sha": activated_sha, "bootstrap_anchor": anchor,
-        "legacy_pending": _legacy_pending(legacy_pending_bytes),
+        "legacy_pending": _legacy_pending(legacy_pending_bytes), "legacy_reconciliation": None,
+        "contributions": [], "qualifications": [], "operator_coverage": [],
+        "satisfied_contributions": [],
     }
     candidate["record_sha256"] = _canonical_hash(candidate, "record_sha256")
     validate_record(candidate)
@@ -342,3 +588,249 @@ def initialize_for_migration(
             return current
         S.write_json(path, candidate)
     return deepcopy(candidate)
+
+
+def _append(service_id: str, field: str, row: dict, *, root: Path | None = None) -> dict:
+    """Append one immutable fact under the sole deployment lock."""
+    path = record_path(service_id, root=root)
+    with S.ordered_file_lock(path.with_suffix(".lock"), S.LockLevel.ACTIVATION_MAINTENANCE):
+        record = load(service_id, root=root)
+        if record is None:
+            raise DeploymentError(f"DeploymentRecord for {service_id} is not initialized")
+        existing = next((item for item in record[field] if item.get("id") == row["id"]), None)
+        if existing is not None:
+            same_contribution = (field == "contributions"
+                                 and {key: value for key, value in existing.items() if key != "observed_at"}
+                                 == {key: value for key, value in row.items() if key != "observed_at"})
+            if existing != row and not same_contribution:
+                raise DeploymentConflict(f"conflicting {field} fact {row['id']}")
+            return record
+        record[field].append(deepcopy(row))
+        record["record_sha256"] = _canonical_hash(record, "record_sha256")
+        validate_record(record)
+        S.write_json(path, record)
+        return deepcopy(record)
+
+
+def append_contribution(
+    service_id: str, *, publication_receipt_id: str, publication_receipt_sha256: str,
+    merge_sha: str, observed_at: str, root: Path | None = None,
+) -> dict:
+    """Record that one immutable publication receipt merged; this does not qualify it."""
+    facts = {
+        "publication_receipt_id": _identifier(publication_receipt_id, "publication receipt id"),
+        "publication_receipt_sha256": _digest(
+            publication_receipt_sha256, "publication receipt sha256"),
+        "merge_sha": _sha(merge_sha, "contribution merge sha"),
+        "observed_at": _timestamp(observed_at, "contribution observed_at"),
+    }
+    facts["id"] = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+        "publication_receipt_id": facts["publication_receipt_id"],
+        "merge_sha": facts["merge_sha"],
+    })).hexdigest()
+    return _append(service_id, "contributions", _contribution(facts), root=root)
+
+
+def append_qualification(
+    service_id: str, *, contribution_id: str, observed_at: str,
+    main_check_status: str, main_check_head_sha: str, main_check_evidence_sha256: str,
+    open_findings_count: int, open_findings_evidence_sha256: str,
+    merge_hold: bool, merge_hold_reason: str | None = None,
+    supersedes: list[str] | None = None, root: Path | None = None,
+) -> dict:
+    """Append one evidence-derived qualification or blocker; prior facts stay immutable."""
+    facts = {
+        "contribution_id": _digest(contribution_id, "qualification contribution id"),
+        "observed_at": _timestamp(observed_at, "qualification observed_at"),
+        "main_check": {
+            "status": main_check_status,
+            "head_sha": _sha(main_check_head_sha, "qualification main_check head sha"),
+            "evidence_sha256": _digest(
+                main_check_evidence_sha256, "qualification main_check evidence sha256"),
+        },
+        "open_findings": {
+            "count": open_findings_count,
+            "evidence_sha256": _digest(
+                open_findings_evidence_sha256, "qualification finding evidence sha256"),
+        },
+        "merge_hold": {"held": merge_hold, "reason": merge_hold_reason},
+        "decision": ("eligible" if main_check_status == "passed"
+                     and open_findings_count == 0 and merge_hold is False else "blocked"),
+        "supersedes": sorted(set(supersedes or [])),
+    }
+    facts["id"] = hashlib.sha256(S._canonical_json(facts)).hexdigest()  # noqa: SLF001
+    return _append(service_id, "qualifications", _qualification(facts), root=root)
+
+
+def append_operator_coverage(
+    service_id: str, *, start_exclusive: str, commits: list[str], observed_at: str,
+    reason: str, authorization: dict, root: Path | None = None,
+) -> dict:
+    """Cover one exact contiguous first-parent range without fabricating check evidence."""
+    start = _sha(start_exclusive, "operator coverage start")
+    if (not isinstance(commits, list) or not commits or len(commits) > 10_000
+            or len(set(commits)) != len(commits)):
+        raise DeploymentError("operator coverage commits must be 1..10000 unique ordered shas")
+    exact_commits = [_sha(item, "operator coverage commit") for item in commits]
+    facts = {
+        "start_exclusive": start, "end_inclusive": exact_commits[-1],
+        "commit_count": len(exact_commits), "commits_sha256": _commit_list_digest(exact_commits),
+        "observed_at": _timestamp(observed_at, "operator coverage observed_at"),
+        "reason": _text(reason, "operator coverage reason", 500),
+        "authorization": _authorization(deepcopy(authorization)),
+    }
+    facts["id"] = hashlib.sha256(S._canonical_json(facts)).hexdigest()  # noqa: SLF001
+    return _append(service_id, "operator_coverage", _coverage(facts), root=root)
+
+
+def reconcile_legacy_pending(
+    service_id: str, *, observed_at: str, first_parent_chain: list[str],
+    root: Path | None = None,
+) -> dict:
+    """Resolve a recognized marker only through a fully covered anchor-to-head chain."""
+    path = record_path(service_id, root=root)
+    with S.ordered_file_lock(path.with_suffix(".lock"), S.LockLevel.ACTIVATION_MAINTENANCE):
+        record = load(service_id, root=root)
+        if record is None:
+            raise DeploymentError(f"DeploymentRecord for {service_id} is not initialized")
+        pending = record.get("legacy_pending")
+        if pending is None:
+            raise DeploymentError("there is no imported legacy pending evidence to reconcile")
+        if pending.get("status") != "recognized":
+            raise DeploymentError("unrecognized legacy pending evidence has no mechanical head to reconcile")
+        chain = [_sha(item, "legacy reconciliation chain commit") for item in first_parent_chain]
+        existing = record["legacy_reconciliation"]
+        if existing is not None:
+            if (not chain or chain[0] != existing["anchor_sha"]
+                    or chain[-1] != existing["head_sha"]
+                    or len(chain) - 1 != existing["commit_count"]
+                    or _commit_list_digest(chain[1:]) != existing["commits_sha256"]):
+                raise DeploymentConflict("legacy pending evidence already has different reconciled ancestry")
+            return record
+        result = _evaluate_record(record, pending["head"], first_parent_chain, include_legacy=False)
+        if result["blockers"]:
+            raise DeploymentError("legacy pending baseline is not fully covered: "
+                                  + ", ".join(item["kind"] for item in result["blockers"]))
+        facts = {
+            "evidence_sha256": pending["evidence_sha256"],
+            "observed_at": _timestamp(observed_at, "legacy reconciliation observed_at"),
+            "anchor_sha": result["anchor_sha"], "head_sha": pending["head"],
+            "commit_count": len(chain) - 1,
+            "commits_sha256": _commit_list_digest(chain[1:]),
+            "coverage_sha256": hashlib.sha256(S._canonical_json(result["covered"])).hexdigest(),  # noqa: SLF001
+        }
+        facts["id"] = hashlib.sha256(S._canonical_json({  # noqa: SLF001
+            key: facts[key] for key in _LEGACY_RECONCILIATION_FIELDS - {"id", "observed_at"}
+        })).hexdigest()
+        row = _legacy_reconciliation(facts, pending)
+        record["legacy_reconciliation"] = row
+        record["record_sha256"] = _canonical_hash(record, "record_sha256")
+        validate_record(record); S.write_json(path, record)
+        return deepcopy(record)
+
+
+def _evaluate_record(record: dict, candidate_sha: str, first_parent_chain: list[str],
+                     *, include_legacy: bool) -> dict:
+    candidate = _sha(candidate_sha, "eligibility candidate")
+    if (not isinstance(first_parent_chain, list) or not first_parent_chain
+            or len(first_parent_chain) > 100_000
+            or len(set(first_parent_chain)) != len(first_parent_chain)):
+        raise DeploymentError("first-parent chain must be a bounded unique ordered sha array")
+    chain = [_sha(item, "first-parent chain commit") for item in first_parent_chain]
+    anchor = record["activated_sha"] or record["bootstrap_anchor"]["sha"]
+    if chain[0] != anchor or chain[-1] != candidate:
+        raise DeploymentError("first-parent chain must run from the effective anchor through candidate")
+    contributions = {item["merge_sha"]: item for item in record["contributions"]}
+    contribution_by_id = {item["id"]: item for item in record["contributions"]}
+    chain_index = {sha: index for index, sha in enumerate(chain)}
+    included_ids = {item["id"] for sha, item in contributions.items() if sha in chain[1:]}
+    included_qualifications = [
+        item for item in record["qualifications"] if item["contribution_id"] in included_ids
+    ]
+    qualification_by_id = {item["id"]: item for item in included_qualifications}
+    superseded_by_eligible = set()
+    for item in included_qualifications:
+        if item["decision"] != "eligible":
+            continue
+        correcting_sha = contribution_by_id[item["contribution_id"]]["merge_sha"]
+        for replaced in item["supersedes"]:
+            prior = qualification_by_id.get(replaced)
+            if prior is None:
+                continue
+            blocked_sha = contribution_by_id[prior["contribution_id"]]["merge_sha"]
+            if chain_index[correcting_sha] > chain_index[blocked_sha]:
+                superseded_by_eligible.add(replaced)
+    by_contribution: dict[str, list[dict]] = {}
+    for item in included_qualifications:
+        by_contribution.setdefault(item["contribution_id"], []).append(item)
+    operator_by_sha: dict[str, str] = {}
+    for receipt in record["operator_coverage"]:
+        start_index = chain_index.get(receipt["start_exclusive"])
+        end_index = chain_index.get(receipt["end_inclusive"])
+        if start_index is None or end_index is None or end_index <= start_index:
+            continue
+        covered = chain[start_index + 1:end_index + 1]
+        if (len(covered) == receipt["commit_count"]
+                and _commit_list_digest(covered) == receipt["commits_sha256"]):
+            for sha in covered:
+                operator_by_sha.setdefault(sha, receipt["id"])
+    blockers, covered_rows = [], []
+    for contribution in record["contributions"]:
+        if contribution["merge_sha"] not in chain:
+            blockers.append({"kind": "contribution_not_in_candidate_ancestry",
+                             "sha": contribution["merge_sha"],
+                             "reference": contribution["id"]})
+    for sha in chain[1:]:
+        contribution = contributions.get(sha)
+        if contribution is not None:
+            qualifications = by_contribution.get(contribution["id"], [])
+            eligible = [item for item in qualifications if item["decision"] == "eligible"]
+            unresolved = [item for item in qualifications if item["decision"] == "blocked"
+                          and item["id"] not in superseded_by_eligible]
+            if eligible and not unresolved:
+                covered_rows.append({"sha": sha, "kind": "qualified_contribution",
+                                     "reference": eligible[-1]["id"]})
+            elif qualifications and not unresolved and any(
+                    item["id"] in superseded_by_eligible for item in qualifications):
+                covered_rows.append({"sha": sha, "kind": "corrected_contribution",
+                                     "reference": contribution["id"]})
+            else:
+                blockers.append({"kind": "unqualified_contribution", "sha": sha,
+                                 "reference": contribution["id"]})
+        elif sha in operator_by_sha:
+            covered_rows.append({"sha": sha, "kind": "operator_provenance",
+                                 "reference": operator_by_sha[sha]})
+        else:
+            blockers.append({"kind": "uncovered_commit", "sha": sha, "reference": None})
+    if include_legacy and record["legacy_pending"] is not None:
+        reconciliation = record["legacy_reconciliation"]
+        valid_reconciliation = False
+        if reconciliation is not None:
+            end = chain_index.get(reconciliation["head_sha"], -1)
+            prefix = chain[:end + 1] if end >= 0 else []
+            valid_reconciliation = bool(
+                prefix and prefix[0] == reconciliation["anchor_sha"]
+                and len(prefix) - 1 == reconciliation["commit_count"]
+                and _commit_list_digest(prefix[1:]) == reconciliation["commits_sha256"]
+            )
+            if valid_reconciliation:
+                covered_shas = {item["sha"] for item in covered_rows}
+                valid_reconciliation = all(sha in covered_shas for sha in prefix[1:])
+        if not valid_reconciliation:
+            blockers.append({"kind": LEGACY_PENDING_BLOCKER, "sha": None,
+                             "reference": record["legacy_pending"]["evidence_sha256"]})
+    return {
+        "eligible": not blockers, "anchor_sha": anchor, "candidate_sha": candidate,
+        "covered": covered_rows, "blockers": blockers,
+    }
+
+
+def evaluate_eligibility(
+    service_id: str, *, candidate_sha: str, first_parent_chain: list[str],
+    root: Path | None = None,
+) -> dict:
+    """Project eligibility from durable facts and one exact anchor-through-candidate chain."""
+    record = load(service_id, root=root)
+    if record is None:
+        raise DeploymentError(f"DeploymentRecord for {service_id} is not initialized")
+    return _evaluate_record(record, candidate_sha, first_parent_chain, include_legacy=True)

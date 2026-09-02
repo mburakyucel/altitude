@@ -1,7 +1,9 @@
-"""Phase 2A's DeploymentRecord is strict, durable, truthful, and dormant."""
+"""Phase 2B's dormant DeploymentRecord is strict, durable, and replay-safe."""
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from copy import deepcopy
@@ -82,6 +84,34 @@ class TestDeploymentRecord(unittest.TestCase):
             checkout=self.checkout, runtime_manifest=manifest or self._manifest(),
             root=self.root, **kwargs,
         )
+
+    def _contribute(self, sha=None, receipt="publication-1", observed="2026-09-02T01:00:00+00:00") -> dict:
+        return deployment.append_contribution(
+            "altitude", publication_receipt_id=receipt,
+            publication_receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
+            merge_sha=sha or "e" * 40, observed_at=observed, root=self.root,
+        )
+
+    def _qualify(self, contribution_id, *, status="passed", count=0, held=False,
+                 supersedes=None, observed="2026-09-02T02:00:00+00:00") -> dict:
+        contribution = next(item for item in deployment.load("altitude", root=self.root)["contributions"]
+                            if item["id"] == contribution_id)
+        return deployment.append_qualification(
+            "altitude", contribution_id=contribution_id, observed_at=observed,
+            main_check_status=status, main_check_head_sha=contribution["merge_sha"],
+            main_check_evidence_sha256="1" * 64,
+            open_findings_count=count, open_findings_evidence_sha256="2" * 64,
+            merge_hold=held, merge_hold_reason="operator review" if held else None,
+            supersedes=supersedes or [], root=self.root,
+        )
+
+    def _write_v1(self, record: dict) -> dict:
+        v1 = {key: deepcopy(value) for key, value in record.items()
+              if key in deployment._V1_RECORD_FIELDS and key != "record_sha256"}  # noqa: SLF001
+        v1["schema_version"] = deployment.SCHEMA_V1
+        v1["record_sha256"] = self._hash(v1, "record_sha256")
+        S.write_json(deployment.record_path("altitude", root=self.root), v1)
+        return v1
 
     def test_running_exact_manifest_is_the_only_source_of_activated_sha(self):
         with mock.patch.object(S, "_fsync_directory", wraps=S._fsync_directory) as fsync_parent:
@@ -250,21 +280,441 @@ class TestDeploymentRecord(unittest.TestCase):
         with self.assertRaisesRegex(deployment.DeploymentError, "differs from its path"):
             deployment.load("altitude", root=self.root)
 
-    def test_no_runtime_consumer_or_activated_sha_writer_exists(self):
+    def test_deployment_module_has_only_its_four_closed_writers_and_no_effect_adapter(self):
         repo = Path(__file__).resolve().parent.parent
-        consumers = []
-        for path in [*(repo / "altitude").glob("*.py"), repo / "bin" / "alt",
-                     *(repo / "scripts").glob("*.py")]:
-            if path.name == "deployment.py":
-                continue
-            text = path.read_text()
-            if "altitude.deployment" in text or "import deployment" in text or "activated_sha" in text:
-                consumers.append(path.relative_to(repo).as_posix())
-        self.assertEqual(consumers, [])
         source = (repo / "altitude" / "deployment.py").read_text()
-        self.assertEqual(source.count("S.write_json("), 1)
+        self.assertEqual(source.count("S.write_json("), 4)
         self.assertNotIn("systemctl", source)
         self.assertNotIn("subprocess", source)
+
+    def test_merge_is_not_qualification_and_each_blocker_is_evidence_derived(self):
+        self._initialize()
+        record = self._contribute()
+        contribution = record["contributions"][0]
+        pending = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertFalse(pending["eligible"])
+        self.assertEqual(pending["blockers"][0]["kind"], "unqualified_contribution")
+
+        for index, values in enumerate((("failed", 0, False), ("passed", 1, False),
+                                        ("passed", 0, True))):
+            record = self._qualify(
+                contribution["id"], status=values[0], count=values[1], held=values[2],
+                observed=f"2026-09-02T02:0{index}:00+00:00",
+            )
+            self.assertEqual(record["qualifications"][-1]["decision"], "blocked")
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertFalse(result["eligible"])
+
+    def test_exact_successful_qualification_makes_one_contribution_eligible(self):
+        self._initialize(); record = self._contribute()
+        record = self._qualify(record["contributions"][0]["id"])
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["covered"], [{
+            "sha": "e" * 40, "kind": "qualified_contribution",
+            "reference": record["qualifications"][0]["id"],
+        }])
+
+    def test_contribution_replay_key_ignores_retry_time_but_rejects_changed_receipt(self):
+        self._initialize(); first = self._contribute()
+        replay = self._contribute(observed="2026-09-02T09:00:00+00:00")
+        self.assertEqual(replay, first)
+        self.assertEqual(len(replay["contributions"]), 1)
+        before = deployment.record_path("altitude", root=self.root).read_bytes()
+        with self.assertRaises(deployment.DeploymentConflict):
+            deployment.append_contribution(
+                "altitude", publication_receipt_id="publication-1",
+                publication_receipt_sha256="9" * 64, merge_sha="e" * 40,
+                observed_at="2026-09-02T10:00:00+00:00", root=self.root,
+            )
+        self.assertEqual(deployment.record_path("altitude", root=self.root).read_bytes(), before)
+
+    def test_reused_receipt_id_and_rewritten_merge_ancestry_fail_closed(self):
+        self._initialize(); record = self._contribute()
+        contribution = record["contributions"][0]
+        self._qualify(contribution["id"])
+        before = deployment.record_path("altitude", root=self.root).read_bytes()
+        with self.assertRaisesRegex(deployment.DeploymentError, "receipt id"):
+            deployment.append_contribution(
+                "altitude", publication_receipt_id="publication-1",
+                publication_receipt_sha256="9" * 64, merge_sha="f" * 40,
+                observed_at="2026-09-02T03:00:00+00:00", root=self.root,
+            )
+        self.assertEqual(deployment.record_path("altitude", root=self.root).read_bytes(), before)
+        rewritten = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="f" * 40,
+            first_parent_chain=[self.sha, "f" * 40], root=self.root,
+        )
+        self.assertFalse(rewritten["eligible"])
+        self.assertEqual(rewritten["blockers"][0]["kind"],
+                         "contribution_not_in_candidate_ancestry")
+
+    def test_corrective_contribution_explicitly_supersedes_a_failed_receipt(self):
+        self._initialize(); record = self._contribute()
+        first = record["contributions"][0]
+        record = self._qualify(first["id"], status="failed")
+        failed = record["qualifications"][0]
+        record = self._contribute(
+            sha="f" * 40, receipt="publication-correction",
+            observed="2026-09-02T03:00:00+00:00",
+        )
+        correction = record["contributions"][1]
+        self._qualify(correction["id"], supersedes=[failed["id"]],
+                      observed="2026-09-02T04:00:00+00:00")
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="f" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "f" * 40], root=self.root,
+        )
+        self.assertTrue(result["eligible"])
+        self.assertEqual([row["kind"] for row in result["covered"]],
+                         ["corrected_contribution", "qualified_contribution"])
+
+    def test_an_earlier_commit_cannot_supersede_a_later_failed_contribution(self):
+        self._initialize()
+        later = self._contribute(sha="f" * 40, receipt="publication-later")
+        later_contribution = later["contributions"][0]
+        failed = self._qualify(later_contribution["id"], status="failed")["qualifications"][0]
+        earlier = self._contribute(
+            sha="e" * 40, receipt="publication-earlier",
+            observed="2026-09-02T03:00:00+00:00",
+        )
+        earlier_contribution = earlier["contributions"][1]
+        self._qualify(earlier_contribution["id"], supersedes=[failed["id"]],
+                      observed="2026-09-02T04:00:00+00:00")
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="f" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "f" * 40], root=self.root,
+        )
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["blockers"][-1]["kind"], "unqualified_contribution")
+        repaired = self._contribute(
+            sha="d" * 40, receipt="publication-genuine-correction",
+            observed="2026-09-02T05:00:00+00:00",
+        )
+        genuine = repaired["contributions"][2]
+        self._qualify(genuine["id"], supersedes=[failed["id"]],
+                      observed="2026-09-02T06:00:00+00:00")
+        repaired_result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="d" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "f" * 40, "d" * 40], root=self.root,
+        )
+        self.assertTrue(repaired_result["eligible"])
+
+    def test_phase2b_rejects_nonempty_future_activation_high_water(self):
+        self._initialize(); record = self._contribute()
+        record["satisfied_contributions"] = [record["contributions"][0]["id"]]
+        record["record_sha256"] = self._hash(record, "record_sha256")
+        with self.assertRaisesRegex(deployment.DeploymentError, "must be empty"):
+            deployment.validate_record(record)
+
+    def test_unknown_or_reused_supersession_refuses_without_changing_record(self):
+        self._initialize(); record = self._contribute()
+        contribution = record["contributions"][0]
+        before = deployment.record_path("altitude", root=self.root).read_bytes()
+        with self.assertRaises(deployment.DeploymentError):
+            self._qualify(contribution["id"], supersedes=["9" * 64])
+        self.assertEqual(deployment.record_path("altitude", root=self.root).read_bytes(), before)
+
+    def test_qualification_must_check_its_exact_merge_and_supersede_only_a_blocker(self):
+        self._initialize(); record = self._contribute()
+        contribution = record["contributions"][0]
+        before = deployment.record_path("altitude", root=self.root).read_bytes()
+        with self.assertRaisesRegex(deployment.DeploymentError, "merge sha"):
+            deployment.append_qualification(
+                "altitude", contribution_id=contribution["id"],
+                observed_at="2026-09-02T02:00:00+00:00", main_check_status="passed",
+                main_check_head_sha="f" * 40, main_check_evidence_sha256="1" * 64,
+                open_findings_count=0, open_findings_evidence_sha256="2" * 64,
+                merge_hold=False, root=self.root,
+            )
+        self.assertEqual(deployment.record_path("altitude", root=self.root).read_bytes(), before)
+        record = self._qualify(contribution["id"])
+        eligible = record["qualifications"][0]
+        with self.assertRaisesRegex(deployment.DeploymentError, "supersedes"):
+            self._qualify(contribution["id"], supersedes=[eligible["id"]],
+                          observed="2026-09-02T03:00:00+00:00")
+
+    def test_same_contribution_and_blocked_qualification_cannot_supersede(self):
+        self._initialize(); record = self._contribute()
+        contribution = record["contributions"][0]
+        failed = self._qualify(contribution["id"], status="failed")["qualifications"][0]
+        with self.assertRaisesRegex(deployment.DeploymentError, "supersedes"):
+            self._qualify(contribution["id"], supersedes=[failed["id"]],
+                          observed="2026-09-02T03:00:00+00:00")
+        record = self._contribute(
+            sha="f" * 40, receipt="blocked-correction",
+            observed="2026-09-02T04:00:00+00:00",
+        )
+        correction = record["contributions"][1]
+        with self.assertRaisesRegex(deployment.DeploymentError, "eligible corrective"):
+            self._qualify(correction["id"], status="failed", supersedes=[failed["id"]],
+                          observed="2026-09-02T05:00:00+00:00")
+
+    def test_operator_provenance_covers_only_the_exact_recorded_chain(self):
+        self._initialize()
+        auth = {**self.auth, "id": "coverage-authorization", "reason": "cover external commits"}
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40, "f" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="externally authored reviewed range",
+            authorization=auth, root=self.root,
+        )
+        exact = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="f" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "f" * 40], root=self.root,
+        )
+        self.assertTrue(exact["eligible"])
+        wrong = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="d" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "d" * 40], root=self.root,
+        )
+        self.assertFalse(wrong["eligible"])
+        self.assertEqual(wrong["blockers"][-1]["kind"], "uncovered_commit")
+
+    def test_known_failed_contribution_cannot_be_hidden_by_operator_coverage(self):
+        self._initialize(); record = self._contribute()
+        contribution = record["contributions"][0]
+        self._qualify(contribution["id"], status="failed")
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["blockers"][0]["kind"], "unqualified_contribution")
+
+    def test_legacy_evidence_blocks_until_the_exact_evidence_is_reconciled(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        held = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertEqual(held["blockers"][-1]["kind"], deployment.LEGACY_PENDING_BLOCKER)
+        deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T04:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertTrue(deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )["eligible"])
+
+    def test_tampered_legacy_coverage_digest_blocks_even_with_new_record_hash(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T04:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        record = deployment.load("altitude", root=self.root)
+        record["legacy_reconciliation"]["coverage_sha256"] = "9" * 64
+        record["record_sha256"] = self._hash(record, "record_sha256")
+        S.write_json(deployment.record_path("altitude", root=self.root), record)
+        with self.assertRaisesRegex(deployment.DeploymentError, "immutable facts"):
+            deployment.evaluate_eligibility(
+                "altitude", candidate_sha="e" * 40,
+                first_parent_chain=[self.sha, "e" * 40], root=self.root,
+            )
+
+    def test_later_stronger_prefix_evidence_preserves_legacy_reconciliation(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        original = deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T04:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )["legacy_reconciliation"]
+        contribution = self._contribute()["contributions"][0]
+        self._qualify(contribution["id"])
+        self.assertTrue(deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )["eligible"])
+        replay = deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T05:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertEqual(replay["legacy_reconciliation"], original)
+
+    def test_later_correction_can_repair_a_blocked_contribution_in_legacy_prefix(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        original = deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T04:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )["legacy_reconciliation"]
+        blocked = self._contribute()["contributions"][0]
+        failed = self._qualify(blocked["id"], status="failed")["qualifications"][0]
+        correction = self._contribute(
+            sha="f" * 40, receipt="publication-prefix-correction",
+            observed="2026-09-02T05:00:00+00:00",
+        )["contributions"][1]
+        self._qualify(correction["id"], supersedes=[failed["id"]],
+                      observed="2026-09-02T06:00:00+00:00")
+        result = deployment.evaluate_eligibility(
+            "altitude", candidate_sha="f" * 40,
+            first_parent_chain=[self.sha, "e" * 40, "f" * 40], root=self.root,
+        )
+        self.assertTrue(result["eligible"])
+        replay = deployment.reconcile_legacy_pending(
+            "altitude", observed_at="2026-09-02T07:00:00+00:00",
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )
+        self.assertEqual(replay["legacy_reconciliation"], original)
+
+    def test_legacy_reconciliation_rejects_unrecognized_tampered_or_uncovered_evidence(self):
+        self._initialize(legacy_pending_bytes=b'{"future":true}\n')
+        with self.assertRaisesRegex(deployment.DeploymentError, "unrecognized"):
+            deployment.reconcile_legacy_pending(
+                "altitude", observed_at="2026-09-02T04:00:00+00:00",
+                first_parent_chain=[self.sha], root=self.root,
+            )
+        self.temp.cleanup(); self.temp = tempfile.TemporaryDirectory(prefix="altitude-deployment-")
+        self.root = Path(self.temp.name); self.checkout = str(self.root / "checkout"); Path(self.checkout).mkdir()
+        raw = json.dumps({"since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+                          "files": ["altitude/server.py"]}, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        with self.assertRaisesRegex(deployment.DeploymentError, "not fully covered"):
+            deployment.reconcile_legacy_pending(
+                "altitude", observed_at="2026-09-02T04:00:00+00:00",
+                first_parent_chain=[self.sha, "e" * 40], root=self.root,
+            )
+        with self.assertRaises(deployment.DeploymentError):
+            deployment.reconcile_legacy_pending(
+                "altitude", observed_at="2026-09-02T04:00:00+00:00",
+                first_parent_chain=[self.sha, "f" * 40], root=self.root,
+            )
+
+    def test_phase2a_v1_upgrade_is_locked_idempotent_and_preserves_baseline(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        record = self._initialize(legacy_pending_bytes=raw)
+        v1 = self._write_v1(record)
+        path = deployment.record_path("altitude", root=self.root)
+        with self.assertRaises(deployment.DeploymentError):
+            deployment.load("altitude", root=self.root)
+        first = deployment.upgrade_v1_for_migration("altitude", root=self.root)
+        self.assertEqual(first["bootstrap_anchor"], v1["bootstrap_anchor"])
+        self.assertEqual(first["legacy_pending"], v1["legacy_pending"])
+        self.assertEqual(first["contributions"], [])
+        before = path.read_bytes()
+        self.assertEqual(deployment.upgrade_v1_for_migration("altitude", root=self.root), first)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_v1_upgrade_is_cross_process_single_writer(self):
+        v1 = self._write_v1(self._initialize())
+        code = (
+            "from pathlib import Path; from altitude import deployment; "
+            f"deployment.upgrade_v1_for_migration('altitude',root=Path({str(self.root)!r}))"
+        )
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        children = [subprocess.Popen([sys.executable, "-c", code], env=env) for _ in range(2)]
+        self.assertEqual([child.wait(timeout=10) for child in children], [0, 0])
+        upgraded = deployment.load("altitude", root=self.root)
+        self.assertEqual(upgraded["bootstrap_anchor"], v1["bootstrap_anchor"])
+        self.assertEqual(upgraded["legacy_pending"], v1["legacy_pending"])
+
+    def test_v1_upgrade_failure_before_atomic_replace_preserves_v1(self):
+        v1 = self._write_v1(self._initialize())
+        path = deployment.record_path("altitude", root=self.root)
+        before = path.read_bytes()
+        with mock.patch.object(S, "write_json", side_effect=RuntimeError("simulated crash")):
+            with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+                deployment.upgrade_v1_for_migration("altitude", root=self.root)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(deployment.validate_v1_record(json.loads(before)), v1)
+
+    def test_two_process_replay_appends_one_contribution(self):
+        self._initialize()
+        code = (
+            "from pathlib import Path; from altitude import deployment; "
+            f"deployment.append_contribution('altitude',publication_receipt_id='p',"
+            f"publication_receipt_sha256='{'1' * 64}',merge_sha='{'e' * 40}',"
+            f"observed_at='2026-09-02T01:00:00+00:00',root=Path({str(self.root)!r}))"
+        )
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        children = [subprocess.Popen([sys.executable, "-c", code], env=env) for _ in range(2)]
+        self.assertEqual([child.wait(timeout=10) for child in children], [0, 0])
+        self.assertEqual(len(deployment.load("altitude", root=self.root)["contributions"]), 1)
+
+    def test_two_process_legacy_replay_ignores_retry_time(self):
+        raw = json.dumps({
+            "since": "2026-09-02T00:00:00+00:00", "head": "e" * 40,
+            "files": ["altitude/server.py"],
+        }, sort_keys=True).encode()
+        self._initialize(legacy_pending_bytes=raw)
+        deployment.append_operator_coverage(
+            "altitude", start_exclusive=self.sha, commits=["e" * 40],
+            observed_at="2026-09-02T03:00:00+00:00", reason="external range",
+            authorization={**self.auth, "id": "coverage-auth"}, root=self.root,
+        )
+        prefix = (
+            "from pathlib import Path; from altitude import deployment; "
+            "deployment.reconcile_legacy_pending('altitude',"
+        )
+        suffix = (
+            f",first_parent_chain=['{self.sha}','{'e' * 40}'],"
+            f"root=Path({str(self.root)!r}))"
+        )
+        codes = [
+            prefix + f"observed_at='2026-09-02T04:0{minute}:00+00:00'" + suffix
+            for minute in range(2)
+        ]
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)}
+        children = [subprocess.Popen([sys.executable, "-c", code], env=env) for code in codes]
+        self.assertEqual([child.wait(timeout=10) for child in children], [0, 0])
+        record = deployment.load("altitude", root=self.root)
+        self.assertIsNotNone(record["legacy_reconciliation"])
+        self.assertTrue(deployment.evaluate_eligibility(
+            "altitude", candidate_sha="e" * 40,
+            first_parent_chain=[self.sha, "e" * 40], root=self.root,
+        )["eligible"])
 
 
 if __name__ == "__main__":

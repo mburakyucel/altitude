@@ -383,6 +383,32 @@ eligibility until it is reconciled. The old `restart-pending.json` is a derived 
 not a launch fence. This phase records eligibility only; it cannot build, install, stop, start, or
 acknowledge maintenance.
 
+PR 2B extends the same record in place to schema `altitude.deployment/v2`; it does not add a journal,
+sidecar, runtime selector, or second lock. One explicit offline upgrader validates the exact Phase 2A `v1`
+shape, preserves its anchor and legacy evidence, and atomically replaces it under the existing deployment lock;
+ordinary reads refuse `v1` and never auto-migrate. Contributions contain only publication-receipt identity/hash,
+merge SHA, and observation time. Their service-local replay key is receipt id plus merge SHA, excluding retry
+time; a changed receipt hash conflicts. Qualifications contain the exact merge-SHA main-check evidence,
+open-finding evidence, canonical merge-hold observation, and explicit supersession references. Their
+eligible/blocked decision is derived and rejects contradiction. Only an eligible qualification on a distinct,
+strictly later corrective contribution can supersede a blocked qualification. Operator provenance covers only a supplied
+contiguous first-parent range bound by start/end/count/ordered digest and authorization. The eligibility
+projection accepts the whole anchor-through-candidate chain, gives known contributions precedence over
+operator coverage, and returns explicit uncovered/unqualified/legacy blockers. It never reads Git or the
+network and does not claim the candidate is current remote main; the later detached runner owns that proof.
+Recognized legacy pending evidence is reconciled only by an exact, fully covered anchor-to-marker chain. Its
+immutable identity binds the ordered-commit and original coverage digests; later projections revalidate the
+same ancestry and require that every prefix commit remains mechanically covered, while allowing stronger
+append-only evidence to replace the original coverage choice. Unrecognized or tampered evidence stays blocked. The v2
+record also initializes `satisfied_contributions=[]` but Phase 2B exposes no writer: Phase 4 activation must
+atomically advance that high-water from a successful receipt before historical contributions may be excluded
+from later ancestry projections.
+
+This extension grows the permanent deployment module beyond Phase 2A because it contains the complete closed
+fact validation and pure eligibility projection, not a second workflow or compatibility path. Its review must
+report exact line growth and later deployment phases must extend or compress this module inside the accepted
+repository-wide final budget; they may not add another deployment authority.
+
 ### Phase 2 gate
 
 - Publication and qualification have one mechanically observed receipt path.

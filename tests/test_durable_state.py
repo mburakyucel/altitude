@@ -535,7 +535,10 @@ class LegacyWriterInventoryTests(unittest.TestCase):
         }),
         "write_json": Counter({
             ("actions.py", "_publish"): 1,
+            ("deployment.py", "_append"): 1,
             ("deployment.py", "initialize_for_migration"): 1,
+            ("deployment.py", "reconcile_legacy_pending"): 1,
+            ("deployment.py", "upgrade_v1_for_migration"): 1,
             ("dispatch.py", "poll"): 3,
             ("dispatch.py", "pull_after_done"): 1,
             ("dispatch.py", "session_settings"): 1,
@@ -652,6 +655,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("engines.py", "usage_limit_in"): 2,
             ("deployment.py", "_authorization"): 1,
             ("deployment.py", "_pending_values"): 1,
+            ("deployment.py", "_timestamp"): 1,
             ("hooks/guard.py", "<module>"): 2,
             ("hooks/guard.py", "_command_views"): 2,
             ("digest.py", "speak"): 1,
@@ -721,6 +725,35 @@ class LegacyWriterInventoryTests(unittest.TestCase):
                 if path.suffix == ".py" or (first and "python" in first[0]):
                     sources.append(path)
         return sources
+
+    def test_dormant_deployment_authority_has_no_recursive_runtime_consumer(self):
+        repository = Path(__file__).resolve().parent.parent
+        consumers = []
+        for path in self._python_sources(repository):
+            relative = path.relative_to(repository).as_posix()
+            if relative == "altitude/deployment.py":
+                continue
+            tree = ast.parse(path.read_text())
+            imports_deployment = any(
+                (isinstance(node, ast.Import)
+                 and any(item.name == "altitude.deployment" for item in node.names))
+                or (isinstance(node, ast.ImportFrom)
+                    and ((node.module == "altitude"
+                          and any(item.name == "deployment" for item in node.names))
+                         or node.module == "altitude.deployment"
+                         or (node.level and node.module is None
+                             and any(item.name == "deployment" for item in node.names))))
+                for node in ast.walk(tree)
+            )
+            mentions_activated_sha = any(
+                (isinstance(node, ast.Constant) and node.value == "activated_sha")
+                or (isinstance(node, ast.Name) and node.id == "activated_sha")
+                or (isinstance(node, ast.Attribute) and node.attr == "activated_sha")
+                for node in ast.walk(tree)
+            )
+            if imports_deployment or mentions_activated_sha:
+                consumers.append(relative)
+        self.assertEqual(consumers, [])
 
     @staticmethod
     def _aliases(tree: ast.AST) -> tuple[dict[str, str], dict[str, str]]:

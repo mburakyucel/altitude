@@ -635,6 +635,20 @@ The legacy restart marker remains a blocker/evidence hash only. No Phase 2A modu
 itself or contains contribution, qualification, maintenance, activation, build, install, stop/start, or
 health behavior; those fields and writers arrive only in their named later phases.
 
+Phase 2B adds contribution, qualification, operator-coverage, and legacy-reconciliation facts to that same
+record. The exact Phase 2A `v1` record is upgraded in place only by an explicit locked, atomic migration;
+ordinary reads refuse `v1` and never select or auto-convert formats. It derives qualification from exact
+check/finding/hold evidence, requires explicit immutable supersession of a blocked receipt by an eligible
+qualification for a distinct, strictly later contribution, and evaluates one complete first-parent chain supplied by the later
+activation runner. A known contribution always takes precedence over generic operator coverage, so provenance
+cannot erase a failed check or open finding. Contribution identity is service-local receipt id plus merge SHA;
+retry observation time is not part of the key, and a changed receipt hash conflicts. Recognized legacy evidence
+is cleared only by the exact fully covered anchor-to-marker first-parent chain; unrecognized, uncovered,
+conflicting, or tampered evidence remains a blocker. Phase 2B reserves an empty, read-only
+`satisfied_contributions` high-water field for Phase 4 activation so a future advanced `activated_sha` can retire
+already activated contributions without rewriting history; Phase 2B has no writer for it. Phase 2B still has no runtime caller, remote observation,
+maintenance claimant, activation operation, service effect, or format selector.
+
 The embedded `ActivationOperation` is the final deployment-transition operation. Activation records
 `attempt_id`, the bounded operator authorization receipt, the exact SHA selected later at the
 post-gate resolution boundary, prior PID, and three non-interchangeable identity positions. The prior

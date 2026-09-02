@@ -133,12 +133,13 @@ L2, helper, server, CLI, or timer path consumes it yet, and all current provider
 
 ### Dormant deployment authority
 
-`deployment.py` defines one strict `altitude.deployment/v1` record per service. Phase 2A can initialize
-it only through an explicit offline migration/test API under the deployment lock; no server, CLI, timer,
-task settlement, startup, staging, or restart path imports it. A canonical record contains service and
-repository identity, one immutable bootstrap anchor, `activated_sha`, and optional bounded legacy-pending
-evidence. It has no maintenance owner, activation operation/receipt, contribution, qualification, build,
-install, stop, start, or health behavior.
+`deployment.py` defines one strict `altitude.deployment/v2` record per service. It can be initialized or
+upgraded from the exact Phase 2A `v1` shape only through explicit offline migration/test APIs under the
+same deployment lock; normal reads never guess or auto-migrate a format. No server, CLI, timer, task
+settlement, startup, staging, or restart path imports it. A canonical record contains service and repository
+identity, one immutable bootstrap anchor, `activated_sha`, bounded legacy-pending evidence, ordered immutable
+merge contributions and qualifications, exact operator-provenance ranges, and the record hash. It has no
+maintenance owner, activation operation/receipt, build, install, stop, start, or health behavior.
 
 An exact stable `running_install` runtime manifest supplies both the loaded bootstrap SHA and
 `activated_sha`. A stopped bootstrap instead requires the exact frozen stopped-install manifest plus the
@@ -148,6 +149,22 @@ refuses initialization. Legacy `restart-pending.json` bytes normalize only to bo
 unreconciled blocker; their head never becomes loaded truth, qualification, contribution, or a launch fence.
 Atomic replacement supplies file and parent-directory durability, and exact replay is byte-idempotent while
 a different initializer conflicts without changing the record.
+
+A contribution records only the immutable publication-receipt id/hash and observed merge SHA. Its replay
+key is receipt id plus merge SHA; retry observation time is metadata and cannot create another fact, while a
+changed receipt hash conflicts. A separate
+qualification is mechanically derived from the exact merge-SHA main check, open-finding count, and canonical
+merge hold. Any one makes it blocked. Only an eligible qualification for a distinct, strictly later
+contribution may supersede an earlier blocked qualification; history is never rewritten. Known blocked contributions cannot be hidden by operator
+coverage. External commits require an operator-provenance receipt for the exact contiguous first-parent range,
+including its ordered-commit digest and authorization. Eligibility is a pure projection over a caller-supplied
+anchor-through-candidate first-parent chain: every commit must be covered, every known contribution must be
+qualified or explicitly corrected, and imported recognized legacy-pending evidence must be reconciled against
+the exact fully covered anchor-to-marker chain. Unrecognized or conflicting evidence remains a blocker. The
+record reserves `satisfied_contributions` as Phase 4's activation high-water: Phase 2B initializes and validates
+it as empty but exposes no writer, so historical contributions can be retired only by a later successful
+activation receipt. This
+projection neither decides that the candidate is latest remote main nor performs an activation effect.
 
 ## Recovery
 
