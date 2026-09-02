@@ -140,7 +140,8 @@ _TASK_DIRS = ("l1", "l1/*.codex-runtime", "l2-engine", "transcripts", "transcrip
 # executable source namespaces are unclassified until this closed roster is deliberately amended.
 PERMANENT_BACKEND_ROSTER = (
     "altitude/__init__.py", "altitude/actions.py", "altitude/config.py", "altitude/digest.py",
-    "altitude/dispatch.py", "altitude/engines.py", "altitude/git_policy.py",
+    "altitude/contracts.py", "altitude/deployment.py", "altitude/dispatch.py",
+    "altitude/engines.py", "altitude/git_policy.py",
     "altitude/github_intake.py", "altitude/incidents.py", "altitude/l1.py", "altitude/l3.py",
     "altitude/l3_actions.py", "altitude/land.py", "altitude/manifest.py", "altitude/monitor.py",
     "altitude/quota_codex.py", "altitude/recovery.py", "altitude/route.py", "altitude/server.py",
@@ -151,7 +152,7 @@ PERMANENT_BACKEND_ROSTER = (
 )
 WEB_SOURCE_ROSTER = (
     "web/src/data/Toast.tsx", "web/src/data/api.ts", "web/src/data/useOptimisticMutation.ts",
-    "web/src/main.tsx", "web/src/routes.tsx", "web/src/routes/Chat.tsx",
+    "web/src/data/contracts.ts", "web/src/main.tsx", "web/src/routes.tsx", "web/src/routes/Chat.tsx",
     "web/src/routes/Inbox.tsx", "web/src/routes/LiveSession.tsx", "web/src/routes/Monitor.tsx",
     "web/src/routes/Project.tsx", "web/src/routes/Projects.tsx", "web/src/routes/Task.tsx",
     "web/src/shell/AppShell.tsx", "web/src/shell/theme.tsx", "web/src/styles.css",
@@ -166,6 +167,8 @@ PERSONA_SCHEMA_TEMPLATE_ROSTER = (
 )
 SUPPORT_ROSTER = ("systemd/altitude.service", ".github/workflows/remote-tests.yml", "Makefile")
 TEMPORARY_ROSTER = ("altitude/legacy_preflight.py",)
+TEST_FIXTURE_ROSTER = ("schemas/fixtures/projections.v1.json",)
+DOCUMENTATION_ROSTER = ("web/README.md",)
 BASELINE_COUNTS = {
     "permanent_backend": {"files": 32, "lines": 10695},
     "web_source": {"files": 15, "lines": 2683},
@@ -816,6 +819,8 @@ def _source_inventory(repo: Path) -> dict:
         "temporary_real_state_importers": TEMPORARY_ROSTER,
         "persona_schema_template": PERSONA_SCHEMA_TEMPLATE_ROSTER,
         "support": SUPPORT_ROSTER,
+        "contract_test_fixtures": TEST_FIXTURE_ROSTER,
+        "documentation": DOCUMENTATION_ROSTER,
         "python_tests": tuple(sorted(path.relative_to(repo).as_posix()
                                      for path in (repo / "tests").glob("*.py"))),
         "web_tests": tuple(sorted(path.relative_to(repo).as_posix()
@@ -839,6 +844,10 @@ def _source_inventory(repo: Path) -> dict:
     permanent_names = ("permanent_backend", "web_source", "web_build")
     permanent = [row for name in permanent_names for row in category_rows[name]]
     classified = {relative for roster in categories.values() for relative in roster}
+    # Candidate discovery is independent of the rosters above. Generated web output and the pnpm
+    # lockfile are deliberately outside the source count; tests, the shared contract fixture, and
+    # web documentation are classified separately. Every other regular file in a runtime-consumed
+    # namespace must be rostered, regardless of suffix.
     candidates = set()
     candidates.update(path.relative_to(repo).as_posix() for path in (repo / "altitude").rglob("*.py"))
     for root in (repo / "bin", repo / "scripts", repo / "hooks"):
@@ -846,13 +855,35 @@ def _source_inventory(repo: Path) -> dict:
             candidates.update(path.relative_to(repo).as_posix() for path in root.rglob("*")
                               if path.is_file() and "__pycache__" not in path.parts
                               and path.suffix not in (".pyc", ".pyo"))
-    web_src = repo / "web" / "src"
-    if web_src.is_dir():
-        candidates.update(path.relative_to(repo).as_posix() for path in web_src.rglob("*")
-                          if path.is_file() and path.suffix in (".ts", ".tsx", ".css"))
-    for relative in (*WEB_BUILD_ROSTER, *SUPPORT_ROSTER, *PERSONA_SCHEMA_TEMPLATE_ROSTER):
-        if (repo / relative).is_file():
-            candidates.add(relative)
+    for web_namespace in (repo / "web" / "src", repo / "web" / "public"):
+        if web_namespace.is_dir():
+            candidates.update(path.relative_to(repo).as_posix() for path in web_namespace.rglob("*")
+                              if path.is_file())
+    workflows = repo / ".github" / "workflows"
+    if workflows.is_dir():
+        candidates.update(path.relative_to(repo).as_posix()
+                          for suffix in ("*.yml", "*.yaml") for path in workflows.glob(suffix)
+                          if path.is_file())
+    systemd = repo / "systemd"
+    if systemd.is_dir():
+        candidates.update(path.relative_to(repo).as_posix() for path in systemd.rglob("*")
+                          if path.is_file())
+    makefile = repo / "Makefile"
+    if makefile.is_file():
+        candidates.add("Makefile")
+    for namespace in ("personas", "schemas", "templates"):
+        root = repo / namespace
+        if root.is_dir():
+            candidates.update(path.relative_to(repo).as_posix() for path in root.rglob("*")
+                              if path.is_file())
+    web_design = repo / "web" / "design"
+    if web_design.is_dir():
+        candidates.update(path.relative_to(repo).as_posix() for path in web_design.rglob("*")
+                          if path.is_file())
+    web_root = repo / "web"
+    if web_root.is_dir():
+        candidates.update(path.relative_to(repo).as_posix() for path in web_root.iterdir()
+                          if path.is_file() and path.name != "pnpm-lock.yaml")
     missing = {name: sorted(set(roster) - {row["path"] for row in category_rows[name]})
                for name, roster in categories.items() if name not in ("python_tests", "web_tests")}
     missing = {name: value for name, value in missing.items() if value}

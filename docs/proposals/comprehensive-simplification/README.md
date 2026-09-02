@@ -1,6 +1,8 @@
 # Comprehensive simplification proposal
 
-> **Status: accepted for source-only implementation after adversarial re-review.** Independent
+> **Status: target candidate under independent re-review.** Previously recorded product decisions
+> remain governing constraints, but this corrected document set is not settled until that review.
+> Independent
 > adversarial passes repeatedly rejected and then verified corrections to deployment,
 > crash-consistency, process ownership, task state, migration, source freeze, and surface accounting.
 > The freeze receipt pins the deployed
@@ -9,6 +11,23 @@
 > activation. Candidate-source versions of those documents update with each behavior PR.
 > Module implementation uses the accepted dependency order and independent review; production
 > activation/restart remains a separate action.
+
+## Implementation status at this candidate
+
+The terms below are exact. **Active candidate source** means a normal source path would use the change
+if this candidate were activated. **Dormant** means code and tests exist but no normal source path may
+call it. **Planned** means it is not implemented. None of these terms means deployed.
+
+| Status | Candidate contents |
+| --- | --- |
+| Frozen production | Commit `97e11979bdc0814ad5067eab717f999d1c251437`; service stopped; state frozen; no `ActivationReceipt` |
+| Active candidate source | Exact-candidate remote web CI and Codex-only autonomous-engine closure |
+| Implemented but dormant | Durable I/O primitives; boundary contracts; physical-transition foundation; runtime manifest/preflight; DeploymentRecord baseline, contribution, and qualification facts |
+| Planned | L3/L2/helper adoption after the physical foundation; settlement effects; application commands; task v2; scoped holds; recovery v2; projections/cleanup; activation runner and real-state cutovers |
+| Production activation | Not performed and not authorized by any source merge or this proposal |
+
+The [active architecture](../../ARCHITECTURE.md) identifies current candidate behavior and labels every
+dormant foundation. The target architecture in this pack is a plan until its named adoption PR lands.
 
 ## Purpose
 
@@ -46,7 +65,7 @@ large or a path is inconvenient. Every proposed simplification must identify:
 - [06 - Adversarial review](06-adversarial-review.md): independent challenges to the first draft,
   their concrete dispositions, and the claims that still need reviewer verification.
 - [07 - Baseline and target](07-baseline-and-target.md): exact line/file counting contract,
-  baseline rosters, future-file classification, and a plausible permanent target roster.
+  baseline rosters, future-file classification, and the normative permanent target roster.
 
 ## Proposed architecture in one view
 

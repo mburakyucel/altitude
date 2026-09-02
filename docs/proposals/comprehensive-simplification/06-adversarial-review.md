@@ -15,9 +15,9 @@ Three independent reviewers traced the proposal at commit `57886cf` against curr
 Mechanical checks had already confirmed every tracked file appears in the component ledger and all
 local Markdown links resolve. Reviewers therefore concentrated on behavioral contradictions. The
 first draft and successive corrected candidates were rejected as not implementation-ready. The
-accepted candidate incorporates the following dispositions and passed the final re-review checklist
-at the end of this document. Acceptance authorizes reviewed source modules; it is not production
-activation evidence.
+candidate incorporates the dispositions below, including the later clarity corrections, and is
+under independent re-review. The checklist at the end must be rerun; this document is neither source
+acceptance nor production activation evidence.
 
 ## Blocking findings
 
@@ -67,11 +67,11 @@ activation evidence.
 | B16 | Ledger classifications understated rewrites/migrations | `git_policy`, `state`, restart tool, event filenames, operations, Inbox, restart marker, and ROADMAP rows are corrected. |
 | B17 | Multiple publication attempts lacked fresh corrective workspace ownership | Corrective attempts create a new fenced generation, fresh branch/worktree/base registration, and immutable receipt. |
 | B18 | Recovery preemption conflicted with WIP one | External settlement stabilizes and units empty before explicit `preempted_by_episode`; ordinary task later rebases through new generation. |
-| B19 | Clearance/hold history could add a second active ledger | Domain-embedded keyed clearance reconciles receipt/removal; cleared holds become incident/audit amendments, not active truth. |
+| B19 | Clearance/hold history could add a second active ledger | Domain-embedded keyed clearance replaces the active recovery episode with one canonical inactive epoch; cleared evidence remains audit-only. |
 | B20 | Audit state and event files were falsely described as one transaction | State-first transition envelopes plus before-next-mutation reconciliation make events a delayed keyed projection, with kill tests. |
 | B21 | Foundation work silently became a whole-system transition rewrite | Phase 0C now supplies only lock/durable-I/O primitives and an explicit legacy-callsite inventory; each command owner adopts envelopes and deletes its old writer in its own later PR. |
 | B22 | “Small PR” labels concealed cross-system changes | Process, effect, admission, and recovery phases are split by owner/ingress family, with dormant primitives first and a final static-closure gate before any production claimant or format switch. |
-| B23 | Numeric budgets could be changed by reclassification | `07-baseline-and-target.md` fixes the baseline commit, exact file rosters/counting rules, future-file classification, and a plausible target roster. Artifact families are counted by canonical lifecycle/authority rather than by every inert lock instance or read-only decoder. |
+| B23 | Numeric budgets could be changed by reclassification | `07-baseline-and-target.md` fixes the baseline commit, exact file rosters/counting rules, future-file classification, and the normative target roster. Artifact families are counted by canonical lifecycle/authority rather than by every inert lock instance or read-only decoder. |
 | B24 | Publication finalization was split across independently unsafe PRs | Attention, terminal truth, and archive movement now land together in PR 1C.5; PR 1C.3 no longer owns archive finalization. |
 | B25 | PR 4B still concealed a cross-system implementation | Resolver/builder, service transaction, forward repair, and dormant integration are separately reviewed; claimant enablement is a final small PR only after every cutover callback exists. |
 | B26 | The recorded runnable baseline arithmetic was not reproducible | `07-baseline-and-target.md` records exact pinned rosters: 10,695 backend, 2,683 web, 195 web-build/config, totaling 13,573 lines in 52 files. |
@@ -81,6 +81,15 @@ activation evidence.
 | B30 | “Phase complete” implied deployed behavior during the source freeze | Source-phase completion now means one reviewed candidate-source path with disposable evidence; deployed cutover and importer deletion remain explicitly incomplete until the real ActivationReceipt. |
 | B31 | Recovery sub-PRs could expose a mixed v1/v2 episode | PRs 8C.1-8C.4 have fixture-only callers and leave v1 untouched. PR 8D performs the sole candidate-source caller switch and deletion after the complete dormant implementation is tested. |
 | B32 | Activation replay assumed the old/candidate PID existed at every stage | Restart suppression now immediately follows prior-install capture, old identity is revalidated after build, and replay checks zero PID before candidate start versus one exact health-only generation afterward. First-activation `failed_released` preserves the stopped service. |
+| B33 | The source inventory silently omitted three production files | The closed roster includes both new backend fact modules and the web contract validator; a test compares the real checkout against an independent roster. |
+| B34 | Recovery clearance deleted the only stale-permit fence | The target persists one inactive monotonic epoch and binds no-active permits to it. |
+| B35 | Provider wording still implied Claude routing/fallback | Codex is the sole autonomous engine; Claude is read-only legacy evidence until its named post-activation deletion. |
+| B36 | Target counts retained temporary legacy hooks | The permanent target is 43 runnable files/24 backend files; guard/statusline files are temporary and deleted only after the first ActivationReceipt. |
+| B37 | Persona decisions named incompatible physical paths | `personas/l2.md` and `personas/l3.md` are the sole target sources; provider-suffixed legacy copies retire after prompt-parity proof. |
+| B38 | L3 serialization held a lock across a provider turn | A short durable current-turn CAS chooses one message; no project lock is held during provider work. |
+| B39 | Deployment wording implied an atomic filesystem/process span | State changes use persisted stages and CAS; process effects occur between reconciled stages and are never called atomic. |
+| B40 | Current, dormant, planned, and activated behavior were conflated | Every active document now pins frozen production, candidate source, dormant foundations, planned cutovers, and the separately authorized activation boundary. |
+| B41 | Retained modules lacked one physical authority map | The architecture now maps every retained backend, adapter, web, artifact, and persona module to one owner and forbids adapters or projections from becoming writers. |
 
 ## Reductions confirmed safe to pursue
 
@@ -111,7 +120,7 @@ These keeps remain justified:
 
 ## Final re-review checklist
 
-Before the architecture PR is considered settled, a reviewer must confirm:
+Before the architecture PR is considered settled, an independent reviewer must confirm:
 
 - `02`, `03`, `04`, and `05` agree on six operations, terminal states, deployment qualification,
   the resolved Codex-only target and legacy-empty activation prerequisite, unknown Codex quota,

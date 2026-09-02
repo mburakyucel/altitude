@@ -1,5 +1,9 @@
 # Engine and session lifecycle
 
+> **Candidate-source status.** This describes the source candidate based on `a1d42e8`; production
+> remains stopped and frozen at `97e1197`, with no ActivationReceipt. Claude rows below are read-only
+> legacy evidence/cleanup behavior. New autonomous L3, L2, L1, and helper turns are Codex-only.
+
 ## Live L2 transcript
 
 The task page stays a concise Burak/L2 conversation. Its opt-in **Live session** route projects the engine's local
@@ -37,7 +41,7 @@ the current physical worker turn and resumes the same logical engine conversatio
 normally retains its thread id. Historical Claude session ids remain evidence, but disabled Claude work is not
 resumed. Altitude records the old and new
 worker/session identities and renders resume, replacement, compaction, engine-change, and recovery events as
-boundaries underneath the same logical task dispatch. A parser error or incomplete final JSONL record is displayed
+boundaries underneath the same logical task dispatch. A parser error or incomplete provider-native JSONL record is displayed
 as viewer evidence and retried on the next poll; it never changes task or worker state.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
@@ -129,16 +133,23 @@ broker applies at most the validated project-coordination action. Provider selec
 L3's project-level responsibility nor L2's end-to-end
 task ownership.
 
+The target L3 prompt receives one generation-keyed redacted projection: bounded recent human chat;
+each active task's title, state, blocked reason, direct question, merge hold, and publication
+references; and the current recovery epoch. It excludes raw logs, provider-native stores, host/home
+paths, secrets, credentials, and broker capabilities. A stale projection generation is refused.
+
 For contained Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and
 are unset before Codex starts. The child receives an allowlisted environment; ambient tokens, API keys, SSH agents,
 Git credential helpers, and the L2 capability are absent. A deterministic host canary checks that its inner sandbox
 cannot see or signal a known host PID. A model-requested GitHub issue cannot contain synthesized private context: the broker
-stores only the exact current chat message, with a title quoted from it, as a private draft. Publication requires a
-second exact, draft-specific approval message from Burak, and secret-shaped content remains a hard refusal.
+stores only the exact current chat message, with a title quoted from it, as a private draft. In this
+candidate, publication still requires a second exact, draft-specific approval message from Burak.
+Target decision D6 removes that second phrase only when the issue-publication command adopts the
+initial exact bounded request as authorization. Secret-shaped content remains a hard refusal.
 
 ## Polling, restart, and cleanup
 
-Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
+Legacy Claude jobs and Codex processes normalize to the same read model: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. After an
 `altd` restart, Claude is rediscovered through its job registry and Codex through its private task
 record plus validated PID start time and containment unit. A missing or failed worker without a
@@ -148,9 +159,11 @@ same provider adapter.
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.
 
-After changing enabled provider launch, runtime, or session-resume integration, validate Altitude with one
-tiny real Codex task through the complete L3 → L2 → PR → required checks → merge path. Afterward, the
-operator must verify that no worker remains.
+After changing enabled provider launch, runtime, or session-resume integration, validate source
+integration in a disposable installation with one tiny real Codex task through the complete
+L3 → L2 → PR → required checks → merge path, then prove no worker remains. This test does not update,
+activate, or restart production. Production execution requires a separately authorized activation
+and a successful ActivationReceipt.
 
 ## Context and prompt-cache evidence
 

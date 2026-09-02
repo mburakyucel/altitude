@@ -1,5 +1,11 @@
 # Altitude architecture
 
+> **Candidate-source status.** This document describes the reviewed source candidate based on
+> `a1d42e85c8586137b1635f481cb5da362b8b3e1d`. Production remains stopped and byte-frozen at
+> `97e11979bdc0814ad5067eab717f999d1c251437`; no ActivationReceipt exists. Sections explicitly
+> labeled dormant are implemented facts with no normal caller. The comprehensive-simplification
+> pack describes planned target behavior, not behavior activated by this source.
+
 Altitude has a small coordination layer, one task owner, optional bounded helpers, and mechanical
 safety rails. Model judgment chooses how much decomposition a request needs; code enforces task
 ownership, isolation, launch holds, and the PR boundary.
@@ -93,13 +99,21 @@ strict, inert final action and perform any requested state change or landing ope
 Codex L3 uses the same containment and broker boundary. It receives a disposable writable runtime directory while
 Altitude's compact state and the selected project checkout are mounted as explicit read-only inputs. This gives the
 Codex runtime the small amount of scratch space it needs without giving the coordinator write access to either source.
+The target L3 projection is generation-keyed and redacted: bounded recent human chat; each active
+task's title, state, blocked reason, direct question, merge hold, and publication references; and the
+current recovery epoch. It excludes provider stores, raw logs, home paths, secrets, credentials, and
+broker capabilities. The projection lives beneath the expected read-only runtime root and is rejected
+when its generation does not match the claimed L3 turn.
 The user manager creates the transient containment service, so Altitude keeps its own `NoNewPrivileges` hardening
 while nested bwrap initializes inside the dedicated service. The outer launcher alone receives the user-session bus;
 the Codex child starts from an empty environment rebuilt from a narrow allowlist, with that bus, its runtime socket
 tree, ambient service credentials, and scoped L2 capabilities removed. A deterministic host canary verifies that the
 inner sandbox cannot see or signal a known host PID; the trusted host can still stop the whole cgroup.
-A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
-draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
+A GitHub-issue action can save only the exact current user message under a title quoted from it. In
+the current candidate it remains a private draft until Burak sends the exact draft-specific approval
+phrase; secret-shaped content is still refused. Target decision D6 will treat Burak's initial exact
+bounded publication request as authorization only when PR 1C.4 adopts that command and deletes this
+second-phrase rule.
 L1 implementers receive narrower write subleases; the
 trusted wrapper verifies that their parent commit did not move and captures their changes as a
 patch for the owning L2 to evaluate.
@@ -177,16 +191,19 @@ server runs at most one recovery turn for it at a time, retains failed turns wit
 audits successful handling. After stability returns, L3 triages the evidence: narrow corrective follow-up
 is an FYI, while broad architecture, policy, or system work is preserved for Burak as a proposal or issue.
 
-The service lifecycle is separate from source changes. The architecture-cutover restart was
-explicitly authorized, completed from verified main, and smoke-tested without replaying archived
-work. Ordinary source changes never start, stop, mask, unmask, or restart the service; any later
-lifecycle action requires separate authorization and post-change health verification.
+The service lifecycle is separate from source changes. Production is currently stopped and frozen;
+the planned comprehensive cutover has not run. Ordinary source changes never start, stop, mask,
+unmask, or restart the service. Activation requires separate authorization, the detached activation
+runner, an ActivationReceipt, and post-change health verification.
 
 ## Interfaces and storage
 
 The Python server owns state transitions and JSON APIs. The React app provides Inbox, Projects,
 Chat, and Monitor navigation plus project/task detail routes. Task chat is a human-readable Burak/L2
 conversation; operational events remain an audit detail.
+
+The current authenticated TLS certificate, private-key, CA paths, and client-trust arrangement are
+unchanged and outside this simplification. No source phase is a TLS migration.
 
 The next control-plane boundary is defined, but deliberately dormant: `altitude/contracts.py` owns
 closed Python contracts for worker outcomes, publication scope, quota observations, application
@@ -200,8 +217,8 @@ checks canonical hold state, while replies remain in the task conversation. No s
 these contracts yet; each later adoption must replace its old producer and consumer together rather
 than introduce a behavior selector or a second authority.
 
-Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
-and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
+Runtime files live under `ALTITUDE_HOME`. Active architecture documents label candidate, dormant,
+planned, and activated behavior explicitly. Hooks supply temporary Claude-side command guardrails
 and telemetry for legacy Claude evidence; permission profiles, process containment, and backend
 validation form the Codex
 execution boundary. Superseded designs remain in Git history, not in the active tree.
@@ -273,7 +290,7 @@ re-reads mutable source to synthesize identity.
 
 `alt preflight --home <copied-home> --role ...` performs a deterministic inventory without locking,
 normalizing, networking, or writing the copy or repository. It enumerates closed active
-monitor/project/task/provider/operation shapes, recovery/hold/incident evidence, and all 46 current
+monitor/project/task/provider/operation shapes, recovery/hold/incident evidence, and every current
 artifact families. Each family keeps its declared source-owner roster separate from a mechanically
 observed active-consumer count: a counted source owner must contain both a read seam and a literal
 family token; provider/external declarations are never silently counted as observed code. Its exact

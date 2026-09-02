@@ -21,7 +21,7 @@
 
 | ID | Decision | Reason |
 | --- | --- | --- |
-| O1 | Unknown quota telemetry is eligible uncertainty, not exhaustion; use the configured default and create a provider hold only after an actual launch/quota failure. | Observability failure must not halt L3 recovery or all providers. |
+| O1 | Unknown Codex quota telemetry is eligible uncertainty, not exhaustion; use the configured default and create a Codex hold only after an actual launch/quota failure. | Observability failure must not halt L3 recovery or the sole autonomous engine. |
 | O2 | Codex weekly allowance is the primary capacity score; its short window is an availability gate. Claude observations are legacy telemetry, never routing eligibility. | Preserve Codex weekly quota without retaining a conditional dual-provider target. |
 | O3 | Normal systemd restart-on-crash remains enabled self-healing. Planned activation temporarily suppresses restart loops until exact candidate health succeeds. | Unplanned process crashes and authorized source activation are different events. |
 | O4 | One shared stage/receipt helper supports exactly six closed operation kinds embedded in their domain records: L3 turn, worker transition, settlement, issue publication, recovery transition, and deployment transition. Recovery claim/clearance are fixed subtypes; activation is the sole deployment subtype. | Count state machines honestly without creating a workflow engine or a temporary cutover publisher. |
@@ -30,6 +30,7 @@
 | O7 | The final numeric budgets in `04-migration-validation.md` are acceptance gates. | “Simpler” must be measurable and tests cannot hide production growth. |
 | O8 | Physical process ownership, remote-effect reconciliation, deployment qualification, and application-command ownership land before maintenance can acknowledge. The detached activation runner is the first production gate claimant; no temporary legacy-restart adapter is added. | Exclusive drain must prove facts mechanically, and adding a second transitional restart workflow would recreate the authority ambiguity being removed. |
 | O9 | Production remains stopped and its state hash-frozen throughout implementation. Source PRs use copied homes/disposable units; no implementation merge, checkout movement, or disposable success is production activation. | This removes mixed old/new self-hosting and the temporary cutover publisher. The first real activation remains separately operator-authorized and retains all real-state importers until its receipt exists. |
+| O10 | Recovery clearance replaces the active episode with one canonical inactive record carrying a monotonic epoch and the cleared episode/revision/receipt digest. No-active permits bind that epoch. | Absence cannot fence stale permits or prove which clearance won. The inactive epoch is current recovery truth, not a second ledger. |
 
 ## Simplification decisions
 
@@ -68,7 +69,8 @@ evidence:
 
 - What stable effect id and deterministic target are written before the effect?
 - How does restart query/reconcile an effect that succeeded before its local receipt?
-- Does JSONL tail repair preserve a valid unterminated row and truncate an invalid partial row?
+- Does JSONL repair exclude and truncate every unterminated tail before append, even when that tail
+  parses as JSON, and refuse every malformed LF-terminated row?
 - Are atomic replace, append, and parent-directory durability claims matched by tests?
 
 ### Publication and deployment

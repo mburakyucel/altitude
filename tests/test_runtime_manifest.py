@@ -80,7 +80,8 @@ class TestRuntimeManifest(unittest.TestCase):
         rosters = (legacy_preflight.PERMANENT_BACKEND_ROSTER,
                    legacy_preflight.WEB_SOURCE_ROSTER, legacy_preflight.WEB_BUILD_ROSTER,
                    legacy_preflight.PERSONA_SCHEMA_TEMPLATE_ROSTER,
-                   legacy_preflight.SUPPORT_ROSTER, legacy_preflight.TEMPORARY_ROSTER)
+                   legacy_preflight.SUPPORT_ROSTER, legacy_preflight.TEMPORARY_ROSTER,
+                   legacy_preflight.TEST_FIXTURE_ROSTER, legacy_preflight.DOCUMENTATION_ROSTER)
         for name in {name for roster in rosters for name in roster}:
             if name in files:
                 continue
@@ -1053,6 +1054,38 @@ class TestRuntimeManifest(unittest.TestCase):
         calls = {row["call"] for row in inventory["mechanically_observed_writer_call_sites"]}
         self.assertTrue({"path.chmod", "tempfile.mkstemp", "os.fdopen",
                          "tempfile.NamedTemporaryFile", "os.open"}.issubset(calls), calls)
+
+    def test_checked_out_source_has_no_unclassified_production_path(self):
+        repository = Path(__file__).resolve().parents[1]
+        inventory = legacy_preflight._source_inventory(repository)
+        self.assertEqual(inventory["unclassified_files"], [])
+        self.assertEqual(inventory["missing_roster_files"], {})
+
+    def test_candidate_discovery_is_independent_of_every_noncode_roster(self):
+        omitted = (
+            ".github/workflows/omitted.yaml",
+            "systemd/omitted.service",
+            "personas/omitted.md",
+            "schemas/omitted.json",
+            "templates/omitted.md",
+            "web/design/omitted.css",
+            "web/omitted.config.ts",
+            "web/src/omitted.json",
+            "web/src/omitted.svg",
+            "web/src/omitted.wasm",
+            "web/public/omitted.png",
+            "web/vite.config.mts",
+        )
+        for relative in omitted:
+            with self.subTest(relative=relative):
+                path = self.repo / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture\n")
+                try:
+                    inventory = legacy_preflight._source_inventory(self.repo)
+                    self.assertIn(relative, inventory["unclassified_files"])
+                finally:
+                    path.unlink()
 
     def test_cli_manifest_does_not_create_configured_state_home(self):
         configured_home = self.root / "configured-home"

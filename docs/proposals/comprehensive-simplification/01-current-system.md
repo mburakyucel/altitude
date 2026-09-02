@@ -1,11 +1,12 @@
-# Current system audit
+# Baseline system audit
 
-> **Status: proposal audit, not active architecture.**
+> **Status: non-normative baseline evidence at commit
+> `97e11979bdc0814ad5067eab717f999d1c251437`, not active architecture.**
 >
 > This document records the system observed at the start of the comprehensive-simplification
 > proposal. It does not replace [the active architecture](../../ARCHITECTURE.md), change a policy,
-> authorize implementation, or describe a future design. Statements below describe current code
-> paths and the pressure points they expose. Later proposal documents may evaluate changes.
+> authorize implementation, or describe a future design. “Current” below means current at that pinned
+> baseline, not the later candidate branch. Later proposal documents evaluate changes.
 
 ## Scope and method
 
@@ -24,7 +25,7 @@ The current system has a clear product model:
 - Fault evidence is separate from task creation, while a recovery fuse prevents new work from
   starting during an unsafe episode.
 
-That model is implemented. The complexity described here is mostly below it: provider-specific
+That model was implemented at the pinned baseline. The complexity described here is mostly below it: provider-specific
 execution, repeated ownership fencing, duplicated outcome state, broad recovery escalation, and
 post-completion maintenance.
 
@@ -1105,7 +1106,7 @@ proposal will retain.
 | Durable/private audit evidence | task/project events, conversations, incidents, transcript bundles | Several facts are copied into indexes, caches, snapshots, FYIs, and terminal summaries. |
 | Safe resource reclamation | post-done cleanup and PR/squash/patch proofs | Cleanup reproduces ownership and publication proof and participates in recovery/self-deploy. |
 
-This inventory is the baseline for the rest of the proposal. Until a later change is implemented and
-the active documentation is deliberately updated, [the active architecture](../../ARCHITECTURE.md),
-[session lifecycle](../../SESSION_LIFECYCLE.md), current personas, schemas, and executable code remain
-the authoritative description of Altitude.
+This inventory remains baseline evidence only. Candidate behavior is authoritative only when executable
+source, its tests, [the active architecture](../../ARCHITECTURE.md), and
+[session lifecycle](../../SESSION_LIFECYCLE.md) agree. Deployment still requires a separate successful
+activation receipt.

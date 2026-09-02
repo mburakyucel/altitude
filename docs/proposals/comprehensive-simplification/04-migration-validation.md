@@ -35,11 +35,22 @@ The recorded baseline is:
 | Service/CI/build support outside runnable-source count | 134 lines / 3 files |
 | Baseline checks | 489 Python tests; 39 web tests; production web build |
 
+The clarity candidate based on `a1d42e8` is intentionally expansionary while replacements are
+dormant: **17,184 permanent runnable lines / 56 files**, comprising **14,162 backend lines / 35
+files**, **2,827 web lines / 16 files**, and **195 web-build lines / 5 files**. The temporary real-state
+preflight is **1,510 lines / 1 file** and is reported separately. Separately counted candidate inputs
+are **496 persona/schema/template lines / 13 files**, **247 support lines / 3 files**, and one
+**294-line test-only cross-runtime contract fixture**; `web/README.md` is **13 lines / 1 file** of
+non-runtime documentation. The candidate must retire at least **5,004
+permanent lines and 13 files overall**, including **5,162 backend lines and 11 backend files**, to meet
+the final target. This is implementation debt, not evidence of simplification.
+
 Final budgets are hard review gates:
 
 - no more than **12,180 permanent runnable lines** (at least 10% net reduction);
 - no more than **9,000 backend/CLI/hook/restart lines** (at least 15% reduction);
-- no more than **46 runnable production files** and **25 permanent named artifact families**;
+- no more than **43 runnable production files**, including **24 backend/CLI/hook/restart files**, and
+  **25 permanent named artifact families**;
 - no more than **400 persona/schema/template lines in 10 files** and no more than **250
   service/CI/build-support lines in 3 files**; these categories cannot absorb runnable complexity;
 - exactly one mutation authority per domain, no more than six mutable control authorities, and
@@ -48,7 +59,7 @@ Final budgets are hard review gates:
   or production dependency; counted transient per-turn process units are permitted;
 - tests may grow and are reported separately; deleting tests to meet a production budget is forbidden.
 
-The exact baseline roster, counting procedure, future-file rule, and plausible target roster are in
+The exact baseline roster, counting procedure, future-file rule, and normative target roster are in
 [`07-baseline-and-target.md`](07-baseline-and-target.md). A new production path cannot escape the
 budget by being omitted from that roster; its reviewer must classify it before merge.
 
@@ -99,13 +110,16 @@ tested owner:
 
 - protected branches, task provenance, worktree isolation, scope validation, and merge holds;
 - stale-generation rejection for messages, outcomes, helpers, and publication;
-- fail-closed Codex containment and existing Claude guard/backend validation;
-- weekly-first provider routing; unknown telemetry is uncertainty, not exhaustion;
+- fail-closed Codex containment and temporary legacy Claude guard/backend validation;
+- Codex weekly-first routing; unknown telemetry is uncertainty, not exhaustion;
 - exact transcript access checks and credential-shaped redaction;
 - private durable incident evidence and a launch fuse for uncertain shared-safety faults;
 - operator authorization for planned source activation/restart;
 - GitHub issue hydration before dispatch and explicit authorization for issue publication;
 - one active top-level L2 per repository; optional helpers remain children of that owner.
+
+The current authenticated TLS certificate, key, CA paths, and client-trust arrangement are explicitly
+out of scope. This migration neither moves nor redesigns them.
 
 Normal systemd restart-on-crash remains allowed self-healing. Planned activation is different: the
 activation runner suppresses restart loops until candidate health succeeds. A source merge never
@@ -225,8 +239,9 @@ No reverse acquisition is allowed. Tests deliberately contend every adjacent pai
 Introduce two small primitives behind the existing public helper shapes:
 
 - atomic replace: write, fsync file, rename, fsync parent directory;
-- keyed append: under the owner lock, validate the final JSONL record, truncate only a partial final
-  record, append one newline-delimited record, fsync, and deduplicate by stable id.
+- keyed append: under the owner lock, treat every unterminated tail as uncommitted, exclude it from
+  reads/deduplication, truncate it before append, refuse malformed LF-terminated rows, append one
+  newline-delimited record, fsync, and deduplicate by stable id.
 
 This PR is foundation-only. It may harden the central atomic JSON and append/read helpers without
 changing their record shapes, and may make the existing project lock participate in the order. It
@@ -269,8 +284,9 @@ with a narrow Node/pnpm environment. Static workflow contract tests fail if any 
 - Baseline tests pass: 489 Python, 39 web, typecheck/build.
 - Preflight run twice on a copied home is byte-for-byte stable and changes no input.
 - Manifest identifies loaded code, not merely mutable checkout HEAD.
-- Primitive kill tests cover atomic replace, object-only partial tail repair, missing newline,
-  duplicate id, cross-process lock release, and invalid non-object tails left unchanged.
+- Primitive kill tests cover atomic replace; exclusion and truncation of every unterminated tail
+  before append, including a complete JSON object without LF; refusal without mutation for malformed
+  or non-object LF-terminated rows; duplicate ids; and cross-process lock release.
 - Dormant contracts reject unknown variants and have zero runtime producers or consumers.
 - Remote Python and web checks execute the same exact sanitized candidate under the static boundary.
 - No task/recovery/provider/publication lifecycle behavior changes before these facts are recorded.
@@ -300,11 +316,18 @@ ownership writer and fallback reader before merging. The shared transition is:
 planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
 ```
 
-Intent stores a deterministic unit, physical generation, provider-session request, and stable message
-id before launch. Resume creates a new physical generation even when the provider conversation id
-continues. No next writer starts until the prior unit is proven empty. Recovery work also persists
+For an owner transition, `TaskCommands` alone takes the task lock and serializes `task.json`. It
+stores the deterministic unit, physical generation, provider-session request, and stable message id,
+then compare-and-swaps `planned -> prior_stopped` before releasing the lock. Only that winner sends
+an immutable task-revision/transition-digest request to `WorkerCommands`. WorkerCommands performs or
+reconciles the physical effect and returns a typed receipt; it never writes `task.json` or embedded
+`active_operation`. TaskCommands reacquires the task lock, rejects stale revision/digest/generation,
+and serializes the receipt and any owner binding. No task lock is held during provider work.
+Resume creates a new physical generation even when the provider conversation id continues. No next
+writer starts until the prior unit is proven empty. Recovery work also persists
 `{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. L3 receives a
-durable current-turn claim; in-memory locks remain local optimization only. Unknown legacy ownership
+durable current-turn CAS; a different message receives explicit busy/deferred. Process-local locks
+remain local optimization only. Unknown legacy ownership
 fails closed instead of being declared empty. A static process inventory must be empty before the
 next sub-PR; no maintenance claimant exists during this sequence.
 
@@ -339,6 +362,11 @@ publication receipt into `DeploymentRecord`. Worker reports remain untrusted thr
 - No maintenance acknowledgement or source activation path exists yet.
 
 ## Phase 2 — deployment contribution and qualification authority
+
+The writer-free DeploymentRecord fact modules may be reviewed and merged after Phase 0 because they
+have no runtime caller or selector. That narrow ordering exception does not complete Phase 2 and does
+not authorize adoption: settlement contribution, maintenance, and activation remain blocked until the
+complete Phase 1 ownership/effect gate passes.
 
 ### PR 2A: minimal DeploymentRecord and truthful baseline
 
@@ -446,8 +474,9 @@ source record, not in a final cleanup sweep. Each PR includes a stopped-state fi
 explicit proof that the frozen production family is empty. Transcript-bundle version reconciliation
 belongs to Phase 9 and remains read-only until then.
 
-HTTP, CLI, Claude direct commands, Codex brokers, server timers, and tests call the same in-process
-command. Adapters parse/authorize and return typed results; they never write state themselves.
+HTTP, CLI, Codex brokers, server timers, and tests call the same in-process command. Stopped-state
+Claude importers/decoders are evidence-only and never call a command. Adapters parse/authorize and
+return typed results; they never write state themselves.
 Read-only projections may retain v1 response shapes temporarily but cannot actuate behavior.
 
 Each command stores a stable transition id/revision and uses the Phase 0 event reconciliation.
@@ -464,7 +493,7 @@ External effects reference the domain-embedded operation described in the target
 
 Process ownership, remote-effect reconciliation, qualification, and application commands now exist,
 so drain evidence is mechanical rather than inferred. Legacy self-deploy still exists, but no
-temporary restart adapter is added: PR 4A's gate is dormant until PR 4B's detached runner becomes its
+temporary restart adapter is added: PR 4A's gate is dormant until PR 4B's detached runner becomes
 fully testable behind the guard; final PR 10A.2 later makes that runner the first and only production
 claimant after every cutover callback exists.
 
@@ -659,7 +688,8 @@ settlement is stable and all owner/helper units are empty; the task becomes
 
 - Hydrate GitHub issues once before queueing; immutable snapshot absence fails intake.
 - Unknown quota remains eligible uncertainty and chooses the configured default.
-- Actual launch/quota failure holds only that provider and may route a new generation elsewhere.
+- Actual Codex launch/quota failure creates a Codex hold. It never falls back to another engine;
+  retry or resume waits for Codex eligibility or explicit operator action.
 - Persist the selected observation plus policy version/hash, not a mutable reserve policy in tasks.
 - Weekly comparable allowance is primary; short windows are availability gates.
 
@@ -690,7 +720,8 @@ through successful activation. Kill/replay proves no lost, duplicate, or briefly
 - **8A — dormant recovery/incident contracts:** strict v2 episode, logical wake/physical claim,
   clearance, UUID incident/amendment, and cutover-receipt validators plus fixed fixtures; no writer.
 - **8B — stopped-state importer:** import legacy Markdown/amendments/indexes and frozen clear recovery
-  state into a staged keyed ledger, with row-level kill/replay tests. It cannot enable v2 or delete
+  state into a staged keyed ledger plus a canonical inactive recovery epoch, with row-level
+  kill/replay tests. It cannot enable v2 or delete
   its input and remains shipped through the first production activation.
 - **8C.1 — dormant fuse and incident commands:** implement state-first launch fuse plus keyed incident
   append behind a no-caller boundary; keep all v1 runtime callers/writers unchanged.
@@ -698,7 +729,8 @@ through successful activation. Kill/replay proves no lost, duplicate, or briefly
   claim, and capped-backoff abandonment/retry with fixture-only callers; keep v1 unchanged.
 - **8C.3 — recovery task and permit:** implement at-most-one recovery L2, waiting-operator behavior,
   and episode permit fencing with fixture-only callers; keep v1 unchanged.
-- **8C.4 — dormant clearance:** implement keyed clearance receipt/removal against fixtures only; keep
+- **8C.4 — dormant clearance:** implement keyed clearance receipt and active-to-inactive transition
+  against fixtures only; keep
   v1 runtime clearance unchanged.
 - **8D — activation hook and closure:** attach the single recovery/incident import-and-switch to the
   parent ActivationOperation, switch all runtime callers to the complete v2 command set in this one
@@ -750,7 +782,9 @@ Recovery behavior is direct:
 - no incident creates a task, rule, persona, or another incident;
 - `waiting_operator` runs only cheap mechanical probes; it does not spend model quota until Burak
   input, new evidence, or a deployment receipt changes the revision;
-- clearance is a keyed embedded operation: receipt is reconciled, then active episode is removed.
+- clearance is a keyed embedded operation: reconcile its receipt, then replace the active episode
+  with a canonical `state=inactive` record. The record retains a monotonic epoch, cleared episode
+  and revision, prior epoch, and receipt digest. A no-active permit binds that epoch.
 
 PR 8D deletes legacy active recovery attention retries, duplicate project-hold writers, and
 incident-index writers together only after the complete candidate E2Es pass. Real-state importers and isolated audit
@@ -759,7 +793,8 @@ may delete them.
 
 Kill tests cover task-claim intent/create/finalize, a failed or rejected first recovery task, new
 evidence after the slot is spent, recursive recovery-origin fault refusal, logical-wake claim and
-abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clearance receipt/removal,
+abandoned-claim replacement before/after `retry_at`, capped-backoff replay, clearance
+active-to-inactive transition,
 runtime incident append, every legacy incident import row, and cutover-receipt reconciliation. Every
 case retains one episode, one physical wake claim at a time, and no more than one repair task.
 
@@ -799,6 +834,9 @@ maintenance command deletes only a clean, owned worktree with an exact merged re
 empty process units. Uncertainty leaves the artifact and emits one audit event; cleanup never opens
 global recovery or blocks new work.
 
+After journal parity is proved, PR 9B deletes the legacy `altd.log` writer and file. The existing
+supervisor-owned system journal remains the only service-log source.
+
 ### Phase 9 tests
 
 - Contract fixtures fail closed on unknown versions/extra authority fields.
@@ -811,11 +849,14 @@ global recovery or blocks new work.
 ### PR 10A.1: source finalization while production remains frozen
 
 Delete every temporary selector, compatibility **writer**, active fallback reader, superseded
-persona, schema, hook, endpoint, field, test fixture, and proposal instruction that describes
-rejected behavior. Retain only the explicitly enumerated real-state importers and isolated archive
-decoders needed by the first production activation. They are reported separately as temporary
-migration source and cannot select normal runtime behavior. Git history is the archive; active
-context contains one architecture.
+persona, schema, endpoint, field, test fixture, and proposal instruction that describes rejected
+behavior. PR 10A.1 also deletes `monitor/hook-faults.log` and the runtime hook-fault drain after fault/event
+parity. The legacy `hooks/guard.py`, `hooks/statusline-monitor.sh`, and their Claude settings remain
+temporary through the first ActivationReceipt because they are part of the frozen legacy-empty
+proof, not the permanent target. Retain only those named temporary checks, the explicitly enumerated
+real-state importers, and isolated archive decoders needed by the first production activation. They
+are reported separately as temporary migration source and cannot select normal runtime behavior.
+Git history is the archive; active context contains one architecture.
 
 Run static searches for every deleted name and report intentional read-only archive-decoder matches.
 Record final production/artifact/writer/timer/dependency counts against Phase 0. Run:
@@ -823,11 +864,12 @@ Record final production/artifact/writer/timer/dependency counts against Phase 0.
 - full Python suite;
 - web tests, typecheck, and production build;
 - all kill/race tests;
-- disposable activation and forward-repair E2E;
+- disposable activation and forward-repair E2E; this is source-integration evidence only and never
+  activates, installs, or restarts production;
 - disposable real tiny Codex L3 -> L2 -> PR/check/merge path;
 - no real Claude turn; tests instead prove every launch/resume path closed and the activation manifest
   proves every legacy Claude unit/process empty;
-- task defect, provider outage/reroute, and global recovery E2Es; and
+- task defect, Codex outage/hold/retry, and global recovery E2Es; and
 - restart inspection proving no worker/helper/service process remains unexpectedly.
 
 Do not restart the production Altitude service merely because implementation merged. Activation and
@@ -846,7 +888,9 @@ later explicit operator authorization; it does not invoke, install, or restart p
 
 Only after the separately authorized production activation has a successful receipt with exact
 import counts/source hashes/cutover receipts may a later reviewed PR delete the consumed real-state
-importers. That later candidate is installed through another explicit activation. Until then, the
+importers, `hooks/guard.py`, `hooks/statusline-monitor.sh`, their retired Claude settings, and tests
+that exist only for those legacy paths. That later candidate is installed through another explicit
+activation. Until then, the
 pre-activation repository is considered source-refactor complete but intentionally retains bounded
 migration code; disposable success or elapsed time is never a deletion signal.
 

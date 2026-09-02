@@ -14,7 +14,11 @@ Classification is closed:
 - personas, schemas, templates, service/CI/build support, and tests are reported separately and
   cannot absorb runnable behavior;
 - `web/pnpm-lock.yaml`, generated `web/dist`, dependencies, bytecode, screenshots, and runtime state
-  are excluded;
+  are excluded; web test files and `schemas/fixtures/projections.v1.json` are test source reported
+  separately, while `web/README.md` is explicitly classified as non-runtime documentation;
+- candidate discovery recursively scans every regular file under runtime-consumed `web/src`,
+  `web/public`, and `web/design`, plus every regular web-root file except the named pnpm lockfile;
+  suffixes never decide whether an asset or config is inventoried;
 - a new file is classified by what executes or consumes it, not its directory or extension; a file
   serving two categories goes in the stricter runnable category;
 - a renamed/split file remains counted; deletion is the only way it leaves a roster; and
@@ -110,13 +114,13 @@ The permanent runnable baseline is therefore **13,573 lines / 52 files**.
 - Baseline execution: **489 Python tests and 39 web tests**, plus web typecheck and production
   build. Test source may grow; removing tests does not improve a production metric.
 
-## Plausible permanent target roster
+## Normative permanent target roster
 
-This is a review constraint, not a mandate to create every proposed filename. A candidate may use a
-smaller roster or retain a current filename, but it must explain any additional file and remain under
-the 46-file/line budgets. The target below has **45 permanent runnable files**.
+This is the permanent target ownership roster. A candidate may retain an equivalent current filename
+only when it preserves the listed single responsibility; it must explain any additional file and
+remain under the **43-file** and line budgets. The target below has **43 permanent runnable files**.
 
-### Backend/CLI/hook/restart target: 26 files
+### Backend/CLI/hook/restart target: 24 files
 
 ```text
 altitude/__init__.py
@@ -142,8 +146,6 @@ altitude/tasks.py                   # includes immutable GitHub intake
 altitude/transcript.py
 bin/alt
 hooks/git-boundary                  # one installed dispatcher for four Git hook names
-hooks/guard.py
-hooks/statusline-monitor.sh
 scripts/restart_altitude.py
 ```
 
@@ -191,8 +193,14 @@ separate `l2_codex.md`/`l3_codex.md` files retire. Pending actions drain or migr
 old action schema files retire. Trusted receipt schemas remain Python-owned and never enter model
 action/outcome JSON.
 
+`hooks/guard.py` and `hooks/statusline-monitor.sh` are temporary migration checks, not permanent
+target files. They remain through the first successful ActivationReceipt for the legacy-empty proof
+and are deleted with retired Claude settings in PR 10B. The four native Git hooks are installed as
+links or copies of the one `hooks/git-boundary` dispatcher; installation parity is a merge gate. If
+parity fails, migration stops for redesign rather than adding four permanent source stubs.
+
 The roster deliberately removes digest/TTS, edit counting, durable Inbox, duplicate brokers,
 duplicate monitor/status projections, separate quota/router modules, separate land/verify modules,
 public task-intake duplication, and four copy-pasted Git-hook source stubs. It adds only the canonical
 command, contract, deployment, manifest, and projection boundaries required by the target design.
-Line budgets still control: meeting 45 files does not excuse oversized replacements.
+Line budgets still control: meeting 43 files does not excuse oversized replacements.

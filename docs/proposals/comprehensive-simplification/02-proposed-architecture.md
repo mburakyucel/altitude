@@ -1,6 +1,7 @@
 # 02 - Proposed architecture
 
-> Accepted target as of 2026-09-02 after adversarial re-review. Source and active documentation move
+> Target candidate under independent re-review as of 2026-09-02. Recorded product decisions remain
+> governing constraints; this corrected text is not settled until review. Source and active documentation move
 > module by module, but the frozen production service uses none
 > of the new behavior until one separately authorized activation applies every pending real-state
 > cutover.
@@ -59,8 +60,9 @@ reconciles its latest transition envelope: a missing or partial audit row is app
 physical duplicate rows with the same transition id collapse to one logical event for every
 reader/export. Event-first is forbidden. Therefore a crash can delay an audit projection but cannot
 invent an unapplied event or permanently lose the last committed event; no second mutation can hide
-the gap. The shared append primitive holds the owning lock, detects and truncates an incomplete final
-JSONL row before appending, writes one newline-delimited record, fsyncs the file, and fsyncs its parent
+the gap. The shared append primitive holds the owning lock, excludes and truncates every unterminated
+tail before append even when it parses as a complete JSON object, refuses a malformed or non-object
+LF-terminated row without mutation, writes one newline-delimited record, fsyncs the file, and fsyncs its parent
 directory when the file was created or replaced. Kill tests cover state rename, a torn final row,
 event append, directory durability, and reconciliation. HTTP and CLI code do no direct state
 mutation. This removes current divergence such as project/task creation being implemented separately
@@ -90,8 +92,8 @@ control authorities. The target has exactly these six:
 | Authority/domain | Sole trusted API | Canonical control record(s) | Retires |
 | --- | --- | --- | --- |
 | Project coordination | `ProjectCommands` | `projects.json`, project `l3.json`, issue-publication operation | direct server/CLI/broker project, L3-turn, and issue-draft writers |
-| Task lifecycle | `TaskCommands` | task `task.json`, including settlement | direct task/status/conversation/report/land writers |
-| Worker lifecycle | `WorkerCommands` | owner/helper worker bundles plus their embedded task transition | provider-specific dispatch/L1 launch, stop, and live-cache writers |
+| Task lifecycle | `TaskCommands` | task `task.json`, including generation, embedded owner transition, and settlement | every direct task/status/conversation/report/land/owner-operation writer; `TaskCommands` is the sole TaskRecord serializer |
+| Worker lifecycle | `WorkerCommands` | worker/helper bundles plus typed transition decisions and physical-effect receipts | provider-specific dispatch/L1 launch, stop, and live-cache writers; it submits owner transition commands/results to `TaskCommands` and never writes `task.json` |
 | Operational conditions | `ConditionCommands` | `operational-holds.json` | project hold mirrors, quota holds, fault-spool actuators |
 | Global recovery and incidents | `RecoveryCommands` | `recovery.json`, clearance/incident ledgers | recovery hold/attention and duplicate incident writers |
 | Deployment and activation | `DeploymentCommands` | per-service `DeploymentRecord` and activation receipts | self-deploy, restart-pending, and restart-script state writers |
@@ -100,12 +102,50 @@ Trusted Git/GitHub/service executors are bounded effects invoked by the owning t
 deployment operation; they cannot initiate lifecycle changes and therefore are not a seventh control
 authority.
 
-Creation of a fault, incident, or operational hold is state-first and keyed. For an incident without
-a hold, the canonical keyed incident row is appended before derived events or views. For a condition
-that must hold execution, the hold/recovery record first commits the stable condition id, bounded
-evidence, and keyed incident intent; the command then appends or reconciles the exact incident row and
-audit event. A crash can delay the historical evidence-ledger row for a held condition, but it cannot
-leave the unsafe condition permissive merely because an append failed.
+The physical module boundary is also closed. “Writes through” below means a private implementation
+helper may persist only while invoked by the named command authority; it is not another public
+mutation entry point.
+
+| Retained module(s) | One responsibility | Authority rule |
+| --- | --- | --- |
+| `__init__.py` | Package identity | No policy, effect, or state write |
+| `brokers.py` | Parse, authorize, and validate inert L2/L3 envelopes | Calls exactly one applicable command; never writes state or performs an external effect |
+| `commands.py` | Expose `ProjectCommands`, `TaskCommands`, `WorkerCommands`, `ConditionCommands`, `RecoveryCommands`, and `DeploymentCommands` | Sole normal-runtime durable mutation API; only `TaskCommands` takes the task lock and serializes `task.json` |
+| `config.py` | Read validated operator configuration and registered roots | Project registration changes only through `ProjectCommands` |
+| `contracts.py` | Closed Python and wire-contract validation | Pure; no state or effects |
+| `deployment.py` | DeploymentRecord codec, eligibility projection, and activation-transition validation | Writes through `DeploymentCommands` only |
+| `dispatch.py` | Prepare exact worktree/base/brief effects for one TaskCommands-planned worker transition | Invoked by `WorkerCommands`; never binds or persists task ownership itself |
+| `engines.py` | Start, stop, observe, and collect one named contained process unit | Effect adapter for `WorkerCommands`; returns typed receipts and never writes task/project authority |
+| `git_policy.py` | Pure repository/provenance checks and native-hook installation effect | Publication/maintenance operations own every invocation |
+| `incidents.py` | Strict private incident rows, amendments, and rendering | Appends only through `RecoveryCommands`; `ConditionCommands` may store an incident intent/reference in its own hold record and request that recovery command |
+| `l1.py` | Build bounded helper prompts and collect patch/finding receipts | Helper lifecycle remains owned by `WorkerCommands` and the parent settlement |
+| `l3.py` | Render the bounded coordinator projection and execute one contained Codex turn | `ProjectCommands` owns chat/session/current-turn state |
+| `manifest.py` | Read-only runtime identity manifests | No mutation authority |
+| `projections.py` | Overview/project/task/monitor/diagnostic read models | Read-only; a projection never actuates behavior |
+| `recovery.py` | Recovery record validation, deterministic probes, and policy decisions | Canonical episode/incident writes occur only through `RecoveryCommands` |
+| `routing.py` | Read quota observations and choose the Codex model/hold result | Pure decision; `ConditionCommands` owns any provider hold |
+| `server.py` | HTTP/static transport and timer scheduling | Adapters and timers call commands; no direct domain write |
+| `settlement.py` | Verify and execute staged Git/GitHub publication effects and construct receipts | `TaskCommands` owns the embedded settlement; deployment contribution goes through `DeploymentCommands` |
+| `state.py` | Atomic replace, keyed append, locks, and path lookup | Storage primitive only; no lifecycle policy |
+| `tasks.py` | TaskRecord codec, state graph, attention, and issue-snapshot validation | `TaskCommands` alone takes the task lock and serializes the whole TaskRecord, including `active_operation` |
+| `transcript.py` | Generation-fenced live view and bounded durable evidence | Read/snapshot effect only; never task authority |
+| `bin/alt` | Operator and internal-process adapter | Calls commands or read models; no direct domain write |
+| `hooks/git-boundary` | Four native Git enforcement entry points from one installed source | Enforces Git policy; never Altitude state authority |
+| `scripts/restart_altitude.py` | Detached activation/forward-repair effect runner | Executes only an authorized `DeploymentCommands` operation |
+| Web API/contracts | Validate transport and wire data | No backend authority; mutations call command endpoints |
+| Web routes/shell/build files | Human presentation and deterministic build | No durable authority |
+| Personas/schemas/templates | Untrusted model/output and human artifact contracts | No trusted receipt or mutation authority |
+
+Conservative cleanup is a `TaskCommands` maintenance command. It may invoke Git/worktree effects and
+append one task audit event, but it creates no cleanup record or seventh authority.
+
+Creation of a fault, incident, or operational hold is state-first and keyed. `RecoveryCommands` is
+the sole incident-ledger authority. For an incident without a hold, it appends the canonical keyed
+row before derived events or views. For a scoped condition, `ConditionCommands` first commits only
+its operational-hold record with the stable condition id, bounded evidence, and keyed incident
+intent/reference; it then requests `RecoveryCommands` to append or reconcile that exact incident row.
+For a global condition, `RecoveryCommands` first commits `recovery.json` and then the incident row.
+A crash can delay the historical evidence row, but it cannot leave the unsafe condition permissive.
 
 ### 2. Project coordinator (L3)
 
@@ -122,17 +162,27 @@ L3 does not relay ordinary L2 questions, automatically pull backlog issues, clos
 spawn L1s, or create a chain of healing work. Codex owns the sole resumable target session. A retained
 legacy Claude session is evidence only and is never handed off or fabricated into a Codex resume.
 
-All L3 turns are serialized across processes. Either only the service invokes them, with CLI calls
-routed through the service, or an explicit offline operator command proves the service stopped and
-acquires the same kernel file lock. The proposal selects the service as the ordinary mutation path;
-an expiring owner file or process-local thread lock is not authority.
+All L3 turn transitions are serialized by short project-lock compare-and-swap operations. An accepted
+human message has a stable id. Under the project lock, `ProjectCommands` installs that message and one
+`current_turn` intent only when no nonterminal turn exists. Only the caller that wins
+`planned -> prior_stopped` may launch; every other caller observes or reconciles the same turn. The
+project lock is released before provider work. A process-local mutex may reduce duplicate local work,
+but it is not authority. A different message arriving while a turn is nonterminal receives an explicit
+busy/deferred result and can never receive the older turn's answer.
 
 Each accepted human message has an id and one L3-turn operation embedded in `l3.json`, covering
-provider selection, physical launch, native session result, response append, and any inert action
+Codex model selection, physical launch, native session result, response append, and any inert action
 application. It records the daemon/supervisor instance that owns the attempt; a replacement instance
 may reconcile it but cannot silently claim to be the original owner. On a crash, the named process
 unit/session/result is reconciled and the response/action id is applied at most once. This preserves
-separate provider sessions without pretending that a lock alone makes a network/model turn atomic.
+the current Codex session and read-only legacy session evidence without pretending that a lock alone
+makes a network/model turn atomic.
+
+Each turn reads one generation-keyed, redacted context projection plus the selected checkout. The
+projection contains bounded recent human chat and essential active-task coordination facts: title,
+state, blocked question/reason, merge hold, and publication references, plus the exact recovery epoch.
+It excludes the Altitude home, raw logs, provider stores, credentials, capabilities, and unrelated
+project state. The entire projection path must resolve beneath its expected per-turn context root.
 
 ### 3. Task and logical L2 owner
 
@@ -144,7 +194,7 @@ request: immutable request/snapshot reference
 state: queued | running | settling | blocked | done | rejected
 scope: normalized optional repo-relative publication paths
 code_allowed, control_contract_version
-provider_policy: requested preference + selected global policy version/hash
+provider_policy: requested Codex model preference + selected global policy version/hash
 merge_hold: null or explicit reason
 generation: null or OwnerGeneration
 active_operation: null or embedded owner-worker-transition/settlement operation
@@ -180,21 +230,31 @@ recovery_permit_revision: null or exact permitted episode revision
 One locked `require_current_generation` operation is reused by messages, block/resume, outcome
 application, helper launch, publication, and completion. Callers do not reimplement partial tuples.
 The capability remains private and is never rendered in UI, transcripts, issues, PRs, or logs.
-Every physical start or resume atomically installs a new generation after proving the prior physical
-worker stopped. A genuine provider resume may keep `provider_session_id`, but it receives a new
+Every physical start or resume first enters `TaskCommands`, which takes the task lock, serializes the
+planned owner transition into `TaskRecord.active_operation`, and compare-and-swaps
+`planned -> prior_stopped`. It then releases the task lock. Only that winner sends an immutable typed
+effect request carrying task revision and transition digest to `WorkerCommands`. `WorkerCommands`
+validates the request, performs/reconciles the named process effect, and returns a typed receipt; it
+never opens or writes `task.json`. `TaskCommands` reacquires the same task lock, revalidates revision,
+generation, and transition digest, and serializes the receipt plus any generation binding. No task
+lock is held during provider work, and no atomic claim spans process launch.
+A genuine provider resume may keep `provider_session_id`, but it receives a new
 `attempt_id`, `physical_worker_id`, and `capability_id`; every prior action is therefore stale. The
 logical L2 still owns the task end to end across these serial generations.
 
 The shared worker-transition operation covers both the logical owner and every helper. Its subject is
-`owner` or a stable helper id. Before spawning, the owning TaskRecord or helper record stores the
-target generation/helper id, deterministic process-unit name, provider request, and message id with
-stage `planned`. The exact stage enum is `planned -> prior_stopped -> spawned -> bound ->
-result_observed -> empty -> complete | failed`. Owner transitions occupy
-`TaskRecord.active_operation`; concurrently launched
-helpers are child transitions referenced by the active settlement and embedded in their helper
-records. After a crash, Altitude inspects each named process unit and durable provider output before
-deciding whether launch occurred; it never guesses from a timestamp or invokes resume twice.
-Rejection and blocked transitions cannot finish until the owner and every task-owned helper process
+`owner` or a stable helper id. Before spawning, `TaskCommands` stores an owner target generation,
+deterministic process-unit name, provider request, and message id at stage `planned` in
+`TaskRecord.active_operation`; `WorkerCommands` never persists that field. Helper records store the
+equivalent helper transition under their own WorkerCommands-owned lock and remain references from the
+active settlement, not TaskRecord writers. The exact stage enum is `planned -> prior_stopped ->
+spawned -> bound -> result_observed -> empty -> complete | failed`. After a crash, WorkerCommands
+inspects each named process unit and durable provider output and returns a typed observation/receipt.
+TaskCommands revalidates and serializes the next owner stage. Neither command guesses from a
+timestamp or invokes resume twice.
+Reject/cancel first enters TaskCommands and installs intent on the same current transition under the
+task lock. Rejection and blocked transitions
+cannot finish until the owner and every task-owned helper process
 unit are terminal/empty and their receipts reconcile.
 
 ### 4. Task lifecycle and settlement
@@ -295,12 +355,12 @@ inside outcome authority.
 These are model-declared outcomes, not the complete worker-status taxonomy. The adapter separately
 normalizes `live`, `clean_exit_without_outcome`, `quota_limited`, `capacity_limited`,
 `provider_failed`, `malformed_outcome`, `process_missing`, and `ownership_uncertain`. Typed command
-policy then either reroutes/resumes the same logical task, blocks it with evidence and a retry
+policy then either retries/resumes the same logical Codex task, blocks it with evidence and a retry
 condition, or activates the global fuse when another writer cannot be ruled out. An abnormal exit is
 never fabricated into a model outcome.
 
-The transport may differ, but both produce an explicit versioned JSON wire envelope with a checked-in
-schema. Python producers validate before persisting; Python consumers validate before acting; the
+The enabled Codex adapter produces an explicit versioned JSON wire envelope with a checked-in schema.
+Python producers validate before persisting; Python consumers validate before acting; the
 TypeScript client uses an explicit Zod runtime validator at the API boundary.
 Codex returns the inert envelope directly. Legacy Claude outcome/report adapters remain read-only only
 as long as archived/stopped-state compatibility requires them; they are not target writers. Claude's
@@ -323,20 +383,20 @@ launch path, is the honest closure for global CLI commands that have no task tar
 ### 6. Optional helpers and review
 
 L1/reviewer help remains optional and owned by L2. The platform-managed helper mechanism initially
-stays because it provides cross-provider selection, bounded subleases, independent sessions, and
+stays because it provides bounded subleases, independent Codex sessions, and
 patch capture without transferring PR ownership.
 
 The reduced helper contract contains only:
 
 - role (`implementer` or `reviewer`);
 - bounded brief;
-- optional provider/model preference;
+- optional Codex model preference;
 - normalized sub-scope;
 - parent commit and owner generation;
 - patch or structured findings; and
 - terminal status.
 
-Remove PR parsing, PR aggregation, helper publication, and cleanup coupling. Native provider
+Remove PR parsing, PR aggregation, helper publication, and cleanup coupling. Native Codex
 subagents may later replace platform-managed helpers only if they preserve isolation, bounded scope,
 observable status, and the L2's sole-publisher rule.
 
@@ -360,8 +420,8 @@ Parallelism remains available across repositories and inside a task through opti
 Under the selected D1 policy, a blocked code task retains the repository slot because its branch
 and unresolved publication still belong to that logical owner. It must be resumed, completed,
 rejected, or explicitly converted to a GitHub issue before another top-level L2 starts. Altitude
-does not silently park work and pretend its collision risk disappeared. This conservative rule can
-be amended during review, but doing so requires an explicit multi-branch conflict policy.
+does not silently park work and pretend its collision risk disappeared. A later change requires the
+explicit architecture-amendment process and a reviewed multi-branch conflict policy.
 
 One narrowly defined exception exists for an active global recovery episode. Trusted reconciliation
 must first bring any ordinary settlement/external effect to an unambiguous stable boundary;
@@ -482,7 +542,7 @@ Evidence recording and operational actuation are separate operations. Every faul
 | --- | --- | --- |
 | advisory | TTS/UI projection/telemetry/transcript snapshot/cleanup refusal | Record and display; no execution hold |
 | task/project | failed resume or a task-worktree defect whose common Git/owner integrity is still proven | Block the affected task or project; other projects continue |
-| provider | quota/capacity/provider sandbox unavailable with no escaped writer | Hold/reroute eligible work for that provider |
+| provider | Codex quota/capacity/sandbox unavailable with no escaped writer | Hold Codex work until its retry condition; no provider fallback |
 | global | containment not proven empty, an orphan writer can affect shared state, or durable control-plane integrity is uncertain | Publish global fuse before any further launch |
 
 Classification is a small static mapping at each trusted boundary, not a central extensible rules
@@ -494,11 +554,13 @@ resume mechanically.
 One global `operational-holds.json` registry is canonical for active task-reference, project, and
 provider holds; task records reference an applicable operational hold rather than copying it. Each
 entry has stable condition id, scope/subject, evidence reference, `retry_at`, attempts, and clear
-recheck condition. Opening a condition first commits the keyed hold under the control lock and only
-then appends/reconciles its incident and audit evidence. Clearing first records keyed clear intent,
-appends or reconciles the incident-ledger amendment, and then removes the active entry; no second
-hold-history authority is created. A global condition similarly publishes `recovery.json` before any
-incident projection, with bounded evidence and one durable L3 attention request. Replaceable quota
+recheck condition. Opening a scoped condition first commits the keyed hold under the control lock;
+when incident evidence is required, `ConditionCommands` stores its stable intent/reference and asks
+`RecoveryCommands` to append or reconcile the incident and audit evidence. Clearing first records
+keyed clear intent; `RecoveryCommands` appends or reconciles any incident-ledger amendment; then
+`ConditionCommands` removes the active entry. No second hold-history or incident authority is
+created. A global condition is wholly owned by `RecoveryCommands`, which publishes `recovery.json`
+before any incident projection, with bounded evidence and one durable L3 attention request. Replaceable quota
 observations are evidence, not control state: unknown/stale quota does not open a hold, while an
 observed quota/capacity failure can open one through a trusted command. This gives restart-safe scope
 ownership without recreating per-project mirror files.
@@ -527,9 +589,12 @@ new evidence increments the episode revision and immediately makes the old gener
 requires objective revalidation and a new fenced generation.
 
 The embedded recovery-clearance operation uses an episode/revision-derived idempotency key. It
-records intent in the still-active episode, appends or reconciles exactly one clearance receipt, then
-removes `recovery.json`. A crash resumes those stages; `clearing` is an operation stage, not a lasting
-cleared episode state.
+records intent in the still-active episode, then atomically replaces it with the canonical
+`state=inactive` record. That record retains a monotonic epoch plus the exact cleared episode,
+revision, prior epoch, and clearance-receipt digest. It next appends or reconciles exactly one keyed
+clearance audit row before the next recovery mutation. A crash resumes those stages. The audit row is
+history, never launch authority. Even a no-active-episode launch observation binds the exact inactive
+epoch, preventing a stale clear observation from surviving a hold-and-clear cycle.
 
 `waiting_operator` permits only named read-only mechanical probes and reconciliation of already
 recorded effects. It cannot run another model turn, start/resume a worker, publish, mutate source or
@@ -807,18 +872,18 @@ Target durable artifacts are intentionally few:
 ALTITUDE_HOME/
   projects.json                    # sole registration + repository/project policy authority
   operational-holds.json           # keyed active task-ref/project/provider holds; absent/empty when clear
-  recovery.json                    # episode + supervisor/claim/clearance operations; absent when clear
+  recovery.json                    # active episode or inactive monotonic epoch + clearance reference
   monitor/recovery-hold.lock       # retain current recovery lock inode/path; no split-lock rename
   monitor/recovery-launch.lock     # retain current launch lock inode/path
   recovery-clearances.jsonl
   incidents.jsonl                 # canonical private evidence, project/task scope optional
   deployments/                    # records plus new per-service activation lock
   quota/                           # provider observations, replaceable cache
-  tls/                             # Altitude-owned certificate, key, and CA lifecycle
+  tls/                             # current authenticated certificate/key/CA arrangement; unchanged here
   <project>/
     .lock                          # retain current project lock inode/path
     .publication-settlement.lock   # retain current publication lock inode/path
-    l3.json                        # provider sessions + embedded active L3 turn; no compatibility mirrors
+    l3.json                        # current Codex session, read-only legacy refs, embedded active L3 turn
     chat.jsonl
     events.jsonl                   # project audit
     issue-publications/            # the sole project-level operation records outside l3.json
@@ -833,7 +898,7 @@ ALTITUDE_HOME/
       outcomes/                    # immutable untrusted WorkerOutcome by generation/effect id
       helpers/                     # bounded prompt + embedded worker transition + result receipt
       receipts/                    # immutable Publication/Verification/NoCode receipts by attempt
-      progress.md                  # optional L2 checkpoint, not control state
+      progress.md                  # retained optional L2 checkpoint, never control state
       transcripts/                 # only per approved retention policy
     archive/<slug>/                # same terminal task lifecycle; v2 or isolated read-only legacy bundle
 ```
@@ -862,7 +927,7 @@ mirrors, report variants, multiple incident indexes, persisted `STATE.md`, and t
 | Optional L1/reviewer | Helper contract | Removing old L1 PR logic does not remove optional help |
 | Collision avoidance | Worktree, WIP default 1, sole publisher, pinned PR | Path scheduler can shrink only after concurrency policy changes |
 | PR reviewability | Trusted publication receipt | Removing `report.json` is safe only after receipt and independent verification exist |
-| Dual providers / weekly quota | Route + provider adapters | Removing compatibility fields waits for state migration, not provider removal |
+| Codex-only weekly quota | Routing + Codex adapter | Legacy Claude observations remain read-only until their deletion gate and never enter eligibility |
 | Codex security boundary | Containment + inert broker | Schema simplification must remain strict and broker-side validation fail-closed |
 | Incident learning | Canonical incident ledger | Fault scoping changes actuation, not evidence retention |
 | Aggressive self-healing | Deterministic reconciliation + L3 global recovery | Fewer healing tasks means more direct reconciliation, not less recovery autonomy |
@@ -880,3 +945,5 @@ mirrors, report variants, multiple incident indexes, persisted `STATE.md`, and t
 - A new architecture persona or healing-agent hierarchy.
 - Automatic restarts by L3 or L2.
 - Removing a safety check before its replacement invariant is implemented and tested.
+- Changing the current authenticated TLS certificate/key/CA paths or client trust. That arrangement
+  remains unchanged; a later TLS migration requires its own operator plan and connectivity tests.
