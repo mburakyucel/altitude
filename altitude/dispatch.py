@@ -61,6 +61,19 @@ def l2_job_root(project: str, slug: str) -> Path:
     return S.task_dir(project, slug) / "l2-engine"
 
 
+@contextmanager
+def publication_settlement(project: str):
+    """Fence provenance gates from the remote-merge/service-fast-forward interval."""
+    path = config.project_dir(project) / ".publication-settlement.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def _git_branch(worktree: str | Path) -> str | None:
     """The branch git reports for `worktree`, or None if it is absent, detached or git failed."""
     import subprocess
@@ -243,7 +256,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         raise T.TransitionError(f"GitHub issue intake held before launch: {exc}") from exc
     repo = config.project_path(project)
     try:
-        origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+        with publication_settlement(project):
+            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
         from . import incidents
@@ -431,10 +445,11 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
     repo = config.project_path(project)
     try:
-        origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-        # A resume is specifically how an agent continues uncommitted work, so dirt is allowed here; path,
-        # branch, and every committed ancestor remain strict.
-        _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
+        with publication_settlement(project):
+            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+            # A resume is specifically how an agent continues uncommitted work, so dirt is allowed here; path,
+            # branch, and every committed ancestor remain strict.
+            _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
         from . import incidents
         incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
