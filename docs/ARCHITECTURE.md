@@ -97,6 +97,27 @@ base-owned workflow accepts only same-repository heads, pins its actions and Nod
 read-only repository permission, persists no checkout credential, exposes no token or secret, and
 runs candidate commands under an empty environment with disposable HOME and cache directories.
 
+### Dormant physical-ownership foundation
+
+`engines.py` now defines one closed physical transition for later L3, L2-owner, and helper adoption:
+`planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete | failed`.
+Its deterministic unit, physical generation, provider-session request, stable message id, and optional
+recovery episode/permit revision are immutable intent protected by one stable digest. Receipts have closed
+stage-specific shapes, and the record revision is derived exactly from its receipts and durable error. Each
+caller will embed the transition in its existing
+authoritative aggregate and persist it with the durable state primitives; the transition creates no sidecar
+record, journal, lock, or artifact family. A recorded pre-spawn error reconciles through
+`launched=false`, `bound=false`, its exact error result, and proven empty before failure, without a
+provider effect. After `prior_stopped`, an empty/collected unit with neither an error nor a durable
+result is ambiguous—the launch may have run and exited—so reconciliation returns
+`ownership_uncertain` instead of relaunching. An unknown or populated unit can never become terminal.
+
+Provider-neutral managed-unit helpers expose exact manager/cgroup observation and whole-unit spawn/stop while
+reusing the existing Codex containment mechanics. A read-only reconciliation helper correlates the exact unit
+with a durable result marker carrying the same intent digest and returns a crash-stage decision; disagreement
+refuses as `ownership_uncertain` rather than guessing or relaunching. This foundation is deliberately dormant: no production L3,
+L2, helper, server, CLI, or timer path consumes it yet, and all current provider behavior remains unchanged.
+
 ## Recovery
 
 System faults are deduplicated into private incident evidence and activate a global recovery fuse.

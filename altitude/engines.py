@@ -1,6 +1,7 @@
 """Headless Claude Code and Codex command builders and runners."""
 from __future__ import annotations
 import ast
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _codex_processes: dict[str, subprocess.Popen] = {}
 
 CODEX_SYSTEMD_PREFIX = "altitude-codex-"
+MANAGED_SYSTEMD_PREFIX = "altitude-worker-"
 SYSTEMD_RUN_BIN = shutil.which("systemd-run") or "systemd-run"
 SYSTEMCTL_BIN = shutil.which("systemctl") or "systemctl"
 ENV_BIN = shutil.which("env") or "/usr/bin/env"
@@ -53,6 +55,431 @@ CODEX_PATCH_NOTE = (
     "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
     "sandbox and its configured writable roots."
 )
+
+
+PHYSICAL_TRANSITION_STAGES = (
+    "planned", "prior_stopped", "spawned", "bound", "result_observed", "empty",
+    "complete", "failed",
+)
+_PHYSICAL_NEXT = {
+    "planned": {"prior_stopped"},
+    "prior_stopped": {"spawned"},
+    "spawned": {"bound"},
+    "bound": {"result_observed"},
+    "result_observed": {"empty"},
+    "empty": {"complete", "failed"},
+    "complete": set(),
+    "failed": set(),
+}
+_PHYSICAL_KEYS = {
+    "version", "transition_id", "subject_kind", "subject_id", "generation", "provider",
+    "process_unit_id", "provider_session_request", "message_id", "recovery_episode_id",
+    "recovery_permit_revision", "intent_digest", "stage", "receipts", "error", "revision",
+}
+_PHYSICAL_INTENT_KEYS = (
+    "version", "transition_id", "subject_kind", "subject_id", "generation", "provider",
+    "process_unit_id", "provider_session_request", "message_id", "recovery_episode_id",
+    "recovery_permit_revision",
+)
+
+
+class PhysicalTransitionError(RuntimeError):
+    """A physical owner/helper transition is malformed or attempted an unsafe move."""
+
+
+class ManagedUnitError(RuntimeError):
+    """A managed process unit could not be observed or made provably empty."""
+
+
+def _physical_json(value):
+    """Return a detached strict-JSON copy suitable for stable receipt comparison."""
+    if not isinstance(value, dict):
+        raise PhysicalTransitionError("physical transition value must be an object")
+    try:
+        return json.loads(S._canonical_json(value))  # noqa: SLF001 - share Phase 0C's strict JSON contract
+    except (TypeError, ValueError) as exc:
+        raise PhysicalTransitionError(f"physical transition contains invalid JSON: {exc}") from exc
+
+
+def deterministic_process_unit(subject_kind: str, subject_id: str, generation: str) -> str:
+    """Derive one bounded systemd unit name from the exact physical subject generation."""
+    if subject_kind not in ("l3", "owner", "helper"):
+        raise PhysicalTransitionError(f"unknown physical subject kind {subject_kind!r}")
+    if not isinstance(subject_id, str) or not subject_id.strip():
+        raise PhysicalTransitionError("physical subject id must be a nonempty string")
+    if not isinstance(generation, str) or not generation.strip():
+        raise PhysicalTransitionError("physical generation must be a nonempty string")
+    identity = f"{subject_kind}\0{subject_id}\0{generation}"
+    label = re.sub(r"[^A-Za-z0-9_.-]", "-", subject_id).strip(".-")[:48] or "subject"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"{MANAGED_SYSTEMD_PREFIX}{subject_kind}-{label}-{digest}.service"
+
+
+def _provider_session_request(value) -> dict:
+    request = _physical_json(value)
+    if not isinstance(request, dict) or request.get("kind") not in ("fresh", "resume"):
+        raise PhysicalTransitionError("provider session request must be fresh or resume")
+    expected = {"kind"} if request["kind"] == "fresh" else {"kind", "session_id"}
+    if set(request) != expected:
+        raise PhysicalTransitionError("provider session request has unknown or missing fields")
+    if request["kind"] == "resume" and (
+        not isinstance(request["session_id"], str) or not request["session_id"]
+    ):
+        raise PhysicalTransitionError("resume request requires a nonempty provider session id")
+    return request
+
+
+def _physical_intent_digest(record: dict) -> str:
+    intent = {key: record.get(key) for key in _PHYSICAL_INTENT_KEYS}
+    return hashlib.sha256(S._canonical_json(intent)).hexdigest()  # noqa: SLF001
+
+
+def new_physical_transition(*, transition_id: str, subject_kind: str, subject_id: str,
+                            generation: str, provider: str, provider_session_request: dict,
+                            message_id: str, recovery_episode_id: str | None = None,
+                            recovery_permit_revision: int | None = None) -> dict:
+    """Create an inert launch intent for embedding in its domain's authoritative record."""
+    for label, value in (("transition id", transition_id), ("message id", message_id)):
+        if not isinstance(value, str) or not value:
+            raise PhysicalTransitionError(f"{label} must be a nonempty string")
+    if provider not in ("claude", "codex"):
+        raise PhysicalTransitionError(f"unknown provider {provider!r}")
+    if (recovery_episode_id is None) != (recovery_permit_revision is None):
+        raise PhysicalTransitionError("recovery episode and permit revision must be present together")
+    if recovery_episode_id is not None and (
+        not isinstance(recovery_episode_id, str) or not recovery_episode_id
+        or isinstance(recovery_permit_revision, bool)
+        or not isinstance(recovery_permit_revision, int) or recovery_permit_revision < 1
+    ):
+        raise PhysicalTransitionError("invalid recovery episode or permit revision")
+    record = {
+        "version": 1,
+        "transition_id": transition_id,
+        "subject_kind": subject_kind,
+        "subject_id": subject_id,
+        "generation": generation,
+        "provider": provider,
+        "process_unit_id": deterministic_process_unit(subject_kind, subject_id, generation),
+        "provider_session_request": _provider_session_request(provider_session_request),
+        "message_id": message_id,
+        "recovery_episode_id": recovery_episode_id,
+        "recovery_permit_revision": recovery_permit_revision,
+        "intent_digest": "",
+        "stage": "planned",
+        "receipts": {},
+        "error": None,
+        "revision": 0,
+    }
+    record["intent_digest"] = _physical_intent_digest(record)
+    return validate_physical_transition(record)
+
+
+def _required_receipts(stage: str) -> tuple[str, ...]:
+    ordered = PHYSICAL_TRANSITION_STAGES[1:6]
+    if stage == "planned":
+        return ()
+    if stage in ("complete", "failed"):
+        return (*ordered, stage)
+    return ordered[:ordered.index(stage) + 1]
+
+
+def _validate_empty_observation(observation: object, unit: str) -> None:
+    keys = {"process_unit_id", "load_state", "active_state", "sub_state", "control_group", "population", "empty"}
+    if (not isinstance(observation, dict) or set(observation) != keys
+            or observation.get("process_unit_id") != unit or observation.get("population") != "empty"
+            or observation.get("empty") is not True
+            or observation.get("active_state") not in ("inactive", "failed")
+            or not all(isinstance(observation.get(key), str)
+                       for key in ("load_state", "active_state", "sub_state", "control_group"))):
+        raise PhysicalTransitionError(f"{unit} does not have an exact empty-unit observation")
+
+
+def _validate_unit_observation(observation: object, unit: str) -> dict:
+    keys = {"process_unit_id", "load_state", "active_state", "sub_state", "control_group", "population", "empty"}
+    if (not isinstance(observation, dict) or set(observation) != keys
+            or observation.get("process_unit_id") != unit
+            or observation.get("population") not in ("empty", "populated", "unknown")
+            or not isinstance(observation.get("empty"), bool)
+            or not all(isinstance(observation.get(key), str)
+                       for key in ("load_state", "active_state", "sub_state", "control_group"))):
+        raise PhysicalTransitionError("ownership_uncertain: managed-unit observation is not exact")
+    should_be_empty = (observation["load_state"] == "not-found"
+                       or (observation["active_state"] in ("inactive", "failed")
+                           and observation["population"] == "empty"))
+    if observation["empty"] is not should_be_empty or observation["population"] == "unknown":
+        raise PhysicalTransitionError("ownership_uncertain: managed-unit population is not proven")
+    return observation
+
+
+def _validate_durable_result(observation: object, record: dict) -> dict:
+    if observation is None:
+        return {"present": False}
+    value = _physical_json(observation)
+    if value == {"present": False}:
+        return value
+    keys = {"present", "process_unit_id", "intent_digest", "result_id", "sha256"}
+    if (set(value) != keys or value.get("present") is not True
+            or value.get("process_unit_id") != record["process_unit_id"]
+            or value.get("intent_digest") != record["intent_digest"]
+            or not isinstance(value.get("result_id"), str) or not value["result_id"]
+            or not isinstance(value.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None):
+        raise PhysicalTransitionError("ownership_uncertain: durable result does not match the physical intent")
+    return value
+
+
+def validate_physical_transition(record: dict) -> dict:
+    """Validate and detach one closed physical transition without reading external state."""
+    value = _physical_json(record)
+    if not isinstance(value, dict) or set(value) != _PHYSICAL_KEYS:
+        raise PhysicalTransitionError("physical transition has unknown or missing fields")
+    if value.get("version") != 1 or value.get("stage") not in PHYSICAL_TRANSITION_STAGES:
+        raise PhysicalTransitionError("physical transition version or stage is invalid")
+    for key in ("transition_id", "subject_id", "generation", "message_id"):
+        if not isinstance(value.get(key), str) or not value[key]:
+            raise PhysicalTransitionError(f"physical transition {key} must be a nonempty string")
+    if value.get("subject_kind") not in ("l3", "owner", "helper"):
+        raise PhysicalTransitionError("physical transition subject kind is invalid")
+    if value.get("provider") not in ("claude", "codex"):
+        raise PhysicalTransitionError("physical transition provider is invalid")
+    expected_unit = deterministic_process_unit(value["subject_kind"], value["subject_id"], value["generation"])
+    if value.get("process_unit_id") != expected_unit:
+        raise PhysicalTransitionError("physical transition process unit is not deterministic")
+    value["provider_session_request"] = _provider_session_request(value.get("provider_session_request"))
+    episode, permit = value.get("recovery_episode_id"), value.get("recovery_permit_revision")
+    if (episode is None) != (permit is None) or (
+        episode is not None and (
+            not isinstance(episode, str) or not episode or isinstance(permit, bool)
+            or not isinstance(permit, int) or permit < 1
+        )
+    ):
+        raise PhysicalTransitionError("physical transition recovery identity is invalid")
+    digest = value.get("intent_digest")
+    if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or digest != _physical_intent_digest(value)):
+        raise PhysicalTransitionError("physical transition intent digest is invalid")
+    revision = value.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise PhysicalTransitionError("physical transition revision is invalid")
+    receipts = value.get("receipts")
+    required = _required_receipts(value["stage"])
+    if not isinstance(receipts, dict) or set(receipts) != set(required):
+        raise PhysicalTransitionError("physical transition receipts do not match its stage")
+    expected_revision = len(receipts) + (1 if value.get("error") is not None else 0)
+    if revision != expected_revision:
+        raise PhysicalTransitionError("physical transition revision is not exactly derived from receipts and error")
+    for name, receipt in receipts.items():
+        if not isinstance(receipt, dict):
+            raise PhysicalTransitionError(f"physical transition {name} receipt must be an object")
+    if "prior_stopped" in receipts:
+        prior = receipts["prior_stopped"]
+        previous = prior.get("previous_process_unit_id")
+        expected_keys = ({"previous_process_unit_id", "empty"} if previous is None
+                         else {"previous_process_unit_id", "empty", "observation"})
+        if set(prior) != expected_keys or prior.get("empty") is not True:
+            raise PhysicalTransitionError("prior_stopped requires proven empty prior ownership")
+        if previous is not None:
+            if not isinstance(previous, str) or not previous:
+                raise PhysicalTransitionError("prior process unit id is invalid")
+            _validate_empty_observation(prior.get("observation"), previous)
+    if "spawned" in receipts:
+        spawned = receipts["spawned"]
+        if spawned.get("process_unit_id") != expected_unit:
+            raise PhysicalTransitionError("spawned receipt names a different process unit")
+        if spawned.get("launched") is True:
+            if set(spawned) != {"process_unit_id", "launched"}:
+                raise PhysicalTransitionError("positive spawned receipt has an invalid shape")
+        elif spawned.get("launched") is False:
+            if (set(spawned) != {"process_unit_id", "launched", "reason"}
+                    or not isinstance(spawned.get("reason"), str) or not spawned["reason"].strip()
+                    or value.get("error") is None):
+                raise PhysicalTransitionError("negative spawned receipt requires a closed reason and durable error")
+        else:
+            raise PhysicalTransitionError("spawned receipt must say whether launch occurred")
+    if "bound" in receipts:
+        bound = receipts["bound"]
+        if bound.get("bound") is True:
+            if (set(bound) != {"bound", "physical_worker_id", "provider_session_id"}
+                    or not isinstance(bound.get("physical_worker_id"), str) or not bound["physical_worker_id"]
+                    or not isinstance(bound.get("provider_session_id"), str) or not bound["provider_session_id"]):
+                raise PhysicalTransitionError("positive bound receipt has an invalid shape")
+            if receipts["spawned"].get("launched") is not True:
+                raise PhysicalTransitionError("an unlaunched process cannot bind a provider identity")
+        elif bound.get("bound") is False:
+            if (set(bound) != {"bound", "reason"}
+                    or not isinstance(bound.get("reason"), str) or not bound["reason"].strip()
+                    or value.get("error") is None):
+                raise PhysicalTransitionError("negative bound receipt requires a closed reason and durable error")
+        else:
+            raise PhysicalTransitionError("bound receipt must say whether provider identity was bound")
+        if receipts["spawned"].get("launched") is False and bound.get("bound") is not False:
+            raise PhysicalTransitionError("an unlaunched process must remain unbound")
+    if "result_observed" in receipts:
+        result = receipts["result_observed"]
+        if (set(result) != {"result_id", "sha256"}
+                or not isinstance(result.get("result_id"), str) or not result["result_id"]
+                or not isinstance(result.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", result["sha256"]) is None):
+            raise PhysicalTransitionError("result_observed receipt requires a stable result id and SHA-256")
+    if "empty" in receipts:
+        if set(receipts["empty"]) != {
+            "process_unit_id", "load_state", "active_state", "sub_state", "control_group", "population", "empty"
+        }:
+            raise PhysicalTransitionError("empty receipt has an invalid shape")
+        if receipts["empty"].get("process_unit_id") != expected_unit:
+            raise PhysicalTransitionError("empty receipt names a different process unit")
+        _validate_empty_observation(receipts["empty"], expected_unit)
+    error = value.get("error")
+    if error is not None and (not isinstance(error, str) or not error):
+        raise PhysicalTransitionError("physical transition error must be null or nonempty text")
+    if value["stage"] == "complete" and error is not None:
+        raise PhysicalTransitionError("a completed physical transition cannot carry an error")
+    if value["stage"] == "failed" and error is None:
+        raise PhysicalTransitionError("a failed physical transition requires an error")
+    negative = ((receipts.get("spawned") or {}).get("launched") is False
+                or (receipts.get("bound") or {}).get("bound") is False)
+    if negative and "result_observed" in receipts:
+        expected_error_hash = hashlib.sha256(error.encode("utf-8")).hexdigest()
+        if receipts["result_observed"] != {"result_id": "transition:error", "sha256": expected_error_hash}:
+            raise PhysicalTransitionError("negative launch/bind requires the exact durable error receipt")
+    if "complete" in receipts and (set(receipts["complete"]) != {"status"}
+                                    or receipts["complete"].get("status") != "complete"):
+        raise PhysicalTransitionError("complete receipt has an invalid shape")
+    if "failed" in receipts and (set(receipts["failed"]) != {"status"}
+                                  or receipts["failed"].get("status") != "failed"):
+        raise PhysicalTransitionError("failed receipt has an invalid shape")
+    return value
+
+
+def note_physical_transition_error(record: dict, error: str) -> dict:
+    """Persist the first inert error while reconciliation continues toward proven emptiness."""
+    value = validate_physical_transition(record)
+    if value["stage"] in ("complete", "failed"):
+        raise PhysicalTransitionError("terminal physical transition cannot accept another error")
+    if not isinstance(error, str) or not error.strip():
+        raise PhysicalTransitionError("physical transition error must be nonempty text")
+    error = error.strip()
+    if value["error"] is not None:
+        if value["error"] != error:
+            raise PhysicalTransitionError("physical transition already records a different error")
+        return value
+    value["error"] = error
+    value["revision"] += 1
+    return validate_physical_transition(value)
+
+
+def advance_physical_transition(record: dict, expected_stage: str, next_stage: str,
+                                receipt: dict) -> dict:
+    """Advance exactly one durable stage; an identical receipt replay is idempotent."""
+    value = validate_physical_transition(record)
+    if next_stage not in _PHYSICAL_NEXT.get(expected_stage, set()):
+        raise PhysicalTransitionError(f"illegal physical transition {expected_stage} -> {next_stage}")
+    receipt = _physical_json(receipt)
+    if not isinstance(receipt, dict):
+        raise PhysicalTransitionError("physical transition receipt must be an object")
+    if value["stage"] == next_stage:
+        if value["receipts"].get(next_stage) == receipt:
+            return value
+        raise PhysicalTransitionError(f"conflicting replay of physical stage {next_stage}")
+    if value["stage"] != expected_stage:
+        raise PhysicalTransitionError(
+            f"physical transition is {value['stage']}, expected {expected_stage}"
+        )
+    if next_stage == "failed" and value["error"] is None:
+        raise PhysicalTransitionError("physical failure must be recorded before terminalization")
+    if next_stage == "complete" and value["error"] is not None:
+        raise PhysicalTransitionError("physical transition with an error cannot complete")
+    value["receipts"][next_stage] = receipt
+    value["stage"] = next_stage
+    value["revision"] += 1
+    return validate_physical_transition(value)
+
+
+def reconcile_physical_transition(record: dict, durable_result_observation: dict | None) -> dict:
+    """Inspect the exact unit and result marker without launching, stopping, or persisting.
+
+    The returned decision is advisory to a later owner-family adapter. Ambiguous observations refuse
+    with ``ownership_uncertain``; the helper never guesses a receipt or mutates the caller's record.
+    """
+    value = validate_physical_transition(record)
+    unit = value["process_unit_id"]
+    try:
+        unit_observation = _validate_unit_observation(observe_managed_unit(unit), unit)
+    except ManagedUnitError as exc:
+        raise PhysicalTransitionError(f"ownership_uncertain: {exc}") from exc
+    result = _validate_durable_result(durable_result_observation, value)
+    recorded_result = value["receipts"].get("result_observed")
+    if recorded_result is not None:
+        if not result["present"] or {
+            "result_id": result["result_id"], "sha256": result["sha256"]
+        } != recorded_result:
+            raise PhysicalTransitionError("ownership_uncertain: recorded result is absent or changed")
+
+    stage = value["stage"]
+    empty, result_present = unit_observation["empty"], result["present"]
+    if stage == "planned":
+        if not empty or result_present:
+            raise PhysicalTransitionError("ownership_uncertain: physical effect exists before prior-stop receipt")
+        decision = "prove_prior_stopped"
+    elif stage == "prior_stopped":
+        if value["error"] is not None:
+            if not empty:
+                raise PhysicalTransitionError(
+                    "ownership_uncertain: a pre-spawn failure has a populated unit"
+                )
+            expected = {
+                "result_id": "transition:error",
+                "sha256": hashlib.sha256(value["error"].encode("utf-8")).hexdigest(),
+            }
+            if result_present and {
+                "result_id": result["result_id"], "sha256": result["sha256"]
+            } != expected:
+                raise PhysicalTransitionError(
+                    "ownership_uncertain: pre-spawn durable result differs from the recorded error"
+                )
+            decision = "record_spawn_failure"
+        elif empty and not result_present:
+            raise PhysicalTransitionError(
+                "ownership_uncertain: launch may have run and its unit been collected"
+            )
+        else:
+            decision = "record_spawned"
+    elif stage == "spawned":
+        if value["receipts"]["spawned"]["launched"] is False:
+            if not empty:
+                raise PhysicalTransitionError("ownership_uncertain: an unlaunched transition has a populated unit")
+            decision = "record_bound_failure"
+        elif result_present:
+            decision = "forward_repair"
+        elif empty:
+            decision = "process_missing"
+        else:
+            decision = "record_bound"
+    elif stage == "bound":
+        if value["receipts"]["bound"]["bound"] is False:
+            if not empty:
+                raise PhysicalTransitionError("ownership_uncertain: an unbound transition has a populated unit")
+            decision = "record_result" if result_present else "record_error_result"
+        elif result_present:
+            decision = "record_result"
+        elif empty:
+            decision = "process_missing"
+        else:
+            decision = "running"
+    elif stage == "result_observed":
+        decision = "record_empty" if empty else "wait_for_empty"
+    elif stage == "empty":
+        if not empty:
+            raise PhysicalTransitionError("ownership_uncertain: empty receipt contradicts the managed unit")
+        decision = "record_failed" if value["error"] else "record_complete"
+    else:
+        if not empty:
+            raise PhysicalTransitionError("ownership_uncertain: terminal transition still owns processes")
+        decision = "settled"
+    return {
+        "transition_id": value["transition_id"], "stage": stage, "decision": decision,
+        "process_unit": unit_observation, "durable_result": result,
+    }
 
 
 def codex_isolation_config(cwd: Path, *, writable: bool = True,
@@ -529,6 +956,19 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
 
 
+def managed_service_command(unit: str, command: list[str], child_env: dict[str, str]) -> list[str]:
+    """Build the common foreground managed-unit command without changing current Codex callers."""
+    if not isinstance(unit, str) or not unit.startswith(MANAGED_SYSTEMD_PREFIX) or not unit.endswith(".service"):
+        raise ManagedUnitError(f"invalid Altitude managed process unit {unit!r}")
+    if not command or not all(isinstance(part, str) and part for part in command):
+        raise ManagedUnitError("managed process command must contain nonempty string arguments")
+    if not isinstance(child_env, dict) or not all(
+        isinstance(key, str) and key and isinstance(value, str) for key, value in child_env.items()
+    ):
+        raise ManagedUnitError("managed process environment must contain only string names and values")
+    return _codex_service_command(unit, command, child_env)
+
+
 def _systemd_unit_properties(unit: str) -> dict[str, str]:
     """Read the security-relevant state of one transient user unit, failing closed with no user bus."""
     cmd = [SYSTEMCTL_BIN, "--user", "show", unit, "--property=LoadState", "--property=ActiveState",
@@ -557,21 +997,26 @@ def _systemd_unit_properties(unit: str) -> dict[str, str]:
     return props
 
 
-def _cgroup_unpopulated(control_group: str) -> bool:
-    """Prove a v2 cgroup and all descendants are empty; a removed cgroup is also empty."""
+def _cgroup_population(control_group: str) -> str:
+    """Observe a v2 cgroup as empty, populated, or unknown without guessing on I/O failure."""
     if not control_group:
-        return True
+        return "empty"
     relative = Path(control_group.lstrip("/"))
     if ".." in relative.parts:
-        return False
+        return "unknown"
     events = Path("/sys/fs/cgroup") / relative / "cgroup.events"
     try:
         values = dict(line.split(None, 1) for line in events.read_text().splitlines() if len(line.split(None, 1)) == 2)
     except FileNotFoundError:
-        return True
+        return "empty"
     except OSError:
-        return False
-    return values.get("populated") == "0"
+        return "unknown"
+    return {"0": "empty", "1": "populated"}.get(values.get("populated"), "unknown")
+
+
+def _cgroup_unpopulated(control_group: str) -> bool:
+    """Preserve the Codex fail-closed boolean over the exact population observation."""
+    return _cgroup_population(control_group) == "empty"
 
 
 def _codex_unit_empty(unit: str) -> bool:
@@ -581,6 +1026,67 @@ def _codex_unit_empty(unit: str) -> bool:
     if props.get("ActiveState") not in ("inactive", "failed"):
         return False
     return _cgroup_unpopulated(props.get("ControlGroup") or "")
+
+
+def observe_managed_unit(unit: str) -> dict:
+    """Return an exact provider-neutral manager/cgroup observation for one named unit."""
+    if not isinstance(unit, str) or not unit.startswith(MANAGED_SYSTEMD_PREFIX) or not unit.endswith(".service"):
+        raise ManagedUnitError(f"invalid Altitude managed process unit {unit!r}")
+    try:
+        props = _systemd_unit_properties(unit)
+    except CodexContainmentError as exc:
+        raise ManagedUnitError(str(exc)) from exc
+    required = {"LoadState", "ActiveState", "SubState", "ControlGroup"}
+    if not required.issubset(props):
+        raise ManagedUnitError(f"incomplete systemd state for managed process unit {unit}")
+    population = ("empty" if props["LoadState"] == "not-found"
+                  else _cgroup_population(props.get("ControlGroup") or ""))
+    empty = (props["LoadState"] == "not-found"
+             or (props["ActiveState"] in ("inactive", "failed") and population == "empty"))
+    return {
+        "process_unit_id": unit,
+        "load_state": props["LoadState"],
+        "active_state": props["ActiveState"],
+        "sub_state": props["SubState"],
+        "control_group": props["ControlGroup"],
+        "population": population,
+        "empty": empty,
+    }
+
+
+def spawn_managed_unit(transition: dict, command: list[str], *, cwd: Path,
+                       launcher_env: dict[str, str], child_env: dict[str, str],
+                       stdin=None, stdout=None, stderr=None) -> subprocess.Popen:
+    """Cross the spawn boundary only for a prior-stopped, caller-persisted launch intent.
+
+    Persistence deliberately remains with the domain aggregate. The caller must durably embed the
+    returned transition before invoking this function, then record the spawn receipt afterward.
+    """
+    record = validate_physical_transition(transition)
+    if record["stage"] != "prior_stopped" or record["receipts"]["prior_stopped"].get("empty") is not True:
+        raise PhysicalTransitionError("managed spawn requires a prior_stopped transition")
+    before = observe_managed_unit(record["process_unit_id"])
+    if before["empty"] is not True:
+        raise ManagedUnitError(f"managed process unit {record['process_unit_id']} is not empty before spawn")
+    argv = managed_service_command(record["process_unit_id"], command, child_env)
+    return subprocess.Popen(
+        argv, cwd=str(Path(cwd)), stdin=stdin, stdout=stdout, stderr=stderr,
+        env=dict(launcher_env), start_new_session=True,
+    )
+
+
+def stop_managed_unit(unit: str, timeout: float = 5.0) -> dict:
+    """Stop every descendant and return an exact empty receipt, or fail closed."""
+    if not isinstance(unit, str) or not unit.startswith(MANAGED_SYSTEMD_PREFIX) or not unit.endswith(".service"):
+        raise ManagedUnitError(f"invalid Altitude managed process unit {unit!r}")
+    try:
+        _stop_codex_unit(unit, timeout)
+    except CodexContainmentError as exc:
+        raise ManagedUnitError(str(exc)) from exc
+    observation = observe_managed_unit(unit)
+    if observation["empty"] is not True:
+        raise ManagedUnitError(f"managed process unit {unit} remained populated after stop")
+    return observation
 
 
 def _wait_codex_unit_empty(unit: str, timeout: float = 5.0) -> bool:
