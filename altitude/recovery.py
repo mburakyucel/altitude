@@ -1,9 +1,8 @@
 """Small recovery safety fuse: faults pause ordinary dispatch until explicit clearance."""
 from __future__ import annotations
 
-import fcntl
+import hashlib
 import json
-import os
 import secrets
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -37,27 +36,31 @@ def _clean(value: object, limit: int = 300) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+def _fault_digest(current: dict) -> str:
+    evidence = {"episode": current.get("episode"), "faults": current.get("faults") or []}
+    return hashlib.sha256(json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _commit(current: dict) -> None:
+    """Persist one hold RMW without discarding an unreplayed state-first transition."""
+    S.reconcile_transition(current)
+    current["state_revision"] = int(current.get("state_revision") or 0) + 1
+    S.write_json(hold_path(), current)
+
+
 @contextmanager
 def _lock():
     config.ensure_root()
-    with open(lock_path(), "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    with S.ordered_file_lock(lock_path(), S.LockLevel.RECOVERY):
+        yield
 
 
 @contextmanager
 def _launch_lock():
     """Serialize the hold linearization point with the short worker-launch operation."""
     config.ensure_root()
-    with open(launch_lock_path(), "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    with S.ordered_file_lock(launch_lock_path(), S.LockLevel.RECOVERY):
+        yield
 
 
 class LaunchHeld(RuntimeError):
@@ -91,7 +94,7 @@ def hold(reason: str, *, kind: str = "operator", incident: str | None = None,
                  "incident": incident or previous_incident, "by": actor}
         current.update({"active": True, "updated": now})
         current["faults"] = [*other[-19:], fault]
-        S.write_json(hold_path(), current)
+        _commit(current)
     # A launcher that yielded from launch_permission before publication is already committed to spawning. Wait
     # only for that short spawn boundary to settle. Every queued launcher rechecks the now-published hold first.
     # State and launch locks are deliberately never nested, avoiding an inversion with launch_permission.
@@ -114,7 +117,7 @@ def attach_incident(kind: str, incident: str) -> dict | None:
             if row.get("kind") == kind:
                 row["incident"] = incident
                 current["updated"] = S.now()
-                S.write_json(hold_path(), current)
+                _commit(current)
                 break
         return current
 
@@ -158,7 +161,7 @@ def request_l3_attention(project: str | None, *, kind: str, incident: str | None
         attention["updated"] = S.now()
         current["l3_attention"] = attention
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
+        _commit(current)
         return dict(attention)
 
 
@@ -227,7 +230,7 @@ def claim_l3_attention(project: str) -> dict | None:
         attention["claimed"] = now.replace(microsecond=0).isoformat()
         current["l3_attention"] = attention
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
+        _commit(current)
         return _attention_snapshot(project, attention)
 
 
@@ -244,7 +247,7 @@ def l3_attention_is_current(project: str, episode: str, revision: int, claim: st
         attention["claimed"] = S.now()
         current["l3_attention"] = attention
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
+        _commit(current)
         return True
 
 
@@ -271,7 +274,7 @@ def fail_l3_attention(project: str, episode: str, revision: int, claim: str, err
         attention.pop("claimed", None)
         current["l3_attention"] = attention
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
+        _commit(current)
         return True
 
 
@@ -291,14 +294,13 @@ def complete_l3_attention(project: str, episode: str, revision: int, claim: str)
         attention.pop("claimed", None)
         current["l3_attention"] = attention
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
-    try:
-        S.project_log(project, "recovery-turn-handled", episode=episode, revision=revision,
-                      faults=list(attention.get("faults") or [])[-20:])
-    except OSError:
-        # The hold record and eventual clearance record still durably carry the handled revision. Do not replay a
-        # successful model turn merely because this supplementary audit append failed.
-        pass
+        current["state_revision"] = int(current.get("state_revision") or 0) + 1
+        S.write_json_transition(
+            hold_path(), current, "recovery-turn-handled",
+            subject=f"recovery/{episode}", actor="altd",
+            projection=S.project_projection(project), episode=episode, revision=revision,
+            faults=list(attention.get("faults") or [])[-20:],
+        )
     return True
 
 
@@ -331,7 +333,7 @@ def claim_repair(project: str, slug: str, *, actor: str) -> dict:
             )
         current["repair"] = {"project": project, "slug": slug, "claimed": S.now(), "by": actor}
         current["updated"] = S.now()
-        S.write_json(hold_path(), current)
+        _commit(current)
         return current
 
 
@@ -343,7 +345,7 @@ def release_failed_claim(project: str, slug: str) -> None:
         if repair.get("project") == project and repair.get("slug") == slug:
             current["repair"] = None
             current["updated"] = S.now()
-            S.write_json(hold_path(), current)
+            _commit(current)
 
 
 def dispatch_hold(project: str, task: dict | None = None) -> str | None:
@@ -382,7 +384,19 @@ def clear(reason: str, *, actor: str) -> dict:
         if not current:
             raise ValueError("no active recovery hold")
         repair = current.get("repair") or None
-        record = {
+        pending = current.get("clearance_pending")
+        revision = int(current.get("state_revision") or 0)
+        digest = _fault_digest(current)
+        if isinstance(pending, dict) and (
+                pending.get("hold_revision") != revision or pending.get("fault_digest") != digest):
+            current.pop("clearance_pending", None)
+            current["updated"] = S.now()
+            _commit(current)
+            raise ValueError("recovery evidence changed after clearance was prepared; inspect and clear again")
+        if isinstance(pending, dict) and (pending.get("by") != actor or pending.get("reason") != reason):
+            raise ValueError("clearance retry must use the same actor and reason")
+        record = pending if isinstance(pending, dict) else {
+            "clearance_id": str(current.get("episode") or current.get("since")),
             "at": S.now(),
             "by": actor,
             "reason": reason,
@@ -400,15 +414,17 @@ def clear(reason: str, *, actor: str) -> dict:
                 "revision": int(current["l3_attention"].get("revision") or 0),
                 "handled_revision": int(current["l3_attention"].get("handled_revision") or 0),
             } if isinstance(current.get("l3_attention"), dict) else None),
+            "hold_revision": revision + 1,
+            "fault_digest": digest,
         }
+        if pending is None:
+            current["clearance_pending"] = record
+            current["updated"] = S.now()
+            _commit(current)
         history = clearance_history_path()
-        history.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(history, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, "a") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        S.append_jsonl(history, record, key_field="clearance_id")
         hold_path().unlink()
+        S._fsync_directory(hold_path().parent)
     for project in config.load_projects():
         project_hold = config.project_dir(project) / "hold.json"
         value = S.read_json(project_hold, None)

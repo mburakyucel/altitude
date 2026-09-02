@@ -447,8 +447,10 @@ def tick() -> None:
                     deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
                     if not deferred:
                         with S.project_lock(project):
-                            t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
-                    S.append_event(project, t["slug"], "cleanup", notes=notes)
+                            t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now()
+                            S.save_task_transition(project, t2, "cleanup", transition_actor="altd", notes=notes)
+                    else:
+                        S.append_event(project, t["slug"], "cleanup", notes=notes)
                     log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
@@ -797,6 +799,8 @@ def install_statusline() -> dict:
 
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
+    S.reconcile_startup()
+    incidents.reconcile_startup()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance clears the restart-pending flag
         try:
             git_policy.service_preflight(config.REPO)

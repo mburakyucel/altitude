@@ -218,7 +218,9 @@ class TestCleanClose(unittest.TestCase):
                     try:
                         turns, logs = self._run(task, verdict)
                     finally:
-                        S.save_task(PROJECT, task)
+                        # Restore this deliberately corrupt fixture directly; production
+                        # save_task now refuses to overwrite unreconciled corrupt state.
+                        S.write_json(S.status_path(PROJECT, task["slug"]), task)
 
                     self.assertEqual(len(turns), 1)
                     self.assertEqual(turns[0][2], "report-landed")

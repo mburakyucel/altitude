@@ -1,10 +1,10 @@
 """Incident evidence and deduplicated system-fault reporting."""
 from __future__ import annotations
-import fcntl
 import json
 import os
 import re
 import sys
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -23,8 +23,7 @@ _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS
 
 
 def _index_append(row: dict) -> None:
-    with open(config.INCIDENT_INDEX, "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    S.append_jsonl(config.INCIDENT_INDEX, row, key_field="projection_id")
 
 
 FAULTS = config.ROOT / "monitor" / "faults.json"
@@ -32,19 +31,17 @@ FAULT_WINDOW_SECONDS = 24 * 3600
 
 
 def fault_lock_path() -> Path:
-    return FAULTS.with_suffix(".lock")
+    # The lock is a control-plane path and must follow the active runtime root;
+    # FAULTS remains a legacy data constant patched by older callers/tests.
+    return config.MONITOR_DIR / "faults.lock"
 
 
 @contextmanager
 def _fault_lock():
     """Serialize fault evidence RMW and dedupe, independently of project dispatch locks."""
     FAULTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(fault_lock_path(), "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    with S.ordered_file_lock(fault_lock_path(), S.LockLevel.RECOVERY):
+        yield
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
@@ -90,16 +87,26 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
 
 
+def _fold_index(path: Path) -> list[dict]:
+    """Fold append-only base/correction projections while reading legacy single rows."""
+    folded: dict[str, dict] = {}
+    for row in S.read_jsonl(path, key_field="projection_id", ignore_invalid=False):
+        key = row.get("incident_key") or (
+            f"{row.get('project')}/{row.get('id')}" if row.get("project") and row.get("id") else None
+        )
+        if not key:
+            continue
+        if row.get("projection_kind") == "amendment":
+            if key in folded:
+                folded[key].update(row.get("updates") or {})
+            continue
+        folded[key] = {k: v for k, v in row.items()
+                       if k not in ("projection_id", "projection_kind", "updates")}
+    return list(folded.values())
+
+
 def index() -> list[dict]:
-    if not config.INCIDENT_INDEX.exists():
-        return []
-    out = []
-    for line in config.INCIDENT_INDEX.read_text().splitlines():
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            pass
-    return out
+    return _fold_index(config.INCIDENT_INDEX)
 
 
 _IID = re.compile(r"^I-(\d+)$")
@@ -113,12 +120,8 @@ def _alloc_lock(directory: Path):
     It is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
     with itself nor invert an order against the project lock."""
     directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / ".alloc.lock", "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+    with S.ordered_file_lock(directory / ".alloc.lock", S.LockLevel.OPERATION):
+        yield
 
 
 def _issued_incident_numbers(project: str) -> list[int]:
@@ -136,14 +139,10 @@ def _issued_incident_numbers(project: str) -> list[int]:
         if r.get("project") == project:
             take(r.get("id"))
     ledger = config.project_dir(project) / "incidents.jsonl"
-    if ledger.exists():
-        for line in ledger.read_text().splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(row, dict):
-                take(row.get("id"))
+    # Legacy allocation deliberately skipped malformed historical rows. Keep that
+    # compatibility only here; normal durable readers fail closed on corruption.
+    for row in S.read_jsonl(ledger, key_field="projection_id", ignore_invalid=True):
+        take(row.get("id"))
     for d in (config.project_dir(project) / "incidents", config.project_path(project) / "docs" / "incidents"):
         if d.is_dir():
             for f in d.glob("I-*.md"):
@@ -194,15 +193,14 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
             raise RuntimeError(f"cannot file an incident on {project}: {iid or '(none allocated)'} already exists at {path} "
                                f"and so did every id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident "
                                "file is never overwritten")
-    S.atomic_write(path, template.format(id=iid, **fields))
-    row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
+    created = S.now()
+    row = {"incident_key": f"{project}/{iid}", "at": S.now(), "project": project,
+           "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "cause": cause.strip()[:200]}
-    with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
-    _index_append(row)
-    if task:
-        S.append_event(project, task, "incident", id=iid, tags=row["tags"], by=actor)
-    S.project_log(project, "incident", id=iid, title=title, tags=row["tags"])
+    meta = {"version": 1, **row, "at": created, "actor": actor}
+    source = f"<!-- altitude-incident: {json.dumps(meta, sort_keys=True)} -->\n" + template.format(id=iid, **fields)
+    S.atomic_write(path, source)
+    reconcile_incident_file(project, path)
     S.regen_state_md(project)
     return {"id": iid, "path": str(path)}
 
@@ -237,25 +235,66 @@ def _incident_task(body: str, spans: dict[str, tuple[int, int]]) -> str | None:
     return task if task and task != "-" else None
 
 
-def _index_correct(path: Path, project: str, incident: str, updates: dict) -> bool:
-    """Rewrite one incident's existing index row. Never appends: a second row for the same id would leave the
-    audit reading the old cause beside the new one."""
-    if not updates or not path.exists():
-        return False
-    lines, hit = [], False
-    for line in path.read_text().splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            lines.append(line)
+_SOURCE_META = re.compile(r"^<!-- altitude-(incident|amendment): (\{.*\}) -->$", re.M)
+
+
+def _source_metadata(path: Path) -> list[tuple[str, dict]]:
+    out = []
+    for match in _SOURCE_META.finditer(path.read_text()):
+        value = json.loads(match.group(2))
+        if not isinstance(value, dict) or value.get("version") != 1:
+            raise ValueError(f"invalid Altitude incident metadata in {path}")
+        out.append((match.group(1), value))
+    return out
+
+
+def reconcile_incident_file(project: str, path: Path) -> None:
+    """Rebuild every derived index/event row from one canonical incident Markdown file."""
+    metadata = _source_metadata(path)
+    base = next((value for kind, value in metadata if kind == "incident"), None)
+    if not base:
+        return  # legacy Markdown remains readable but has no reconstructable metadata
+    iid, task = base.get("id"), base.get("task")
+    if base.get("project") != project or path.stem != iid:
+        raise ValueError(f"incident metadata does not match {path}")
+    key = f"{project}/{iid}"
+    row = {k: base.get(k) for k in ("incident_key", "at", "project", "id", "title", "task", "tags", "cause")}
+    row.update({"projection_id": f"incident:{key}:created", "projection_kind": "created"})
+    for target in (config.project_dir(project) / "incidents.jsonl", config.INCIDENT_INDEX):
+        S.append_jsonl(target, row, key_field="projection_id")
+    if task and S.task_dir(project, task).is_dir():
+        S.append_event(project, task, "incident", event_id=f"incident:{key}",
+                       at=base.get("at"), id=iid, tags=base.get("tags") or [], by=base.get("actor"))
+    S.project_log(project, "incident", event_id=f"incident:{key}",
+                  at=base.get("at"), id=iid, title=base.get("title"), tags=base.get("tags") or [])
+    for kind, amendment in metadata:
+        if kind != "amendment":
             continue
-        if row.get("project") == project and row.get("id") == incident:
-            row.update(updates)
-            line, hit = json.dumps(row, sort_keys=True), True
-        lines.append(line)
-    if hit:
-        S.atomic_write(path, "\n".join(lines) + "\n")
-    return hit
+        amendment_id = amendment.get("amendment_id")
+        if not isinstance(amendment_id, str) or not amendment_id:
+            raise ValueError(f"invalid amendment metadata in {path}")
+        projection_id = f"incident:{key}:amend:{amendment_id}"
+        correction = {"projection_id": projection_id, "projection_kind": "amendment",
+                      "incident_key": key, "project": project, "id": iid,
+                      "at": amendment.get("at"), "updates": amendment.get("updates") or {}}
+        for target in (config.project_dir(project) / "incidents.jsonl", config.INCIDENT_INDEX):
+            S.append_jsonl(target, correction, key_field="projection_id")
+        event = f"incident-amended:{key}:{amendment_id}"
+        payload = {"id": iid, "fields": amendment.get("fields") or [],
+                   "reason": amendment.get("reason"), "by": amendment.get("actor")}
+        if task and S.task_dir(project, task).is_dir():
+            S.append_event(project, task, "incident-amended", event_id=event,
+                           at=amendment.get("at"), **payload)
+        S.project_log(project, "incident-amended", event_id=event,
+                      at=amendment.get("at"), **payload)
+
+
+def reconcile_startup() -> None:
+    for project in config.load_projects():
+        directory = config.project_dir(project) / "incidents"
+        if directory.is_dir():
+            for path in sorted(directory.glob("I-*.md")):
+                reconcile_incident_file(project, path)
 
 
 def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3", **fields) -> dict:
@@ -287,6 +326,7 @@ def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3
     path = config.project_dir(project) / "incidents" / f"{incident}.md"
     if not path.exists():
         raise ValueError(f"unknown incident {incident!r} in project {project!r} (no {path})")
+    reconcile_incident_file(project, path)
     body = path.read_text()
     spans = _field_spans(body, incident)
     absent = [AMENDABLE[k] for k in AMENDABLE if k in fields and AMENDABLE[k] not in spans]
@@ -300,17 +340,17 @@ def amend_incident(project: str, incident: str, *, reason: str, actor: str = "l3
     was = [f"- was {AMENDABLE[k]}: {body[s:e]}" for (s, e), k in edits]      # file order, so it reads like the file
     for (s, e), key in reversed(edits):                                      # right to left: earlier spans keep their offsets
         body = body[:s] + fields[key] + body[e:]
-    body = body.rstrip("\n") + f"\n\namended: {S.now()[:10]} by {actor}: {reason}\n" + "\n".join(was) + "\n"
+    amended_at = S.now()
+    amendment = {"version": 1, "amendment_id": uuid.uuid4().hex, "at": amended_at,
+                 "actor": actor, "reason": reason, "fields": sorted(fields),
+                 "updates": {INDEXED[k]: fields[k][:200] for k in fields if k in INDEXED}}
+    body = (body.rstrip("\n") + f"\n\n<!-- altitude-amendment: {json.dumps(amendment, sort_keys=True)} -->"
+            f"\namended: {amended_at[:10]} by {actor}: {reason}\n" + "\n".join(was) + "\n")
     S.atomic_write(path, body)
-    row = {INDEXED[k]: fields[k][:200] for k in fields if k in INDEXED}
-    _index_correct(config.project_dir(project) / "incidents.jsonl", project, incident, row)
-    _index_correct(config.INCIDENT_INDEX, project, incident, row)
-    if task:
-        S.append_event(project, task, "incident-amended", id=incident, fields=sorted(fields), reason=reason, by=actor)
-    elif named:
+    reconcile_incident_file(project, path)
+    if not task and named:
         print(f"alt: {incident} names task {named!r}, which has no folder — amended the incident, wrote no event",
               file=sys.stderr)
-    S.project_log(project, "incident-amended", id=incident, fields=sorted(fields), reason=reason, by=actor)
     S.regen_state_md(project)
     return {"id": incident, "path": str(path), "amended": sorted(fields), "task": task, "names_task": named,
             "by": actor}

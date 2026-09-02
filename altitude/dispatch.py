@@ -1,7 +1,6 @@
 """Dispatch one task-owning L2 in its worktree, monitor it, and safely resume its session."""
 from __future__ import annotations
 from contextlib import contextmanager
-import fcntl
 import json
 import secrets
 import subprocess
@@ -16,6 +15,21 @@ class DispatchFailure(T.TransitionError):
     """A launch fault already persisted and routed through the global recovery fuse."""
 
 
+class _PendingResumeFault(Exception):
+    """Inert description of a resume fault that must be persisted after resume locks unwind."""
+
+    def __init__(self, project: str, slug: str, previous: str, reason: str, *,
+                 incident_kind: str, incident_detail: str, user_error: Exception):
+        super().__init__(str(user_error))
+        self.project = project
+        self.slug = slug
+        self.previous = previous
+        self.reason = reason[:300]
+        self.incident_kind = incident_kind
+        self.incident_detail = incident_detail
+        self.user_error = user_error
+
+
 def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
     """Leave a failed launch queued, clear its transient claim, and trip recovery once."""
     reason = str(error)[:300]
@@ -23,8 +37,8 @@ def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchF
         task = S.load_task(project, slug)
         if task.get("state") == "queued":
             task["dispatching"] = None
-            S.save_task(project, task)
-    S.append_event(project, slug, "dispatch-failed", reason=reason)
+            S.save_task_transition(project, task, "dispatch-failed",
+                                   transition_actor="altd", reason=reason)
     from . import incidents
     incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug)
     return DispatchFailure(f"dispatch failed: {reason}")
@@ -37,6 +51,33 @@ def record_resume_failure(project: str, slug: str, previous: str, error: object)
     from . import incidents
     incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
     return RuntimeError(f"resume of {project}/{slug} failed: {reason}")
+
+
+def _pending_resume_failure(project: str, slug: str, previous: str, error: object) -> _PendingResumeFault:
+    reason = str(error)[:300]
+    return _PendingResumeFault(
+        project, slug, previous, reason,
+        incident_kind="l2-resume", incident_detail=f"{project}/{slug}: {reason}",
+        user_error=RuntimeError(f"resume of {project}/{slug} failed: {reason}"),
+    )
+
+
+def _raise_recorded_resume_fault(pending: _PendingResumeFault) -> None:
+    """Persist one locked resume failure only after every resume lock has unwound."""
+    if pending.incident_kind == "l2-resume":
+        raise record_resume_failure(
+            pending.project, pending.slug, pending.previous, pending.reason
+        ) from pending.__cause__
+    S.append_event(
+        pending.project, pending.slug, "resume-failed",
+        previous=pending.previous, reason=pending.reason,
+    )
+    from . import incidents
+    incidents.system_fault(
+        pending.incident_kind, pending.incident_detail,
+        project=pending.project, task=pending.slug,
+    )
+    raise pending.user_error from pending.__cause__
 
 
 def project_never_list(repo: Path) -> str:
@@ -65,13 +106,8 @@ def l2_job_root(project: str, slug: str) -> Path:
 def publication_settlement(project: str):
     """Fence provenance gates from the remote-merge/service-fast-forward interval."""
     path = config.project_dir(project) / ".publication-settlement.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    with S.ordered_file_lock(path, S.LockLevel.GIT_PUBLICATION):
+        yield
 
 
 def _git_branch(worktree: str | Path) -> str | None:
@@ -306,8 +342,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         with S.project_lock(project):
             held_task = S.load_task(project, slug)
             held_task["dispatching"] = None
-            S.save_task(project, held_task)
-        S.append_event(project, slug, "dispatch-held", reason=str(exc))
+            S.save_task_transition(project, held_task, "dispatch-held",
+                                   transition_actor="altd", reason=str(exc))
         raise T.TransitionError(str(exc)) from exc
     except Exception as exc:
         raise record_dispatch_failure(project, slug, exc) from exc
@@ -361,13 +397,16 @@ def l2_env(project: str, task: dict) -> dict:
 def _resume_lock(project: str, slug: str):
     """Serialize replacements of one L2 across the server and human-run CLI processes."""
     path = S.task_dir(project, slug) / ".resume.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+    # The recovery launch barrier is outermost so a hold cannot race a stop/start.
+    # Project then task lock matches the global order; legacy helpers may safely
+    # re-enter these already-held exact locks.
+    try:
+        with recovery._launch_lock():  # noqa: SLF001 - canonical recovery launch barrier
+            with S.project_lock(project):
+                with S.task_lock(path):
+                    yield
+    except recovery.LaunchHeld as exc:
+        raise T.TransitionError(str(exc)) from exc
 
 
 def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str | None = None,
@@ -451,9 +490,12 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
             # branch, and every committed ancestor remain strict.
             _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
-        from . import incidents
-        incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
-        raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
+        reason = str(exc)
+        raise _PendingResumeFault(
+            project, slug, sid, reason,
+            incident_kind="task-git-provenance", incident_detail=f"resume {project}/{slug}: {reason}",
+            user_error=T.TransitionError(f"resume refused by Git provenance gate: {exc}"),
+        ) from exc
     # Provenance checks may take a network round trip. Re-read before spending an engine launch.
     current = S.load_task(project, slug)
     _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
@@ -479,8 +521,12 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
                 old = next((row for row in engines.claude_agents() if row.get("id") == old_worker), None)
                 if old and old.get("state") not in ("failed", "done", "stopped") and old.get("status") != "exited":
                     raise RuntimeError(f"Claude worker {old_worker} is still live after stop")
+        except S.LockOrderError:
+            raise
         except Exception as exc:
-            raise record_resume_failure(project, slug, sid, f"old worker could not be stopped: {exc}") from exc
+            raise _pending_resume_failure(
+                project, slug, sid, f"old worker could not be stopped: {exc}"
+            ) from exc
     try:
         held = recovery.dispatch_hold(project, task)
         if held:
@@ -493,13 +539,17 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     except recovery.LaunchHeld as exc:
         try:
             _defer_stopped_resume(project, task, text, str(exc), previous=sid)
+        except S.LockOrderError:
+            raise
         except Exception as defer_exc:
-            raise record_resume_failure(
+            raise _pending_resume_failure(
                 project, slug, sid, f"recovery hold appeared after worker stop and pending resume could not persist: {defer_exc}"
             ) from defer_exc
         raise T.TransitionError(str(exc)) from exc
+    except S.LockOrderError:
+        raise
     except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
+        raise _pending_resume_failure(project, slug, sid, exc) from exc
     try:
         if engine == "claude":
             live = [a for a in engines.claude_agents()
@@ -508,12 +558,16 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         else:
             row = res.get("agent") or {}
             live = [row] if row.get("id") and row.get("sessionId") and row.get("state") == "working" else []
+    except S.LockOrderError:
+        raise
     except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
+        raise _pending_resume_failure(project, slug, sid, exc) from exc
     if res.get("returncode") != 0 or not live:
         for row in live:
             try:
                 engines.stop_l2_worker(engine, row["id"], job_root=job_root)
+            except S.LockOrderError:
+                raise
             except Exception:  # noqa: BLE001 — the recovery fuse records the launch failure below
                 pass
         note = res.get("stderr", "")[:200] or res.get("stdout", "")[:200]
@@ -523,7 +577,7 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
             detail = "no concrete live worker"
             if note:
                 detail += f" ({note})"
-        raise record_resume_failure(project, slug, sid, detail)
+        raise _pending_resume_failure(project, slug, sid, detail)
     new = max(live, key=lambda a: a.get("startedAt") or 0)
     changed = None
     try:
@@ -540,20 +594,28 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
                 if delivered_issue_digest:
                     t["github_issue_context_delivered"] = delivered_issue_digest
                 t.pop("completion_requested", None)
-                S.save_task(project, t)
+                S.save_task_transition(
+                    project, t, "resumed", transition_actor="altd", engine=engine,
+                    agent_id=new.get("id"), session_id=new.get("sessionId"),
+                    previous_session=sid, previous_worker=old_worker,
+                )
+    except S.LockOrderError:
+        raise
     except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held
         try:
             engines.stop_l2_worker(engine, new["id"], job_root=job_root)
+        except S.LockOrderError:
+            raise
         except Exception:  # noqa: BLE001 — recovery owns any worker the stop command could not reach
             pass
-        raise record_resume_failure(project, slug, sid, f"could not bind replacement worker: {exc}") from exc
+        raise _pending_resume_failure(
+            project, slug, sid, f"could not bind replacement worker: {exc}"
+        ) from exc
     if changed is not None:
         engines.stop_l2_worker(engine, new["id"], job_root=job_root)
         S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],
                        reason=str(changed))
         raise T.TransitionError(f"{slug}: task generation changed during resume; replacement worker stopped") from changed
-    S.append_event(project, slug, "resumed", engine=engine, agent_id=new.get("id"),
-                   session_id=new.get("sessionId"), previous_session=sid, previous_worker=old_worker)
     res["agent"] = new
     return res
 
@@ -575,16 +637,20 @@ def _defer_stopped_resume(project: str, snapshot: dict, prompt: str, hold: str, 
         task["blocked_reason"] = reason
         if task["state"] == "running":
             T._move(project, task, "blocked", "altd", reason=reason)  # noqa: SLF001 — atomic state + resume payload
-        else:
-            S.save_task(project, task)
-            S.regen_state_md(project)
-        S.append_event(project, task["slug"], "resume-held", reason=hold, previous=previous,
-                       pending_resume=True)
+            task = S.load_task(project, task["slug"])
+        S.save_task_transition(
+            project, task, "resume-held", transition_actor="altd", reason=hold,
+            previous=previous, pending_resume=True,
+        )
+        S.regen_state_md(project)
 
 
 def resume_session(project: str, slug: str, text: str, session_id: str | None = None, **expected) -> dict:
-    with _resume_lock(project, slug):
-        return _resume_session_locked(project, slug, text, session_id, **expected)
+    try:
+        with _resume_lock(project, slug):
+            return _resume_session_locked(project, slug, text, session_id, **expected)
+    except _PendingResumeFault as pending:
+        _raise_recorded_resume_fault(pending)
 
 
 def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
@@ -615,8 +681,10 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
                 task["resume_prefix"] = prefix
                 task["resume_after"] = S.now()
                 task["blocked_reason"] = waiting
-                S.save_task(project, task)
-                S.append_event(project, slug, "resume-deferred", hold=hold, reason=waiting)
+                S.save_task_transition(
+                    project, task, "resume-deferred", transition_actor="altd",
+                    hold=hold, reason=waiting,
+                )
             return {"deferred": True, "hold": hold, "waiting": waiting}
     prompt = (answer if task.get("resume_exact_prompt")
               else f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
@@ -629,7 +697,8 @@ def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "
     if locked_resume:
         res = _resume_session_locked(project, slug, prompt, **expected)
     else:
-        # Keep the public resume seam used by callers and tests; it owns its own cross-process lock.
+        # The public resume seam owns the lock and records pending faults only
+        # after that lock has unwound.
         res = resume_session(project, slug, prompt, **expected)
     new_agent = res.get("agent") or {}
     T.resume(project, slug, answer=answer, expected_state="blocked",
@@ -657,34 +726,37 @@ def message_l2(project: str, slug: str, text: str, *, expected_dispatch_id: str 
     text = str(text or "").strip()
     if not text:
         raise T.TransitionError("task message is empty")
-    with _resume_lock(project, slug):
-        task = S.load_task(project, slug)
-        _require_resume_snapshot(task, slug)
-        for label, expected, actual in (
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("engine", expected_engine, l2_engine(task)),
-        ):
-            if expected is not None and str(expected) != str(actual or ""):
-                raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
-        if not task.get("dispatch_id") or not task.get("session_id"):
-            raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
-        expected = {
-            "expected_dispatch_id": task["dispatch_id"],
-            "expected_session_id": task["session_id"],
-            "expected_agent_id": task.get("agent_id"),
-            "expected_state": task["state"],
-        }
-        message = T.append_task_message(
-            project, slug, "burak", text, actor="burak",
-            expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
-            expected_state=task["state"],
-        )
-        if task["state"] == "blocked":
-            result = _resume_blocked_locked(project, slug, text, **expected)
-        else:
-            result = _resume_session_locked(project, slug, text, **expected)
-        return {**result, "message": message}
+    try:
+        with _resume_lock(project, slug):
+            task = S.load_task(project, slug)
+            _require_resume_snapshot(task, slug)
+            for label, expected, actual in (
+                ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
+                ("session", expected_session_id, task.get("session_id")),
+                ("engine", expected_engine, l2_engine(task)),
+            ):
+                if expected is not None and str(expected) != str(actual or ""):
+                    raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
+            if not task.get("dispatch_id") or not task.get("session_id"):
+                raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
+            expected = {
+                "expected_dispatch_id": task["dispatch_id"],
+                "expected_session_id": task["session_id"],
+                "expected_agent_id": task.get("agent_id"),
+                "expected_state": task["state"],
+            }
+            message = T.append_task_message(
+                project, slug, "burak", text, actor="burak",
+                expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
+                expected_state=task["state"],
+            )
+            if task["state"] == "blocked":
+                result = _resume_blocked_locked(project, slug, text, **expected)
+            else:
+                result = _resume_session_locked(project, slug, text, **expected)
+            return {**result, "message": message}
+    except _PendingResumeFault as pending:
+        _raise_recorded_resume_fault(pending)
 
 
 def resume_due(project: str) -> list[str]:

@@ -68,9 +68,10 @@ def _claim(project: str, task: dict, action: dict) -> dict:
             record = existing
         else:
             live["pending_action"] = record
-            S.save_task(project, live)
-            S.append_event(project, task["slug"], "l2-action-claimed", action=action["action"],
-                           agent_id=task.get("agent_id"))
+            S.save_task_transition(
+                project, live, "l2-action-claimed", transition_actor="altd",
+                action=action["action"], agent_id=task.get("agent_id"),
+            )
         return record
 
 
@@ -186,8 +187,8 @@ def _publish(project: str, task: dict, action: dict) -> dict:
     # Keep every strict dispatch/resume gate outside the short interval after GitHub accepts a merge but before the
     # self-deploy checkout reaches origin/main. Settlement also runs when land returns a retry-class error: GitHub may
     # have accepted the exact merge even when a later observation reports that the pinned pair moved.
-    with dispatch.publication_settlement(project):
-        try:
+    try:
+        with dispatch.publication_settlement(project):
             result = land.land(
                 str(action["commit_message"]), project=project,
                 pr_title=str(action.get("pr_title") or "").strip() or None,
@@ -196,9 +197,9 @@ def _publish(project: str, task: dict, action: dict) -> dict:
                 authority={"actor": "l2", "dispatch_id": task.get("dispatch_id"),
                            "l2_token": task.get("l2_token")},
             )
-        finally:
-            if wants_merge:
-                dispatch.pull_after_done(project, task)
+    finally:
+        if wants_merge:
+            dispatch.pull_after_done(project, task)
     report = _report(action, result, task)
     S.write_json(S.task_dir(project, task["slug"]) / "report.json", report)
     _clear(project, task["slug"], _identity(task))

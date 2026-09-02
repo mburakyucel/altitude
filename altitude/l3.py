@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import threading
+import uuid
 from pathlib import Path
 
 from . import config, engines, l3_actions, route, state as S
@@ -33,22 +34,14 @@ def save_info(project: str, data: dict) -> None:
 
 def chat_log(project: str, role: str, text: str, **meta) -> None:
     path = config.project_dir(project) / "chat.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a") as stream:
-        stream.write(json.dumps({"at": S.now(), "role": role, "text": text, **meta}, sort_keys=True) + "\n")
+    record = {"id": str(meta.pop("id", "") or uuid.uuid4().hex), "at": S.now(),
+              "role": role, "text": text, **meta}
+    S.append_jsonl(path, record, key_field="id")
 
 
 def chat_history(project: str, limit: int = 60) -> list[dict]:
     path = config.project_dir(project) / "chat.jsonl"
-    if not path.exists():
-        return []
-    result = []
-    for line in path.read_text().splitlines()[-limit:]:
-        try:
-            result.append(json.loads(line))
-        except ValueError:
-            pass
-    return result
+    return S.read_jsonl(path, key_field="id")[-limit:]
 
 
 def busy(project: str) -> bool:

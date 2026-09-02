@@ -1,10 +1,11 @@
 """Task lifecycle — queued, running, blocked, reported, then archived. Every transition goes through here."""
 from __future__ import annotations
+import hashlib
 import json
-import os
 import re
 import subprocess
 import uuid
+from contextlib import ExitStack
 
 from . import config, state as S
 
@@ -79,12 +80,9 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
             "by": actor or role,
         }
         path = S.task_dir(project, slug) / "conversation.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as stream:
-            stream.write(json.dumps(message, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        S.append_event(project, slug, "task-message", message_id=message["id"], role=role,
+        S.append_jsonl(path, message, key_field="id")
+        S.append_event(project, slug, "task-message", event_id=f"task-message:{message['id']}",
+                       at=message["at"], message_id=message["id"], role=role,
                        dispatch_id=task["dispatch_id"], by=message["by"])
         return message
 
@@ -92,29 +90,35 @@ def append_task_message(project: str, slug: str, role: str, text: str, *,
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
     """Read the durable task conversation, failing loudly on a corrupt record."""
     path = S.task_dir(project, slug) / "conversation.jsonl"
-    if not path.exists():
-        return []
-    lines = path.read_text().splitlines()
+    try:
+        messages = S.read_jsonl(path, key_field="id")
+    except ValueError as exc:
+        raise ValueError(f"corrupt task conversation in {path}: {exc}") from exc
     if limit is not None:
         count = max(0, int(limit))
-        lines = lines[-count:] if count else []
-    messages = []
-    for line_number, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        try:
-            message = json.loads(line)
-        except ValueError as exc:
-            raise ValueError(f"corrupt task conversation in {path} at line {line_number}: {exc}") from exc
+        messages = messages[-count:] if count else []
+    for line_number, message in enumerate(messages, 1):
         if (not isinstance(message, dict) or message.get("role") not in TASK_MESSAGE_ROLES
                 or not isinstance(message.get("text"), str)):
             raise ValueError(f"corrupt task conversation in {path} at line {line_number}: invalid message")
-        messages.append(message)
     return messages
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     frm = task["state"]
+    payload = {"frm": frm, "to": to, "by": actor, **ev}
+    S.reconcile_task_transition(project, task)
+    if frm == to:
+        previous = task.get("transition") or {}
+        previous_payload = previous.get("payload") or {}
+        # A caller retry after failure between the authoritative write and audit
+        # append completes the same transition instead of inventing a second one.
+        if (previous.get("event_kind") == "state"
+                and previous_payload.get("to") == to
+                and previous_payload.get("by") == actor
+                and all(previous_payload.get(key) == value for key, value in ev.items())):
+            S.regen_state_md(project)
+            return task
     if to not in TRANSITIONS.get(frm, set()):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
     stopped = None
@@ -132,8 +136,7 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     task["state"] = to
     if to == "running":
         task["dispatching"] = None
-    S.save_task(project, task)
-    S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
+    S.save_task_transition(project, task, "state", transition_actor=actor, **payload)
     if stopped:
         engine, note = stopped
         S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
@@ -153,7 +156,34 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
     if model in config.MODEL_ALIASES and engine is None:
         engine = "claude"  # a provider-specific model name is itself an explicit provider pin
     config.project(project)
-    with S.project_lock(project):
+    recovery = None
+    if source == "recovery":
+        from . import recovery as recovery_module
+        recovery = recovery_module
+    creation = {
+        "title": title, "request": request.rstrip(), "actor": actor, "source": source,
+        "model": model, "paths": [p.strip() for p in (paths or []) if p.strip()],
+        "hold_merge": (hold_merge or "").strip() or None, "engine": engine,
+    }
+    creation_key = hashlib.sha256(
+        json.dumps(creation, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    with ExitStack() as locks:
+        if recovery is not None:
+            locks.enter_context(recovery._lock())  # noqa: SLF001 - recovery precedes project
+        locks.enter_context(S.project_lock(project))
+        for existing in S.list_tasks(project):
+            if existing.get("creation_key") != creation_key:
+                continue
+            request_path = S.task_dir(project, existing["slug"]) / "request.md"
+            expected = request.rstrip() + "\n"
+            if request_path.exists() and request_path.read_text() != expected:
+                raise TransitionError(f"{existing['slug']}: task creation key has conflicting request content")
+            if not request_path.exists():
+                S.atomic_write(request_path, expected)
+            S.reconcile_task_transition(project, existing)
+            S.regen_state_md(project)
+            return existing
         base = S.slugify(title)
         slug, n = base, 1
         while S.task_dir(project, slug).exists():
@@ -161,20 +191,13 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             slug = f"{base}-{n}"
         recovery_claimed = False
         if source == "recovery":
-            from . import recovery
             try:
+                assert recovery is not None
                 recovery.claim_repair(project, slug, actor=actor)
             except ValueError as exc:
                 raise TransitionError(str(exc)) from exc
             recovery_claimed = True
         d = S.tasks_dir(project) / slug
-        try:
-            d.mkdir(parents=True)
-            S.atomic_write(d / "request.md", request.rstrip() + "\n")
-        except Exception:
-            if recovery_claimed:
-                recovery.release_failed_claim(project, slug)
-            raise
         task = {"slug": slug, "title": title, "state": "queued", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
@@ -182,15 +205,19 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "verified": None, "model": model, "engine": engine, "l2_engine": None,
                 "engine_model": None, "routing": None, "l2_token": None,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
-                "hold_merge": (hold_merge or "").strip() or None}
+                "hold_merge": (hold_merge or "").strip() or None,
+                "creation_key": creation_key}
         try:
-            S.save_task(project, task)
+            S.save_task_transition(
+                project, task, "new", transition_actor=actor, by=actor, title=title,
+                source=source, queued=True, recovery_delegated=source == "recovery",
+                creation_key=creation_key,
+            )
+            S.atomic_write(d / "request.md", request.rstrip() + "\n")
         except Exception:
             if recovery_claimed:
                 recovery.release_failed_claim(project, slug)
             raise
-        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True,
-                       recovery_delegated=source == "recovery")
         S.regen_state_md(project)
         return task
 
@@ -209,7 +236,9 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
     with S.project_lock(project):
         d = S.task_dir(project, slug)
         S.atomic_write(d / "brief.md", brief_md.rstrip() + "\n")
-        S.append_event(project, slug, "brief", by=actor, bytes=len(brief_md))
+        task = S.load_task(project, slug)
+        S.save_task_transition(project, task, "brief", transition_actor=actor,
+                               by=actor, bytes=len(brief_md))
         return d / "brief.md"
 
 
@@ -336,9 +365,10 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                                             "dispatch_id": expected_dispatch_id,
                                             "agent_id": task.get("agent_id"),
                                             "session_id": task.get("session_id")}
-            S.save_task(project, task)
-            S.append_event(project, slug, "completion-requested", by=actor,
-                           dispatch_id=expected_dispatch_id)
+            S.save_task_transition(
+                project, task, "completion-requested", transition_actor=actor,
+                by=actor, dispatch_id=expected_dispatch_id,
+            )
             return task
         for label, expected, actual in (
             ("state", expected_state, task.get("state")),
@@ -405,29 +435,19 @@ def set_spend(project: str, slug: str, **spend) -> dict:
 
 def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
     """An FYI is a line in the project's inbox.jsonl; the page shows the tail."""
-    item = {"at": S.now(), "kind": "fyi", "project": project, "slug": slug, "text": text.strip(), "by": actor, "seen": False}
+    item = {"id": uuid.uuid4().hex, "at": S.now(), "kind": "fyi", "project": project,
+            "slug": slug, "text": text.strip(), "by": actor, "seen": False}
     p = config.project_dir(project) / "inbox.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        import json
-        f.write(json.dumps(item, sort_keys=True) + "\n")
+    S.append_jsonl(p, item, key_field="id")
     if slug:
-        S.append_event(project, slug, "fyi", text=text.strip(), by=actor)
+        S.append_event(project, slug, "fyi", event_id=f"fyi:{item['id']}", at=item["at"],
+                       text=text.strip(), by=actor)
     return item
 
 
 def inbox(project: str, limit: int = 50) -> list[dict]:
-    import json
     p = config.project_dir(project) / "inbox.jsonl"
-    if not p.exists():
-        return []
-    out = []
-    for line in p.read_text().splitlines()[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            pass
-    return out
+    return S.read_jsonl(p, key_field="id")[-limit:]
 
 
 def decisions(project: str) -> list[dict]:
@@ -448,7 +468,13 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     why = (why or "").strip() or None
     with S.project_lock(project):
         t = S.load_task(project, slug)
+        S.reconcile_task_transition(project, t)
+        previous = t.get("transition") or {}
+        prior_payload = previous.get("payload") or {}
+        if (t.get("hold_merge") == why and previous.get("event_kind") in ("hold-merge", "release-merge")
+                and prior_payload.get("why") == why and prior_payload.get("actor") == actor):
+            return t
         t["hold_merge"] = why
-        S.save_task(project, t)
-    S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor)
+        S.save_task_transition(project, t, "hold-merge" if why else "release-merge",
+                               transition_actor=actor, why=why, actor=actor)
     return t

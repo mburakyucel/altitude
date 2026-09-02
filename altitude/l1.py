@@ -2,7 +2,6 @@
 worktree; `alt l1 wait` collects the result. The L2 decides when L1 help is useful and owns every result. Raw stream
 artifacts are local diagnostic evidence: cite their paths, never paste their contents into a PR, issue, or report."""
 from __future__ import annotations
-import fcntl
 import os
 import re
 import subprocess
@@ -67,8 +66,39 @@ def load(project: str, slug: str, name: str) -> dict | None:
     return S.read_json(runs_dir(project, slug) / f"{name}.json", None)
 
 
+@contextmanager
+def _record_lock(project: str, slug: str):
+    with S.project_lock(project):
+        with S.task_lock(runs_dir(project, slug) / ".lock"):
+            yield
+
+
 def save(project: str, slug: str, rec: dict) -> None:
-    S.write_json(runs_dir(project, slug) / f"{rec['name']}.json", rec)
+    with _record_lock(project, slug):
+        path = runs_dir(project, slug) / f"{rec['name']}.json"
+        current = S.read_json(path, None)
+        if isinstance(current, dict):
+            S.reconcile_transition(current)
+        S.write_json(path, rec)
+
+
+def _finish(project: str, slug: str, name: str, result: dict, *, actor: str) -> dict:
+    """Close a helper under its owner lock; a real child result supersedes a dead-process guess."""
+    with _record_lock(project, slug):
+        rec = load(project, slug, name)
+        if not rec:
+            raise T.TransitionError(f"no run {name!r}")
+        if rec.get("done") and actor != "l1":
+            return rec
+        rec.update({"done": S.now(), "result": result})
+        S.write_json_transition(
+            runs_dir(project, slug) / f"{name}.json", rec, "l1-finished",
+            subject=f"{project}/{slug}/l1/{name}", actor=actor,
+            projection=S.task_projection(project, slug), name=name,
+            engine=rec["engine"], pr=result.get("pr"),
+            error=str(result.get("error") or "")[:200],
+        )
+        return rec
 
 
 def list_runs(project: str, slug: str) -> list[dict]:
@@ -104,13 +134,9 @@ def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token
 @contextmanager
 def _launch_permission(project: str, slug: str, dispatch_id: str, l2_token: str):
     """Fence the final L1 Popen against both recovery and a concurrent L2 replacement."""
-    # Project state can already reach the recovery launch barrier while holding this lock
-    # (for example, quota-fault detection during dispatch). Keep that established lock order
-    # here as project -> launch; the reverse order can deadlock fault publication against L1.
-    with S.project_lock(project):
-        snapshot = S.load_task(project, slug)
-        _require_current_l2(snapshot, slug, dispatch_id, l2_token)
-        with recovery.launch_permission(project, snapshot):
+    snapshot = S.load_task(project, slug)
+    with recovery.launch_permission(project, snapshot):
+        with S.project_lock(project):
             current = S.load_task(project, slug)
             _require_current_l2(current, slug, dispatch_id, l2_token)
             yield
@@ -132,20 +158,27 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     if held:
         raise T.TransitionError(held)
     lock_path = runs_dir(project, slug) / ".lock"
-    with open(lock_path, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        runs = list_runs(project, slug)
-        author = next((r["engine"] for r in reversed(runs) if r["role"] == "implementer"), None)
-        used_names = {str(r["name"]) for r in runs}
-        sequences = [int(r.get("n") or 0) for r in runs]
-        sequences.extend(int(m.group(1)) for used in used_names if (m := re.search(r"-(\d+)$", used)))
-        n = max(sequences, default=0) + 1
-        name = name or f"{role}-{n}"
-        if name in used_names:
-            raise T.TransitionError(f"run {name!r} already exists")
-        return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
-                      paths=paths, n=n, author=author, runs=runs, expected_dispatch_id=expected_dispatch_id,
-                      expected_l2_token=expected_l2_token)
+    try:
+        with recovery._launch_lock():  # noqa: SLF001 - recovery precedes project/task locks
+            with S.project_lock(project):
+                task = S.load_task(project, slug)
+                _require_current_l2(task, slug, expected_dispatch_id, expected_l2_token)
+                with S.task_lock(lock_path):
+                    runs = list_runs(project, slug)
+                    author = next((r["engine"] for r in reversed(runs) if r["role"] == "implementer"), None)
+                    used_names = {str(r["name"]) for r in runs}
+                    sequences = [int(r.get("n") or 0) for r in runs]
+                    sequences.extend(int(m.group(1)) for used in used_names if (m := re.search(r"-(\d+)$", used)))
+                    n = max(sequences, default=0) + 1
+                    name = name or f"{role}-{n}"
+                    if name in used_names:
+                        raise T.TransitionError(f"run {name!r} already exists")
+                    return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
+                                  paths=paths, n=n, author=author, runs=runs,
+                                  expected_dispatch_id=expected_dispatch_id,
+                                  expected_l2_token=expected_l2_token)
+    except recovery.LaunchHeld as exc:
+        raise T.TransitionError(str(exc)) from exc
 
 
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
@@ -268,9 +301,12 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
     finally:
         log.close()
     rec["pid"] = child.pid
-    save(project, slug, rec)
-    S.append_event(project, slug, "l1-started", name=name, role=role, engine=choice["engine"],
-                   why=choice["why"], model=model, actor="l2")
+    S.write_json_transition(
+        runs_dir(project, slug) / f"{name}.json", rec, "l1-started",
+        subject=f"{project}/{slug}/l1/{name}", actor="l2",
+        projection=S.task_projection(project, slug), name=name, role=role,
+        engine=choice["engine"], why=choice["why"], model=model,
+    )
     return rec
 
 
@@ -388,13 +424,10 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     if summary and "no pr" not in summary.lower():
         pm = PR_RE.search(summary)
         pr = int(pm.group(1)) if pm else None
-    rec.update({"done": S.now(), "result": {"error": err, "pr": pr, "patch": patch_path,
-                                            "summary": summary, "usage": res.get("usage"),
-                                            "structured": res.get("structured"), "returncode": res.get("returncode"),
-                                            "text_tail": text[-1500:], "raw": raw_info}})
-    save(project, slug, rec)
-    S.append_event(project, slug, "l1-finished", name=name, engine=rec["engine"], pr=pr, error=(err or "")[:200], actor="l1")
-    return rec
+    result = {"error": err, "pr": pr, "patch": patch_path, "summary": summary,
+              "usage": res.get("usage"), "structured": res.get("structured"),
+              "returncode": res.get("returncode"), "text_tail": text[-1500:], "raw": raw_info}
+    return _finish(project, slug, name, result, actor="l1")
 
 
 def _compact(r: dict) -> dict:
@@ -436,9 +469,9 @@ def status(project: str, slug: str) -> list[dict]:
     out = []
     for r in list_runs(project, slug):
         if not r.get("done") and not _alive(r.get("pid")):  # the child vanished without closing its record: say so
-            r.update({"done": S.now(), "result": {"error": "L1 process died before finishing (no result)", "pr": None, "summary": None}})
-            save(project, slug, r)
-            S.append_event(project, slug, "l1-finished", name=r["name"], engine=r["engine"], pr=None, error="process died", actor="altd")
+            r = _finish(project, slug, r["name"],
+                        {"error": "L1 process died before finishing (no result)",
+                         "pr": None, "summary": None}, actor="altd")
         out.append(_compact(r))
     return out
 

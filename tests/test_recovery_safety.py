@@ -38,6 +38,123 @@ class TestRecoveryFuse(unittest.TestCase):
     def tearDown(self):
         self.patches.close()
 
+    def _resume_fault_case(self, stage: str, entry: str) -> None:
+        """Exercise a real recovery incident only after the public resume lock unwinds."""
+        task = T.new("altitude", f"{entry} {stage} resume", "request", actor="l3", source="chat")
+        worktree = self.repo / ".claude" / "worktrees" / task["slug"]
+        worktree.mkdir(parents=True)
+        task.update({
+            "state": "blocked" if entry == "blocked" else "running",
+            "blocked_reason": "operator answer required" if entry == "blocked" else None,
+            "worktree": str(worktree), "dispatch_id": f"{task['slug']}-1",
+            "session_id": "session-old", "agent_id": "agent-old", "l2_token": "stable-token",
+        })
+        S.save_task("altitude", task)
+        new = {"name": f"altitude/{task['dispatch_id']}", "id": "agent-new",
+               "sessionId": "session-new", "state": "working", "startedAt": 2}
+
+        with ExitStack() as stack:
+            fetch = stack.enter_context(mock.patch.object(
+                dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40))
+            stack.enter_context(mock.patch.object(dispatch, "_validate_task_worktree"))
+            stack.enter_context(mock.patch.object(dispatch, "wip_hold", return_value=None))
+            stack.enter_context(mock.patch.object(engines, "usage_hold", return_value=None))
+            stop = stack.enter_context(mock.patch.object(engines, "stop_l2_worker", return_value="stopped"))
+            launch = stack.enter_context(mock.patch.object(
+                engines, "resume_l2", return_value={"returncode": 0, "stdout": "", "stderr": ""}))
+            stack.enter_context(mock.patch.object(engines, "claude_agents", return_value=[new]))
+            if stage == "provenance":
+                fetch.side_effect = dispatch.git_policy.GitPolicyError("origin ownership changed")
+            elif stage == "stop":
+                stop.side_effect = OSError("stop transport failed")
+            elif stage == "launch":
+                launch.side_effect = OSError("launcher failed")
+            elif stage == "bind":
+                stack.enter_context(mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")))
+            else:  # pragma: no cover - test helper misuse
+                self.fail(f"unknown resume fault stage {stage}")
+
+            expected_error = T.TransitionError if stage == "provenance" else RuntimeError
+            expected_text = "resume refused by Git provenance gate" if stage == "provenance" else "resume of altitude/"
+            with self.assertRaisesRegex(expected_error, expected_text):
+                if entry == "direct":
+                    dispatch.resume_session("altitude", task["slug"], "continue")
+                elif entry == "message":
+                    dispatch.message_l2("altitude", task["slug"], "steer")
+                else:
+                    dispatch.resume_blocked("altitude", task["slug"], "approved")
+
+        if stage == "provenance":
+            stop.assert_not_called()
+            launch.assert_not_called()
+            kind = "task-git-provenance"
+        elif stage == "stop":
+            self.assertEqual([call.args[1] for call in stop.call_args_list], ["agent-old"])
+            launch.assert_not_called()
+            kind = "l2-resume"
+        elif stage == "launch":
+            self.assertEqual([call.args[1] for call in stop.call_args_list], ["agent-old"])
+            launch.assert_called_once()
+            kind = "l2-resume"
+        else:
+            self.assertEqual([call.args[1] for call in stop.call_args_list], ["agent-old", "agent-new"])
+            launch.assert_called_once()
+            kind = "l2-resume"
+
+        failed = [event for event in S.read_events("altitude", task["slug"])
+                  if event.get("kind") == "resume-failed"]
+        self.assertEqual(len(failed), 1)
+        faults = [fault for fault in recovery.status()["faults"] if fault.get("kind") == kind]
+        self.assertEqual(len(faults), 1)
+        self.assertIsNotNone(faults[0].get("incident"))
+        filed = [row for row in incidents.index() if row.get("title") == f"system fault: {kind}"]
+        self.assertEqual(len(filed), 1)
+
+    def test_direct_provenance_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("provenance", "direct")
+
+    def test_message_provenance_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("provenance", "message")
+
+    def test_direct_stop_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("stop", "direct")
+
+    def test_blocked_stop_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("stop", "blocked")
+
+    def test_direct_launch_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("launch", "direct")
+
+    def test_message_launch_fault_unwinds_before_real_incident(self):
+        self._resume_fault_case("launch", "message")
+
+    def test_direct_bind_fault_unwinds_before_real_incident_and_stops_replacement(self):
+        self._resume_fault_case("bind", "direct")
+
+    def test_blocked_bind_fault_unwinds_before_real_incident_and_stops_replacement(self):
+        self._resume_fault_case("bind", "blocked")
+
+    def test_resume_never_translates_or_suppresses_a_lock_order_error(self):
+        task = T.new("altitude", "lock order resume", "request", actor="l3", source="chat")
+        worktree = self.repo / ".claude" / "worktrees" / task["slug"]
+        worktree.mkdir(parents=True)
+        task.update({
+            "state": "running", "worktree": str(worktree), "dispatch_id": f"{task['slug']}-1",
+            "session_id": "session-old", "agent_id": "agent-old", "l2_token": "stable-token",
+        })
+        S.save_task("altitude", task)
+        inversion = S.LockOrderError("synthetic lock inversion")
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                mock.patch.object(dispatch, "_validate_task_worktree"), \
+                mock.patch.object(engines, "stop_l2_worker", side_effect=inversion):
+            with self.assertRaisesRegex(S.LockOrderError, "synthetic lock inversion"):
+                dispatch.resume_session("altitude", task["slug"], "continue")
+
+        self.assertIsNone(recovery.status())
+        self.assertFalse(any(event.get("kind") == "resume-failed"
+                             for event in S.read_events("altitude", task["slug"])))
+
     def test_system_fault_holds_dispatch_and_creates_no_task(self):
         result = incidents.system_fault("test-health", "engine supervision failed", project="altitude")
 
@@ -522,8 +639,25 @@ class TestRecoveryFuse(unittest.TestCase):
         S.save_task("altitude", ordinary)
 
         def fault_then_return(*args, **kwargs):
-            incidents.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
+            # A real monitor fault arrives on another thread/process while the Git
+            # provenance mutex is held. Model that concurrency instead of nesting
+            # RECOVERY under GIT_PUBLICATION in this callback's thread.
+            errors = []
+            worker = threading.Thread(
+                target=lambda: _record_fault(errors),
+            )
+            worker.start()
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            if errors:
+                raise errors[0]
             return "a" * 40
+
+        def _record_fault(errors):
+            try:
+                incidents.system_fault("fetch-race", "ownership changed during fetch", project="altitude")
+            except BaseException as exc:
+                errors.append(exc)
 
         crossed_spawn_boundary = mock.Mock()
 

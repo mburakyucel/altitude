@@ -113,6 +113,35 @@ The Python server owns state transitions and JSON APIs. The React app provides I
 Chat, and Monitor navigation plus project/task detail routes. Task chat is a human-readable Burak/L2
 conversation; operational events remain an audit detail.
 
+Durable replacement writes fsync the temporary file, rename it over the destination, and fsync the
+parent directory. One bounded JSONL primitive now owns L3 chat, task conversation, Inbox, incidents,
+recovery clearances, and task/project events. Writers take an exclusive lock on the append file
+itself; readers take a shared lock, so no persistent per-log sidecar authority is created. Each write
+validates the existing stream before mutation, fsyncs the file and parent, and reconciles exact stable
+keys. A valid unterminated object is preserved and newline-terminated. Only a syntactically
+EOF-incomplete final JSON object (including a partial final UTF-8 code point after an otherwise
+incomplete object prefix) may be truncated. A complete non-object, corrupt syntax, invalid UTF-8, or
+corruption in an earlier row fails without changing the file. Valid legacy rows without the new key
+remain readable; ordinary readers no longer hide malformed legacy rows.
+
+Task `status.json` retains the latest authoritative transition envelope: version, stable transition
+id, subject, actor, timestamp, event kind, bounded payload, and payload hash. Task lifecycle changes,
+creation/completion requests, and merge-hold changes fsync that state first, then append the exact
+transition id to `events.log`. Every later task save reconciles the retained envelope before it may
+replace state. Thus failure after state replacement but before event append is repaired without a
+second lifecycle change, and retrying the same transition does not duplicate its event. The audit
+stream remains a derived projection rather than a second state authority.
+
+The global outer-to-inner lock contract is activation/maintenance, recovery, project, task,
+operation, then Git publication. The real recovery hold/launch, project, resume, helper, incident,
+JSONL, and publication-settlement lock paths use these levels. Exact re-entry of an already-held
+owner lock reuses its outer descriptor; reverse acquisition and same-level non-increasing paths are
+refused. Resume and helper launch take the recovery barrier before project/task ownership, and Git
+publication is innermost. A failed resume carries only an inert fault description through this
+critical section; the public resume or steering entry point appends `resume-failed` and opens the
+recovery incident only after every resume lock has unwound. Tests contend the production lock
+contexts and the JSONL file descriptors, not substitute lock names.
+
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, hooks,
 and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
 and telemetry; permission profiles, process containment, and backend validation form the Codex
