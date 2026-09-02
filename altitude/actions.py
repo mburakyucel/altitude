@@ -182,13 +182,23 @@ def _report(action: dict, result: dict, task: dict) -> dict:
 def _publish(project: str, task: dict, action: dict) -> dict:
     proj = config.project(project)
     test_cmd = str(proj.get("test_cmd") or land.DEFAULT_TEST_CMD)
-    result = land.land(
-        str(action["commit_message"]), project=project,
-        pr_title=str(action.get("pr_title") or "").strip() or None,
-        merge=bool(action.get("merge")), wait=int(proj.get("land_wait") or 600),
-        base="main", test_cmd=test_cmd, cwd=Path(task["worktree"]),
-        authority={"actor": "l2", "dispatch_id": task.get("dispatch_id"), "l2_token": task.get("l2_token")},
-    )
+    wants_merge = bool(action.get("merge"))
+    # Keep every strict dispatch/resume gate outside the short interval after GitHub accepts a merge but before the
+    # self-deploy checkout reaches origin/main. Settlement also runs when land returns a retry-class error: GitHub may
+    # have accepted the exact merge even when a later observation reports that the pinned pair moved.
+    with dispatch.publication_settlement(project):
+        try:
+            result = land.land(
+                str(action["commit_message"]), project=project,
+                pr_title=str(action.get("pr_title") or "").strip() or None,
+                merge=wants_merge, wait=int(proj.get("land_wait") or 600),
+                base="main", test_cmd=test_cmd, cwd=Path(task["worktree"]),
+                authority={"actor": "l2", "dispatch_id": task.get("dispatch_id"),
+                           "l2_token": task.get("l2_token")},
+            )
+        finally:
+            if wants_merge:
+                dispatch.pull_after_done(project, task)
     report = _report(action, result, task)
     S.write_json(S.task_dir(project, task["slug"]) / "report.json", report)
     _clear(project, task["slug"], _identity(task))

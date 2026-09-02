@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -119,6 +120,61 @@ class TestL2Actions(unittest.TestCase):
         self.assertEqual(result["kind"], "pending")
         self.assertEqual(live["resume_answer"], "exact correction")
         self.assertNotIn("pending_action", live)
+
+    def test_merged_publish_settles_self_deploy_before_retry_resume(self):
+        task = self.task("post merge settlement")
+        action = {"action": "publish", "commit_message": "fix: settle merge", "merge": True}
+        phase = {"merged": False, "settled": False}
+
+        def merged_then_retry(*_args, **_kwargs):
+            phase["merged"] = True
+            raise actions.land.LandError("the pinned base/head moved after GitHub accepted the merge")
+
+        def settle(_project, _task):
+            self.assertTrue(phase["merged"])
+            phase["settled"] = True
+            return ["self-deploy settled"]
+
+        def resume(_project, _slug, _prompt, **_expected):
+            self.assertTrue(phase["settled"], "retry must not reach provenance before self-deploy settles")
+            return {"agent": {"id": "worker-2"}}
+
+        with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
+             mock.patch.object(recovery, "dispatch_hold", return_value=None), \
+             mock.patch.object(actions.land, "land", side_effect=merged_then_retry), \
+             mock.patch.object(dispatch, "pull_after_done", side_effect=settle) as pulled, \
+             mock.patch.object(dispatch, "resume_session", side_effect=resume):
+            result = actions.process_l2("p", self.item(task, action))
+
+        self.assertEqual(result["kind"], "resumed")
+        pulled.assert_called_once_with("p", mock.ANY)
+        self.assertNotIn("pending_action", S.load_task("p", task["slug"]))
+
+    def test_provenance_gate_waits_for_publication_settlement(self):
+        entered = threading.Event()
+        release = threading.Event()
+        passed = threading.Event()
+
+        def publisher():
+            with dispatch.publication_settlement("p"):
+                entered.set()
+                release.wait(2)
+
+        def provenance():
+            entered.wait(2)
+            with dispatch.publication_settlement("p"):
+                passed.set()
+
+        publishing = threading.Thread(target=publisher)
+        checking = threading.Thread(target=provenance)
+        publishing.start()
+        checking.start()
+        self.assertTrue(entered.wait(2))
+        self.assertFalse(passed.wait(.05), "provenance observed the merge-to-fast-forward interval")
+        release.set()
+        publishing.join(2)
+        checking.join(2)
+        self.assertTrue(passed.is_set())
 
 
 if __name__ == "__main__":
