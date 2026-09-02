@@ -1,0 +1,156 @@
+# Comprehensive simplification proposal
+
+> **Status: draft for Burak's review. This is not the active architecture and authorizes no
+> implementation, task creation, service action, or migration.** The active system remains
+> [Architecture](../../ARCHITECTURE.md) plus
+> [Engine and session lifecycle](../../SESSION_LIFECYCLE.md). If this proposal is rejected or
+> superseded, remove it rather than leaving agents to reconcile competing instructions.
+
+## Purpose
+
+The first architecture cutover removed the mandatory proposal/critic/implementation pipeline and
+established the intended L3 -> one L2 owner -> optional L1/reviewer -> PR model. Subsequent work added
+provider-neutral sessions, containment, recovery, issue hydration, live transcripts, portable
+transcripts, restart safety, and several fixes for races between those mechanisms. Many additions
+protect real requirements. The resulting implementation nevertheless has too many coupled state
+machines, duplicate facts, compatibility paths, and globally scoped reactions.
+
+This pack proposes a holistic reduction. It does not justify a deletion merely because a file is
+large or a path is inconvenient. Every proposed simplification must identify:
+
+1. the desired product mechanism it preserves;
+2. the invariant currently enforced by the code;
+3. the smaller component that will own that invariant afterward;
+4. its dependencies on other simplifications;
+5. an observable acceptance test and rollback/stop condition; and
+6. the compatibility data that must be migrated before old code is removed.
+
+## Proposal pack
+
+- [01 - Current system](01-current-system.md): current end-to-end flows, state and artifact map,
+  ownership boundaries, and observed complexity. This is descriptive, not aspirational.
+- [02 - Proposed architecture](02-proposed-architecture.md): target responsibilities, canonical
+  records, state machines, recovery policy, provider boundary, publication, deployment, UI, and
+  control-plane design.
+- [03 - Component decisions](03-component-decisions.md): exhaustive keep/simplify/consolidate/remove/
+  defer ledger for production modules, hooks, service/CLI/CI, schemas, personas, templates, web
+  surfaces, runtime artifacts, docs/design, and test families.
+- [04 - Migration and validation](04-migration-validation.md): phase ordering, migration gates,
+  invariants, verification, real end-to-end tests, stop conditions, and rollback.
+- [05 - Review ledger](05-review-ledger.md): cross-cutting proposal IDs, dependencies, consistency
+  checks, unresolved product choices, and the questions a reviewer should answer.
+- [06 - Adversarial review](06-adversarial-review.md): independent challenges to the first draft,
+  their concrete dispositions, and the claims that still need reviewer verification.
+
+## Proposed architecture in one view
+
+```text
+Burak
+  |-- project direction / roadmap <-----------------------> L3 coordinator
+  |                                                           |
+  |                                                           `-- create one task when execution is needed
+  `-- task-specific steering <----------------------------> Task conversation
+                                                               |
+                                                     one logical L2 owner
+                                                               |
+                                  +----------------------------+---------------------------+
+                                  |                            |                           |
+                             direct work               optional bounded help       normalized outcome
+                                                                                         |
+                                                                                trusted settlement
+                                                                                         |
+                                                                        PR / checks / merge receipt
+                                                                                         |
+                                                                                archive + concise FYI
+
+Fault evidence -> deterministic classification
+  |-- advisory --------------------> record / display
+  |-- task/project/provider scoped -> hold/retry only that scope
+  `-- uncertain shared safety -----> global fuse -> L3 operational recovery
+                                                   `-- at most one recovery L2 when code is needed
+
+Merged source -> deployment pending -> separately authorized operator deployment/restart
+Archived task -> conservative, non-blocking maintenance/pruning
+```
+
+## What remains non-negotiable
+
+- L3 remains Burak's high-level project contact and uses model judgment rather than an intent
+  classifier or mandatory planning pipeline.
+- One L2 owns each task end to end. Burak talks to that L2 directly for task-specific steering.
+- L2 may implement directly or use zero, one, or several optional bounded helpers/reviewers.
+- Work is isolated by task worktree and branch. Every code change reaches `main` through a PR.
+- The current logical task owner is fenced from stale workers and messages.
+- Codex containment and trusted brokerage remain fail-closed. Claude protections remain until an
+  equivalent replacement is proved.
+- Publication verifies scope, provenance, the exact PR head/base pair, applicable checks, merge
+  holds, and the merge result.
+- Claude and Codex remain supported for L3 and L2, with weekly-first quota routing and no fake
+  cross-provider resume.
+- Incident evidence remains private and durable. A genuinely unsafe shared condition stops launches.
+- L3 retains operational recovery autonomy and may delegate the active episode's single recovery
+  L2. Incidents never recursively generate work.
+- Service restart remains separately authorized. Source work cannot restart or unmask Altitude.
+- Live L2 transcript visibility remains opt-in and never claims hidden reasoning.
+
+## Main reduction themes
+
+| ID | Reduction | Preserved invariant |
+| --- | --- | --- |
+| S01 | Classify faults by blast radius instead of globally fusing every fault | Unsafe shared ownership/containment still stops every launch |
+| S02 | Decouple task provenance from deployment-checkout synchronization | Every task still starts from a freshly fetched immutable remote base |
+| S03 | Replace report/verified/reported/closeout stamps with one explicit settlement state | Worker exit and publication remain crash recoverable and idempotent |
+| S04 | Create one trusted publication receipt and one check classifier | PR head/base, checks, holds, merge, and deployment facts remain mechanically verified |
+| S05 | Normalize provider terminal outcomes behind one internal contract | Codex stays brokered; provider identity and real session continuity remain visible |
+| S06 | Remove self-deploy and forensic cleanup from the task scheduler | Deployment remains explicit; unsafe cleanup refuses deletion without freezing work |
+| S07 | Give every durable fact one canonical record and derive UI/prompt views | Audit history remains append-only; no view becomes a competing source of truth |
+| S08 | Default to one L2 per repository and make paths publication scope, not predictive scheduling | Worktrees still isolate tasks and publication still enforces declared scope |
+| S09 | Hydrate GitHub issue input once, before dispatch | External task content is trusted, immutable, repository-bound, and available to L2 |
+| S10 | Use compact action-specific schemas and shared role instructions | Untrusted actions remain strict and provider boundaries remain explicit |
+| S11 | Remove dead/cosmetic hooks, TTS, endpoints, fields, and compatibility code | Quota and safety telemetry remain; observability failure cannot halt execution |
+| S12 | Make Chat the only high-level intake and Task the only task conversation | L3 coordination and direct L2 steering no longer have bypassing UI paths |
+| S13 | Keep live transcripts; snapshot portable evidence at defined boundaries | Interruptions retain evidence without rebuilding every transcript after every event |
+| S14 | Move CLI, HTTP, and model brokers onto one application-command layer | All mutations use identical validation and cross-process serialization |
+| S15 | Migrate compatibility data once and delete fallback readers | Active context describes one architecture rather than old and new simultaneously |
+
+## Reduction accounting
+
+“Simpler” is an acceptance claim, not a reason by itself. Each implementation phase must attach a
+before/after inventory covering production files and lines, durable record/artifact families, schema
+variants, independent state writers, timer paths, user-visible mutation paths, compatibility
+branches, and external dependencies. Tests and migration evidence are reported separately so adding
+needed verification cannot disguise production growth.
+
+Temporary compatibility code is allowed only with an owner, counter, and deletion gate in
+[04 - Migration and validation](04-migration-validation.md). A phase that introduces its replacement
+but does not retire the superseded writer at the stated gate is incomplete. The final target must:
+
+- retain one deployed service process and the existing file-backed storage model;
+- have one application-command authority for durable mutations and no direct HTTP/CLI/model writes;
+- have one canonical task record, current owner generation, active operation/settlement journal, publication receipt, global
+  recovery episode, and incident ledger for their respective facts;
+- have no scheduler-owned deployment, recursive recovery task, predictive top-level path scheduler,
+  cosmetic fault actuator, or compatibility writer;
+- have zero active uses of every fallback reader selected for deletion; and
+- show a net reduction in permanent production code and state/artifact families. Any exception must
+  name the preserved invariant and receive explicit review rather than being hidden as refactoring.
+
+## Review and decision process
+
+1. Review the target architecture and unresolved choices before approving individual deletions.
+2. Review the component ledger against the target, not against line-count reduction alone.
+3. Resolve the choices in [05 - Review ledger](05-review-ledger.md).
+4. Amend this proposal until it describes one internally consistent target.
+5. If accepted, merge this documentation as the approved migration plan or move its accepted
+   decisions into the active architecture in the same PR. Do not leave two normative architectures.
+6. Create small implementation issues/PRs from the migration phases. A phase is not complete until
+   its old path and compatibility tests are removed.
+7. After the final phase, replace the active architecture documents with the verified behavior and
+   delete/archive this proposal according to the review decision.
+
+## Scope and non-goals
+
+This proposal does not implement the refactor, redesign the visual UI, discard the preserved
+wireframes, select a single model provider, weaken Git/PR/containment controls, automatically drain
+the GitHub backlog, or authorize a restart. It is also not a promise to split every large Python file:
+responsibilities are reduced first; file boundaries follow the resulting ownership model.
