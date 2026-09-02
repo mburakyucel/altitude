@@ -352,6 +352,13 @@ activation rather than forcing ancestry from null. Import restart-pending data o
 `legacy_pending` evidence/blocker, never as activation truth, a launch fence, or a qualified
 contribution. Source staging and ordinary startup cannot change `activated_sha`.
 
+Phase 2A implements this as one 344-line permanent module plus one 271-line focused test module. The
+single `deployments/<service>.json` record and colocated lock are the already-budgeted DeploymentRecord
+artifact/synchronization family, not a new family beyond the target inventory. The production addition
+contains only closed validation, baseline normalization, lock-protected atomic persistence, and readback;
+it has zero runtime consumer/writer and no service or remote effect. Later deployment phases must extend or
+replace this module within the repository-wide final budget rather than create a parallel authority.
+
 ### PR 2B: contribution and qualification
 
 A merge contribution and permission to activate are different facts:

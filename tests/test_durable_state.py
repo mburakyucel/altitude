@@ -535,6 +535,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
         }),
         "write_json": Counter({
             ("actions.py", "_publish"): 1,
+            ("deployment.py", "initialize_for_migration"): 1,
             ("dispatch.py", "poll"): 3,
             ("dispatch.py", "pull_after_done"): 1,
             ("dispatch.py", "session_settings"): 1,
@@ -649,6 +650,8 @@ class LegacyWriterInventoryTests(unittest.TestCase):
         "replace_call": Counter({
             ("hooks/guard.py", "_double_quoted_views"): 4,
             ("engines.py", "usage_limit_in"): 2,
+            ("deployment.py", "_authorization"): 1,
+            ("deployment.py", "_pending_values"): 1,
             ("hooks/guard.py", "<module>"): 2,
             ("hooks/guard.py", "_command_views"): 2,
             ("digest.py", "speak"): 1,

@@ -626,6 +626,15 @@ last_failed_candidate + bounded diagnostics
 schema_version
 ```
 
+Phase 2A introduces only the baseline subset: strict service/repository identity, exactly one immutable
+bootstrap-anchor variant, nullable `activated_sha`, bounded `legacy_pending`, schema/hash, and one
+per-service lock. An exact stable `running_install` manifest is the sole source allowed to seed
+`activated_sha`; a stopped bootstrap uses an operator-provenance anchor bound to the frozen stopped
+manifest/state/raw evidence and leaves `activated_sha=null`. Unknown identity refuses initialization.
+The legacy restart marker remains a blocker/evidence hash only. No Phase 2A module observes runtime state
+itself or contains contribution, qualification, maintenance, activation, build, install, stop/start, or
+health behavior; those fields and writers arrive only in their named later phases.
+
 The embedded `ActivationOperation` is the final deployment-transition operation. Activation records
 `attempt_id`, the bounded operator authorization receipt, the exact SHA selected later at the
 post-gate resolution boundary, prior PID, and three non-interchangeable identity positions. The prior

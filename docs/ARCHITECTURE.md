@@ -131,6 +131,24 @@ with a durable result marker carrying the same intent digest and returns a crash
 refuses as `ownership_uncertain` rather than guessing or relaunching. This foundation is deliberately dormant: no production L3,
 L2, helper, server, CLI, or timer path consumes it yet, and all current provider behavior remains unchanged.
 
+### Dormant deployment authority
+
+`deployment.py` defines one strict `altitude.deployment/v1` record per service. Phase 2A can initialize
+it only through an explicit offline migration/test API under the deployment lock; no server, CLI, timer,
+task settlement, startup, staging, or restart path imports it. A canonical record contains service and
+repository identity, one immutable bootstrap anchor, `activated_sha`, and optional bounded legacy-pending
+evidence. It has no maintenance owner, activation operation/receipt, contribution, qualification, build,
+install, stop, start, or health behavior.
+
+An exact stable `running_install` runtime manifest supplies both the loaded bootstrap SHA and
+`activated_sha`. A stopped bootstrap instead requires the exact frozen stopped-install manifest plus the
+same bounded operator authorization, frozen-state/raw-evidence hashes, and an explicit evidence limitation;
+its `activated_sha` is null and the anchor is not an activation receipt. Unknown or conflicting identity
+refuses initialization. Legacy `restart-pending.json` bytes normalize only to bounded hash/evidence plus an
+unreconciled blocker; their head never becomes loaded truth, qualification, contribution, or a launch fence.
+Atomic replacement supplies file and parent-directory durability, and exact replay is byte-idempotent while
+a different initializer conflicts without changing the record.
+
 ## Recovery
 
 System faults are deduplicated into private incident evidence and activate a global recovery fuse.
