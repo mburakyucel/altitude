@@ -1,5 +1,10 @@
 # Engine and session lifecycle
 
+> **Scope:** This document describes executable `main` at commit `97e1197`, including its current
+> stop-and-replace steering behavior. It does not describe the unmerged simplification branches or
+> an App Server steering design. See the
+> [2026-09-02 review checkpoint](simplification-review/README.md).
+
 ## Live L2 transcript
 
 The task page stays a concise Burak/L2 conversation. Its opt-in **Live session** route projects the engine's local
@@ -31,12 +36,14 @@ under their external retention policy; deletion is intentionally not coupled to 
 reject unknown versions, and future L3, L1, reviewer, and recovery bundles can use the same manifest/event contract
 with a different `level` and `role`.
 
-Each read and steering request carries the project, task, dispatch generation, engine, and displayed session. A
-mismatch fails closed and asks the viewer to refresh, so steering cannot land on a replacement L2. Steering ends
+Transcript reads and steering from the Live Session view carry the project, task, dispatch generation, engine, and
+displayed session. A mismatch fails closed and asks that viewer to refresh. The normal Task and Project composers
+currently omit those optional displayed-generation fields, so they address the generation that is current when the
+server acquires the task lock; stale-page rejection is not guaranteed on those two surfaces. Steering then ends
 the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
 normally retains its thread id, while Claude retains its resumable session id. Altitude records the old and new
-worker/session identities and renders resume, replacement, compaction, engine-change, and recovery events as
-boundaries underneath the same logical task dispatch. A parser error or incomplete final JSONL record is displayed
+worker/session identities in the `resumed` event. The reader recognizes additional compatibility event names, but
+this baseline has no producer for separate replacement, compaction, engine-change, or recovery boundary events. A parser error or incomplete final JSONL record is displayed
 as viewer evidence and retried on the next poll; it never changes task or worker state.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
@@ -74,8 +81,9 @@ than a guessed quota relationship.
 
 ## Message and resume
 
-Burak's message is first appended to the task's durable human conversation with the exact dispatch,
-session, state, and worker snapshot it addressed. Under the task's resume lock Altitude then:
+Burak's message is first appended to the task's durable human conversation with its `dispatch_id`
+and `session_id`. The surrounding resume operation separately validates current task state and
+worker identity; those values are not fields in the message row. Under the task's resume lock Altitude then:
 
 1. validates that snapshot and the task worktree/commit provenance;
 2. stops the current physical worker and confirms it is no longer live;
@@ -88,8 +96,8 @@ cross-provider continuation is a deliberate new attempt based on saved work, not
 resume.
 
 Claude resume uses `claude --bg --resume`. Its L2 contract is direct: the persona may invoke the
-scoped Altitude CLI, while the backend revalidates the task identity, lease, provenance, and merge
-policy before accepting a state change or publication request. Claude hooks add command guardrails
+scoped Altitude CLI, while the backend applies the identity, clean-Git, lease, provenance, and merge
+policy checks relevant to each command and effect boundary. Claude hooks add command guardrails
 and telemetry; they are not the backend authority check.
 
 Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
@@ -116,16 +124,17 @@ provider transcript. A Claude limit after text or tool activity never causes the
 automatically replayed on Codex because that could duplicate side effects.
 
 A Codex L3 turn uses the same containment and inert-result pattern, but its filesystem view is
-read-only with respect to durable inputs: it may read the compact Altitude state and the selected project checkout,
-and may write only to an inert disposable runtime directory required by the Codex CLI. Its trusted
+read-only with respect to durable inputs: the full Altitude runtime root (`ALTITUDE_HOME`) and the
+selected project checkout are readable roots, while only an inert disposable runtime directory is writable.
+The prompt normally directs it to compact state, but the sandbox does not narrow reads to that file. Its trusted
 broker applies at most the validated project-coordination action. Claude L3 retains its direct CLI
 contract. Provider selection changes neither L3's project-level responsibility nor L2's end-to-end
 task ownership.
 
 For contained Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and
 are unset before Codex starts. The child receives an allowlisted environment; ambient tokens, API keys, SSH agents,
-Git credential helpers, and the L2 capability are absent. A deterministic host canary checks that its inner sandbox
-cannot see or signal a known host PID. A model-requested GitHub issue cannot contain synthesized private context: the broker
+Git credential helpers, and the L2 capability are absent. The inner sandbox hides host PIDs; this baseline has no
+deterministic host-PID canary. A model-requested GitHub issue cannot contain synthesized private context: the broker
 stores only the exact current chat message, with a title quoted from it, as a private draft. Publication requires a
 second exact, draft-specific approval message from Burak, and secret-shaped content remains a hard refusal.
 
