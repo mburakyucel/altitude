@@ -33,7 +33,8 @@ simplification branches.
 This branch changes documentation only: `README.md`, `CLAUDE.md`, the three canonical documents
 under `docs/`, and the six files in this directory. It changes no production code, merges no
 implementation, and did not start Altitude. Some files record private operational and security
-boundaries; do not publish this branch without Burak reviewing that disclosure.
+boundaries. Burak has authorized publication to the private Altitude repository; re-review those
+details before any repository visibility change or copying them elsewhere.
 
 ## Current decision status
 

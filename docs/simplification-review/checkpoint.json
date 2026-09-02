@@ -13,7 +13,7 @@
     "based_on": "97e11979bdc0814ad5067eab717f999d1c251437",
     "content_commit": "815cca49c974f81447a2c3dd86303d76d33fe38d",
     "content_commit_meaning": "first substantive documentation checkpoint; later tip may contain metadata-only annotation",
-    "published": false
+    "publication_scope": "private Altitude repository only"
   },
   "candidate_checkpoints": [
     {
