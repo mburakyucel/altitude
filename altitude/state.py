@@ -1,13 +1,16 @@
-"""Files, one writer, atomic. Task folders, status.json, events.log, STATE.md regeneration."""
+"""Durable file primitives plus task folders, state, events, and STATE.md regeneration."""
 from __future__ import annotations
 import fcntl
 import json
+import math
 import os
 import re
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from enum import IntEnum
 from pathlib import Path
 
 from . import config
@@ -16,11 +19,39 @@ STATES = ("queued", "running", "reported", "done", "rejected", "blocked")
 OPEN_STATES = ("queued", "running", "reported", "blocked")
 
 
+class LockOrderError(RuntimeError):
+    """Raised before acquiring a lock that would violate the global lock order."""
+
+
+class LockLevel(IntEnum):
+    ACTIVATION_MAINTENANCE = 10
+    RECOVERY = 20
+    PROJECT = 30
+    TASK = 40
+    OPERATION = 50
+    GIT_PUBLICATION = 60
+
+
+LOCK_ORDER = tuple(LockLevel)
+_held_locks = threading.local()
+_LockIdentity = tuple[int, int]
+_HeldLock = tuple[LockLevel, str, _LockIdentity]
+
+
 def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write(path: Path, text: str) -> None:
+    """Replace a file after its contents, rename, and parent entry are durable."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
@@ -30,6 +61,7 @@ def atomic_write(path: Path, text: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -54,22 +86,289 @@ def write_json(path: Path, obj) -> None:
     atomic_write(path, json.dumps(obj, indent=2, sort_keys=True) + "\n")
 
 
+def _lock_stack() -> list[_HeldLock]:
+    stack = getattr(_held_locks, "stack", None)
+    if stack is None:
+        stack = []
+        _held_locks.stack = stack
+    return stack
+
+
+def _path_identity(path: Path) -> _LockIdentity | None:
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _check_lock_order(
+    level: LockLevel, canonical: str, identity: _LockIdentity | None, *, reentry: bool
+) -> tuple[list[_HeldLock], bool]:
+    stack = _lock_stack()
+    for index, (held_level, held_path, held_identity) in enumerate(stack):
+        same_path = held_path == canonical
+        same_inode = identity is not None and held_identity == identity
+        if not same_path and not same_inode:
+            continue
+        if (reentry and index == len(stack) - 1 and held_level == level
+                and same_path and identity == held_identity):
+            return stack, True
+        if held_level != level:
+            raise LockOrderError(
+                f"lock path/inode already held at {held_level.name}, not {level.name}: {canonical}"
+            )
+        raise LockOrderError(f"lock reentry must be the current lock: {level.name} {canonical}")
+    if stack:
+        held_level, held_path, _held_identity = stack[-1]
+        if level < held_level:
+            raise LockOrderError(
+                f"lock order inversion: {level.name} {canonical} after "
+                f"{held_level.name} {held_path}"
+            )
+        if level == held_level and canonical <= held_path:
+            raise LockOrderError(
+                f"same-level locks require increasing paths: {canonical} after {held_path}"
+            )
+    return stack, False
+
+
+def _opened_lock_entry(stream, level: LockLevel, canonical: str, *, reentry: bool):
+    info = os.fstat(stream.fileno())
+    entry = (level, canonical, (info.st_dev, info.st_ino))
+    stack, entered = _check_lock_order(level, canonical, entry[2], reentry=reentry)
+    return stack, entry, entered
+
+
 @contextmanager
-def project_lock(project: str):
-    """One writer per project across processes (server and `alt` CLI)."""
-    d = config.project_dir(project)
-    d.mkdir(parents=True, exist_ok=True)
-    with open(d / ".lock", "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+def ordered_file_lock(path: Path, level: LockLevel):
+    """Take a file lock in declared outer-to-inner and canonical-path order.
+
+    Exact re-entry shares the descriptor already owned by this thread. Other locks
+    at one level must use increasing canonical paths.
+    """
+    path, level = Path(path), LockLevel(level)
+    canonical = str(path.resolve(strict=False))
+    stack, entered = _check_lock_order(
+        level, canonical, _path_identity(path), reentry=True
+    )
+    if entered:
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as lock_file:
+        stack, entry, entered = _opened_lock_entry(
+            lock_file, level, canonical, reentry=True
+        )
+        if entered:
+            yield
+            return
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        stack.append(entry)
         try:
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            if stack.pop() != entry:
+                raise RuntimeError("lock stack corrupted")
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+@contextmanager
+def project_lock(project: str):
+    """One writer per project across processes (server and `alt` CLI)."""
+    with ordered_file_lock(config.project_dir(project) / ".lock", LockLevel.PROJECT):
+        yield
 
 
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:40].rstrip("-") or "task"
+
+
+def _validate_json_value(value) -> None:
+    if value is None or isinstance(value, (bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite JSON number")
+        return
+    if isinstance(value, str):
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise ValueError("JSON string contains an unpaired surrogate")
+        return
+    if isinstance(value, list):
+        for item in value:
+            _validate_json_value(item)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+            _validate_json_value(key)
+            _validate_json_value(item)
+        return
+    raise TypeError(f"unsupported JSON value: {type(value).__name__}")
+
+
+def _strict_json_loads(text: str):
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON object key {key!r}")
+            result[key] = value
+        return result
+
+    def finite_float(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f"non-finite JSON number {token}")
+        return value
+
+    value = json.loads(
+        text,
+        object_pairs_hook=object_pairs,
+        parse_float=finite_float,
+        parse_constant=lambda value: (_ for _ in ()).throw(
+            ValueError(f"non-finite JSON number {value}")
+        ),
+    )
+    _validate_json_value(value)
+    return value
+
+
+def _decode_jsonl_line(path: Path, raw: bytes, line_number: int) -> dict:
+    try:
+        value = _strict_json_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"corrupt JSONL in {path} at line {line_number}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"corrupt JSONL in {path} at line {line_number}: expected object")
+    return value
+
+
+def _canonical_json(value: dict) -> bytes:
+    _validate_json_value(value)
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+
+def _jsonl_records(path: Path, data: bytes) -> tuple[list[dict], int]:
+    """Return LF-committed rows and the offset before any uncommitted tail."""
+    committed_length = data.rfind(b"\n") + 1
+    committed = data[:committed_length]
+    rows = committed[:-1].split(b"\n") if committed else []
+    return ([_decode_jsonl_line(path, raw, line)
+             for line, raw in enumerate(rows, start=1)], committed_length)
+
+
+def append_jsonl(path: Path, record: dict, *, key_field: str) -> bool:
+    """Append one stable-keyed object after discarding any uncommitted tail."""
+    if not isinstance(record, dict):
+        raise TypeError("JSONL record must be an object")
+    key = record.get(key_field)
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"JSONL record requires non-empty string {key_field!r}")
+    path = Path(path)
+    encoded_record = _canonical_json(record)
+    encoded = encoded_record + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    canonical = str(path.resolve(strict=False))
+    stack, _ = _check_lock_order(
+        LockLevel.OPERATION, canonical, _path_identity(path), reentry=False
+    )
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fd = os.open(path, os.O_RDWR)
+    with os.fdopen(fd, "r+b") as stream:
+        stack, entry, _ = _opened_lock_entry(
+            stream, LockLevel.OPERATION, canonical, reentry=False
+        )
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        stack.append(entry)
+        try:
+            data = stream.read()
+            records, safe_length = _jsonl_records(path, data)
+            seen: dict[str, bytes] = {}
+            duplicate = False
+            for existing in records:
+                existing_key = existing.get(key_field)
+                if not isinstance(existing_key, str) or not existing_key:
+                    raise ValueError(
+                        f"JSONL record requires non-empty string {key_field!r} in {path}"
+                    )
+                existing_encoded = _canonical_json(existing)
+                previous = seen.get(existing_key)
+                if previous is not None and previous != existing_encoded:
+                    raise ValueError(
+                        f"conflicting JSONL record for {key_field}={existing_key!r} in {path}"
+                    )
+                seen[existing_key] = existing_encoded
+                if existing_key == key:
+                    if existing_encoded != encoded_record:
+                        raise ValueError(
+                            f"conflicting JSONL record for {key_field}={key!r} in {path}"
+                        )
+                    duplicate = True
+            if safe_length != len(data):
+                stream.seek(safe_length)
+                stream.truncate()
+            stream.seek(0, os.SEEK_END)
+            if not duplicate:
+                stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        finally:
+            if stack.pop() != entry:
+                raise RuntimeError("lock stack corrupted")
+            fcntl.flock(stream, fcntl.LOCK_UN)
+    # Also closes create/fsync ambiguity from a prior attempt that made bytes visible.
+    _fsync_directory(path.parent)
+    return not duplicate
+
+
+def read_jsonl(path: Path, *, key_field: str | None = None) -> list[dict]:
+    """Read objects under the writer lock and reconcile exact stable-key duplicates."""
+    path = Path(path)
+    canonical = str(path.resolve(strict=False))
+    stack, _ = _check_lock_order(
+        LockLevel.OPERATION, canonical, _path_identity(path), reentry=False
+    )
+    try:
+        with open(path, "rb") as stream:
+            stack, entry, _ = _opened_lock_entry(
+                stream, LockLevel.OPERATION, canonical, reentry=False
+            )
+            fcntl.flock(stream, fcntl.LOCK_SH)
+            stack.append(entry)
+            try:
+                data = stream.read()
+            finally:
+                if stack.pop() != entry:
+                    raise RuntimeError("lock stack corrupted")
+                fcntl.flock(stream, fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return []
+    committed, _safe_length = _jsonl_records(path, data)
+    records, keyed = [], {}
+    for record in committed:
+        if key_field is not None:
+            key = record.get(key_field)
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"JSONL record requires non-empty string {key_field!r} in {path}")
+            encoded_record = _canonical_json(record)
+            previous = keyed.get(key)
+            if previous is not None:
+                if previous != encoded_record:
+                    raise ValueError(
+                        f"conflicting JSONL record for {key_field}={key!r} in {path}"
+                    )
+                continue
+            keyed[key] = encoded_record
+        records.append(record)
+    return records
 
 
 # ---- task folders -----------------------------------------------------------

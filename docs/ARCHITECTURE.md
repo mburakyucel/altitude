@@ -117,3 +117,46 @@ Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, t
 and documentation describe only the current behavior. Hooks supply Claude-side command guardrails
 and telemetry; permission profiles, process containment, and backend validation form the Codex
 execution boundary. Superseded designs remain in Git history, not in the active tree.
+
+### Durable I/O foundation
+
+`state.py` owns three persistence contracts. Atomic replacement fsyncs the temporary file,
+renames it, and fsyncs the parent directory. The keyed JSONL primitive locks the destination inode,
+accepts only recursively valid JSON object rows with a nonempty string key, compares strict
+canonical JSON (including boolean/integer/float distinctions), and rejects duplicate keys,
+non-string object keys, non-finite numbers, unpaired surrogates, and conflicting id reuse. LF is the
+only commit marker: CR is ordinary row content, malformed LF-terminated or non-object rows fail
+without mutation, and readers never expose any unterminated final bytes. Append excludes that
+uncommitted tail from deduplication—even when it parses as a complete object—and truncates it before
+append.
+This covers a kill at every byte of UTF-8 strings, numbers, literals, arrays, and nested objects
+without guessing from decoder errors or promoting bytes that were never committed.
+The primitive is deliberately dormant in this phase: no event, chat, incident, task, or recovery
+producer has been switched to it.
+
+New and migrated locks use this outer-to-inner order: activation/maintenance, recovery, project,
+task, operation, Git publication. `project_lock` is the sole migrated runtime wrapper; exact
+top-of-stack re-entry shares its held lock, same-level multi-lock acquisition uses canonical path
+order, and the same canonical path or inode cannot be assigned another level or acquired through a
+hard-link alias.
+The remaining legacy wrappers are explicitly frozen by a multiplicity-preserving source-inventory
+test: recovery state and launch, incident fault and allocation, L1 run, task resume, and publication
+settlement. The same inventory covers legacy append writers (task conversation/FYI, task/project
+events, L3 chat, incident index, clearance, process/log streams, Python hooks, and the shell
+statusline temp/move)
+plus aliased/bare JSON and atomic aggregate writers, writable open/os.open calls, path writers,
+JSON dump/os.write, every stream write/truncate, Path and os/shutil rename/replace/removal/move,
+replacement/copy calls, and raw locks including the foundation module. Runnable shell sources are
+recursively enumerated under the closed production roots as well as scanned for writes. Counts are
+per owning function rather than sets, so another call in an already-listed function also fails.
+Their behavior and on-disk shapes are unchanged here; each moves only with its owning domain in the
+later owner-family migration, when its legacy allowlist entry is deleted. No transition envelope,
+replay scan, workflow selector, sidecar journal, dependency, or runtime artifact family is introduced
+by this foundation.
+
+The bounded source budget is explicit: production Python remains the same module set and changes
+only `altitude/state.py`, from 222 to 521 lines (+299 net; 307 added, 8 removed). One 991-line
+focused test module and this architecture note are the only new/expanded source artifacts. Runtime
+dependencies, services, selectors, schemas, generated outputs, and durable artifact families each
+increase by zero. The added production surface is the three reusable primitives above; domain
+adapters and replay machinery are intentionally outside this phase.
