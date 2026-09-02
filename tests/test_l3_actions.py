@@ -144,6 +144,65 @@ class TestL3Actions(unittest.TestCase):
                 )
         unsafe_resume.assert_not_called()
 
+    def test_resume_persists_journaled_paths_before_dispatch(self):
+        task = self.task(state="blocked", paths=[])
+        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
+                  "paths": ["altitude/l3_actions.py", "tests/test_l3_actions.py"]}
+
+        def resume(*_args, **_kwargs):
+            self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
+            return {"deferred": False}
+
+        with mock.patch.object(dispatch, "resume_blocked", side_effect=resume):
+            l3_actions.apply("p", envelope(action), action_id="0" * 63 + "1")
+
+        self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
+
+    def test_resume_paths_refuse_collision_without_mutating_or_dispatching(self):
+        task = self.task(state="blocked", paths=["existing.py"])
+        self.task(title="Holder", state="running", paths=["src/shared.py"])
+        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
+                  "paths": ["src/shared.py"]}
+
+        with mock.patch.object(dispatch, "resume_blocked") as resume:
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "file lease"):
+                l3_actions.apply("p", envelope(action), action_id="0" * 63 + "2")
+
+        resume.assert_not_called()
+        self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
+
+    def test_resume_paths_roll_back_when_exact_resume_is_refused(self):
+        task = self.task(state="blocked", paths=["existing.py"])
+        action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
+                  "paths": ["src/new.py"]}
+
+        with mock.patch.object(dispatch, "resume_blocked",
+                               side_effect=T.TransitionError("session changed")):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "session changed"):
+                l3_actions.apply("p", envelope(action), action_id="0" * 63 + "3")
+
+        self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
+
+    def test_resume_paths_preserve_the_existing_task_lease(self):
+        task = self.task(state="blocked", paths=["existing.py"])
+        action = {"type": "task_resume", "slug": task["slug"], "paths": ["src/new.py"]}
+
+        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}):
+            l3_actions.apply("p", envelope(action), action_id="0" * 63 + "7")
+
+        self.assertEqual(S.load_task("p", task["slug"])["paths"],
+                         ["existing.py", "src/new.py"])
+
+    def test_resume_paths_reject_non_relative_entries(self):
+        task = self.task(state="blocked", paths=[])
+        for index, invalid in enumerate(("../outside.py", "/absolute.py", "src//empty.py"), 4):
+            action = {"type": "task_resume", "slug": task["slug"], "paths": [invalid]}
+            with mock.patch.object(dispatch, "resume_blocked") as resume:
+                with self.assertRaisesRegex(l3_actions.L3ActionError, "invalid repo-relative path"):
+                    l3_actions.apply("p", envelope(action), action_id="0" * 63 + str(index))
+            resume.assert_not_called()
+            self.assertEqual(S.load_task("p", task["slug"])["paths"], [])
+
     def test_github_issue_content_marker_prevents_duplicate_across_turns(self):
         created_body = []
 
