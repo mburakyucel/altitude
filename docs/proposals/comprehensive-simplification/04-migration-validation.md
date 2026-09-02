@@ -1,8 +1,11 @@
 # Migration and validation plan
 
-> This plan is executable only after the decisions in `05-review-ledger.md` are recorded. A phase is
-> complete only when its replacement is active, its superseded writer is deleted, its tests pass,
-> and its architecture documentation describes the behavior that actually shipped.
+> This plan is executable only after the decisions in `05-review-ledger.md` are recorded. Before the
+> separately authorized first activation, a source phase is complete only when its replacement is
+> the sole normal path in reviewed candidate source, its superseded source writer is deleted, its
+> tests pass on copied/disposable state, and candidate-source architecture documentation describes
+> that merged behavior. This does not claim deployed use: real-state importer deletion, production
+> cutover completion, and deployed-document activation remain pending until the ActivationReceipt.
 
 ## Completion contract
 
@@ -22,10 +25,10 @@ The recorded baseline is:
 
 | Surface | Baseline |
 | --- | ---: |
-| Runnable backend, CLI, hooks/guard, and restart tool | 10,695 lines |
-| Non-test web source | 2,683 lines |
-| Web build/config source | 157 lines |
-| Total permanent runnable source | 13,535 lines / 52 files |
+| Runnable backend, CLI, hooks/guard, and restart tool | 10,695 lines / 32 files |
+| Non-test web source | 2,683 lines / 15 files |
+| Web build/config source | 195 lines / 5 files |
+| Total permanent runnable source | 13,573 lines / 52 files |
 | Personas, schemas, and templates (reported separately) | 496 lines / 13 files |
 | Python tests | 10,258 lines / 54 files |
 | Web tests and harness (reported separately) | 1,097 lines / 10 files |
@@ -36,7 +39,7 @@ Final budgets are hard review gates:
 
 - no more than **12,180 permanent runnable lines** (at least 10% net reduction);
 - no more than **9,000 backend/CLI/hook/restart lines** (at least 15% reduction);
-- no more than **47 runnable production files** and **25 permanent named artifact families**;
+- no more than **46 runnable production files** and **25 permanent named artifact families**;
 - no more than **400 persona/schema/template lines in 10 files** and no more than **250
   service/CI/build-support lines in 3 files**; these categories cannot absorb runnable complexity;
 - exactly one mutation authority per domain, no more than six mutable control authorities, and
@@ -45,9 +48,17 @@ Final budgets are hard review gates:
   or production dependency; counted transient per-turn process units are permitted;
 - tests may grow and are reported separately; deleting tests to meet a production budget is forbidden.
 
-An artifact family is one independently named persisted path/schema pattern with its own lifecycle or
-reader/writer. Mirrors and caches count if runtime code persists/reads them; multiple files inside
-one provider-worker or transcript bundle count once when they have one lifecycle. Generated
+The exact baseline roster, counting procedure, future-file rule, and plausible target roster are in
+[`07-baseline-and-target.md`](07-baseline-and-target.md). A new production path cannot escape the
+budget by being omitted from that roster; its reviewer must classify it before merge.
+
+An artifact family is one canonical lifecycle/authority and its path pattern, not every instance of
+that pattern or every inert reader. Mirrors and caches count if runtime code persists/reads them;
+multiple files inside one provider-worker or transcript bundle count once when they have one owner
+and deletion lifecycle. Empty flock files at colocated paths count as one synchronization family
+because one primitive creates/reads them and they contain no semantic state. An isolated read-only
+legacy decoder does not create another control family; a second active writer or independently
+retained mutable lifecycle always does. Generated
 `web/dist`, dependencies, bytecode, screenshots, external provider-native stores, and the existing
 supervisor-owned system journal do not count; explicitly named per-turn disposable scratch such as
 `l3-codex-runtime/` also does not count because it is recreated and has no durable reader after the
@@ -67,7 +78,7 @@ Codex worker bundle; transcript bundle; worktree/ref/provenance; report.md compa
 digest/audio; runtime hooks directory; service log; TLS material
 ```
 
-The target families, using the same rule, enumerate and are capped at exactly 25:
+The target families, using the same rule, currently enumerate 25 and may only shrink:
 
 ```text
 projects; synchronization locks; operational holds; recovery episode/embedded transition;
@@ -120,6 +131,30 @@ survive one release if it is labeled derived, has a counter, and has a named nex
 The merge order below is dependency order. Non-overlapping implementation and review may run in
 parallel, but dependent branches rebase on the actually merged predecessor before final validation.
 
+## Prerequisite — freeze production once
+
+This migration deliberately does not self-host. Before the first implementation PR:
+
+1. finish and archive each clean v1 task, or stop its workers/helpers, preserve useful branch/session
+   evidence, and reject it under the current rules;
+2. reconcile every pending commit/push/PR/merge/issue effect and close the current recovery episode
+   through the current verified clearance path;
+3. record the loaded source, unit, main PID/start identity, cgroup, state-home path, registered
+   provider units, Git worktrees/refs, and a byte inventory/hash of the frozen runtime state;
+4. stop the service and prove its cgroup plus every known L3/L2/L1/helper/provider unit empty; an
+   escaped or ambiguous existing writer is a global blocker, not something “disabled” prospectively;
+5. disable every runtime mutation ingress and keep the production state home byte-frozen; and
+6. run the Phase 0 preflight before any later checkout operation and again before activation. Any
+   unexplained state/hash/process drift stops the migration.
+
+All implementation PRs are source-only. They run against copied state homes and disposable service
+units; no test or merge claims to have migrated production. The installed production checkout is not
+updated merely because an implementation or merge was authorized. If an exact manual checkout
+operation is separately authorized while stopped, it must re-prove the freeze before and after and
+must not start the service. Production's first use of the new behavior is the separately authorized
+detached activation after the source refactor; all refactor commits receive mechanically checked
+operator-provenance coverage because no production settlement code existed to receipt them.
+
 ## Phase 0 — decisions, manifest, locks, and durable primitives
 
 ### PR 0A: approve one architecture
@@ -136,6 +171,34 @@ Add a read-only manifest reporting exact source SHA, supported state versions, w
 service unit identity, and build version. Add an offline preflight that reads a copied
 `ALTITUDE_HOME`, inventories active/archived state, reports unknown shapes, and never mutates.
 
+Identity has three explicit roles, never one permissive mismatch flag:
+
+- `running_install` is captured at ordinary startup after Phase 0B exists and is supplied/revalidated
+  after maintenance acknowledgement. The loaded entry, installed manager ExecStart checkout/unit/
+  drop-ins, observed source, and running process identity must agree. It is unavailable for this
+  already-stopped one-time bootstrap and must not be backdated.
+- `stopped_install` is activation manifest B. It requires the service and its cgroup to be empty,
+  hashes the installed checkout/entry/unit/drop-ins without importing or executing B, and requires
+  every corresponding byte and manager configuration fact to match the immutable prior-install
+  receipt (`running_install` normally, bootstrap freeze receipt for the already-stopped first
+  activation). Manager inactive state is required; an absent/unqueryable manager or drifted installed
+  byte blocks.
+- `detached_candidate` is activation manifest C. Its entry/source tree must equal its pinned
+  candidate commit and it reports candidate bundle/unit-template hashes, but it makes no claim about
+  the still-old manager ExecStart.
+
+Activation compares one strict stopped-install manifest B with one strict candidate manifest C and
+persists the immutable prior-install receipt hash, both new manifest hashes, and the intended B->C
+target. A mismatch inside any role blocks; B != C is the expected transition, not evidence to ignore.
+
+Because Phase 0B source lands after this migration's one-time production stop, it must not backdate a
+`running_install` receipt. For the first activation only, preflight combines the prerequisite's raw
+loaded-source/PID/unit/state evidence with a fresh exact `stopped_install` observation into an
+immutable bootstrap freeze/provenance receipt. It names every unavailable running fact and the
+operator authorization; it never labels the stopped observation “running.” Missing source SHA,
+installed bytes, manager configuration, state hash, or process-empty proof remains a hard blocker.
+After the first activation, ordinary starts create native `running_install` receipts.
+
 The preflight records:
 
 - active tasks by state and physical worker/provider identity;
@@ -146,6 +209,8 @@ The preflight records:
 
 Unknown active state blocks every later cutover. Unknown archived state stays accessible only through
 an isolated read-only archive decoder; it is never imported by active dispatch/resume/settlement.
+The legacy inventory/preflight is temporary but remains shipped through the first successful
+production activation; only PR 10B may delete it after its frozen-state and cutover receipts exist.
 
 ### PR 0C: lock order and durable I/O
 
@@ -157,16 +222,21 @@ activation/maintenance -> recovery -> project -> task -> operation -> Git public
 
 No reverse acquisition is allowed. Tests deliberately contend every adjacent pair.
 
-Replace scattered JSON/JSONL writes with two small primitives:
+Introduce two small primitives behind the existing public helper shapes:
 
 - atomic replace: write, fsync file, rename, fsync parent directory;
 - keyed append: under the owner lock, validate the final JSONL record, truncate only a partial final
-  record, append one newline-delimited record, fsync, and deduplicate/reconcile by stable id.
+  record, append one newline-delimited record, fsync, and deduplicate by stable id.
 
-Every local authoritative transition writes state first with a stable transition envelope. The
-audit projection is appended second and reconciled before the next mutation. Event-first is
-forbidden. Power-loss durability is claimed only after the fsync tests pass on the supported
-filesystem; otherwise the documented guarantee is process-crash durability.
+This PR is foundation-only. It may harden the central atomic JSON and append/read helpers without
+changing their record shapes, and may make the existing project lock participate in the order. It
+does not convert recovery/fault/resume/L1/publication wrappers, add a runtime transition envelope,
+or change a domain lifecycle. A checked-in static inventory classifies every remaining legacy lock
+and direct JSON/JSONL writer; a new unclassified writer fails tests. Each Phase 3 command-family PR
+then adopts state-first stable transition envelopes and before-next-mutation audit reconciliation
+for the owner it migrates, while deleting that family's legacy exception. Power-loss durability is
+claimed only after the fsync tests pass on the supported filesystem; otherwise the documented
+guarantee is process-crash durability.
 
 ### PR 0D: dormant boundary contracts
 
@@ -191,10 +261,11 @@ with a narrow Node/pnpm environment. Static workflow contract tests fail if any 
 - Baseline tests pass: 489 Python, 39 web, typecheck/build.
 - Preflight run twice on a copied home is byte-for-byte stable and changes no input.
 - Manifest identifies loaded code, not merely mutable checkout HEAD.
-- JSONL kill tests cover partial write, missing newline, duplicate id, and state-before-event death.
+- Primitive kill tests cover atomic replace, object-only partial tail repair, missing newline,
+  duplicate id, cross-process lock release, and invalid non-object tails left unchanged.
 - Dormant contracts reject unknown variants and have zero runtime producers or consumers.
 - Remote Python and web checks execute the same exact sanitized candidate under the static boundary.
-- No runtime behavior changes before these facts are recorded.
+- No task/recovery/provider/publication lifecycle behavior changes before these facts are recorded.
 
 ## Phase 1 — physical ownership and reconciled external effects on v1
 
@@ -211,10 +282,12 @@ autonomous or mutating Claude L3/L2/L1/helper roles are disabled; explicitly ope
 read-only use may remain. No drain or process record may infer emptiness from `claude --bg`, a
 provider row, or a stale PID.
 
-### PR 1B: one physical transition for every model process
+### PRs 1B.1-1B.4: one physical transition, adopted by owner family
 
-Put L3 turns, L2 owners, and helpers for every enabled provider behind one provider-neutral physical
-record embedded in its owning domain:
+PR 1B.1 adds the dormant closed physical record and process-unit reconciliation helper. PR 1B.2
+adopts it for L3 turns (Codex first, then Claude only if 1A passed); PR 1B.3 adopts it for L2 owners;
+PR 1B.4 adopts it for managed helpers. Each adoption deletes that family's prior PID/job-row/timestamp
+ownership writer and fallback reader before merging. The shared transition is:
 
 ```text
 planned -> prior_stopped -> spawned -> bound -> result_observed -> empty -> complete/failed
@@ -225,22 +298,28 @@ id before launch. Resume creates a new physical generation even when the provide
 continues. No next writer starts until the prior unit is proven empty. Recovery work also persists
 `{episode_id, permit_revision}` and every launch/message/result/publication rechecks it. L3 receives a
 durable current-turn claim; in-memory locks remain local optimization only. Unknown legacy ownership
-fails closed instead of being declared empty.
+fails closed instead of being declared empty. A static process inventory must be empty before the
+next sub-PR; no maintenance claimant exists during this sequence.
 
-### PR 1C: normalized outcomes, settlement, and remote-effect reconciliation on v1
+### PRs 1C.1-1C.5: outcomes and reconciled external effects on v1
 
-Adopt the dormant strict `WorkerOutcome` and a fixed task settlement operation while v1 task records
-remain authoritative. Settlement owns verification, commit, push, PR creation, checks, merge,
-post-merge qualification, attention, and archive. Every external stage stores intent before the
-effect, then records mechanically observed results. Queryable task/generation markers reconcile
-ambiguous commit, PR, merge, and GitHub-issue retries; timestamp/title matching is forbidden.
+- **1C.1 — normalized outcomes:** adopt strict `WorkerOutcome` for enabled L2 adapters and delete the
+  parallel Claude-report/Codex-action authority fields. Blocking/no-code/continue remain state-only.
+- **1C.2 — settlement claim and local verification:** add the fixed task settlement record, exact
+  worktree/scope/base snapshot, and commit intent. Delete report-promotion and completion-request
+  writers for migrated paths; this PR cannot push or call GitHub.
+- **1C.3 — task publication:** move push, exact PR discovery/create, checks, merge, post-merge
+  observation, immutable publication receipt, and direct CLI landing into that
+  settlement. Every stage stores intent before effect and reconciles by task/generation marker and
+  exact remote identity; timestamp/title matching is forbidden.
+- **1C.4 — issue publication:** move the repository-bound issue marker/create/reconcile path into the
+  one project issue operation and delete the L3 action journal's duplicate effect state.
+- **1C.5 — continuation, attention, and terminalization:** move helper-result continuation,
+  new-owner-generation creation, project attention/FYI projection, terminal state, and archive move
+  into settlement, deleting stranded report promotion, old finalizers, and L3 closeout flags.
 
-Write one immutable publication receipt containing the exact generation, base/head, scope, commit,
-PR pair, check verdicts, merge SHA, post-merge observation, and stable remote effect id. Issue
-publication uses explicit user authority and a similarly bounded embedded operation. Direct CLI
-landing enters the same task settlement; there is no unrecorded publication path. Worker reports
-remain untrusted. Helper continuation creates a new owner generation and never a recursive healing
-task.
+Deployment contribution and qualification are deliberately absent here; Phase 2 adopts the
+publication receipt into `DeploymentRecord`. Worker reports remain untrusted throughout.
 
 ### Phase 1 gate
 
@@ -256,8 +335,12 @@ task.
 ### PR 2A: minimal DeploymentRecord and truthful baseline
 
 Create one strict per-service `DeploymentRecord`, but no maintenance claimant or activation runner.
-Seed `activated_sha` only from a mechanically identified active-service manifest. A stopped or
-unverifiable service starts with `activated_sha=null`. Import restart-pending data only as bounded
+Seed `activated_sha` only from a mechanically identified active-service manifest. Also accept the
+immutable prerequisite freeze receipt as the one-time `bootstrap_anchor`: exact observed loaded SHA
+when available, otherwise an explicit operator-provenance anchor naming the stopped checkout SHA,
+frozen state hash, evidence limitation, and authorization. It is not an ActivationReceipt. A stopped
+or unverifiable service has `activated_sha=null`; an unknown/ambiguous bootstrap anchor blocks first
+activation rather than forcing ancestry from null. Import restart-pending data only as bounded
 `legacy_pending` evidence/blocker, never as activation truth, a launch fence, or a qualified
 contribution. Source staging and ordinary startup cannot change `activated_sha`.
 
@@ -269,15 +352,16 @@ A merge contribution and permission to activate are different facts:
 - only a successful final qualification marks the contribution deployable;
 - failed main checks, unresolved findings, or a merge hold are activation blockers;
 - a corrective receipt explicitly supersedes the failed receipt without mutating history; and
-- activation refuses unless every contribution between activated SHA and current latest-main target
+- activation refuses unless every contribution between the effective ancestry anchor and current latest-main target
   is qualified or explicitly superseded.
 
-Walk the exact first-parent ancestry from `activated_sha` through the candidate. Every commit must be
-covered by a qualified contribution or an immutable operator-provenance receipt stored inside the
-deployment artifact family. An externally written or imported commit is unqualified by default; the
-operator receipt names its exact SHA/range and authorization without fabricating check evidence.
-Bootstrap/import tests cover mixed Altitude and external commits, gaps, rewrites, and conflicting
-receipts.
+The effective ancestry anchor is `activated_sha` when non-null and otherwise the one-time
+`bootstrap_anchor.sha`; no other fallback exists. Walk the exact first-parent ancestry from that
+effective anchor through the candidate. Every commit must be covered by a qualified contribution or
+an immutable operator-provenance receipt stored inside the deployment artifact family. An externally
+written or imported commit is unqualified by default; the operator receipt names its exact SHA/range
+and authorization without fabricating check evidence. Bootstrap/import tests cover mixed Altitude and
+external commits, gaps, rewrites, and conflicting receipts.
 
 Import remaining legacy gap/marker evidence, establish a mechanically verified baseline, and refuse
 eligibility until it is reconciled. The old `restart-pending.json` is a derived compatibility marker,
@@ -287,7 +371,8 @@ acknowledge maintenance.
 ### Phase 2 gate
 
 - Publication and qualification have one mechanically observed receipt path.
-- Every first-parent ancestry gap blocks activation eligibility.
+- Every first-parent ancestry gap from the mechanically selected effective anchor blocks
+  activation eligibility.
 - DeploymentRecord has no activation operation and no maintenance owner yet.
 - Legacy checkout fast-forward is staging divergence, never loaded-source truth.
 
@@ -296,15 +381,29 @@ acknowledge maintenance.
 Do not perform a giant command-layer rewrite. Move one command family at a time while the v1 record
 shape remains active. Each PR deletes its old direct writer immediately.
 
-Recommended order:
+Required PR order:
 
-1. project registration/removal;
-2. task creation, immutable GitHub hydration, and brief creation;
-3. task conversation/steering;
-4. block/resume/reject/merge-hold;
-5. outcome/settlement/publication requests;
-6. fault/hold/recovery changes; and
-7. bounded issue publication.
+1. **3A — project registration/removal**;
+2. **3B — L3 turn/session state and action journals**: make `sessions[provider]` canonical, add a
+   dormant stopped-state importer for selected-session mirrors, and reconcile or refuse every
+   pending `l3-actions`/issue draft by its stable effect id before deleting that writer;
+3. **3C — task intake**: creation, immutable GitHub hydration, request, and brief creation;
+4. **3D — task conversation/steering**;
+5. **3E — lifecycle control**: block/resume/reject/merge-hold;
+6. **3F — outcome/settlement/publication requests** (the Phase 1 external-effect operations remain
+   the effect owner);
+7. **3G — fault/hold/recovery commands over v1 records**; and
+8. **3H — bounded issue publication command**; and
+9. **3I — project/L3/action/event cutover callbacks and closure**: expose the stopped-state project
+   registry, L3 session, pending action/draft, and project-event importers as fixed typed callbacks
+   for the later ActivationOperation; no caller exists yet. Fixture execution records each domain's
+   intent/count/hash/cutover receipt and static inventory proves no normal-runtime fallback selector
+   or old active writer remains.
+
+Project/task event filenames and transition ids migrate with the command family that owns their
+source record, not in a final cleanup sweep. Each PR includes a stopped-state fixture importer or an
+explicit proof that the frozen production family is empty. Transcript-bundle version reconciliation
+belongs to Phase 9 and remains read-only until then.
 
 HTTP, CLI, Claude direct commands, Codex brokers, server timers, and tests call the same in-process
 command. Adapters parse/authorize and return typed results; they never write state themselves.
@@ -325,110 +424,162 @@ External effects reference the domain-embedded operation described in the target
 Process ownership, remote-effect reconciliation, qualification, and application commands now exist,
 so drain evidence is mechanical rather than inferred. Legacy self-deploy still exists, but no
 temporary restart adapter is added: PR 4A's gate is dormant until PR 4B's detached runner becomes its
-first and only production claimant.
+fully testable behind the guard; final PR 10A.2 later makes that runner the first and only production
+claimant after every cutover callback exists.
 
-### PR 4A: complete admission closure
+### PRs 4A.1-4A.5: complete admission closure, claimant disabled
 
-Extend DeploymentRecord with one maintenance latch and the approved activation-operation slot. Every
-mutation/model/effect ingress takes a shared admission before any recovery/project/task/operation/Git
-lock and holds it through its durable result. Exclusive acquisition is writer-preferring, waits for
-shared holders, proves every Phase 1 unit and effect operation empty/reconciled, then writes one
-acknowledgement. It never guesses from task labels, provider rows, quiet time, or bare PIDs.
-Shared-to-exclusive upgrade is forbidden.
+- **4A.1 — dormant gate:** extend DeploymentRecord with one maintenance latch and activation slot;
+  add writer-preferring shared admission, exclusive claim, re-entry rules, and strict owner
+  capability. No production path may claim it.
+- **4A.2 — application ingress:** make HTTP POST, mutating CLI, and every Phase 3 command acquire
+  shared admission before recovery/project/task/operation/Git locks; keep reads byte-stable.
+- **4A.3 — model and external effects:** cover L3/L2/L1 process boundaries, settlement, Git/GitHub,
+  issue publication, and recovery actuation through their durable result.
+- **4A.4 — background and host ingress:** cover timers, cleanup, mutating snapshots, quota caches,
+  transcript export, digest remnants, and external hooks; make hidden mutating reads pure or
+  classify them as mutations.
+- **4A.5 — closure proof:** generated static inventory and race tests prove every mutation/model/
+  effect ingress participates. Keep the dormant-claim guard through final source closure; until then
+  no code can acknowledge maintenance.
 
-HTTP/CLI adapters, command boundaries, L3/L2/L1 final process boundaries, settlement/issue effects,
-recovery changes, timers, cleanup, mutating snapshots, quota caches, and external hooks all
-participate. Read-only health/manifest/static/status calls remain available and byte-stable. Hidden
-mutating reads are made pure or classified as mutations. An acknowledged gate starts the service in
-health-only mode; timers/mutations enable only when activation receipt and gate release are recorded
-atomically.
+Exclusive acquisition waits for shared holders, proves every Phase 1 unit and effect operation
+empty/reconciled, and only then writes acknowledgement. It never guesses from task labels, provider
+rows, quiet time, or bare PIDs. Shared-to-exclusive upgrade is forbidden. An acknowledged candidate
+starts health-only; timers/mutations enable only when activation receipt and gate release are
+recorded atomically.
 
-### PR 4B: detached latest-main activation
+### PRs 4B.1-4B.4: detached latest-main activation, claimant still disabled
 
-Install and exercise the complete activation runner. It fetches a detached exact checkout of the
-latest qualified `origin/main`, runs that candidate's preflight/tests/build, and passes explicit
-installed-checkout/state-home targets to the candidate deploy tool. `make restart` only locates and
-re-execs this detached tool before importing candidate code.
+- **4B.1 — resolver/builder:** detached remote resolution, qualification/ancestry check, strict
+  prior-install-A/candidate-C comparison, tests, web build, and staged hashes; no service or gate effect.
+- **4B.2 — service transaction:** fixed stop/install/health-only start/verify/restart-policy stages
+  behind a fake service-manager adapter; no production claimant.
+- **4B.3 — forward-repair bootstrap:** system-Git locator/re-exec path and failed-held replay that do
+  not import installed candidate code; still disabled for production.
+- **4B.4 — dormant integration:** bind the maintenance owner, current Phase 3 cutover callbacks, and
+  closed ActivationOperation behind the dormant guard; prove the whole disposable E2E and static
+  absence of any second claimant. Production invocation remains impossible until the final
+  pre-activation enablement PR after every required callback exists.
+
+Build and exercise the complete activation runner against disposable installations. Source merge
+does not install or invoke it in production. On a later separately authorized use, it first
+acknowledges the maintenance gate, then records live `running_install` receipt A while a quiesced old
+service remains up. For the already-stopped first activation only, A is instead an exact bootstrap
+`stopped_install` bound to the immutable freeze/provenance receipt. It then fetches a detached exact
+checkout of latest qualified `origin/main`, records that checkout's
+strict `detached_candidate` manifest C, runs C's preflight/tests/build, and validates the intended
+installed-to-C repository/state/unit transition. After it suppresses restart and proves the old unit
+empty, it records strict `stopped_install` manifest B and requires B's installed bytes/configuration
+to match A. A, B, and C hashes, entries, unit/template hashes, state versions, and C commit enter the
+ActivationOperation before source change. Candidate validation never pretends manager ExecStart
+already points to C; stopped validation never executes B or tolerates internal/A-to-B mismatch. The
+runner then passes explicit installed-checkout/state-home targets to C's deploy tool. `make restart`
+only locates and re-execs this detached tool before importing installed candidate code.
 
 ```text
-claimed -> gate_acknowledged -> candidate_resolved -> candidate_built -> remote_revalidated
-        -> restart_policy_suppressed -> old_service_stopped -> source_assets_installed
+claimed -> gate_acknowledged -> prior_install_recorded -> restart_policy_suppressed
+        -> candidate_resolved -> candidate_built -> remote_revalidated
+        -> prior_install_revalidated -> old_service_stopped -> stopped_install_revalidated
+        -> source_assets_installed -> state_cutovers_applied
         -> candidate_started_health_only -> verified -> verification_recorded
         -> restart_policy_restored -> activation_recorded -> complete
         -> failed_released (only before old_service_stopped; old source/service unchanged)
-        -> failed_held (from old_service_stopped onward; retaining evidence and gate)
+        -> failed_held (after suppressed old-identity loss or old_service_stopped; retaining evidence and gate)
 ```
+
+For first activation, `claimed` is also the atomic bootstrap of missing deployment authority. Under
+the deployment lock it requires record absence, exact frozen state/bootstrap stopped-install/
+process-empty evidence, a stable authorization/attempt id, and a read-only preclaim remote target.
+One atomic replace creates the bootstrap anchor, exact operator-provenance coverage through that
+target, held latch, and sole ActivationOperation. Retry with the same identities reconciles; a
+different initializer or mismatched hash refuses. Later remote advancement adds exact coverage under
+the same bounded authorization without changing the anchor.
 
 The runner stages source/web/unit compatibility without importing installed code, refetches before
 source change, and restarts resolution/build if remote main advanced. After revalidation, later
-external merges wait for the next activation. It suppresses restart loops, stops the old service and
-proves its cgroup empty, installs the exact staged assets, starts health-only, verifies
+external merges wait for the next activation. It suppresses restart immediately after recording A,
+then revalidates the exact old PID/start/source after candidate build. If that identity disappeared
+or changed, the operation records the mismatch, idempotently stops/proves the entire unit empty,
+records `old_service_stopped(reason=identity_lost)`, and ends `failed_held`; it never releases the gate
+or adopts the replacement PID as A. Otherwise it stops the old service and
+proves its cgroup empty, revalidates stopped B against A, installs the exact staged assets, applies
+and reconciles every selected state cutover from detached C, starts health-only, verifies
 PID/start/source/schema/API/SPA/bundle, restores normal crash policy, and atomically records
 activation, satisfied contributions, enablement, and gate release.
 
-Before old-service stop, failure restores policy, proves the old generation unchanged, and records
-`failed_released`. From old-service stop onward, failure leaves the service stopped and gate held.
+Before old-service stop, an ordinary preparation failure restores policy, proves the unchanged old
+generation, and records `failed_released`. On the already-stopped first activation, that same outcome
+instead proves unchanged stopped A/B plus frozen state and leaves the service stopped. Old-identity
+loss/replacement is the explicit exception: the authority advances through the idempotent empty-unit
+boundary and records `failed_held`, as do all failures after `old_service_stopped`.
 The installed unit fixes `StartLimitIntervalSec=120`, `StartLimitBurst=3`, `RestartSec=5`; the runner
 receipts `reset-failed` and caps each attempt at three candidate generations. Forward repair uses
 system Git plus a reviewed state-compatible detached candidate even if installed imports/Makefile are
-broken. No separately installed mutable bootstrap or second deployment selector exists.
+broken. A new explicit authorization names the terminal failed attempt, proves its claimant and every
+service process empty, reconciles installed SHA/cutover receipts, and atomically transfers the held
+gate owner through one fixed repair capability; it never releases the gate between attempts or
+reopens the old generation cap. No separately installed mutable bootstrap or second deployment
+selector exists.
 
 ### Phase 4 tests
 
 - Race every admitted entry against exclusive claim; no mutation starts after acknowledgement.
+- Kill/race absent DeploymentRecord initialization; the same authorization reconciles one held
+  attempt and a conflicting initializer cannot create an anchor, latch, or operation.
 - Unknown L3/L2/helper ownership or external-effect state refuses drain.
 - Kill every activation, restart-policy, receipt, and gate stage.
+- Crash the old service to zero PID and race a replacement PID between prior-install recording and
+  candidate build; each path empties the unit and reaches `failed_held`. Kill/replay while recording
+  the mismatch, stopping the replacement, proving emptiness, and persisting the stopped boundary.
 - Break installed imports/Makefile; detached forward repair still works.
 - Pre-stop failure preserves old source/service; post-stop failure leaves one held gate and no loop.
+- Race failed-held repair takeover; only a newly authorized attempt with reconciled evidence can
+  atomically own the still-held gate, and no task/model/old attempt runs in between.
 - Run a disposable activation E2E; never use the production service as the experiment.
 
-## Phase 5 — last self-deploy cutover
+## Phase 5 — delete legacy self-deploy while production is stopped
 
-### PR 5A: bounded one-time cutover publisher
+### PR 5A: remove the obsolete authority
 
-The installed PR 4B release contains one explicitly authorized publisher for one configured
-repository/base/head/marker tuple. It is usable only by the acknowledged maintenance owner and has no
-generic publication mode:
-
-```text
-claimed -> gate_acknowledged -> pr_revalidated -> merge_observed
-        -> operator_provenance_receipted -> complete -> failed_held
-```
-
-It merges the narrow candidate that deletes `dispatch.pull_after_done`, scheduler checkout
-fast-forward, restart-pending compatibility, their tests/fields, and the temporary publisher itself.
-Regular settlement remains blocked. The still-installed command reconciles the exact merge by marker,
-writes immutable operator provenance, compacts the operation, and never repeats or silently qualifies
-a different SHA. A later separately authorized Phase 4 activation installs the candidate in which the
-command is absent. Merge and activation are then permanently separate.
+Delete `dispatch.pull_after_done`, scheduler checkout fast-forward, restart-pending compatibility,
+their tests/fields, and every startup path that interprets checkout movement as loaded-code truth.
+This is an ordinary reviewed source PR landed outside Altitude while the prerequisite production
+freeze remains intact. It neither claims the maintenance gate nor writes a synthetic deployment
+receipt. The eventual first ActivationReceipt covers the exact first-parent refactor range through
+operator provenance and installs the already self-deploy-free candidate.
 
 ### Phase 5 gate
 
-- Before later activation, publication changes receipts/DeploymentRecord only, never source/assets/
-  unit/service.
-- Static search proves self-deploy, restart-pending, and temporary-publisher code absent in candidate.
-- Historical cutover truth is an immutable receipt, not a permanent operation variant.
+- Production state, source, assets, unit, and service remain unchanged by the PR itself.
+- Static search proves self-deploy and restart-pending code absent in the candidate.
+- Deployment transition still has activation as its only subtype and the detached runner remains
+  the first/only claimant.
 
 ## Phase 6 — one-shot task v2 cutover
 
-### PR 6A: gated drain and one-shot task cutover
+### PRs 6A.1-6A.3: build one cutover candidate
 
-Before gate acquisition, land dormant v2 API/UI/read-model consumers and prove them against fixed
-fixtures while v1 remains authoritative. They must have no active selection branch yet. The cutover
-then switches every active task reader and writer together under the gate; there is no release in
-which fresh v2 tasks exist behind v1-only consumers.
+- **6A.1 — dormant consumers/import contract:** land v2 API/UI/read-model consumers and a strict
+  stopped-state importer; prove them against fixed fixtures with no active selection branch.
+- **6A.2 — v2 task commands:** implement the sole v2 reader/writer set and activation-owned import
+  hook, still exercised only in copied homes/disposable activation.
+- **6A.3 — remove active-v1 source paths:** delete v1 report/verified/reported/dispatching writers and
+  fallback readers from the candidate. Retain the real-state importer and isolated legacy archive
+  decoder; neither may be deleted before a successful production ActivationReceipt.
 
-Acquire and acknowledge the maintenance gate before the final emptiness proof and keep it through
-candidate health-only start/format switch. Before switching:
+At the eventual separately authorized activation, acquire and acknowledge the maintenance gate
+before the final emptiness proof and keep it through health-only start/format switch. Before switching:
 
 - finish and archive a v1 task; or
 - stop every owned process, preserve useful work in a GitHub issue/branch, and reject it.
 
 Stop the old service and recheck that no active/resumable v1 task, operation, or helper remains.
 Fresh active tasks then use only
-`task.json` schema v2. Archived `status.json` tasks stay immutable audit evidence through a
-read-only decoder; active code cannot import that decoder. There is no `state-formats.json`, dual
-writer, migration-hold selector, or translated live owner.
+`task.json` schema v2. Archived `status.json` tasks stay immutable audit evidence through an
+isolated read-only decoder used only by archive queries/exports; active mutation, dispatch, resume,
+worker, and settlement code cannot import it. There is no `state-formats.json`, dual writer,
+migration-hold selector, or translated live owner.
 
 The v2 task states are `queued | running | settling | blocked | done | rejected`. `done` and
 `rejected` carry canonical terminal actor/time/reason or result receipt. Moving a terminal directory
@@ -438,20 +589,18 @@ Before source change, the embedded activation operation records a task-domain cu
 old/new schema, the empty-domain proof, and candidate SHA. After the health-only candidate proves the
 new reader/writer set, `activation_recorded` appends the immutable task cutover receipt to that same
 ActivationReceipt. A crash before the receipt leaves the gate held; replay reconciles installed SHA,
-PID, health-only mode, and domain emptiness before emitting it or fails closed. The receipt is audit
-evidence, not a runtime format selector.
-
-### PR 6B: delete dead v1 task paths
-
-Remove the already inactive v1 readers, report/verified/reported/dispatching stamps,
-compatibility writers, and obsolete tests. Retain only the isolated archive decoder selected by the
-retention decision.
+the process condition required by the parent stage, and domain emptiness before emitting it or fails
+closed. Before `candidate_started_health_only`, zero service PIDs are required; at and after that
+stage, the one exact health-only PID/generation is required. The receipt is audit evidence, not a
+runtime format selector.
 
 ### Phase 6 tests
 
 - Reject while owner/helpers exit; archive only after all units are empty.
 - No-code completion refuses a changed worktree.
 - Unknown v2 state refuses before any provider/network effect.
+- Disposable activation imports the exact frozen-state fixture once and cannot delete/skip the
+  importer merely because that fixture passed.
 
 ## Phase 7 — concurrency, intake, routing, and scoped faults
 
@@ -473,29 +622,62 @@ settlement is stable and all owner/helper units are empty; the task becomes
 - Persist the selected observation plus policy version/hash, not a mutable reserve policy in tasks.
 - Weekly comparable allowance is primary; short windows are availability gates.
 
-### PR 7C: typed boundary results and non-global holds
+### PRs 7C.1-7C.4: typed boundary results and non-global holds
 
-Map every current fault caller to closed effect-result and blast-radius enums. Begin conservatively:
-unknown classifications remain global until characterized. Move task/project/provider holds to one
-canonical registry only when their race tests pass. The move is an activation-owned atomic cutover
-under the acknowledged gate with the old service stopped: preserve every active hold's stable id,
-scope, retry evidence, and revision; write/reconcile the import before enabling the new writer;
-record counts/hashes in the ActivationReceipt; and delete every old writer in that same increment.
-Kill/replay proves no lost, duplicate, or briefly absent hold. Observability/cosmetic failures never
-actuate a hold.
+- **7C.1 — dormant types, registry, and importer:** define closed effect-result/blast-radius types,
+  one canonical hold registry command, and the stopped-state importer with race/kill fixtures; no
+  caller switches and no normal-runtime writer is enabled.
+- **7C.2 — task/provider callers:** migrate task- and provider-scoped failure callers and delete only
+  their old hold writers; unknown mappings remain global until characterized.
+- **7C.3 — project/repository callers:** migrate project- and repository-scoped Git/publication/
+  cleanup callers and delete only their old writers.
+- **7C.4 — system boundary and activation hook:** migrate the remaining explicitly global callers,
+  prove observability/cosmetic failures cannot actuate a hold, attach the hold importer/switch to the
+  single ActivationOperation, and prove static closure. Global failures continue to invoke the v1
+  RecoveryCommands through its one existing adapter until the atomic recovery-v2 switch in 8D; this
+  PR changes their typed result/scope, not their recovery record authority.
+
+At the eventual activation-owned cutover under the acknowledged gate, preserve every frozen hold's
+stable id, scope, retry evidence, and revision; write/reconcile the import before enabling the new
+writer; and record counts/hashes in the ActivationReceipt. Source PRs retain the real-state importer
+through successful activation. Kill/replay proves no lost, duplicate, or briefly absent hold.
 
 ## Phase 8 — recovery v2 and incident evidence
 
-Cut over only as a planned activation under the acknowledged maintenance gate, with the old service
-stopped and no active v1 recovery episode or recovery task. Recheck emptiness after stop. Clear/close
-the existing episode through current verified rules first; do not translate a live supervisor or
-permit a v1 fault writer to race the switch.
+### PRs 8A-8D: one recovery cutover, built in reviewable slices
+
+- **8A — dormant recovery/incident contracts:** strict v2 episode, logical wake/physical claim,
+  clearance, UUID incident/amendment, and cutover-receipt validators plus fixed fixtures; no writer.
+- **8B — stopped-state importer:** import legacy Markdown/amendments/indexes and frozen clear recovery
+  state into a staged keyed ledger, with row-level kill/replay tests. It cannot enable v2 or delete
+  its input and remains shipped through the first production activation.
+- **8C.1 — dormant fuse and incident commands:** implement state-first launch fuse plus keyed incident
+  append behind a no-caller boundary; keep all v1 runtime callers/writers unchanged.
+- **8C.2 — supervisor wake ownership:** implement one logical wake per revision, replaceable physical
+  claim, and capped-backoff abandonment/retry with fixture-only callers; keep v1 unchanged.
+- **8C.3 — recovery task and permit:** implement at-most-one recovery L2, waiting-operator behavior,
+  and episode permit fencing with fixture-only callers; keep v1 unchanged.
+- **8C.4 — dormant clearance:** implement keyed clearance receipt/removal against fixtures only; keep
+  v1 runtime clearance unchanged.
+- **8D — activation hook and closure:** attach the single recovery/incident import-and-switch to the
+  parent ActivationOperation, switch all runtime callers to the complete v2 command set in this one
+  integration PR, and delete all v1 active writers/readers together; static inventory proves no v1
+  active writer/fallback selector remains. Dormant implementation in 8C keeps this cutover PR small
+  and prevents a mixed v1/v2 episode from ever becoming a normal-runtime state.
+  A disposable activation E2E is required, but is not evidence that production migrated.
+
+The eventual real cutover runs only as the separately authorized activation under the acknowledged
+maintenance gate, with the frozen old service stopped and no active v1 recovery episode or recovery
+task. Recheck emptiness and the prerequisite state hash. Clear/close the existing episode through
+current verified rules before the freeze; do not translate a live supervisor or permit a v1 fault
+writer to race the switch.
 
 Use the same activation-owned cutover contract as Phase 6: persist recovery-domain old/new schema,
 empty-episode proof, and candidate SHA as intent before source change; after health-only verification,
 append the immutable recovery cutover receipt inside the ActivationReceipt. Crash replay reconciles
-installed SHA, health-only PID, and domain emptiness while the gate remains held. No active reader
-consults the receipt to select a format.
+installed SHA, domain emptiness, and the process condition required by the parent stage while the gate
+remains held: zero service PIDs before `candidate_started_health_only`, then one exact health-only
+PID/generation. No active reader consults the receipt to select a format.
 
 The v2 episode persists immutable `episode_id`, `supervisor_project`, revision, fault/evidence refs,
 state, optional current repair task, waiting reason, one logical wake id per revision, the current
@@ -529,9 +711,10 @@ Recovery behavior is direct:
   input, new evidence, or a deployment receipt changes the revision;
 - clearance is a keyed embedded operation: receipt is reconciled, then active episode is removed.
 
-After real deterministic, provider outage/reroute, task defect, and global safety E2Es pass, delete
-legacy recovery attention retries, duplicate project holds, incident indexes, and compatibility
-readers.
+PR 8D deletes legacy active recovery attention retries, duplicate project-hold writers, and
+incident-index writers together only after the complete candidate E2Es pass. Real-state importers and isolated audit
+readers remain through the successful production ActivationReceipt; only a later post-activation PR
+may delete them.
 
 Kill tests cover task-claim intent/create/finalize, a failed or rejected first recovery task, new
 evidence after the slot is spent, recursive recovery-origin fault refusal, logical-wake claim and
@@ -541,12 +724,21 @@ case retains one episode, one physical wake claim at a time, and no more than on
 
 ## Phase 9 — product surfaces and conservative cleanup
 
-### PR 9A: one wire contract and projections
+### PRs 9A.1-9A.3: one wire contract and projections
 
-Adopt and consolidate the versioned JSON wire schemas introduced dormant in PR 0D. Python produces
-them; TypeScript validates them with its existing runtime validator. There is no fictional
-cross-language library or generated mutable authority. Status, CLI, API, briefs, and UI are read-only
-projections from canonical records.
+- **9A.1 — backend projections:** adopt the dormant Python task/operational wire validators and
+  consolidate status/monitor/server reads without changing the UI.
+- **9A.2 — web boundary:** adopt matching Zod validators and shared fixtures, then simplify one UI
+  route family at a time.
+- **9A.3 — conversation/evidence cutover hook:** reconcile transcript bundle versions and legacy
+  L3/action/event projections through isolated read-only decoders; attach the transcript importer and
+  schema switch to the single ActivationOperation with intent/count/hash/receipt tests; remove active
+  fallback reads only when the frozen-state importer/decoder inventory proves coverage. The L3,
+  action, and project-event state cutovers themselves remain owned by PR 3I rather than being
+  reimplemented here.
+
+There is no fictional cross-language library or generated mutable authority. Status, CLI, API,
+briefs, and UI are read-only projections from canonical records.
 
 Chat remains the L3 high-level surface. Task remains direct L2 steering plus opt-in exact transcript.
 Remove direct task creation/manual dispatch, duplicate message endpoints/composers, digest audio,
@@ -573,11 +765,16 @@ global recovery or blocks new work.
 - Web remote checks run on the exact candidate.
 - Cleanup refuses dirty, unowned, live, unmerged, or ambiguous artifacts without affecting dispatch.
 
-## Phase 10 — final deletion and documentation
+## Phase 10 — pre-activation final deletion and documentation
 
-Delete every temporary selector, compatibility writer, active fallback reader, superseded persona,
-schema, hook, endpoint, field, test fixture, and proposal instruction that describes rejected
-behavior. Git history is the archive; active context contains one architecture.
+### PR 10A.1: source finalization while production remains frozen
+
+Delete every temporary selector, compatibility **writer**, active fallback reader, superseded
+persona, schema, hook, endpoint, field, test fixture, and proposal instruction that describes
+rejected behavior. Retain only the explicitly enumerated real-state importers and isolated archive
+decoders needed by the first production activation. They are reported separately as temporary
+migration source and cannot select normal runtime behavior. Git history is the archive; active
+context contains one architecture.
 
 Run static searches for every deleted name and report intentional read-only archive-decoder matches.
 Record final production/artifact/writer/timer/dependency counts against Phase 0. Run:
@@ -586,13 +783,30 @@ Record final production/artifact/writer/timer/dependency counts against Phase 0.
 - web tests, typecheck, and production build;
 - all kill/race tests;
 - disposable activation and forward-repair E2E;
-- real tiny Codex L3 -> L2 -> PR/check/merge path;
+- disposable real tiny Codex L3 -> L2 -> PR/check/merge path;
 - real tiny Claude path only if Phase 1A passed;
 - task defect, provider outage/reroute, and global recovery E2Es; and
 - restart inspection proving no worker/helper/service process remains unexpectedly.
 
 Do not restart the production Altitude service merely because implementation merged. Activation and
 restart remain a separate explicit operator action.
+
+### PR 10A.2: sole claimant enablement
+
+One small integration PR removes the dormant activation guard only after static inventory proves the
+closed cutover callback list contains project/L3/action/event, task, operational-hold,
+recovery/incident, and transcript domains; every callback has a kill/replay fixture; the complete
+disposable activation/forward-repair drill is green; and no second maintenance claimant exists. It
+adds no new importer, state format, or fallback. Merging it makes the detached runner eligible for a
+later explicit operator authorization; it does not invoke, install, or restart production.
+
+### PR 10B: post-activation importer deletion
+
+Only after the separately authorized production activation has a successful receipt with exact
+import counts/source hashes/cutover receipts may a later reviewed PR delete the consumed real-state
+importers. That later candidate is installed through another explicit activation. Until then, the
+pre-activation repository is considered source-refactor complete but intentionally retains bounded
+migration code; disposable success or elapsed time is never a deletion signal.
 
 ## Stop conditions
 

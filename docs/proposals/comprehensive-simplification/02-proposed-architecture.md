@@ -1,8 +1,9 @@
 # 02 - Proposed architecture
 
-> Accepted target as of 2026-09-02. It becomes active behavior module by module only when the
-> corresponding reviewed PR updates [Architecture](../../ARCHITECTURE.md); production activation
-> remains a separate operator action.
+> Accepted target as of 2026-09-02 after adversarial re-review. Source and active documentation move
+> module by module, but the frozen production service uses none
+> of the new behavior until one separately authorized activation applies every pending real-state
+> cutover.
 
 ## Design rules
 
@@ -71,9 +72,8 @@ embedded in the record that already owns the lifecycle rather than stored as a f
 authority. The target has exactly six named operation families: L3 turn, owner/helper worker
 transition, task settlement, issue publication, recovery transition, and deployment transition.
 Recovery task claim and clearance are fixed subtypes of the one recovery-transition family.
-During Phase 5 migration only, the one-time self-deploy cutover publication is a fixed temporary
-subtype of deployment transition; it compacts to provenance and is deleted. The final deployment
-transition has only source activation.
+Deployment transition has source activation as its sole subtype. The migration keeps production
+stopped, so deleting legacy self-deploy requires no temporary publisher or second gate claimant.
 Settlement contains its commit/push/PR/check/merge/deployment-qualification stages; it
 does not count each effect as another operation family. Every family has a fixed stage table,
 stable operation/effect ids, deterministic targets where the external system permits them, and
@@ -615,6 +615,7 @@ The deployment record owns:
 
 ```text
 service/repository identity
+bootstrap anchor: frozen source/state evidence used only before the first activation
 activated_sha + successful ActivationReceipt
 ordered merge contributions: receipt/merge SHA
 qualification: eligible receipts + blockers + explicit superseding corrective receipts
@@ -626,15 +627,22 @@ schema_version
 
 The embedded `ActivationOperation` is the final deployment-transition operation. Activation records
 `attempt_id`, the bounded operator authorization receipt, the exact SHA selected later at the
-post-gate resolution boundary, source/bundle/unit hashes, prior PID, and fixed stages:
+post-gate resolution boundary, prior PID, and three non-interchangeable identity positions. The prior
+position is a post-gate `running_install` for a live old service or, only for the already-stopped first
+activation, an exact bootstrap `stopped_install` bound to the immutable freeze/provenance receipt.
+Inactive `stopped_install` B is then revalidated byte-for-byte without executing old code, and
+`detached_candidate` C is pinned to the chosen commit. It records each manifest/receipt hash,
+source/bundle/unit hashes, and the intended B-to-C transition before using these fixed stages:
 
 ```text
-claimed -> gate_acknowledged -> candidate_resolved -> candidate_built -> remote_revalidated
-        -> restart_policy_suppressed -> old_service_stopped -> source_assets_installed
+claimed -> gate_acknowledged -> prior_install_recorded -> restart_policy_suppressed
+        -> candidate_resolved -> candidate_built -> remote_revalidated
+        -> prior_install_revalidated -> old_service_stopped -> stopped_install_revalidated
+        -> source_assets_installed -> state_cutovers_applied
         -> candidate_started_health_only -> verified -> verification_recorded
         -> restart_policy_restored -> activation_recorded -> complete
         -> failed_released (only before old_service_stopped; old service/source unchanged)
-        -> failed_held (from old_service_stopped onward; retaining evidence and gate)
+        -> failed_held (after suppressed old-identity loss or old_service_stopped; retaining evidence and gate)
 ```
 
 After `restart_policy_restored` but before gate release, an unexpected candidate exit is a receipted
@@ -648,6 +656,20 @@ runner resets the counter immediately before the first candidate start and recor
 Either limit transitions to `failed_held` with the service stopped. Fault tests cover counter reset,
 every generation, burst exhaustion, and slow-spaced crashes beyond 120 seconds.
 
+`state_cutovers_applied` means every selected importer has reconciled its stable domain receipt under
+the still-held gate; it does not enable normal readers or writers. A crash re-enters the detached
+candidate tool, verifies the installed SHA and each domain receipt, and resumes the first incomplete
+cutover. No service starts while a selected cutover is partial or unknown.
+
+The first activation initializes deployment authority rather than assuming it already exists. Under
+the deployment lock, `claimed` requires an absent DeploymentRecord plus exact frozen state,
+bootstrap stopped-install/process-empty evidence, a stable authorization/attempt id, and a read-only
+preclaim remote target. One atomic replace creates the bootstrap anchor, exact operator-provenance
+coverage through that target, held maintenance latch, and one ActivationOperation. Retrying the same
+authorization reconciles that record; any different initializer or mismatched byte/hash refuses. If
+the post-gate latest target advances, `candidate_resolved` appends exact additional coverage under
+the same bounded “latest at revalidation” authorization; it never changes the anchor.
+
 `verification_recorded` is only pending evidence. `activation_recorded` is one atomic
 DeploymentRecord replacement that sets `activated_sha`, appends the successful ActivationReceipt and
 any domain-cutover receipts, satisfies the covered contributions, enables mutations/timers, and
@@ -655,13 +677,14 @@ releases the maintenance gate. Before that atomic replace none of those success 
 retained `failed_held` operation can contain verification evidence but never a successful receipt.
 
 Each stage records intent before its process/filesystem effect and the observed receipt after.
-Optional selected-domain cutovers are fields of this activation, not another operation kind. They
-cover task, operational-hold, recovery, and incident-import migrations as applicable and record
+Optional selected-domain cutovers are closed fields of this activation, not another operation kind.
+They cover project/L3 session and pending-action reconciliation, event projections, task,
+operational-hold, recovery, incident import, and transcript-bundle migrations as applicable and record
 domain, old/new schema, drained/reconciled-domain evidence, candidate SHA, imported-row count/hash,
 and derive progress from the parent stages: intent at `remote_revalidated`, stopped/empty proof at
-`old_service_stopped`, compatibility at `verified`, and immutable cutover receipt at
-`activation_recorded`. Crash replay uses those same receipts and never selects runtime format from
-the audit receipt.
+`old_service_stopped`, applied/reconciled evidence at `state_cutovers_applied`, compatibility at
+`verified`, and immutable cutover receipt at `activation_recorded`. Crash replay uses those same
+receipts and never selects runtime format from the audit receipt.
 The operator may stage a candidate speculatively, but after acquiring the maintenance gate it fetches
 and verifies the then-latest `origin/main`, persists that exact SHA at `candidate_resolved`, and
 rebuilds if the speculative SHA differed. Immediately before source change it fetches once more: a
@@ -679,9 +702,13 @@ new work refuses or waits; already-running work is stopped or reconciled to an i
 activation proceeds. Read-only status and the activation operation's own receipts remain available.
 Several merges before authorization contribute to the single latest remote target, but activation
 refuses while any included contribution has an unresolved qualification blocker or any remote-main
-change since `activated_sha` lacks a qualified contribution or immutable operator-provenance receipt.
-Coverage is checked for every commit in the first-parent ancestry range from `activated_sha` through
-the candidate, not merely for contributions Altitude already knows about. Operator-provenance
+change since the ancestry anchor lacks a qualified contribution or immutable operator-provenance
+receipt. After the first activation the anchor is `activated_sha`. Before it, a one-time bootstrap
+anchor comes from the frozen pre-stop loaded manifest; if that observation was unavailable, an exact
+operator-provenance receipt must name the stopped checkout SHA, state hash, evidence limitation, and
+authorization without pretending it was an ActivationReceipt. An unknown/ambiguous anchor refuses.
+Coverage is checked for every commit in the first-parent ancestry range from that anchor through the
+candidate, not merely for contributions Altitude already knows about. Operator-provenance
 receipts live immutably inside the deployment artifact family, name the exact commit/range and
 authorization, and never imply successful checks that were not mechanically observed.
 Task receipts are never mutated to carry activation state; deployment truth references them and
@@ -694,19 +721,31 @@ block forward repair. Normal supervisor restart-on-crash remains enabled, but th
 temporarily suppresses restart loops until exact candidate health succeeds. The acceptable target is:
 
 1. set the durable maintenance gate and prove every mutation/model/timer/worker/helper boundary idle;
-2. resolve/build the latest observed remote main, reject unresolved deployment blockers, revalidate
-   the remote SHA, and record restart-policy suppression;
-3. stop the old service and prove its complete process unit empty;
-4. fast-forward the installed checkout to the revalidated SHA and install the staged bundle/unit;
-5. start the first service generation in health-only mode and verify its PID, API, UI, schema, bundle hash, and
+   then capture the current `running_install` receipt while the quiesced old service remains up, or,
+   for the already-stopped first activation, capture an exact `stopped_install` receipt and bind it to
+   the frozen source/state/unit/process-empty evidence plus its explicit operator-provenance limitation;
+2. immediately suppress old-service restart after recording prior-install A; then resolve/build the
+   latest observed remote main, reject unresolved deployment blockers, and revalidate the remote SHA;
+3. revalidate the exact old PID/start/source identity, then stop the old service and prove its
+   complete process unit empty;
+4. capture `stopped_install` B and prove its installed bytes/configuration still match the prior
+   install receipt (running normally, bootstrap freeze for the first activation), then fast-forward
+   the installed checkout to the revalidated SHA and install the staged bundle/unit;
+5. run every selected state importer from detached C, reconcile each stable domain receipt, and only
+   then start the first service generation in health-only mode and verify its PID, API, UI, schema, bundle hash, and
    source SHA while timers/mutations remain disabled;
 6. persist pending verification evidence and restore normal crash restart while the gate still
    forces health-only behavior;
 7. if systemd starts a new PID before release, record that bounded generation and repeat the full
    health-only verification; only the currently verified PID may then atomically record activated
    SHA/success receipt/contribution satisfaction, enable mutations/timers, and release the gate; or
-8. if preparation fails before old-service stop, restore its restart policy, verify the unchanged old
-   PID/source, and atomically record `failed_released` plus gate release; otherwise, if verification
+8. if preparation fails before old-service stop, restore its restart policy and atomically record
+   `failed_released` plus gate release only after verifying the unchanged/current old PID/source; for
+   the already-stopped first activation, instead prove unchanged stopped A/B and frozen state and
+   leave the service stopped. If the old PID disappears or changes after restart suppression, do not
+   release: durably record the mismatch, issue an idempotent stop, prove the complete unit empty,
+   record `old_service_stopped(reason=identity_lost)`, and end `failed_held` with restart still
+   suppressed. Otherwise, if verification
    fails or StartLimit is exhausted after stop, leave the service stopped and target unsatisfied with
    `state=failed_held`. Do not continue an old process against new dynamic assets or
    silently claim rollback.
@@ -717,8 +756,12 @@ another operator start; the gate keeps it health-only and requires full re-verif
 attempt before old-service stop releases safely after proving the old instance unchanged; a failure
 from old-service stop onward is terminal, stops the service, and retains the gate. Repair is forward-only: a reviewed
 fix or revert lands on `origin/main`, and a new explicit operator authorization creates a new attempt
-against that latest verified SHA. Pre-install failure may discard staged files; it does not authorize
-reuse of the old attempt.
+against that latest verified SHA. It names `repair_of=<failed attempt>`, proves the prior claimant and
+all service processes empty, reconciles installed SHA plus every applied cutover receipt, and uses one
+fixed broker capability to atomically transfer the still-held gate owner to the new attempt without a
+release window. Missing/ambiguous evidence refuses. The old attempt remains terminal and its
+three-generation cap cannot be reset except by this new explicit authorization. Pre-install failure
+may discard staged files; it does not authorize reuse of the old attempt.
 
 A versioned-release/symlink design is rejected for this simplification. Before source activation the
 runner may discard staged source/assets. After source activation, repair is a reviewed

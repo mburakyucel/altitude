@@ -1,11 +1,14 @@
 # Comprehensive simplification proposal
 
-> **Status: reviewed and accepted as the implementation target on 2026-09-02.** Three independent
-> adversarial passes found and corrected deployment, crash-consistency, process-ownership, task-state,
-> migration, and surface-accounting gaps. The active system remains
-> [Architecture](../../ARCHITECTURE.md) plus
-> [Engine and session lifecycle](../../SESSION_LIFECYCLE.md) until each behavior PR updates those
-> documents. The migration is authorized; production activation/restart remains a separate action.
+> **Status: accepted for source-only implementation after adversarial re-review.** Independent
+> adversarial passes repeatedly rejected and then verified corrections to deployment,
+> crash-consistency, process ownership, task state, migration, source freeze, and surface accounting.
+> The freeze receipt pins the deployed
+> behavior and its then-current [Architecture](../../ARCHITECTURE.md) plus
+> [Engine and session lifecycle](../../SESSION_LIFECYCLE.md) until the separately authorized
+> activation. Candidate-source versions of those documents update with each behavior PR.
+> Module implementation uses the accepted dependency order and independent review; production
+> activation/restart remains a separate action.
 
 ## Purpose
 
@@ -42,6 +45,8 @@ large or a path is inconvenient. Every proposed simplification must identify:
   simplifications, and mandatory questions every implementation reviewer must answer.
 - [06 - Adversarial review](06-adversarial-review.md): independent challenges to the first draft,
   their concrete dispositions, and the claims that still need reviewer verification.
+- [07 - Baseline and target](07-baseline-and-target.md): exact line/file counting contract,
+  baseline rosters, future-file classification, and a plausible permanent target roster.
 
 ## Proposed architecture in one view
 
