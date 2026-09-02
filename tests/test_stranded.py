@@ -9,7 +9,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-stranded-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, server, tasks as T  # noqa: E402
+from altitude import config, dispatch, state as S, server, tasks as T, transcript  # noqa: E402
 
 
 class TestStrandedReports(unittest.TestCase):
@@ -18,6 +18,7 @@ class TestStrandedReports(unittest.TestCase):
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
         base = {"created": S.now(), "updated": S.now(), "l2_engine": "codex",
+                "active_operation": {"test": "terminal-owner"},
                 "verified": {"verdict": "ok", "problems": [], "signals": [], "spend": {}, "prs": [], "report": {}}}
         for slug, state, handled, report in (("stranded", "reported", None, True), ("stranded-blocked", "blocked", None, True),
                                              ("handled", "reported", S.now(), True), ("no-report", "blocked", None, False),
@@ -43,7 +44,8 @@ class TestStrandedReports(unittest.TestCase):
         (d / "report.json").write_text(report_text)
         S.save_task(project, {"slug": slug, "title": slug, "state": "blocked", "created": S.now(),
                               "updated": S.now(), "attempt": attempt, "verified": verified, "l3_handled": None,
-                              "blocked_reason": "stale block reason", "l2_engine": "codex"})
+                              "blocked_reason": "stale block reason", "l2_engine": "codex",
+                              "active_operation": {"test": "terminal-owner"}})
         S.append_event(project, slug, "state", frm=block_from, to="blocked", by="test")
 
     def test_only_unhandled_reports_are_resumed(self):
@@ -72,7 +74,16 @@ class TestStrandedReports(unittest.TestCase):
         self.assertEqual(promoted["state"], "reported")
         self.assertIsNone(promoted["blocked_reason"])
         self.assertEqual(calls, [(f"finished:{project}:{slug}", "report_turn", "reported")])
-        self.assertEqual(T.done(project, slug, digest="closed")["state"], "done")
+        original_snapshot = dispatch.owner_result_snapshot
+        original_ready, original_sync = dispatch.owner_archive_ready, transcript.sync
+        dispatch.owner_result_snapshot = lambda _project, live: {"task": live}
+        dispatch.owner_archive_ready = lambda _project, _live: True
+        transcript.sync = lambda *_args, **_kwargs: None
+        try:
+            self.assertEqual(T.done(project, slug, digest="closed")["state"], "done")
+        finally:
+            dispatch.owner_result_snapshot = original_snapshot
+            dispatch.owner_archive_ready, transcript.sync = original_ready, original_sync
 
     def test_report_stamps_the_current_attempt(self):
         project, slug = "altitude-stamp", "stamp"

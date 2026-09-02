@@ -38,16 +38,16 @@ class TestDirectL2Completion(unittest.TestCase):
         S.save_task("p", task)
         return task, worktree
 
-    def test_unchanged_branch_can_close_without_report_artifacts(self):
+    def test_unchanged_branch_requests_completion_but_missing_owner_cannot_finalize(self):
         task, _ = self.task("Architecture proposal")
         requested = T.done("p", task["slug"], actor="l2", digest="Proposal saved in issue #1.",
                            expected_dispatch_id=task["dispatch_id"], expected_l2_token="token")
         self.assertEqual(requested["state"], "running")
         self.assertEqual(requested["completion_requested"]["agent_id"], "worker")
-        result = T.finalize_completion("p", task["slug"], expected_dispatch_id=task["dispatch_id"],
-                                       expected_agent_id="worker", expected_session_id="session")
-        self.assertEqual(result["state"], "done")
-        self.assertFalse((S.task_dir("p", task["slug"]) / "report.json").exists())
+        with self.assertRaisesRegex(T.TransitionError, "exact Codex owner operation required"):
+            T.finalize_completion("p", task["slug"], expected_dispatch_id=task["dispatch_id"],
+                                  expected_agent_id="worker", expected_session_id="session")
+        self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
 
     def test_changed_branch_cannot_bypass_code_verification(self):
         task, worktree = self.task("Code task")

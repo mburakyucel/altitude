@@ -311,6 +311,19 @@ class TestL3Actions(unittest.TestCase):
                                                 "digest": "done"}), action_id="9" * 64)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
 
+    def test_codex_worker_is_stopped_only_when_terminal_and_exact_empty(self):
+        task = self.task(l2_engine="codex")
+        for projection in (
+            {"working": False, "terminal": False, "empty": True},
+            {"working": False, "terminal": True, "empty": False},
+        ):
+            with self.subTest(projection=projection), \
+                 mock.patch.object(dispatch, "owner_projection", return_value=projection):
+                self.assertTrue(l3_actions._worker_live("p", task))  # noqa: SLF001
+        with mock.patch.object(dispatch, "owner_projection",
+                               return_value={"working": False, "terminal": True, "empty": True}):
+            self.assertFalse(l3_actions._worker_live("p", task))  # noqa: SLF001
+
     def test_remote_publication_and_recovery_commands_are_dormant_before_claim(self):
         for index, kind in enumerate(("github_issue_approve", "recovery_hold", "recovery_clear", "task_resume")):
             action_id = f"{index + 1:x}" * 64

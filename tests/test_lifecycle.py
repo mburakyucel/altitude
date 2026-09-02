@@ -46,10 +46,11 @@ class TestLifecycle(unittest.TestCase):
         T.resume("demo", t["slug"])
         T.report("demo", t["slug"], {"verdict": "ok", "prs": [140]})
         T.fyi("demo", t["slug"], "landed")
-        T.done("demo", t["slug"], digest="Done.")
+        with self.assertRaisesRegex(T.TransitionError, "exact Codex owner operation required"):
+            T.done("demo", t["slug"], digest="Done.")
 
-        self.assertEqual(S.task_dir("demo", t["slug"]).parent.name, "archive")
-        self.assertGreaterEqual(len(S.read_events("demo", t["slug"])), 8)
+        self.assertEqual(S.task_dir("demo", t["slug"]).parent.name, "tasks")
+        self.assertGreaterEqual(len(S.read_events("demo", t["slug"])), 7)
 
         t2 = T.new("demo", "Add beta stage with alarm rollback", "again")
         self.assertTrue(t2["slug"].endswith("-2"))

@@ -454,6 +454,9 @@ def reconcile_l3(project: str) -> None:
 
 def reconcile_l2(project: str) -> None:
     """Resume/reconcile L2 owners outside the timer; both paths may persist owner receipts."""
+    for result in dispatch.continue_owners(project):
+        if result.get("status") == "bounded":
+            log(f"[{project}/{result['slug']}] owner continuation reached its fixed step cap")
     for slug in dispatch.resume_due(project):
         log(f"[{project}/{slug}] resumed: the usage window reopened")
     for item in dispatch.poll(project):

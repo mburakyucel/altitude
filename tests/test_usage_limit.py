@@ -63,6 +63,12 @@ class TestPollAndResume(unittest.TestCase):
     def setUpClass(cls):
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
+        cls._jobs_dir = dispatch.JOBS_DIR
+        dispatch.JOBS_DIR = Path(_TMP) / ".claude" / "jobs"
+
+    @classmethod
+    def tearDownClass(cls):
+        dispatch.JOBS_DIR = cls._jobs_dir
 
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
         orig = engines.claude_agents, S.list_tasks, dispatch.job_detail
@@ -92,7 +98,7 @@ class TestPollAndResume(unittest.TestCase):
             S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})
         resumed, holds = [], iter([None, None, "WIP limit: 3 running"])
         orig = dispatch.resume_blocked, dispatch.wip_hold
-        dispatch.resume_blocked = lambda project, slug, answer, prefix="": resumed.append(slug)
+        dispatch.resume_blocked = lambda project, slug, answer, prefix="", **_kwargs: resumed.append(slug)
         dispatch.wip_hold = lambda project, task=None: next(holds)
         try:
             back = dispatch.resume_due("altitude")

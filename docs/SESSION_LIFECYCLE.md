@@ -64,8 +64,11 @@ queued task
   ├─ recovery/WIP/lease and Git provenance gates
   ├─ weekly-first Codex observation and configured model choice
   ├─ persist l2_engine + model + reason + raw quota evidence
-  ├─ persist the TaskRecord-owned request and exact Git-preparation receipt
-  ├─ elect one `planned -> prior_stopped` launcher and start its deterministic unit
+  ├─ persist the TaskRecord-owned request and exact Git intent at preparation `planned`
+  ├─ short-CAS the exact Git intent `planned -> applying`
+  ├─ under the existing settlement lock, idempotently create/validate Git and persist `prepared`
+  ├─ bind physical intent at preparation `complete`
+  ├─ elect one physical `planned -> prior_stopped` launcher and start its deterministic unit
   └─ bind the concrete session and worker only from typed receipts → running
 ```
 
@@ -87,13 +90,24 @@ place. For enabled Codex, Burak's message is appended to the durable human conve
 snapshot. A short task-owned compare-and-swap then persists that same message id and prompt as the current owner's
 sole successor before Altitude:
 
-1. validates the task worktree/commit provenance and records its typed preparation receipt;
-2. persists stop intent, stops the current deterministic unit, and proves it empty;
-3. resumes the already-selected Codex thread in a new physical generation;
-4. binds the replacement worker only through its typed physical-transition receipts.
+1. persists stop intent for any still-nonterminal current generation, stops its deterministic unit, and proves
+   its exact result and emptiness before promoting the already-persisted successor;
+2. installs that exact successor as a planned generation naming the prior unit, with no Git or provider effect yet;
+3. short-CASes the Git intent `planned -> applying`, then acquires the existing publication-settlement lock,
+   idempotently creates or validates the exact worktree, and records the typed receipt at `prepared` while
+   physical ownership is still absent; after interruption, any later exact-request reconciler repeats that
+   bounded sequence under the same lock and re-reads `prepared` without a duplicate effect or receipt. The receipt
+   requires fetched origin to be an ancestor of worktree `HEAD`; a fresh worktree must equal origin exactly, and a
+   resume worktree may advance only through commits carrying the exact task trailer;
+4. binds the deterministic physical intent at preparation `complete`, resumes the already-selected Codex thread
+   in that generation, and binds the provider thread only through typed
+   physical-transition receipts.
 
 Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
-A failed resume leaves the Codex thread and task evidence available for recovery. No cross-provider
+A recovery-fenced bind retains the unchanged `prepared` request, exact Git receipt, and retry metadata even if the
+global hold clears while the failure handler runs. Its retry first durably rebinds that prepared request to the
+current inactive recovery epoch, then creates the physical intent without repeating Git. A failed resume leaves the Codex thread and task evidence
+available for recovery. No cross-provider
 continuation exists in the current target. No long-held resume/owner flock exists: the task-owned seam serializes
 each short receipt transition, while dispatch performs or reconciles Git, manager, and provider effects unlocked.
 
@@ -140,19 +154,33 @@ Recovery turns bind the episode, permit revision, and claim; ordinary turns bind
 Both are rechecked before message, launch, result persistence, result delivery, and each enabled local action.
 
 Codex writes each generation's final answer and JSON events to a predeclared host spool outside scratch. The
-event header binds that spool to the persisted intent. If the wrapper dies before creating the result marker, a
+event header binds that spool to the persisted intent. When the result marker is observed, the same TaskRecord
+transition binds the event spool's exact generation-relative id and raw-byte SHA-256 before terminalization. If
+the wrapper dies before creating the result marker, a
 replacement waits for unit emptiness and accepts only one complete, valid turn; partial evidence fails inertly.
 This inspection also precedes the otherwise ambiguous `prior_stopped` decision: an exact completed spool repairs
 forward without relaunch, no spool remains `ownership_uncertain`, and oversized, partial, or mismatched evidence
-fails inertly. The spool is recovery evidence, not a second result authority, and is removed only after terminal
-delivery retires.
+fails inertly. The spool is recovery evidence, not a second result authority. Terminal archive and successor
+retirement both require that bound private regular file to remain present and unchanged; B3 never silently skips,
+re-hashes, or deletes it.
+
+A rejection while Git preparation is still `planned` records an exact task-owned
+`cancelled-before-effect` terminal/empty receipt on that operation. It performs no Git or provider effect and
+never represents cancellation as a missing owner. The successful result broker still requires a physically
+`complete`, terminal-empty generation; only rejection/archive accepts the exact pre-effect cancellation receipt.
+If a different exact successor was already persisted, background continuation closes the superseded `planned`
+request with that same pre-effect receipt and promotes the successor without Git, provider launch, or a phantom
+physical-history row. The successor remains the sole exact request that may then prepare.
+Once preparation is `applying`, cancellation can persist only a stop: a serialized Git reconciler may be outside
+the TaskRecord lock, so the operation is nonterminal and cannot be archived until that reconciler records the exact receipt. At
+`prepared`, cancellation binds a stopped/error physical generation and settles it without provider launch.
 
 Answer and event caps are enforced while Codex is still producing them. Overflow, timeout, or drain failure
 terminates Codex; the managed wrapper exits and the exact outer generation must then be stopped/proven empty before
 failure settlement. An interrupted non-reconcilable action remains `applying` and fences the current turn. B2 has
-no disposition/reset API: Phase 3 must add the trusted command before activation. Remote issue publication, task
-resume, recovery repair delegation, and L3 recovery hold/clear are rejected before claim until 1C.4/B3/Phase 3G
-supplies their final boundaries.
+no disposition/reset API: Phase 3 must add the trusted command before activation. Codex task resume is active
+through the B3 TaskRecord owner boundary described above. Remote issue publication, recovery repair delegation,
+and L3 recovery hold/clear remain rejected before claim until 1C.4/Phase 3G supplies their final boundaries.
 
 The target L3 prompt receives one generation-keyed redacted projection: bounded recent human chat;
 each active task's title, state, blocked reason, direct question, merge hold, and publication
@@ -175,9 +203,30 @@ treated as absent; read-only inspection may rediscover it only for exact stop/cl
 ownership, or a missing/failed unit without a valid terminal receipt, fails closed as a system fault.
 
 The service timer schedules L2 reconciliation through the existing deduplicated background runner. It does not run
-provider work or persist owner receipts inline. Completed owner generations are retained as bounded TaskRecord
-evidence for live transcript lookup; the transcript reader validates those identities and hashes instead of
-consulting legacy PID/job/timestamp authority.
+provider work or persist owner receipts inline. One bounded continuation pass in that runner mechanically advances
+only replay-safe boundaries: abandoned Git preparation, prepared binding, physical `planned`, a persisted successor
+after its terminal predecessor, and an exact blocked resume. It reuses the TaskRecord CAS and existing settlement,
+WIP/lease, recovery, and physical fences; it never relaunches `prior_stopped`. At most 128 terminal physical owner
+generations (successful or failed) are retained as TaskRecord evidence; a `cancelled-before-effect` operation has
+no physical generation and is not added to that history. Reaching the fixed cap fails closed without eviction until PR 1C.5 supplies owner-history compaction.
+Before checking an admission hold, continuation may only reconcile and strictly stop an already-launched physical
+generation; recovery/WIP holds continue to gate every new Git, binding, promotion, and launch effect. Thus a bound
+blocked resume invalidated by recovery becomes terminal under the hold but remains logically `blocked`; only after
+clearance is its canonical failure surfaced and its exact stale retry intent removed, so it cannot auto-resume.
+An L2 blocked resume remains logically `blocked` until its exact current owner request and physical generation have
+a positive bound receipt; a waiter fences the transition id, generation, and intent digest, so a same-request
+replacement cannot satisfy an older wait.
+One task-owned CAS then revalidates state, dispatch/session/agent identity, message, request, bound receipt, and all
+five persisted retry fields; the same status-file write moves to `running` and removes only that matching retry
+intent. It emits one state event with the exact persisted answer. The synchronous caller carries a non-secret
+completion expectation from its blocked snapshot through the exact bound wait. If background continuation wins,
+a fresh `running` snapshot with no retry fields and the same exact request/generation is idempotent success; a
+different generation, partial retry residue, or reblocked identity refuses. Thus a successful race is not reported
+as failure, and a crash cannot leave an old prompt armed for a later automatic resume.
+Each retired row binds the exact generation-relative event id and SHA-256 plus terminal result id and SHA-256.
+Transcript lookup
+requires both private regular files to remain present and match those receipts; missing, replaced, or tampered
+evidence is explicitly unavailable rather than skipped or rediscovered from legacy PID/job/timestamp authority.
 
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
 restart pending, but it never stops the running service by itself.

@@ -588,7 +588,7 @@ class TestRecoveryFuse(unittest.TestCase):
         self.assertEqual(current["state"], "queued")
         self.assertIsNotNone(current.get("dispatching"), "the owner request is durable before Git effects")
         operation = dispatch._owner(current, project="altitude", required=True)
-        self.assertEqual(operation["preparation"]["stage"], "planned")
+        self.assertEqual(operation["preparation"]["stage"], "prepared")
         self.assertIsNone(operation["physical"])
         self.assertEqual(recovery.status()["faults"][-1]["kind"], "fetch-race")
 
@@ -610,6 +610,8 @@ class TestRecoveryFuse(unittest.TestCase):
         recovery.hold("manual hold", kind="manual", actor="l3")
 
         ordinary_worktree = self.repo / ".claude" / "worktrees" / ordinary["slug"]
+        ordinary, winner = dispatch._claim_owner_preparation("altitude", ordinary)
+        self.assertTrue(winner)
         with self.assertRaisesRegex(T.TransitionError, "recovery hold: manual"):
             dispatch._prepare_owner(
                 "altitude", ordinary, worktree=ordinary_worktree,
@@ -633,6 +635,8 @@ class TestRecoveryFuse(unittest.TestCase):
         )
         self.assertEqual(disposition, "prepare")
         repair_worktree = self.repo / ".claude" / "worktrees" / repair["slug"]
+        repair, winner = dispatch._claim_owner_preparation("altitude", repair)
+        self.assertTrue(winner)
         prepared = dispatch._prepare_owner(
             "altitude", repair, worktree=repair_worktree,
             branch=f"worktree-{repair['slug']}", base_sha="b" * 40,

@@ -32,17 +32,19 @@ class TestResumeHold(unittest.TestCase):
 
         self.resumed = []
         self.stopped = []
-        self.originals = (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
+        self.originals = (dispatch.resume_session, dispatch._complete_blocked_resume,  # noqa: SLF001
+                          engines.claude_stop, engines.claude_agents,
                           engines.usage_hold, monitor.quota)
         dispatch.resume_session = self._resume_session
+        dispatch._complete_blocked_resume = self._complete_blocked_resume  # noqa: SLF001
         engines.claude_stop = self.stopped.append
         engines.claude_agents = lambda: []
         engines.usage_hold = lambda: None
         monitor.quota = lambda: {"known": True}
 
     def tearDown(self):
-        (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
-         engines.usage_hold, monitor.quota) = self.originals
+        (dispatch.resume_session, dispatch._complete_blocked_resume, engines.claude_stop,  # noqa: SLF001
+         engines.claude_agents, engines.usage_hold, monitor.quota) = self.originals
         recovery.hold_path().unlink(missing_ok=True)
 
     def _resume_session(self, project, slug, text, session_id=None, **_expected):
@@ -51,7 +53,25 @@ class TestResumeHold(unittest.TestCase):
             task = S.load_task(project, slug)
             task["agent_id"] = f"new-{slug}"
             S.save_task(project, task)
-        return {"agent": {"id": f"new-{slug}", "sessionId": task["session_id"]}, "stdout": ""}
+        message_id = _expected.get("message_id")
+        return {"agent": {"id": f"new-{slug}", "sessionId": task["session_id"]}, "stdout": "",
+                "_owner_identity": {"message_id": message_id, "request_sha256": "a" * 64,
+                    "transition_id": "b" * 64, "generation": "b" * 64,
+                    "intent_digest": "c" * 64, "process_unit_id": f"new-{slug}",
+                    "provider_session_id": task["session_id"]}}
+
+    def _complete_blocked_resume(self, project, task, _expectation=None):
+        """This lease-focused fixture emulates the production helper's one status-file write."""
+        with S.project_lock(project):
+            live = S.load_task(project, task["slug"])
+            answer = live["resume_answer"]
+            live.update({"state": "running", "dispatching": None, "blocked_reason": None})
+            for key in dispatch._BLOCKED_RESUME_FIELDS:  # noqa: SLF001
+                live.pop(key, None)
+            S.save_task(project, live)
+            S.append_event(project, live["slug"], "state", frm="blocked", to="running",
+                           by="altd", answer=answer)
+        return live
 
     def _task(self, title, state, path, created):
         task = T.new(self.project, title, "request", actor="l3", paths=[path])

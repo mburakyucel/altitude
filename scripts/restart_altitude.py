@@ -84,7 +84,9 @@ def worker_is_live(project: str, task: dict, claude_rows: list[dict] | None) -> 
         row = dispatch.owner_projection(project, task)
         if row is None:
             raise RestartError(f"cannot prove Codex owner for {task.get('slug')} state")
-        return bool(row["working"])
+        # A false `working` observation is not an exit receipt. Only the exact
+        # terminal generation with a proven-empty managed unit is stopped.
+        return not (row.get("terminal") is True and row.get("empty") is True)
     else:
         worker_id = task.get("agent_id")
         if not worker_id:

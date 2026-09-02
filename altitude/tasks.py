@@ -378,16 +378,16 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_l2_token: str | None = None) -> dict:
     snapshot = S.load_task(project, slug)
     expected_owner = None
-    if actor != "l2" and snapshot.get("l2_engine") == "codex" and snapshot.get("active_operation"):
+    if actor != "l2" and snapshot.get("l2_engine") == "codex":
         from . import dispatch
         exact = dispatch.owner_result_snapshot(project, snapshot)
         expected_owner = exact["task"].get("active_operation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
-        if expected_owner is not None:
+        if actor != "l2" and task.get("l2_engine") == "codex":
             from . import dispatch
-            if (task.get("active_operation") != expected_owner
+            if (expected_owner is None or task.get("active_operation") != expected_owner
                     or not dispatch.owner_archive_ready(project, task)):
                 raise TransitionError(f"{slug}: Codex owner changed before terminalization")
         if actor == "l2":
@@ -429,16 +429,16 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
     """Archive a no-code L2 completion only after its physical worker has exited."""
     snapshot = S.load_task(project, slug)
     expected_owner = None
-    if snapshot.get("l2_engine") == "codex" and snapshot.get("active_operation"):
+    if snapshot.get("l2_engine") == "codex":
         from . import dispatch
         exact = dispatch.owner_result_snapshot(project, snapshot)
         expected_owner = exact["task"].get("active_operation")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         require_owner_provider_capability(task)
-        if expected_owner is not None:
+        if task.get("l2_engine") == "codex":
             from . import dispatch
-            if (task.get("active_operation") != expected_owner
+            if (expected_owner is None or task.get("active_operation") != expected_owner
                     or not dispatch.owner_archive_ready(project, task)):
                 raise TransitionError(f"{slug}: Codex owner changed before terminalization")
         request = task.get("completion_requested") or {}
@@ -464,10 +464,12 @@ def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
         task = S.load_task(project, slug)
-        if task.get("l2_engine") == "codex" and task.get("active_operation") is not None:
+        if task.get("l2_engine") == "codex":
             from . import dispatch
-            if not dispatch.owner_archive_ready(project, task):
-                raise TransitionError(f"{slug}: refusing to archive a live Codex owner")
+            if task.get("active_operation") is None or not dispatch.owner_archive_ready(project, task):
+                raise TransitionError(
+                    f"{slug}: refusing to archive without an exact terminal-empty Codex owner result"
+                )
         # Capture the final state/outcome after digest/report creation and before the task moves.
         from . import transcript
         transcript.sync(project, slug)

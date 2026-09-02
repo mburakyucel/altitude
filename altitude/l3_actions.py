@@ -204,7 +204,7 @@ def _worker_live(project: str, task: dict) -> bool:
             if projection is None:
                 raise L3ActionError(
                     f"cannot prove Codex owner for {task.get('slug')} stopped: operation is missing")
-            return bool(projection["working"])
+            return not (projection.get("terminal") is True and projection.get("empty") is True)
         if not worker_id:
             return False
         else:

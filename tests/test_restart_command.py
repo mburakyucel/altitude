@@ -46,6 +46,23 @@ class TestRestartCommand(unittest.TestCase):
         with self.assertRaises(restart.RestartError):
             restart.validate_bundle(ROOT / "tests" / "does-not-exist")
 
+    def test_codex_liveness_requires_terminal_and_exact_empty(self):
+        restart = load_script()
+        task = {"slug": "owner", "l2_engine": "codex"}
+        for projection in (
+            {"working": False, "terminal": False, "empty": True},
+            {"working": False, "terminal": True, "empty": False},
+        ):
+            with self.subTest(projection=projection), \
+                 mock.patch.object(restart.dispatch, "owner_projection", return_value=projection):
+                self.assertTrue(restart.worker_is_live("p", task, None))
+        with mock.patch.object(restart.dispatch, "owner_projection",
+                               return_value={"working": False, "terminal": True, "empty": True}):
+            self.assertFalse(restart.worker_is_live("p", task, None))
+        with mock.patch.object(restart.dispatch, "owner_projection", return_value=None):
+            with self.assertRaisesRegex(restart.RestartError, "cannot prove Codex owner"):
+                restart.worker_is_live("p", task, None)
+
     def test_failed_restart_restores_previous_bundle(self):
         restart = load_script()
         with tempfile.TemporaryDirectory(prefix="altitude-restart-test-") as tmp:

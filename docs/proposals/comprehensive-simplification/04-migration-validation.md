@@ -36,12 +36,17 @@ The recorded baseline is:
 | Baseline checks | 489 Python tests; 39 web tests; production web build |
 
 The current integration candidate is intentionally expansionary while replacements are dormant or only partly
-adopted. **Mechanical recount required after all Phase 1B.3 integration conflicts are resolved:** replace this
-placeholder with the exact whole-candidate permanent runnable line/file totals, backend subset, web and web-build
-subsets, separately reported temporary preflight/persona-schema-template/support/test-fixture inputs, and the exact
-retirement debt to the final budgets below. Use the normative roster and counting procedure in
-[`07-baseline-and-target.md`](07-baseline-and-target.md); do not carry forward a branch-local delta or the pre-B3
-candidate snapshot. This is implementation debt, not evidence of simplification.
+adopted: **19,406 permanent runnable lines / 56 files**, comprising **16,384 backend lines / 35 files**,
+**2,827 web-source lines / 16 files**, and **195 web-build lines / 5 files**. Separately reported inputs are
+**1,510 temporary-preflight lines / 1 file**, **498 persona/schema/template lines / 13 files**, **247 support
+lines / 3 files**, **294 contract-fixture lines / 1 file**, and **13 web-documentation lines / 1 file**. Tests
+are **16,866 Python lines / 60 files** and **1,247 web-test lines / 11 files**. The candidate must retire at least
+**7,226 permanent lines and 13 runnable files overall**, including **7,384 backend lines and 11 backend files**,
+to meet the fixed budgets below. These figures are the mechanical whole-candidate recount using the normative
+roster in [`07-baseline-and-target.md`](07-baseline-and-target.md); they are implementation debt, not evidence of
+simplification. The current full Python suite contains **754 tests**: the restricted sandbox records 744 passes,
+one skip, and nine loopback-socket permission errors; those same nine HTTP tests pass outside that socket-restricted
+sandbox, for a logical result of **753 passes and one skip**.
 
 Final budgets are hard review gates:
 
@@ -318,12 +323,30 @@ PR 1B.3 makes the active TaskRecord's embedded owner operation the only Codex L2
 The task-owned `owner_command` seam alone serializes B3 planning, compare-and-swap, typed receipts, and
 projections under the short project lock. Dispatch performs or reconciles Git, manager, and provider effects
 outside that lock and returns only intent-bound typed receipts through the seam; it does not create a sidecar
-owner record or long-held owner lock. Only the `planned -> prior_stopped` winner may spawn, and every observer
+owner record or long-held owner lock. Git preparation is closed as
+`planned -> applying -> prepared -> complete`: the existing publication-settlement lock serializes idempotent
+fetch/worktree preparation through the prepared-receipt CAS, and an exact-request retry can finish abandoned
+`applying` without a second concurrent effect. The receipt proves fetched origin is an ancestor of worktree `HEAD`;
+fresh preparation requires equality and resume accepts only exact task-trailed descendants. Only the physical `planned -> prior_stopped` winner may spawn, and every observer
 reconciles rather than relaunching.
 
 Resume creates a new physical generation even when the provider conversation id continues. No next
-writer starts until the prior unit is proven empty. The existing timer only schedules deduplicated L2
-reconciliation; provider work and receipt persistence do not run inline in the timer. Each terminal generation is
+writer starts until the prior unit is proven empty. A persisted successor superseding a still-`planned` request
+first closes that request before effect, then promotes the exact successor without Git/provider work or a phantom
+physical generation. The existing timer only schedules the deduplicated L2 worker; provider work and receipt
+persistence do not run inline in the timer. One bounded continuation routine in that worker advances only the
+replay-safe preparation, prepared-bind, physical-planned, terminal-successor, direct-steering, and blocked-resume
+boundaries under the existing WIP/lease, recovery, and physical fences; it never relaunches `prior_stopped`.
+Before admission holds, it may only reconcile and strictly stop an already-launched physical generation; holds
+still gate Git, binding, promotion, and launch. A recovery-invalidated blocked resume remains blocked under the
+hold, then surfaces its canonical failure and consumes only the exact stale retry after clearance.
+Blocked resume waits for the exact current request and physical generation's positive bound receipt, fencing the
+transition id/generation/intent digest against same-request replacement; then one task-owned CAS revalidates
+task/owner/message/retry identity, moves to `running`, clears only the matching retry fields, and emits the truthful
+state event. The blocked caller carries the exact non-secret completion expectation through its wait; a fresh
+`running` reload after a background winner is idempotent only with wholly absent retry fields and the same exact
+request/generation. Competing generation, partial residue, or reblocked identity refuses.
+Each terminal physical generation is
 retained as bounded TaskRecord evidence with its exact transition, unit, message, event/result identities, result
 hash, and session. Transcript lookup validates that generation roster and derives those paths without scanning a
 legacy provider directory. Recovery work also persists `{episode_id, permit_revision}` and every

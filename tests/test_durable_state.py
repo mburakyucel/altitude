@@ -566,7 +566,7 @@ class LegacyWriterInventoryTests(unittest.TestCase):
             ("config.py", "save_projects"): 1,
             ("digest.py", "text"): 1,
             ("dispatch.py", "_managed_owner"): 2,
-            ("dispatch.py", "_write_owner_marker"): 1,
+            ("dispatch.py", "_write_owner_marker"): 2,
             ("incidents.py", "_index_correct"): 1,
             ("incidents.py", "amend_incident"): 1,
             ("incidents.py", "new_incident"): 1,

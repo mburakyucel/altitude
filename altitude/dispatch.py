@@ -84,15 +84,18 @@ def provider_capability_hold(task: dict) -> str | None:
 JOBS_DIR = config.HOME / ".claude" / "jobs"
 
 
-_OWNER_KEYS = {"kind", "request", "preparation", "physical", "result", "stop", "successor", "recovery_epoch"}
+_OWNER_KEYS = {"kind", "request", "preparation", "physical", "result", "event",
+               "cancelled_before_effect", "stop", "successor", "recovery_epoch"}
 _REQUEST_KEYS = {"message_id", "prompt", "prompt_sha256", "model", "routing", "issue_digest"}
 _PREPARATION_KEYS = {"stage", "intent", "receipt", "prior_unit"}
 _PREPARATION_INTENT_KEYS = {"repository", "worktree", "branch", "base_ref"}
 _PREPARATION_RECEIPT_KEYS = {"repository", "worktree", "branch", "base_ref", "base_sha"}
 _RESULT_KEYS = {"provider_session_id", "action", "usage", "error"}
 _OWNER_HISTORY_KEYS = {"generation", "transition_id", "process_unit_id", "message_id",
-                       "event_id", "result_id", "result_sha256", "session_id"}
+                       "intent_digest", "event_id", "event_sha256", "result_id", "result_sha256",
+                       "session_id"}
 _OWNER_ERROR_CAP = 500
+OWNER_GENERATION_HISTORY_CAP = 128
 
 
 def _bounded_owner_error(error: object) -> str:
@@ -124,14 +127,14 @@ def _owner(task: dict, *, project: str | None = None, required: bool = False) ->
         raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner request")
     intent, prep_receipt = (prep or {}).get("intent"), (prep or {}).get("receipt")
     if (not isinstance(prep, dict) or set(prep) != _PREPARATION_KEYS
-            or prep.get("stage") not in ("planned", "complete")
+            or prep.get("stage") not in ("planned", "applying", "prepared", "complete")
             or prep.get("prior_unit") is not None and not isinstance(prep["prior_unit"], str)
             or not isinstance(intent, dict) or set(intent) != _PREPARATION_INTENT_KEYS
             or not all(isinstance(intent.get(key), str) and intent[key]
                        for key in _PREPARATION_INTENT_KEYS)
             or intent.get("base_ref") != "origin/main"
-            or prep["stage"] == "planned" and prep_receipt is not None
-            or prep["stage"] == "complete" and (not isinstance(prep_receipt, dict)
+            or prep["stage"] in ("planned", "applying") and prep_receipt is not None
+            or prep["stage"] in ("prepared", "complete") and (not isinstance(prep_receipt, dict)
                 or set(prep_receipt) != _PREPARATION_RECEIPT_KEYS
                 or not all(isinstance(prep_receipt.get(key), str) and prep_receipt[key]
                            for key in _PREPARATION_RECEIPT_KEYS)
@@ -145,9 +148,9 @@ def _owner(task: dict, *, project: str | None = None, required: bool = False) ->
     if (isinstance(op.get("recovery_epoch"), bool) or not isinstance(op.get("recovery_epoch"), int)
             or op["recovery_epoch"] < 0):
         raise T.TransitionError(f"{task.get('slug')}: malformed owner recovery epoch")
-    if prep["stage"] == "planned":
+    if prep["stage"] != "complete":
         if physical is not None:
-            raise T.TransitionError(f"{task.get('slug')}: unprepared owner has physical authority")
+            raise T.TransitionError(f"{task.get('slug')}: unbound owner preparation has physical authority")
     else:
         try:
             physical = engines.validate_physical_transition(physical)
@@ -190,8 +193,38 @@ def _owner(task: dict, *, project: str | None = None, required: bool = False) ->
             or result.get("error") is not None and (not isinstance(result["error"], str)
                 or not result["error"] or len(result["error"].encode("utf-8", "replace")) > _OWNER_ERROR_CAP)):
         raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner result")
-    if result is not None and physical is None:
+    cancelled = op.get("cancelled_before_effect")
+    if cancelled is not None:
+        stop = op.get("stop")
+        error = (result or {}).get("error")
+        if (not isinstance(cancelled, dict)
+                or set(cancelled) != {"status", "message_id", "result_id", "sha256", "empty"}
+                or cancelled.get("status") != "cancelled-before-effect"
+                or cancelled.get("message_id") != request["message_id"]
+                or cancelled.get("result_id") != "transition:error"
+                or cancelled.get("empty") is not True
+                or not isinstance(cancelled.get("sha256"), str)
+                or not isinstance(stop, dict) or set(stop) != {"reason", "requested", "cancel"}
+                or stop.get("cancel") is not True
+                or not isinstance(stop.get("reason"), str) or not stop["reason"]
+                or not isinstance(stop.get("requested"), str) or not stop["requested"]
+                or prep["stage"] != "planned" or physical is not None
+                or result != {"provider_session_id": None, "action": None,
+                              "usage": {}, "error": error}
+                or error != _bounded_owner_error(
+                    f"owner cancelled before effect for message {request['message_id']}: {stop['reason']}")
+                or cancelled["sha256"] != hashlib.sha256(error.encode()).hexdigest()):
+            raise T.TransitionError(f"{task.get('slug')}: malformed cancelled-before-effect receipt")
+    elif result is not None and physical is None:
         raise T.TransitionError(f"{task.get('slug')}: unprepared owner has a result")
+    event = op.get("event")
+    event_required = bool(physical and "result_observed" in physical["receipts"])
+    if (event_required and (not isinstance(event, dict) or set(event) != {"event_id", "sha256"}
+            or event.get("event_id") != f"l2-engine/{physical['generation']}/events.jsonl"
+            or not isinstance(event.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", event["sha256"]) is None)
+            or not event_required and event is not None):
+        raise T.TransitionError(f"{task.get('slug')}: malformed Codex owner event receipt")
     for field in ("stop", "successor"):
         value = op.get(field)
         if value is not None and not isinstance(value, dict):
@@ -203,20 +236,37 @@ def _owner(task: dict, *, project: str | None = None, required: bool = False) ->
         _owner({**task, "active_operation": {"kind": "codex_owner", "request": successor,
             "preparation": {"stage": "planned", "intent": intent, "receipt": None,
                             "prior_unit": None},
-            "physical": None, "result": None, "stop": None, "successor": None,
+            "physical": None, "result": None, "event": None, "cancelled_before_effect": None,
+            "stop": None, "successor": None,
             "recovery_epoch": op["recovery_epoch"]}}, project=project, required=True)
     history = task.get("owner_generations") or []
-    if not isinstance(history, list):
+    if not isinstance(history, list) or len(history) > OWNER_GENERATION_HISTORY_CAP:
         raise T.TransitionError(f"{task.get('slug')}: malformed owner generation history")
+    seen_generations = set()
     for row in history:
         if (not isinstance(row, dict) or set(row) != _OWNER_HISTORY_KEYS
                 or not all(isinstance(row.get(key), str) and row[key]
                            for key in _OWNER_HISTORY_KEYS - {"session_id"})
-                or row.get("session_id") is not None and not isinstance(row["session_id"], str)
-                or row["event_id"] != f"l2-engine/{row['generation']}/events.jsonl"
                 or not re.fullmatch(r"[0-9a-f]{64}", row["generation"])
+                or row["transition_id"] != row["generation"]
+                or row["process_unit_id"] != engines.deterministic_process_unit(
+                    "owner", f"{project}/{task.get('slug')}", row["generation"])
+                or len(row["message_id"].encode("utf-8", "replace")) >
+                    engines.CODEX_PROVIDER_SESSION_ID_CAP
+                or row.get("session_id") is not None and (
+                    not isinstance(row["session_id"], str) or not row["session_id"]
+                    or len(row["session_id"].encode("utf-8", "replace")) >
+                        engines.CODEX_PROVIDER_SESSION_ID_CAP)
+                or row["event_id"] != f"l2-engine/{row['generation']}/events.jsonl"
+                or row["result_id"] not in (
+                    "transition:error", f"l2-engine/{row['generation']}/result.json")
+                or not re.fullmatch(r"[0-9a-f]{64}", row["intent_digest"])
+                or not re.fullmatch(r"[0-9a-f]{64}", row["event_sha256"])
                 or not re.fullmatch(r"[0-9a-f]{64}", row["result_sha256"])):
             raise T.TransitionError(f"{task.get('slug')}: malformed owner generation history")
+        if row["generation"] in seen_generations:
+            raise T.TransitionError(f"{task.get('slug')}: duplicate owner generation history")
+        seen_generations.add(row["generation"])
     return {**op, "physical": physical}
 
 
@@ -240,23 +290,30 @@ def _operation(project: str, slug: str, request: dict, prior_unit: str | None = 
     return {"kind": "codex_owner", "request": request,
             "preparation": {"stage": "planned", "intent": _preparation_intent(project, slug),
                             "receipt": None, "prior_unit": prior_unit},
-            "physical": None, "result": None, "stop": None, "successor": None,
+            "physical": None, "result": None, "event": None, "cancelled_before_effect": None,
+            "stop": None, "successor": None,
             "recovery_epoch": recovery_epoch}
 
 
 def _owner_terminal(op: dict | None) -> bool:
-    return bool(op and op.get("physical") and op["physical"]["stage"] in ("complete", "failed"))
+    return bool(op and (op.get("cancelled_before_effect") is not None
+                or op.get("physical") and op["physical"]["stage"] in ("complete", "failed")))
 
 
-def _retire_owner_generation(task: dict, op: dict) -> None:
+def _retire_owner_generation(project: str, task: dict, op: dict) -> None:
     """Project one terminal generation before active_operation can be overwritten."""
     if not _owner_terminal(op):
         raise T.TransitionError(f"{task['slug']}: cannot retire a nonterminal owner generation")
+    if op.get("cancelled_before_effect") is not None:
+        raise T.TransitionError(f"{task['slug']}: cancelled-before-effect owner has no generation to retire")
+    _terminal_owner_evidence(project, task, op)
     physical = op["physical"]
     result = physical["receipts"]["result_observed"]
+    event = op["event"]
     row = {"generation": physical["generation"], "transition_id": physical["transition_id"],
            "process_unit_id": physical["process_unit_id"], "message_id": physical["message_id"],
-           "event_id": f"l2-engine/{physical['generation']}/events.jsonl",
+           "intent_digest": physical["intent_digest"],
+           "event_id": event["event_id"], "event_sha256": event["sha256"],
            "result_id": result["result_id"], "result_sha256": result["sha256"],
            "session_id": (op.get("result") or {}).get("provider_session_id")}
     history = task.setdefault("owner_generations", [])
@@ -264,6 +321,11 @@ def _retire_owner_generation(task: dict, op: dict) -> None:
     if existing not in (None, row):
         raise T.TransitionError(f"{task['slug']}: owner generation history conflicts")
     if existing is None:
+        if len(history) >= OWNER_GENERATION_HISTORY_CAP:
+            raise T.TransitionError(
+                f"{task['slug']}: owner generation history reached fixed cap "
+                f"{OWNER_GENERATION_HISTORY_CAP}; PR 1C.5 owner-history compaction is required"
+            )
         history.append(row)
 
 
@@ -287,6 +349,34 @@ def _recovery_observation(project: str, task: dict) -> dict:
         raise T.TransitionError(str(exc)) from exc
 
 
+class OwnerRecoveryFenceError(T.TransitionError):
+    """An unchanged prepared owner request could not bind its persisted recovery fence."""
+
+
+def _owner_invalidation_error(project: str, task: dict, op: dict) -> str | None:
+    """Return one immutable error for stop/recovery invalidation of this exact generation."""
+    physical = op.get("physical")
+    if physical is None:
+        return None
+    stop = op.get("stop")
+    if stop is not None:
+        if physical.get("error") is not None:
+            return physical["error"]
+        reason = str(stop.get("reason") or "stop requested")
+        return _bounded_owner_error(
+            f"owner cancelled for transition {physical['transition_id']}: {reason}")
+    if not recovery.owner_state_is_current(project, task, physical, op["recovery_epoch"]):
+        if physical.get("error") is not None:
+            return physical["error"]
+        episode = physical.get("recovery_episode_id") or "inactive"
+        permit = physical.get("recovery_permit_revision") or "inactive"
+        return _bounded_owner_error(
+            f"owner recovery fence changed for transition {physical['transition_id']} "
+            f"(epoch {op['recovery_epoch']}, episode {episode}, permit {permit})"
+        )
+    return None
+
+
 def _new_physical(project: str, task: dict, op: dict, prep: dict) -> dict:
     generation = int(task.get("owner_generation") or 0)
     receipt = prep["receipt"]
@@ -298,9 +388,14 @@ def _new_physical(project: str, task: dict, op: dict, prep: dict) -> dict:
                 "prompt_sha256": op["request"]["prompt_sha256"],
                 "capability_sha256": hashlib.sha256(task["l2_token"].encode()).hexdigest()}
     transition_id = hashlib.sha256(b"codex-owner\0" + S._canonical_json(identity)).hexdigest()  # noqa: SLF001
-    recovery_state = _recovery_observation(project, task)
+    try:
+        recovery_state = _recovery_observation(project, task)
+    except T.TransitionError as exc:
+        raise OwnerRecoveryFenceError(str(exc)) from exc
     if op["recovery_epoch"] != recovery_state["epoch"]:
-        raise T.TransitionError(f"{task['slug']}: recovery epoch changed before owner preparation")
+        raise OwnerRecoveryFenceError(
+            f"{task['slug']}: recovery epoch changed before owner preparation"
+        )
     request = ({"kind": "resume", "session_id": task["session_id"]}
                if task.get("session_id") else {"kind": "fresh"})
     return engines.new_physical_transition(
@@ -316,9 +411,13 @@ def owner_projection(project: str, task: dict) -> dict | None:
     op = _owner(task, project=project)
     if op is None:
         return None
+    if op.get("cancelled_before_effect") is not None:
+        return {"provider": "codex", "stage": "cancelled-before-effect",
+                "process_unit_id": None, "empty": True, "working": False,
+                "terminal": True, "session_id": task.get("session_id")}
     physical = op.get("physical")
     observation = engines.observe_managed_unit(physical["process_unit_id"]) if physical else None
-    return {"provider": "codex", "stage": physical["stage"] if physical else "preparing",
+    return {"provider": "codex", "stage": physical["stage"] if physical else op["preparation"]["stage"],
             "process_unit_id": physical["process_unit_id"] if physical else None,
             "empty": observation.get("empty") if observation else True,
             "working": bool(observation and not observation.get("empty")),
@@ -342,14 +441,105 @@ def _owner_paths(project: str, slug: str, physical: dict) -> dict[str, Path]:
     paths = {"root": root, "events": root / "events.jsonl", "answer": root / "answer.json",
              "result": root / "result.json"}
     for path in paths.values():
-        if path == root or not path.exists():
+        if path == root:
+            continue
+        if path.is_symlink():
+            raise T.TransitionError(f"{slug}: owner runtime evidence is not a private regular file")
+        if not path.exists():
             continue
         mode = path.lstat()
-        if path.is_symlink() or not stat.S_ISREG(mode.st_mode) or mode.st_nlink != 1:
+        if not stat.S_ISREG(mode.st_mode) or mode.st_nlink != 1:
             raise T.TransitionError(f"{slug}: owner runtime evidence is not a private regular file")
         if path.resolve().parent != root.resolve():
             raise T.TransitionError(f"{slug}: owner runtime evidence escapes its generation")
     return paths
+
+
+def _owner_evidence_bytes(path: Path, cap: int, label: str) -> bytes:
+    """Read one exact private evidence file; absence and replacement are never empty evidence."""
+    try:
+        mode = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(mode.st_mode) or mode.st_nlink != 1:
+            raise T.TransitionError(f"{label} is not a private regular file")
+        if mode.st_size > cap:
+            raise T.TransitionError(f"{label} exceeds {cap} bytes")
+        data = path.read_bytes()
+    except FileNotFoundError as exc:
+        raise T.TransitionError(f"{label} is unavailable") from exc
+    except OSError as exc:
+        raise T.TransitionError(f"{label} is unavailable: {exc}") from exc
+    if len(data) > cap:
+        raise T.TransitionError(f"{label} exceeds {cap} bytes")
+    return data
+
+
+def _owner_event_evidence(project: str, task: dict, identity: dict,
+                          event_id: str, event_sha256: str, *, label: str) -> Path:
+    """Validate one event spool against its bound identity and raw-byte digest."""
+    expected_id = f"l2-engine/{identity['generation']}/events.jsonl"
+    if event_id != expected_id:
+        raise T.TransitionError(f"{task['slug']}: {label} identity changed")
+    path = _owner_paths(project, task["slug"], identity)["events"]
+    data = _owner_evidence_bytes(path, engines.CODEX_EVENT_CAP, label)
+    if hashlib.sha256(data).hexdigest() != event_sha256:
+        raise T.TransitionError(f"{task['slug']}: {label} changed")
+    try:
+        first = data.splitlines()[0]
+        header = S._strict_json_loads(first.decode("utf-8"))  # noqa: SLF001
+    except (IndexError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise T.TransitionError(f"{task['slug']}: {label} header is invalid") from exc
+    expected_header = {"type": "altitude.owner.spool", "version": 1,
+        "transition_id": identity["transition_id"], "generation": identity["generation"],
+        "process_unit_id": identity["process_unit_id"], "message_id": identity["message_id"],
+        "intent_digest": identity["intent_digest"],
+        "answer_id": f"l2-engine/{identity['generation']}/answer.json"}
+    if header != expected_header:
+        raise T.TransitionError(f"{task['slug']}: {label} header changed")
+    return path
+
+
+def _bind_owner_event(project: str, task: dict, op: dict) -> dict:
+    physical = op["physical"]
+    path = _owner_paths(project, task["slug"], physical)["events"]
+    data = _owner_evidence_bytes(path, engines.CODEX_EVENT_CAP, "Codex owner event spool")
+    event = {"event_id": f"l2-engine/{physical['generation']}/events.jsonl",
+             "sha256": hashlib.sha256(data).hexdigest()}
+    _owner_event_evidence(project, task, physical, event["event_id"], event["sha256"],
+                          label="Codex owner event spool")
+    return event
+
+
+def _retired_owner_event_path(project: str, task: dict, row: dict) -> Path:
+    """Validate both immutable retired spools before exposing either to transcript readers."""
+    paths = _owner_paths(project, task["slug"], {"generation": row["generation"]})
+    _owner_event_evidence(project, task, row, row["event_id"], row["event_sha256"],
+                          label="retired Codex owner event spool")
+    result_data = _owner_evidence_bytes(paths["result"], 65536, "retired Codex owner result")
+    try:
+        marker = S._strict_json_loads(result_data.decode("utf-8"))  # noqa: SLF001
+        result_sha256 = hashlib.sha256(S._canonical_json(marker)).hexdigest()  # noqa: SLF001
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError) as exc:
+        raise T.TransitionError(f"{task['slug']}: retired owner result is invalid") from exc
+    if (not isinstance(marker, dict)
+            or set(marker) != {"version", "transition_id", "process_unit_id", "intent_digest", "result"}
+            or marker.get("version") != 1
+            or marker.get("transition_id") != row["transition_id"]
+            or marker.get("process_unit_id") != row["process_unit_id"]
+            or marker.get("intent_digest") != row["intent_digest"]
+            or not isinstance(marker.get("result"), dict)
+            or set(marker["result"]) != _RESULT_KEYS):
+        raise T.TransitionError(f"{task['slug']}: retired owner result changed")
+    if row["result_id"] == "transition:error":
+        error = marker["result"].get("error")
+        if (marker["result"] != {"provider_session_id": None, "action": None,
+                "usage": {}, "error": error}
+                or not isinstance(error, str) or not error
+                or len(error.encode("utf-8", "replace")) > _OWNER_ERROR_CAP
+                or hashlib.sha256(error.encode()).hexdigest() != row["result_sha256"]):
+            raise T.TransitionError(f"{task['slug']}: retired owner error result changed")
+    elif result_sha256 != row["result_sha256"]:
+        raise T.TransitionError(f"{task['slug']}: retired owner result changed")
+    return paths["events"]
 
 
 def _owner_spool_header(physical: dict) -> dict:
@@ -368,13 +558,19 @@ def owner_event_path(project: str, task: dict) -> Path | None:
 def owner_generation_event_paths(project: str, task: dict) -> list[tuple[str, Path]]:
     """Enumerate only validated TaskRecord generation projections; never scan runtime files."""
     _owner(task, project=project)  # validates the compact history as well as the current generation
-    values = [(row.get("session_id") or "", _owner_paths(
-        project, task["slug"], {"generation": row["generation"]})["events"])
-        for row in task.get("owner_generations") or []]
+    values = [(row.get("session_id") or "", _retired_owner_event_path(project, task, row))
+              for row in task.get("owner_generations") or []]
     current = _owner(task, project=project)
     if current and current.get("physical"):
-        values.append((task.get("session_id") or "",
-                       _owner_paths(project, task["slug"], current["physical"])["events"]))
+        current_path = _owner_paths(project, task["slug"], current["physical"])["events"]
+        if _owner_terminal(current):
+            event = current["event"]
+            current_path = _owner_event_evidence(
+                project, task, current["physical"], event["event_id"], event["sha256"],
+                label="terminal Codex owner event spool")
+            values.append((task.get("session_id") or "", current_path))
+        elif current_path.exists():
+            values.append((task.get("session_id") or "", current_path))
     return values
 
 
@@ -474,12 +670,13 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
             raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
         return worktree
 
-    _validate_task_worktree(repo, project, slug, worktree, origin_sha, require_clean=True)
+    _validate_task_worktree(repo, project, slug, worktree, origin_sha,
+                            require_clean=True, allow_task_commits=False)
     return worktree
 
 
 def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path, origin_sha: str,
-                            *, require_clean: bool) -> None:
+                            *, require_clean: bool, allow_task_commits: bool) -> None:
     """Validate an already-created L2 checkout before either a fresh launch or a resume."""
     import subprocess
 
@@ -492,6 +689,31 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
     if actual != expected_branch:
         raise T.TransitionError(
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
+        )
+    head = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--verify", "HEAD^{commit}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    head_sha = (head.stdout or "").strip()
+    if head.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", head_sha):
+        raise T.TransitionError(f"cannot resolve existing task worktree HEAD for {project}/{slug}")
+    ancestor = subprocess.run(
+        ["git", "-C", str(worktree), "merge-base", "--is-ancestor", origin_sha, head_sha],
+        capture_output=True, text=True, timeout=60,
+    )
+    if ancestor.returncode == 1:
+        raise T.TransitionError(
+            f"existing task worktree {worktree} does not descend from fetched origin/main {origin_sha}"
+        )
+    if ancestor.returncode != 0:
+        detail = (ancestor.stderr or ancestor.stdout or "").strip()[:200]
+        raise T.TransitionError(
+            f"cannot prove fetched origin/main ancestry for {project}/{slug}"
+            + (f": {detail}" if detail else "")
+        )
+    if not allow_task_commits and head_sha != origin_sha:
+        raise T.TransitionError(
+            f"initial task worktree {worktree} is not exactly fetched origin/main {origin_sha}"
         )
     task_ref = f"{project}/{slug}"
     missing = git_policy.commits_missing_task_trailer(
@@ -602,6 +824,8 @@ def _begin_owner_request(project: str, slug: str, request: dict, *, initial: dic
         current = _owner(task, project=project)
         if current and _owner_terminal(current) and current != terminal_expected:
             raise T.TransitionError(f"{slug}: terminal owner changed before successor installation")
+        if current and _owner_terminal(current) and current["request"] == request:
+            return task, "complete", None
         if current and not _owner_terminal(current):
             if current["request"] == request:
                 return task, "recover", None
@@ -612,9 +836,10 @@ def _begin_owner_request(project: str, slug: str, request: dict, *, initial: dic
                 "reason": "superseded by persisted owner request", "requested": S.now()}
             task["active_operation"] = current
             return task, "stop", None
-        prior = current["physical"]["process_unit_id"] if current and current.get("physical") else None
-        if current:
-            _retire_owner_generation(task, current)
+        prior = (current["physical"]["process_unit_id"] if current and current.get("physical")
+                 else current["preparation"].get("prior_unit") if current else None)
+        if current and current.get("physical"):
+            _retire_owner_generation(project, task, current)
         task.update(initial or {})
         task["active_operation"] = _operation(project, slug, request, prior, epoch)
         return task, "prepare", ("owner-request-planned", {"message_id": request["message_id"]})
@@ -634,8 +859,10 @@ def _promote_successor(project: str, slug: str) -> dict:
         current = _owner(task, project=project, required=True)
         if current != expected or not _owner_terminal(current) or current.get("successor") is None:
             raise T.TransitionError(f"{slug}: owner successor is not ready")
-        prior = current["physical"]["process_unit_id"]
-        _retire_owner_generation(task, current)
+        prior = (current["physical"]["process_unit_id"] if current.get("physical")
+                 else current["preparation"].get("prior_unit"))
+        if current.get("physical"):
+            _retire_owner_generation(project, task, current)
         task["active_operation"] = _operation(project, slug, current["successor"], prior, epoch)
         return task, None, None
     task, _ = T.owner_command(project, slug, decide,
@@ -644,32 +871,179 @@ def _promote_successor(project: str, slug: str) -> dict:
     return task
 
 
-def _prepare_owner(project: str, task: dict, *, worktree: Path, branch: str, base_sha: str) -> dict:
-    """CAS the completed Git preparation and inert physical intent after effects finish."""
+def _claim_owner_preparation(project: str, task: dict) -> tuple[dict, bool]:
+    """Elect the sole Git-effect claimant with one short planned→applying CAS."""
     op = _owner(task, project=project, required=True)
-    if op["preparation"]["stage"] == "complete":
-        return task
+    if op["preparation"]["stage"] != "planned":
+        return task, False
+    claimed = {**op, "preparation": {**op["preparation"], "stage": "applying"}}
+    try:
+        return _save_owner(project, task, claimed), True
+    except T.TransitionError:
+        current = _active_task(project, task["slug"])
+        _owner(current, project=project, required=True)
+        return current, False
+
+
+def _record_owner_prepared(project: str, task: dict, *, worktree: Path,
+                           branch: str, base_sha: str) -> dict:
+    """Persist the exact Git receipt after the elected claimant finishes its unlocked effect."""
+    current = _active_task(project, task["slug"])
+    op = _owner(current, project=project, required=True)
+    expected = _owner(task, project=project, required=True)
+    if (op["request"] != expected["request"]
+            or op["preparation"]["intent"] != expected["preparation"]["intent"]
+            or op["preparation"]["stage"] != "applying"):
+        raise T.TransitionError(f"{task['slug']}: owner preparation claim changed after Git effect")
     intent = op["preparation"]["intent"]
     receipt = {**intent, "base_sha": base_sha}
     if (str(worktree), branch) != (intent["worktree"], intent["branch"]):
         raise T.TransitionError(f"{task['slug']}: Git preparation differs from persisted intent")
-    prepared = {**op, "preparation": {"stage": "complete", "intent": intent,
+    prepared = {**op, "preparation": {"stage": "prepared", "intent": intent,
         "receipt": receipt, "prior_unit": op["preparation"]["prior_unit"]}}
+    return _save_owner(project, current, prepared, updates={
+        "worktree": str(worktree), "branch": branch, "base_sha": base_sha})
+
+
+def _rebind_prepared_owner_epoch(project: str, task: dict) -> dict:
+    """Rebind an unchanged prepared request only to the current inactive recovery epoch."""
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] != "prepared":
+        return task
+    try:
+        observation = _recovery_observation(project, task)
+    except T.TransitionError as exc:
+        raise OwnerRecoveryFenceError(str(exc)) from exc
+    if op["recovery_epoch"] == observation["epoch"]:
+        return task
+    if observation["state"] != "none":
+        raise OwnerRecoveryFenceError(
+            f"{task['slug']}: prepared owner cannot rebind during an active recovery episode"
+        )
+    replacement = {**op, "recovery_epoch": observation["epoch"]}
+    try:
+        return _save_owner(project, task, replacement)
+    except T.TransitionError:
+        current = _active_task(project, task["slug"])
+        current_op = _owner(current, project=project, required=True)
+        if (current_op["request"] == op["request"]
+                and current_op["recovery_epoch"] == observation["epoch"]
+                and current_op["preparation"]["stage"] in ("prepared", "complete")):
+            return current
+        raise
+
+
+def _bind_prepared_owner(project: str, task: dict) -> dict:
+    """Bind one prepared Git receipt to its deterministic physical intent; perform no effect."""
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "complete":
+        return task
+    if op["preparation"]["stage"] != "prepared":
+        raise T.TransitionError(f"{task['slug']}: exact prepared Git receipt required before binding")
+    task = _rebind_prepared_owner_epoch(project, task)
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "complete":
+        return task
+    if op["preparation"]["stage"] != "prepared":
+        raise T.TransitionError(f"{task['slug']}: prepared owner changed before physical binding")
     generation = int(task.get("owner_generation") or 0) + 1
-    candidate = {**task, "owner_generation": generation, "worktree": str(worktree), "branch": branch,
-                 "base_sha": base_sha}
-    prepared["physical"] = _new_physical(project, candidate, prepared, prepared["preparation"])
-    return _save_owner(project, task, prepared, updates={
-        "owner_generation": generation, "worktree": str(worktree), "branch": branch, "base_sha": base_sha})
+    candidate = {**task, "owner_generation": generation}
+    physical = _new_physical(project, candidate, op, op["preparation"])
+    if op.get("stop") is not None:
+        reason = _bounded_owner_error(
+            f"owner cancelled for transition {physical['transition_id']}: "
+            f"{op['stop'].get('reason') or 'stop requested'}"
+        )
+        physical = engines.note_physical_transition_error(physical, reason)
+    complete = {**op, "preparation": {**op["preparation"], "stage": "complete"},
+                "physical": physical}
+    try:
+        return _save_owner(project, task, complete, updates={"owner_generation": generation})
+    except T.TransitionError:
+        current = _active_task(project, task["slug"])
+        current_op = _owner(current, project=project, required=True)
+        if (current_op["request"] == op["request"]
+                and current_op["preparation"]["stage"] == "complete"
+                and current_op["physical"] == physical):
+            return current
+        raise
+
+
+def _prepare_owner(project: str, task: dict, *, worktree: Path, branch: str, base_sha: str) -> dict:
+    """Record a claimed Git effect, then bind its inert physical intent in a second CAS."""
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "applying":
+        task = _record_owner_prepared(
+            project, task, worktree=worktree, branch=branch, base_sha=base_sha)
+    return _bind_prepared_owner(project, task)
+
+
+def _settle_owner_preparation(project: str, task: dict, *, existing_worktree: bool) -> dict:
+    """Recover one applying Git preparation under the existing settlement lock.
+
+    The TaskRecord CAS is always short. The settlement lock serializes the idempotent Git effect
+    with its prepared-receipt CAS, so a replacement process can safely finish an abandoned
+    ``applying`` operation and a concurrent observer re-reads ``prepared`` without repeating Git.
+    """
+    expected = _owner(task, project=project, required=True)
+    if expected["preparation"]["stage"] == "planned":
+        task, _winner = _claim_owner_preparation(project, task)
+        expected = _owner(task, project=project, required=True)
+    if _owner_terminal(expected) or expected["preparation"]["stage"] in ("prepared", "complete"):
+        return task
+    if expected["preparation"]["stage"] != "applying":
+        raise T.TransitionError(f"{task['slug']}: unknown owner preparation stage")
+
+    with publication_settlement(project):
+        live = _active_task(project, task["slug"])
+        op = _owner(live, project=project, required=True)
+        if _owner_terminal(op) or op["preparation"]["stage"] in ("prepared", "complete"):
+            return live
+        if (op["preparation"]["stage"] != "applying"
+                or op["request"] != expected["request"]
+                or op["preparation"]["intent"] != expected["preparation"]["intent"]):
+            raise T.TransitionError(f"{task['slug']}: applying Git intent changed before settlement")
+
+        repo = config.project_path(project)
+        intent = op["preparation"]["intent"]
+        worktree = Path(intent["worktree"])
+        origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+        if existing_worktree:
+            _validate_task_worktree(repo, project, task["slug"], worktree,
+                                    origin_sha, require_clean=False, allow_task_commits=True)
+        else:
+            worktree = _task_worktree(repo, project, task["slug"], origin_sha)
+
+        # Cancellation and other task projections may race while Git is unlocked. Re-read and
+        # preserve them, but accept only this exact request/intent at the applying boundary.
+        for _ in range(4):
+            live = _active_task(project, task["slug"])
+            current = _owner(live, project=project, required=True)
+            if current["preparation"]["stage"] in ("prepared", "complete"):
+                return live
+            if (current["preparation"]["stage"] != "applying"
+                    or current["request"] != expected["request"]
+                    or current["preparation"]["intent"] != intent):
+                raise T.TransitionError(f"{task['slug']}: applying Git intent changed after effect")
+            try:
+                return _record_owner_prepared(
+                    project, live, worktree=worktree, branch=intent["branch"], base_sha=origin_sha)
+            except T.TransitionError as exc:
+                if "changed concurrently" not in str(exc):
+                    raise
+        raise T.TransitionError(f"{task['slug']}: prepared receipt CAS did not settle")
 
 
 def _step_owner(project: str, task: dict, stage: str, following: str, receipt: dict,
-                *, result: dict | None = None, updates: dict | None = None) -> dict:
+                *, result: dict | None = None, event: dict | None = None,
+                updates: dict | None = None) -> dict:
     op = _owner(task, project=project, required=True)
     replacement = {**op, "physical": engines.advance_physical_transition(
         op["physical"], stage, following, receipt)}
     if result is not None:
         replacement["result"] = result
+    if event is not None:
+        replacement["event"] = event
     return _save_owner(project, task, replacement, updates=updates)
 
 
@@ -696,6 +1070,11 @@ def _claim_owner_launch(project: str, task: dict) -> tuple[dict, bool]:
 
 def _write_owner_marker(project: str, task: dict, op: dict, result: dict) -> None:
     physical = op["physical"]
+    paths = _owner_paths(project, task["slug"], physical)
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    if not paths["events"].exists():
+        S.atomic_write(paths["events"], S._canonical_json(  # noqa: SLF001
+            _owner_spool_header(physical)).decode() + "\n")
     marker = {"version": 1, "transition_id": physical["transition_id"],
               "process_unit_id": physical["process_unit_id"],
               "intent_digest": physical["intent_digest"], "result": result}
@@ -708,7 +1087,7 @@ def _write_owner_marker(project: str, task: dict, op: dict, result: dict) -> Non
                   "error": "Codex owner result exceeded 65536 bytes"}
         marker["result"] = result
         encoded = S._canonical_json(marker) + b"\n"  # noqa: SLF001
-    S.atomic_write(_owner_paths(project, task["slug"], physical)["result"], encoded.decode())
+    S.atomic_write(paths["result"], encoded.decode())
 
 
 def _parse_owner_spool(project: str, task: dict, op: dict) -> dict:
@@ -794,10 +1173,10 @@ def _managed_owner(project: str, slug: str, transition_id: str) -> int:
     same = (current_op["request"] == op["request"] and current_op["preparation"] == op["preparation"]
             and all(current_op["physical"][key] == physical[key]
                     for key in ("transition_id", "generation", "process_unit_id", "message_id", "intent_digest")))
-    if (not same or current_op.get("stop") is not None
-            or not recovery.owner_state_is_current(project, current, physical, current_op["recovery_epoch"])):
+    invalidation = _owner_invalidation_error(project, current, current_op) if same else None
+    if not same or invalidation is not None:
         _write_owner_marker(project, task, op, {"provider_session_id": None, "action": None,
-                            "usage": {}, "error": "owner cancelled or recovery changed before Codex launch"})
+                            "usage": {}, "error": invalidation or "owner changed before Codex launch"})
         return 4
     persona = (config.PERSONAS / "l2_codex.md").read_text()
     request = physical["provider_session_request"]
@@ -817,12 +1196,13 @@ def _managed_owner(project: str, slug: str, transition_id: str) -> int:
             raise T.TransitionError("Codex owner resumed a different provider thread")
         current = _active_task(project, slug)
         current_op = _owner(current, project=project, required=True)
-        if (current_op.get("stop") is not None or current_op["request"] != op["request"]
-                or current_op["preparation"] != op["preparation"]
-                or current_op["physical"]["intent_digest"] != physical["intent_digest"]
-                or not recovery.owner_state_is_current(
-                    project, current, physical, current_op["recovery_epoch"])):
-            raise T.TransitionError("owner cancelled or recovery changed before owner result")
+        same = (current_op["request"] == op["request"]
+                and current_op["preparation"] == op["preparation"]
+                and current_op["physical"]["intent_digest"] == physical["intent_digest"])
+        if not same:
+            raise T.TransitionError("owner changed before owner result")
+        if invalidation := _owner_invalidation_error(project, current, current_op):
+            raise T.TransitionError(invalidation)
     except T.TransitionError as exc:
         bounded = {"provider_session_id": None, "action": None, "usage": {},
                    "error": _bounded_owner_error(exc)}
@@ -832,11 +1212,9 @@ def _managed_owner(project: str, slug: str, transition_id: str) -> int:
             and current_op["physical"]["intent_digest"] == physical["intent_digest"])
     if not same:
         return 5
-    if (current_op.get("stop") is not None
-            or not recovery.owner_state_is_current(project, current, physical,
-                                                    current_op["recovery_epoch"])):
+    if invalidation := _owner_invalidation_error(project, current, current_op):
         bounded = {"provider_session_id": None, "action": None, "usage": {},
-                   "error": "owner cancelled or recovery changed before result persistence"}
+                   "error": invalidation}
     _write_owner_marker(project, current, current_op, bounded)
     return 0 if bounded["error"] is None else 1
 
@@ -878,19 +1256,29 @@ def reconcile_owner(project: str, slug: str) -> dict:
     for _ in range(12):
         task = _active_task(project, slug)
         op = _owner(task, project=project, required=True)
-        if op["preparation"]["stage"] == "planned" or _owner_terminal(op):
+        if op["preparation"]["stage"] != "complete" or _owner_terminal(op):
             return task
         marker, durable = _owner_marker(project, task, op)
         physical, stage = op["physical"], op["physical"]["stage"]
-        if (not recovery.owner_state_is_current(project, task, physical, op["recovery_epoch"])
-                and stage not in ("complete", "failed")
-                and not (stage == "prior_stopped" and marker is not None)):
+        invalidation = _owner_invalidation_error(project, task, op)
+        if invalidation is not None and stage not in ("complete", "failed"):
             if not engines.observe_managed_unit(physical["process_unit_id"])["empty"]:
                 engines.stop_managed_unit(physical["process_unit_id"])
+            changed = False
             if physical["error"] is None:
                 task = _save_owner(project, task, {**op, "physical":
                     engines.note_physical_transition_error(
-                        physical, _bounded_owner_error("recovery episode changed before owner settlement"))})
+                        physical, invalidation)})
+                op = _owner(task, project=project, required=True)
+                physical = op["physical"]
+                changed = True
+            expected_result = {"provider_session_id": None, "action": None,
+                               "usage": {}, "error": invalidation}
+            if ("result_observed" not in physical["receipts"]
+                    and (marker is None or marker.get("result") != expected_result)):
+                _write_owner_marker(project, task, op, expected_result)
+                changed = True
+            if changed:
                 continue
         try:
             decision = engines.reconcile_physical_transition(physical, durable)
@@ -958,8 +1346,10 @@ def reconcile_owner(project: str, slug: str) -> dict:
                 _write_owner_marker(project, task, op, {"provider_session_id": None, "action": None,
                                     "usage": {}, "error": error})
                 continue
+            event = _bind_owner_event(project, task, op)
             task = _step_owner(project, task, stage, "result_observed",
-                {"result_id": durable["result_id"], "sha256": durable["sha256"]}, result=marker["result"])
+                {"result_id": durable["result_id"], "sha256": durable["sha256"]},
+                result=marker["result"], event=event)
             continue
         if stage == "result_observed":
             if not unit["empty"]:
@@ -992,16 +1382,30 @@ def stop_owner(project: str, slug: str, reason: str) -> dict:
         return task
     op = _owner(task, project=project, required=True)
     if op["preparation"]["stage"] == "planned":
-        raise T.TransitionError(f"{slug}: prepared Git effect must reconcile before stop")
+        raise T.TransitionError(f"{slug}: planned owner must be cancelled before effect")
+    if op["preparation"]["stage"] == "applying":
+        # The elected Git claimant may still be outside the lock. The stop intent is durable,
+        # but absence of its exact receipt is ambiguous and can never be archived as empty.
+        return task
+    if op["preparation"]["stage"] == "prepared":
+        task = _bind_prepared_owner(project, task)
+        op = _owner(task, project=project, required=True)
     physical = op["physical"]
     if physical["stage"] == "planned":
+        invalidation = _owner_invalidation_error(project, task, op) or _bounded_owner_error(reason)
         task = _save_owner(project, task, {**op, "physical":
-            engines.note_physical_transition_error(physical, _bounded_owner_error(reason))})
+            engines.note_physical_transition_error(physical, invalidation)})
         task, _winner = _claim_owner_launch(project, task)
         op = _owner(task, project=project, required=True)
         physical = op["physical"]
     if physical["stage"] == "prior_stopped" and physical["error"] is None:
         raise T.TransitionError(f"{slug}: launch boundary is ambiguous; reconcile before replacement")
+    if physical["stage"] not in ("complete", "failed") and physical["error"] is None:
+        invalidation = _owner_invalidation_error(project, task, op) or _bounded_owner_error(reason)
+        task = _save_owner(project, task, {**op, "physical":
+            engines.note_physical_transition_error(physical, invalidation)})
+        op = _owner(task, project=project, required=True)
+        physical = op["physical"]
     unlaunched = (physical["stage"] == "prior_stopped" and physical["error"] is not None
                   or (physical["receipts"].get("spawned") or {}).get("launched") is False)
     if physical["stage"] not in ("complete", "failed") and not unlaunched:
@@ -1012,54 +1416,108 @@ def stop_owner(project: str, slug: str, reason: str) -> dict:
     return task
 
 
+def _cancel_planned_operation(op: dict, reason: str) -> dict:
+    """Return the canonical terminal receipt for one still-planned request."""
+    stop_reason = _bounded_owner_error(reason)
+    error = _bounded_owner_error(
+        f"owner cancelled before effect for message {op['request']['message_id']}: {stop_reason}")
+    return {**op,
+            "stop": {"reason": stop_reason, "requested": S.now(), "cancel": True},
+            "result": {"provider_session_id": None, "action": None,
+                       "usage": {}, "error": error},
+            "cancelled_before_effect": {
+                "status": "cancelled-before-effect", "message_id": op["request"]["message_id"],
+                "result_id": "transition:error", "sha256": hashlib.sha256(error.encode()).hexdigest(),
+                "empty": True}}
+
+
+def _cancel_planned_before_effect(project: str, slug: str, reason: str) -> dict:
+    """Close one still-planned request without Git, provider, or physical history."""
+    def install(task):
+        op = _owner(task, project=project, required=True)
+        if op["preparation"]["stage"] != "planned" or op.get("physical") is not None:
+            raise T.TransitionError(f"{slug}: owner crossed the pre-effect cancellation boundary")
+        if op.get("cancelled_before_effect") is not None:
+            return task, None, None
+        task["active_operation"] = _cancel_planned_operation(op, reason)
+        return task, None, None
+    task, _ = T.owner_command(project, slug, install,
+                              lambda value: _owner(value, project=project, required=True))
+    return task
+
+
 def cancel_owner(project: str, slug: str, reason: str) -> dict:
     """Install the rejection cancellation intent before the idempotent physical stop."""
     def install(task):
-        op = _owner(task, project=project, required=True)
-        if not _owner_terminal(op):
-            op["stop"] = {"reason": _bounded_owner_error(reason), "requested": S.now(), "cancel": True}
-            task["active_operation"] = op
+        current = _owner(task, project=project, required=True)
+        if current.get("cancelled_before_effect") is not None:
+            return task, None, None
+        if current["preparation"]["stage"] == "planned":
+            task["active_operation"] = _cancel_planned_operation(current, reason)
+        elif not _owner_terminal(current):
+            current["stop"] = {"reason": _bounded_owner_error(reason),
+                               "requested": S.now(), "cancel": True}
+            task["active_operation"] = current
         return task, None, None
     task, _ = T.owner_command(project, slug, install,
                               lambda value: _owner(value, project=project, required=True))
     op = _owner(task, project=project, required=True)
-    if op["preparation"]["stage"] == "planned":
-        def retire(task):
-            current = _owner(task, project=project, required=True)
-            if current != op or not (current.get("stop") or {}).get("cancel"):
-                raise T.TransitionError(f"{slug}: cancellation intent changed")
-            task.pop("active_operation", None)
-            return task, None, ("owner-request-cancelled-before-effect", {})
-        task, _ = T.owner_command(project, slug, retire,
-                                  lambda value: None if value.get("active_operation") is None else
-                                  _owner(value, project=project, required=True))
+    if op.get("cancelled_before_effect") is not None:
         return task
     return stop_owner(project, slug, reason)
 
 
 def owner_archive_ready(project: str, task: dict) -> bool:
     op = _owner(task, project=project)
-    return op is None or (_owner_terminal(op) and op["physical"]["receipts"].get("empty", {}).get("empty") is True)
+    if op is not None and op.get("cancelled_before_effect") is not None:
+        return op.get("successor") is None
+    if (op is None or not _owner_terminal(op) or op.get("result") is None
+            or op["physical"]["receipts"].get("empty", {}).get("empty") is not True):
+        return False
+    try:
+        _terminal_owner_evidence(project, task, op)
+    except T.TransitionError:
+        return False
+    return True
 
 
 def _terminal_owner_evidence(project: str, task: dict, op: dict) -> tuple[dict, dict]:
     if not _owner_terminal(op):
         raise T.TransitionError(f"{task['slug']}: owner is not terminal")
+    if op.get("cancelled_before_effect") is not None:
+        receipt = op["cancelled_before_effect"]
+        return {"result": op["result"]}, {"present": True,
+            "result_id": receipt["result_id"], "sha256": receipt["sha256"]}
     marker, durable = _owner_marker(project, task, op)
     receipt = op["physical"]["receipts"]["result_observed"]
     observed = ({"result_id": durable.get("result_id"), "sha256": durable.get("sha256")}
                 if durable.get("present") else None)
     if marker is None or observed != receipt or marker["result"] != op.get("result"):
         raise T.TransitionError(f"{task['slug']}: terminal owner result evidence changed")
+    event = op["event"]
+    _owner_event_evidence(project, task, op["physical"], event["event_id"], event["sha256"],
+                          label="terminal Codex owner event spool")
     return marker, durable
 
 
-def owner_result_snapshot(project: str, task: dict) -> dict:
+def owner_terminal_snapshot(project: str, task: dict) -> dict:
+    """Return one exact terminal-empty result, including a closed failure/cancellation."""
     task = reconcile_owner(project, task["slug"])
     op = _owner(task, project=project, required=True)
-    if op["physical"]["stage"] != "complete" or op.get("result") is None:
+    cancelled = op.get("cancelled_before_effect")
+    if (not _owner_terminal(op) or op.get("result") is None
+            or cancelled is None
+                and op["physical"]["receipts"].get("empty", {}).get("empty") is not True):
         raise T.TransitionError(f"{task['slug']}: exact terminal-empty owner result required")
     _terminal_owner_evidence(project, task, op)
+    return {"task": task, "operation": op, "result": op["result"]}
+
+
+def owner_result_snapshot(project: str, task: dict) -> dict:
+    terminal = owner_terminal_snapshot(project, task)
+    task, op = terminal["task"], terminal["operation"]
+    if op.get("cancelled_before_effect") is not None or op["physical"]["stage"] != "complete":
+        raise T.TransitionError(f"{task['slug']}: exact successful terminal-empty owner result required")
     if not recovery.owner_state_is_current(project, task, op["physical"], op["recovery_epoch"]):
         raise T.TransitionError(f"{task['slug']}: owner recovery fence changed")
     physical = op["physical"]
@@ -1099,6 +1557,232 @@ def require_owner_permit_current(project: str, task: dict) -> None:
     if not recovery.owner_state_is_current(project, task, op["physical"], op["recovery_epoch"]):
         raise T.TransitionError(f"{task['slug']}: owner recovery fence changed")
 
+
+def _continue_prepared_owner(project: str, task: dict) -> dict:
+    """Bind prepared intent, then either settle its stop or cross the provider launch boundary."""
+    op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] == "prepared":
+        task = _bind_prepared_owner(project, task)
+        op = _owner(task, project=project, required=True)
+    if op["preparation"]["stage"] != "complete":
+        return task
+    if op.get("stop") is not None:
+        return stop_owner(project, task["slug"], op["stop"].get("reason") or "owner stopped")
+    return (_spawn_owner(project, task) if op["physical"]["stage"] == "planned"
+            else reconcile_owner(project, task["slug"]))
+
+
+OWNER_CONTINUATION_TASK_CAP = 128
+OWNER_CONTINUATION_STEP_CAP = 8
+_BLOCKED_RESUME_FIELDS = ("resume_after", "resume_answer", "resume_prefix",
+                          "resume_exact_prompt", "resume_message_id")
+_BOUND_OWNER_IDENTITY_KEYS = {"message_id", "request_sha256", "transition_id", "generation",
+                              "intent_digest", "process_unit_id", "provider_session_id"}
+_RESUME_COMPLETION_KEYS = {"resume", "dispatch_id", "session_id", "agent_id", "owner"}
+
+
+def _bound_owner_identity(op: dict) -> dict:
+    """Return the non-secret exact identity of one positively bound owner generation."""
+    physical = op.get("physical") or {}
+    bound = physical.get("receipts", {}).get("bound") or {}
+    if bound.get("bound") is not True:
+        raise T.TransitionError("exact positive owner bound receipt required")
+    request_sha = hashlib.sha256(S._canonical_json(op["request"])).hexdigest()  # noqa: SLF001
+    return {"message_id": op["request"]["message_id"], "request_sha256": request_sha,
+            "transition_id": physical["transition_id"], "generation": physical["generation"],
+            "intent_digest": physical["intent_digest"],
+            "process_unit_id": physical["process_unit_id"],
+            "provider_session_id": bound["provider_session_id"]}
+
+
+def _resume_completion_expectation(task: dict, owner: dict) -> dict:
+    """Bind one persisted blocked input to the exact generation that satisfied its wait."""
+    if (set(owner) != _BOUND_OWNER_IDENTITY_KEYS
+            or any(key not in task for key in _BLOCKED_RESUME_FIELDS)):
+        raise T.TransitionError(f"{task['slug']}: exact blocked resume expectation is unavailable")
+    resume = {key: task[key] for key in _BLOCKED_RESUME_FIELDS}
+    if (resume["resume_message_id"] != owner["message_id"]
+            or task.get("session_id") != owner["provider_session_id"]):
+        raise T.TransitionError(f"{task['slug']}: blocked resume expectation changed before binding")
+    return {"resume": resume, "dispatch_id": task.get("dispatch_id"),
+            "session_id": task.get("session_id"), "agent_id": owner["process_unit_id"],
+            "owner": owner}
+
+
+def _complete_blocked_resume(project: str, task: dict, expectation: dict | None = None) -> dict:
+    """Atomically project one exact bound resume and consume only its matching retry intent."""
+    op = _owner(task, project=project, required=True)
+    owner = _bound_owner_identity(op)
+    expectation = expectation or _resume_completion_expectation(task, owner)
+    if (not isinstance(expectation, dict) or set(expectation) != _RESUME_COMPLETION_KEYS
+            or not isinstance(expectation.get("resume"), dict)
+            or set(expectation["resume"]) != set(_BLOCKED_RESUME_FIELDS)
+            or not isinstance(expectation.get("owner"), dict)
+            or set(expectation["owner"]) != _BOUND_OWNER_IDENTITY_KEYS):
+        raise T.TransitionError(f"{task['slug']}: malformed blocked resume completion expectation")
+    expected_resume = expectation["resume"]
+    message_id, answer = expected_resume["resume_message_id"], expected_resume["resume_answer"]
+    expected_identity = {key: expectation[key] for key in ("dispatch_id", "session_id", "agent_id")}
+    if (task.get("state") not in ("blocked", "running")
+            or not isinstance(message_id, str) or not message_id
+            or not isinstance(answer, str) or expected_resume["resume_exact_prompt"] is not True
+            or op.get("stop") is not None or owner != expectation["owner"]):
+        raise T.TransitionError(f"{task['slug']}: exact bound blocked resume is required")
+
+    def complete(live):
+        current = _owner(live, project=project, required=True)
+        for key, expected in expected_identity.items():
+            if live.get(key) != expected:
+                raise T.TransitionError(
+                    f"{live['slug']}: blocked resume {key.removesuffix('_id')} changed before completion")
+        if (_bound_owner_identity(current) != expectation["owner"]
+                or current["request"]["message_id"] != message_id or current.get("stop") is not None):
+            raise T.TransitionError(f"{live['slug']}: blocked resume owner changed before completion")
+        if live.get("state") == "running":
+            if any(key in live for key in _BLOCKED_RESUME_FIELDS):
+                raise T.TransitionError(
+                    f"{live['slug']}: running resume retains ambiguous retry intent")
+            return live, False, None
+        if live.get("state") != "blocked" or any(
+                key not in live or live[key] != value for key, value in expected_resume.items()):
+            raise T.TransitionError(f"{live['slug']}: blocked resume intent changed before completion")
+        live.update({"state": "running", "dispatching": None, "blocked_reason": None})
+        for key in _BLOCKED_RESUME_FIELDS:
+            live.pop(key)
+        return live, True, ("state", {"frm": "blocked", "to": "running", "by": "altd",
+                                      "answer": answer})
+
+    completed, changed = T.owner_command(
+        project, task["slug"], complete,
+        lambda value: _owner(value, project=project, required=True))
+    if changed:
+        S.regen_state_md(project)
+    return completed
+
+
+def _finish_background_resume(project: str, task: dict, op: dict) -> dict:
+    """Project one exact durable blocked resume after its provider thread is bound."""
+    message_id = task.get("resume_message_id")
+    physical = op.get("physical")
+    bound = (physical or {}).get("receipts", {}).get("bound") or {}
+    if (task.get("state") != "blocked" or not isinstance(message_id, str)
+            or op["request"]["message_id"] != message_id or bound.get("bound") is not True
+            or op.get("stop") is not None or physical.get("stage") == "failed"):
+        return task
+    return _complete_blocked_resume(project, task)
+
+
+def _settle_failed_background_resume(project: str, task: dict, op: dict) -> dict:
+    """Consume one exact failed retry intent without projecting the blocked task to running."""
+    if (task.get("state") != "blocked" or (op.get("physical") or {}).get("stage") != "failed"
+            or any(key not in task for key in _BLOCKED_RESUME_FIELDS)
+            or task.get("resume_message_id") != op["request"]["message_id"]):
+        return task
+    expected_resume = {key: task[key] for key in _BLOCKED_RESUME_FIELDS}
+    expected_identity = {key: task.get(key) for key in ("dispatch_id", "session_id", "agent_id")}
+    error = _bounded_owner_error((op.get("result") or {}).get("error")
+                                 or op["physical"].get("error") or "owner resume failed")
+
+    def settle(live):
+        current = _owner(live, project=project, required=True)
+        if (live.get("state") != "blocked" or current != op
+                or (current.get("physical") or {}).get("stage") != "failed"
+                or any(live.get(key) != value for key, value in expected_identity.items())
+                or any(key not in live or live[key] != value
+                       for key, value in expected_resume.items())):
+            raise T.TransitionError(f"{live['slug']}: failed blocked resume changed before settlement")
+        for key in _BLOCKED_RESUME_FIELDS:
+            live.pop(key)
+        live["blocked_reason"] = f"owner resume failed: {error}"
+        return live, True, ("resume-failed", {
+            "message_id": op["request"]["message_id"], "reason": error})
+
+    settled, changed = T.owner_command(
+        project, task["slug"], settle,
+        lambda value: _owner(value, project=project, required=True))
+    if changed:
+        S.regen_state_md(project)
+    return settled
+
+
+def continue_owners(project: str) -> list[dict]:
+    """Boundedly advance replay-safe Codex owner boundaries from the existing L2 worker.
+
+    This is the sole background continuation routine. It adds no timer or authority: it uses
+    TaskRecord CAS, the existing settlement/launch fences, and the non-launching physical
+    reconciler. In particular, ``prior_stopped`` is observed by ``reconcile_owner`` only.
+    """
+    results = []
+    candidates = [task for task in S.list_tasks(project)
+                  if task.get("state") in ("queued", "running", "blocked")
+                  and l2_engine(task) == "codex" and task.get("active_operation") is not None]
+    for candidate in candidates[:OWNER_CONTINUATION_TASK_CAP]:
+        slug = candidate["slug"]
+        try:
+            for _ in range(OWNER_CONTINUATION_STEP_CAP):
+                task = _active_task(project, slug)
+                if task.get("state") not in ("queued", "running", "blocked"):
+                    break
+                T.require_owner_provider_capability(task)
+                op = _owner(task, project=project, required=True)
+                physical = op.get("physical")
+                if (op["preparation"]["stage"] == "complete" and physical is not None
+                        and physical["stage"] != "planned" and not _owner_terminal(op)):
+                    # A hold gates admission, not strict stop/reconciliation of a unit that already
+                    # crossed launch. Settle only the existing generation; never launch here.
+                    task = reconcile_owner(project, slug)
+                    op = _owner(task, project=project, required=True)
+                hold = wip_hold(project, task, existing_owner=True)
+                if hold:
+                    results.append({"slug": slug, "status": "held", "reason": hold})
+                    break
+                task = _settle_failed_background_resume(project, task, op)
+                op = _owner(task, project=project, required=True)
+                resumed = _finish_background_resume(project, task, op)
+                if resumed != task:
+                    task = resumed
+                    op = _owner(task, project=project, required=True)
+                before = op
+
+                if _owner_terminal(op):
+                    if op.get("successor") is None:
+                        break
+                    task = _promote_successor(project, slug)
+                elif (op["preparation"]["stage"] == "planned"
+                      and op.get("stop") is not None and op.get("successor") is not None):
+                    task = _cancel_planned_before_effect(
+                        project, slug, op["stop"].get("reason") or
+                        "superseded by persisted owner request")
+                elif op["preparation"]["stage"] in ("planned", "applying"):
+                    existing = bool(task.get("session_id") or op["preparation"].get("prior_unit"))
+                    task = _settle_owner_preparation(
+                        project, task, existing_worktree=existing)
+                    task = _continue_prepared_owner(project, task)
+                elif op["preparation"]["stage"] in ("prepared", "complete"):
+                    # `_continue_prepared_owner` launches only physical `planned`. Every later
+                    # physical stage, including ambiguous `prior_stopped`, goes to reconciliation.
+                    task = _continue_prepared_owner(project, task)
+                else:  # schema validation should make this unreachable.
+                    raise T.TransitionError(f"{slug}: unknown owner preparation stage")
+
+                current = _owner(task, project=project, required=True)
+                resumed = _finish_background_resume(project, task, current)
+                if resumed != task:
+                    task = resumed
+                    current = _owner(task, project=project, required=True)
+                if current == before:
+                    break
+            else:
+                results.append({"slug": slug, "status": "bounded"})
+                continue
+            if not any(row.get("slug") == slug for row in results):
+                results.append({"slug": slug, "status": "continued"})
+        except (git_policy.GitPolicyError, recovery.LaunchHeld, T.TransitionError,
+                engines.ManagedUnitError) as exc:
+            results.append({"slug": slug, "status": "held", "reason": _bounded_owner_error(exc)})
+    return results
+
+
 def run(project: str, slug: str, model: str | None = None) -> dict:
     """Install a durable request before Git/provider effects, then start only as CAS launch winner."""
     with S.project_lock(project):
@@ -1124,11 +1808,11 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             raise T.TransitionError(f"{slug}: unknown legacy Codex ownership cannot be relaunched")
         existing = _owner(task, project=project) if task.get("l2_engine") == "codex" else None
     if existing and not _owner_terminal(existing):
-        if existing["preparation"]["stage"] == "planned":
+        preparation_stage = existing["preparation"]["stage"]
+        if preparation_stage in ("planned", "applying"):
             request = existing["request"]
-        else:
-            started = (_spawn_owner(project, task) if existing["physical"]["stage"] == "planned"
-                       else reconcile_owner(project, slug))
+        elif preparation_stage in ("prepared", "complete"):
+            started = _continue_prepared_owner(project, task)
             return _wait_owner_started(project, started)
     else:
         try:
@@ -1158,44 +1842,63 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             raise T.TransitionError(f"{slug}: initial owner request unexpectedly requires stop")
         T.brief(project, slug, brief, actor="altd")
 
-    repo = config.project_path(project)
     try:
-        with publication_settlement(project):
-            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-        worktree = _task_worktree(repo, project, slug, origin_sha)
+        task = _settle_owner_preparation(
+            project, _active_task(project, slug), existing_worktree=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
         raise record_dispatch_failure(project, slug, exc) from exc
-    task = _active_task(project, slug)
     op = _owner(task, project=project, required=True)
     if op["request"] != request:
         raise T.TransitionError(f"{slug}: owner request changed during Git preparation")
-    if op["preparation"]["stage"] == "planned":
-        task = _prepare_owner(project, task, worktree=worktree,
-                              branch=worktree_branch(slug, worktree), base_sha=origin_sha)
-    task = _spawn_owner(project, task)
+    task = _continue_prepared_owner(project, task)
     return _wait_owner_started(project, task)
 
 
-def _wait_owner_started(project: str, task: dict, timeout: float = 15.0) -> dict:
+def _wait_owner_started(project: str, task: dict, timeout: float = 15.0, *,
+                        include_owner_identity: bool = False) -> dict:
     import time
+    expected = _owner(task, project=project, required=True)
+    expected_request = expected["request"]
+    expected_physical = expected.get("physical") or {}
+    expected_identity = tuple(expected_physical.get(key) for key in (
+        "transition_id", "generation", "intent_digest"))
+    if any(value is None for value in expected_identity):
+        raise T.TransitionError(f"{task['slug']}: exact physical owner intent is required before waiting")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         task = reconcile_owner(project, task["slug"])
         op = _owner(task, project=project, required=True)
-        if task.get("state") == "running" or _owner_terminal(op):
+        physical = op.get("physical") or {}
+        identity = tuple(physical.get(key) for key in (
+            "transition_id", "generation", "intent_digest"))
+        if op["request"] != expected_request or identity != expected_identity:
+            raise T.TransitionError(f"{task['slug']}: physical owner changed before binding")
+        bound = (op.get("physical") or {}).get("receipts", {}).get("bound") or {}
+        if bound.get("bound") is True or _owner_terminal(op):
             break
         time.sleep(0.05)
     op = _owner(task, project=project, required=True)
-    if task.get("state") != "running" and not _owner_terminal(op):
+    physical = op.get("physical") or {}
+    identity = tuple(physical.get(key) for key in (
+        "transition_id", "generation", "intent_digest"))
+    if op["request"] != expected_request or identity != expected_identity:
+        raise T.TransitionError(f"{task['slug']}: physical owner changed before binding")
+    bound = (op.get("physical") or {}).get("receipts", {}).get("bound") or {}
+    if bound.get("bound") is not True and not _owner_terminal(op):
         raise T.TransitionError(f"{task['slug']}: owner did not expose a stable thread before timeout")
+    if op.get("cancelled_before_effect") is not None:
+        raise T.TransitionError(f"{task['slug']}: owner was cancelled before effect")
     if op["physical"]["stage"] == "failed":
         raise T.TransitionError(f"{task['slug']}: owner failed before binding")
     projection = owner_projection(project, task) or {}
-    return {"dispatch_id": task["dispatch_id"], "engine": "codex",
-            "routing": task.get("routing"), "agent": {
+    result = {"dispatch_id": task["dispatch_id"], "engine": "codex",
+              "routing": task.get("routing"), "agent": {
                 "id": op["physical"]["process_unit_id"], "sessionId": task.get("session_id"),
                 "state": "working" if projection.get("working") else "done", "engine": "codex"},
-            "stdout": ""}
+              "stdout": ""}
+    if include_owner_identity:
+        result["_owner_identity"] = _bound_owner_identity(op)
+    return result
 
 
 
@@ -1241,6 +1944,31 @@ def _issue_resume_prompt(project: str, task: dict, prompt: str) -> tuple[str, st
             snapshot["content_sha256"])
 
 
+def _defer_owner_request(project: str, slug: str, request: dict, hold: str) -> dict:
+    """Atomically block one exact persisted resume without crossing its next effect boundary."""
+    prompt = request["prompt"]
+    def defer(live):
+        current = _owner(live, project=project, required=True)
+        exact = (current["request"] == request and not _owner_terminal(current))
+        successor = (_owner_terminal(current) and current.get("successor") == request)
+        if (not (exact or successor) or live.get("state") not in ("running", "blocked")):
+            raise T.TransitionError(f"{slug}: owner request changed before admission deferral")
+        previous = live["state"]
+        expected_retry = {
+            "resume_after": S.now(), "resume_answer": prompt, "resume_prefix": "",
+            "resume_exact_prompt": True, "resume_message_id": request["message_id"],
+        }
+        live.update({"state": "blocked", "blocked_reason": hold, **expected_retry})
+        event = (("state", {"frm": previous, "to": "blocked", "by": "altd", "reason": hold})
+                 if previous != "blocked" else None)
+        return live, None, event
+    task, _ = T.owner_command(
+        project, slug, defer,
+        lambda value: _owner(value, project=project, required=True))
+    S.regen_state_md(project)
+    return task
+
+
 def _resume_owner(project: str, slug: str, prompt: str, *, message_id: str, **expected) -> dict:
     task = _active_task(project, slug)
     _require_resume_snapshot(task, slug, **expected)
@@ -1254,6 +1982,9 @@ def _resume_owner(project: str, slug: str, prompt: str, *, message_id: str, **ex
     task, disposition = _begin_owner_request(project, slug, request)
     if disposition == "stop":
         task = stop_owner(project, slug, "superseded by persisted owner request")
+        if hold := wip_hold(project, task, existing_owner=True):
+            _defer_owner_request(project, slug, request, hold)
+            return {"deferred": True, "hold": hold, "waiting": hold}
         try:
             task = _promote_successor(project, slug)
         except T.TransitionError:
@@ -1266,28 +1997,20 @@ def _resume_owner(project: str, slug: str, prompt: str, *, message_id: str, **ex
             raise T.TransitionError(f"{slug}: owner request changed before recovery")
 
     op = _owner(task, project=project, required=True)
-    if op["preparation"]["stage"] == "planned":
-        repo, worktree = config.project_path(project), Path(task["worktree"])
-        try:
-            with publication_settlement(project):
-                origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-                _validate_task_worktree(repo, project, slug, worktree, origin_sha, require_clean=False)
-            task = _prepare_owner(project, task, worktree=worktree,
-                                  branch=worktree_branch(slug, worktree), base_sha=origin_sha)
-        except (git_policy.GitPolicyError, recovery.LaunchHeld, T.TransitionError) as exc:
-            if recovery.dispatch_hold(project, task):
-                def defer(live):
-                    live["blocked_reason"] = str(recovery.dispatch_hold(project, live))
-                    live.update({"state": "blocked", "resume_after": S.now(),
-                                 "resume_answer": prompt, "resume_prefix": "",
-                                 "resume_exact_prompt": True,
-                                 "resume_message_id": request["message_id"]})
-                _task_owner_update(project, slug, defer)
-                return {"deferred": True, "hold": str(exc), "waiting": str(exc)}
-            raise
-    op = _owner(task, project=project, required=True)
-    task = _spawn_owner(project, task) if op["physical"]["stage"] == "planned" else reconcile_owner(project, slug)
-    result = _wait_owner_started(project, task)
+    try:
+        if op["preparation"]["stage"] in ("planned", "applying"):
+            if hold := wip_hold(project, task, existing_owner=True):
+                _defer_owner_request(project, slug, request, hold)
+                return {"deferred": True, "hold": hold, "waiting": hold}
+            task = _settle_owner_preparation(project, task, existing_worktree=True)
+        task = _continue_prepared_owner(project, task)
+    except (git_policy.GitPolicyError, recovery.LaunchHeld, T.TransitionError) as exc:
+        if isinstance(exc, (recovery.LaunchHeld, OwnerRecoveryFenceError)):
+            hold = str(exc)
+            _defer_owner_request(project, slug, request, hold)
+            return {"deferred": True, "hold": hold, "waiting": hold}
+        raise
+    result = _wait_owner_started(project, task, include_owner_identity=True)
     live = _active_task(project, slug)
     if request.get("issue_digest"):
         live = _task_owner_update(project, slug, lambda value:
@@ -1297,13 +2020,17 @@ def _resume_owner(project: str, slug: str, prompt: str, *, message_id: str, **ex
 
 
 def resume_session(project: str, slug: str, text: str, session_id: str | None = None, *,
-                   message_id: str | None = None, **expected) -> dict:
+                   message_id: str | None = None, _include_owner_identity: bool = False,
+                   **expected) -> dict:
     task = _active_task(project, slug)
     if session_id is not None and task.get("session_id") != session_id:
         raise T.TransitionError(f"{slug}: requested provider thread is stale")
     stable = message_id or hashlib.sha256(
         f"owner\0{project}\0{slug}\0{task.get('dispatch_id')}\0{secrets.token_hex(16)}".encode()).hexdigest()
-    return _resume_owner(project, slug, text, message_id=stable, **expected)
+    result = _resume_owner(project, slug, text, message_id=stable, **expected)
+    if not _include_owner_identity:
+        result.pop("_owner_identity", None)
+    return result
 
 
 def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
@@ -1324,13 +2051,25 @@ def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's 
         return {"deferred": True, "hold": hold, "waiting": waiting}
     prompt = (answer if task.get("resume_exact_prompt") and answer == task.get("resume_answer") else
               f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report.")
-    result = resume_session(project, slug, prompt, message_id=message_id, **expected)
+    stable = message_id or hashlib.sha256(
+        f"owner\0{project}\0{slug}\0{task.get('dispatch_id')}\0{secrets.token_hex(16)}".encode()
+    ).hexdigest()
+    def persist_resume(live):
+        if live.get("state") != "blocked":
+            raise T.TransitionError(f"{slug}: blocked resume changed before durable intent")
+        live.update({"resume_after": S.now(), "resume_answer": prompt, "resume_prefix": "",
+                     "resume_exact_prompt": True, "resume_message_id": stable})
+    pending = _task_owner_update(project, slug, persist_resume)
+    result = resume_session(project, slug, prompt, message_id=stable,
+                            _include_owner_identity=True, **expected)
     if result.get("deferred"):
         return result
+    owner_identity = result.pop("_owner_identity", None)
+    if not isinstance(owner_identity, dict):
+        raise T.TransitionError(f"{slug}: bound resume completion identity is unavailable")
+    completion = _resume_completion_expectation(pending, owner_identity)
     live = _active_task(project, slug)
-    T.resume(project, slug, answer=answer, expected_state="blocked",
-             expected_dispatch_id=live.get("dispatch_id"),
-             expected_session_id=live.get("session_id"), expected_agent_id=live.get("agent_id"))
+    _complete_blocked_resume(project, live, completion)
     result["deferred"] = False
     return result
 
@@ -1589,7 +2328,7 @@ def _disabled_owner_scope_uncertain(task: dict, paths: list[str]) -> bool:
             or not narrow(paths))
 
 
-def wip_hold(project: str, task: dict | None = None) -> str | None:
+def wip_hold(project: str, task: dict | None = None, *, existing_owner: bool = False) -> str | None:
     held = recovery.dispatch_hold(project, task)
     if held:
         return held
@@ -1597,7 +2336,8 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     # Disabled-provider legacy rows remain protected by their repository lease,
     # but do not consume the scarce runnable-provider WIP capacity.
     running = [t for t in project_tasks
-               if t["state"] == "running" and not provider_capability_hold(t)]
+               if t["state"] == "running" and not provider_capability_hold(t)
+               and not (existing_owner and task and t["slug"] == task["slug"])]
     proj = config.project(project)
     if task:
         mine = task_paths(project, task)
@@ -1623,7 +2363,8 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
         return f"WIP limit: {len(running)} running in {project}"
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p)
-                if t["state"] == "running" and not provider_capability_hold(t))
+                if t["state"] == "running" and not provider_capability_hold(t)
+                and not (existing_owner and task and p == project and t["slug"] == task["slug"]))
     if total >= config.WIP_PER_MACHINE:
         return f"WIP limit: {total} running on this machine"
     return None

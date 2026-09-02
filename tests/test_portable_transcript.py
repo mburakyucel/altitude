@@ -27,7 +27,9 @@ class TestPortableTranscript(unittest.TestCase):
                           "l2_engine": "codex", "engine_model": "gpt-test",
                           "session_id": "thread-1", "agent_id": "worker-1"})
         S.save_task(self.project, self.task)
-        self.native = _TMP / self.project / "worker.stdout.jsonl"
+        self.native = (S.task_dir(self.project, self.task["slug"]) / "l2-engine" /
+                       ("a" * 64) / "events.jsonl")
+        self.native.parent.mkdir(parents=True)
 
     def test_sync_redacts_validates_and_exports_without_provider_store(self):
         self.native.write_text(json.dumps({"type": "assistant", "text": "done",

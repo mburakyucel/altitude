@@ -181,13 +181,40 @@ prompt/message, Git-preparation receipt, physical transition, bounded result, op
 and the canonical recovery epoch or episode/revision. The task-owned `owner_command` seam is the sole short-lock
 serializer for B3 owner plans, compare-and-swap decisions, receipts, and projections. Dispatch performs or
 reconciles Git, manager, and provider effects outside that lock and returns only typed, intent-bound receipts for
-the seam to persist. Only the `planned -> prior_stopped` winner may spawn; observers reconcile and never relaunch.
+the seam to persist. Git preparation is its own closed state machine:
+`planned -> applying -> prepared -> complete`. A short `planned -> applying` CAS elects the only Git-effect
+intent. The existing publication-settlement lock serializes the entire idempotent fetch/worktree effect through
+the `prepared` receipt CAS; if its process exits, any later exact-request reconciler can finish `applying`, while
+a concurrent waiter re-reads `prepared` without repeating the effect. A receipt is written only after proving the
+fetched origin commit is an ancestor of worktree `HEAD`; an untouched initial worktree must equal that commit,
+while a resume may contain only task-trailed descendants. `prepared` has the exact Git receipt and no
+physical authority; `complete` binds the deterministic physical intent. A stale recovery fence leaves `prepared` unchanged, and an exact retry may rebind it to the
+current inactive recovery epoch without repeating Git. Only the physical `planned -> prior_stopped` winner may
+spawn; observers reconcile and never relaunch.
 Steering first persists the exact successor and stop intent, then proves the old unit empty before a new generation
 resumes the same Codex thread. Rejection likewise persists cancellation before stop and cannot archive until the
-embedded transition is terminal with an exact empty receipt. The server timer only schedules the existing
-deduplicated L2 reconciliation worker; provider effects and receipt persistence never run inline in the timer.
+embedded transition is terminal with an exact empty receipt. Only preparation `planned` can produce the exact
+`cancelled-before-effect` receipt. Cancellation at `applying` leaves a non-archivable stop for the serialized Git reconciler to
+settle; cancellation at `prepared` binds an error generation and never launches a provider. A superseded `planned`
+request is closed before effect and its exact successor is promoted without Git, provider launch, or physical
+history for the cancelled request. The server timer only schedules the existing deduplicated L2 reconciliation
+worker; provider effects and receipt persistence never run inline in the timer. That worker has one bounded
+continuation pass for replay-safe preparation, binding, physical-planned, terminal-successor, direct-steering, and
+blocked-resume boundaries. It uses the existing recovery/WIP/lease and physical fences and never relaunches
+`prior_stopped`. Before an admission hold is applied, the pass may only reconcile, invalidate, stop, and settle an
+already-launched physical generation; the hold still gates Git, binding, successor promotion, and provider launch.
+A recovery-invalidated blocked resume stays blocked under the hold and cannot be projected to `running`; after
+clearance its canonical failure is surfaced and only its exact stale retry intent is consumed. Blocked resume
+waits for the exact current request and physical generation's positive bound
+receipt, fencing transition id, generation, and intent digest against same-request replacement; then one
+`owner_command` CAS revalidates task/owner/message/retry identity, moves `blocked -> running`, clears only that
+matching persisted retry intent, and writes one state event carrying the exact persisted answer. Concurrent replay
+is idempotent. The blocked caller carries the exact non-secret completion expectation through its wait, so a fresh
+`running` reload after a background winner succeeds only when retry fields are wholly absent and the exact bound
+request/generation is unchanged; competing generations, partial residue, and reblocked identity refuse.
 
-Each terminal owner is projected into the TaskRecord's bounded generation history with its exact transition,
+Each terminal physical owner generation (successful or failed) is projected into the TaskRecord's bounded
+generation history with its exact transition,
 managed-unit, message, event/result identities, result hash, and session evidence. Live transcript lookup validates
 that generation roster and derives only those event paths; it does not scan a legacy job directory or infer an
 owner from a PID or timestamp. The active task path is likewise read directly, so archive rename cannot create a
@@ -195,9 +222,9 @@ second claimant or ghost task directory. Task/project APIs omit the prompt, capa
 action, and deferred answer. Legacy Codex PID/job/timestamp authority and its fallback readers are deleted; legacy
 Claude records remain read-only stopped-state evidence.
 
-Phase 1B.3 is integrated on top of the reviewed Phase 1A and Phase 1B.2 fixes in this candidate. Its pre-rebase
-branch-local line delta is obsolete and intentionally omitted: §04's mechanical whole-candidate count is the only
-accepted accounting basis and must be rerun after all B3 integration conflicts are resolved. No new service, timer,
+Phase 1B.3 is integrated on top of the reviewed Phase 1A and Phase 1B.2 fixes in this candidate. The current
+mechanical whole-candidate count is recorded in §04; branch-local and pre-rebase deltas are not accounting inputs.
+No new service, timer,
 endpoint, lock family, dependency, or persistent artifact family is introduced. Phase 1B.4 remains the helper
 adopter. PR 1C.1 replaces the temporary action/result compatibility seam, PR 1C.5 folds continuation and terminal
 generation handling into settlement, Phase 3B removes session mirrors and compacts migrated journals, and PR 10B

@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, git_policy, server  # noqa: E402
+from altitude import state as S  # noqa: E402
 from altitude import tasks as T  # noqa: E402
 
 
@@ -41,7 +42,7 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         return result
 
-    def test_new_worktree_uses_captured_origin_and_valid_existing_history_is_reused(self):
+    def test_new_worktree_uses_captured_origin_and_resume_validates_task_history(self):
         worktree = dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha)
         self.assertEqual(self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip(), self.origin_sha)
         self.assertEqual(self.git("branch", "--show-current", cwd=worktree).stdout.strip(), "worktree-safe-task")
@@ -49,7 +50,76 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
         self.git("add", "safe.txt", cwd=worktree)
         self.git("commit", "-q", "-m", "safe", "-m", "Altitude-Task: demo/safe-task", cwd=worktree)
 
-        self.assertEqual(dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha), worktree)
+        dispatch._validate_task_worktree(  # noqa: SLF001
+            self.repo, "demo", "safe-task", worktree, self.origin_sha,
+            require_clean=False, allow_task_commits=True)
+
+    def test_stale_initial_worktree_cannot_be_receipted_as_newer_origin(self):
+        worktree = dispatch._task_worktree(self.repo, "demo", "stale-task", self.origin_sha)
+        stale_head = self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+
+        other = self.tmp / "other"
+        subprocess.run(["git", "clone", "-q", "--branch", "main",
+                        str(self.remote), str(other)], check=True)
+        for key, value in (("user.email", "test@example.invalid"), ("user.name", "Test User")):
+            subprocess.run(["git", "-C", str(other), "config", key, value], check=True)
+        (other / "REMOTE.md").write_text("advanced\n")
+        subprocess.run(["git", "-C", str(other), "add", "REMOTE.md"], check=True)
+        subprocess.run(["git", "-C", str(other), "commit", "-q", "-m", "advance"], check=True)
+        subprocess.run(["git", "-C", str(other), "push", "-q", "origin", "main"], check=True)
+        self.git("fetch", "-q", "origin", "main")
+        self.git("merge", "-q", "--ff-only", "origin/main")
+        advanced = git_policy.capture_origin_sha(self.repo)
+        self.assertNotEqual(advanced, stale_head)
+
+        with self.assertRaisesRegex(T.TransitionError, "does not descend from fetched origin/main"):
+            dispatch._task_worktree(self.repo, "demo", "stale-task", advanced)
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip(), stale_head)
+
+    def test_applying_retry_never_receipts_advanced_origin_over_stale_worktree(self):
+        project = f"prep-stale-{self.tmp.name}"
+        projects = config.load_projects()
+        projects[project] = {"name": project, "path": str(self.repo)}
+        config.save_projects(projects)
+        task = T.new(project, "stale applying preparation", "exact request",
+                     actor="burak", engine="codex")
+        request = dispatch._request("stale-preparation", "exact prompt", None,  # noqa: SLF001
+                                    {"engine": "codex"})
+        applying, disposition = dispatch._begin_owner_request(  # noqa: SLF001
+            project, task["slug"], request, initial={
+                "dispatch_id": task["slug"] + "-1", "attempt": 1, "l2_engine": "codex",
+                "engine_model": None, "routing": {"engine": "codex"},
+                "l2_token": "capability",
+            })
+        self.assertEqual(disposition, "prepare")
+        applying, winner = dispatch._claim_owner_preparation(project, applying)  # noqa: SLF001
+        self.assertTrue(winner)
+        worktree = dispatch._task_worktree(  # noqa: SLF001
+            self.repo, project, task["slug"], self.origin_sha)
+        stale_head = self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip()
+
+        other = self.tmp / "preparation-other"
+        subprocess.run(["git", "clone", "-q", "--branch", "main",
+                        str(self.remote), str(other)], check=True)
+        for key, value in (("user.email", "test@example.invalid"), ("user.name", "Test User")):
+            subprocess.run(["git", "-C", str(other), "config", key, value], check=True)
+        (other / "REMOTE.md").write_text("advanced after Git effect\n")
+        subprocess.run(["git", "-C", str(other), "add", "REMOTE.md"], check=True)
+        subprocess.run(["git", "-C", str(other), "commit", "-q", "-m", "advance"], check=True)
+        subprocess.run(["git", "-C", str(other), "push", "-q", "origin", "main"], check=True)
+        self.git("fetch", "-q", "origin", "main")
+        self.git("merge", "-q", "--ff-only", "origin/main")
+        advanced = git_policy.capture_origin_sha(self.repo)
+        self.assertNotEqual(advanced, stale_head)
+
+        with self.assertRaisesRegex(T.TransitionError, "does not descend from fetched origin/main"):
+            dispatch._settle_owner_preparation(  # noqa: SLF001
+                project, applying, existing_worktree=False)
+        live = S.load_task(project, task["slug"])
+        operation = dispatch._owner(live, project=project, required=True)  # noqa: SLF001
+        self.assertEqual(operation["preparation"]["stage"], "applying")
+        self.assertIsNone(operation["preparation"]["receipt"])
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip(), stale_head)
 
     def test_existing_branch_with_direct_commit_is_refused(self):
         staging = self.repo / ".claude" / "worktrees" / "bad-task"
@@ -59,7 +129,9 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
         self.git("commit", "-q", "-m", "direct commit", cwd=staging)
 
         with self.assertRaisesRegex(T.TransitionError, "without exact.*provenance"):
-            dispatch._task_worktree(self.repo, "demo", "bad-task", self.origin_sha)
+            dispatch._validate_task_worktree(  # noqa: SLF001
+                self.repo, "demo", "bad-task", staging, self.origin_sha,
+                require_clean=False, allow_task_commits=True)
         self.assertTrue(staging.exists())
 
     def test_orphan_task_branch_is_not_reattached_after_validation_races(self):

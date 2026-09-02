@@ -21,6 +21,7 @@ BOUNDARIES = {"dispatched", "resumed", "resume-cancelled", "resume-failed", "res
               "replaced", "compacted", "engine-changed", "recovery"}
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 SCHEMA_VERSION = "altitude.transcript/v1"
+_OWNER_EVENT_ID = re.compile(r"^l2-engine/[0-9a-f]{64}/events\.jsonl$")
 
 
 class TranscriptAccessError(ValueError):
@@ -198,6 +199,20 @@ def _attempt_dir(project: str, slug: str, dispatch_id: str) -> Path:
     return S.task_dir(project, slug) / "transcripts" / safe
 
 
+def _native_source_identity(project: str, slug: str, engine: str, path: Path) -> str:
+    """Return the validated generation-relative identity used for native snapshot names."""
+    if engine != "codex":
+        return path.name
+    task_root = S.task_dir(project, slug).resolve()
+    try:
+        relative = path.resolve().relative_to(task_root).as_posix()
+    except ValueError as exc:
+        raise TranscriptAccessError("Codex owner event path escaped its task") from exc
+    if not _OWNER_EVENT_ID.fullmatch(relative):
+        raise TranscriptAccessError("Codex owner event path is not generation-relative")
+    return relative
+
+
 def sync(project: str, slug: str) -> Path | None:
     """Materialize the current attempt without depending on its provider store afterward.
 
@@ -235,6 +250,7 @@ def sync(project: str, slug: str) -> Path | None:
         elif error:
             add("conversation", index, "record-error", None, {"error": error}, task_slug=slug)
     for file_index, (engine, session_id, path) in enumerate(_engine_paths(project, slug, task, platform)):
+        source_id = _native_source_identity(project, slug, engine, path)
         records = []
         for record_index, (record, error) in enumerate(_read_jsonl(path)):
             value = _redact(record) if record is not None else {"error": error}
@@ -243,12 +259,13 @@ def sync(project: str, slug: str) -> Path | None:
                 str(value.get("type") or value.get("kind") or "record-error"),
                 value.get("timestamp") or value.get("at"), value,
                 task_slug=slug, session_id=session_id, worker_id=path.name.split(".stdout", 1)[0])
-        native_key = hashlib.sha256(f"{engine}\0{session_id}\0{path.name}".encode()).hexdigest()[:12]
+        native_key = hashlib.sha256(f"{engine}\0{session_id}\0{source_id}".encode()).hexdigest()[:12]
         native_name = f"native-{engine}-{native_key}.jsonl"
         native_data = "".join(json.dumps(v, sort_keys=True) + "\n" for v in records).encode()
         S.atomic_write(root / native_name, native_data.decode())
         native_files.append({"path": native_name, "engine": engine, "session_id": session_id,
-                             "records": len(records), "sha256": _digest(native_data)})
+                             "source_id": source_id, "records": len(records),
+                             "sha256": _digest(native_data)})
     # A provider store may disappear before a late terminal/archive event. Never replace an
     # already captured native snapshot with absence.
     known_native = {entry["path"] for entry in native_files}
@@ -296,10 +313,14 @@ def validate_bundle(root: Path) -> dict:
     if not isinstance(manifest, dict) or manifest.get("schema_version") != SCHEMA_VERSION:
         raise TranscriptAccessError("unsupported or missing transcript manifest")
     checked = []
+    seen = set()
     entries = [manifest.get("canonical") or {}, *(manifest.get("native") or [])]
     entries += [{"path": path, "sha256": digest} for path, digest in (manifest.get("outcome") or {}).items()]
     for entry in entries:
         rel = str(entry.get("path") or "")
+        if rel in seen:
+            raise TranscriptAccessError(f"duplicate bundle file identity: {rel}")
+        seen.add(rel)
         path = (root / rel).resolve()
         if not rel or root.resolve() not in path.parents or not path.is_file():
             raise TranscriptAccessError(f"bundle file unavailable: {rel}")

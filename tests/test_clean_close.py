@@ -8,7 +8,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-clean-close-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, incidents, l3, server, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, incidents, l3, server, state as S, tasks as T, transcript  # noqa: E402
 
 PROJECT = "cleanclose"
 
@@ -54,9 +54,11 @@ class TestCleanClose(unittest.TestCase):
         directory = S.task_dir(PROJECT, slug)
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "report.json", report)
+        # These tests isolate report settlement. The exact Codex owner/archive proof is
+        # exercised without mocks in test_l2_owner_ownership.
         task = {"slug": slug, "title": slug, "state": "reported", "created": S.now(),
                 "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47],
-                "l2_engine": "codex"}
+                "l2_engine": "codex", "active_operation": {"test": "terminal-owner"}}
         if hold_merge:
             task["hold_merge"] = "always-list: release"
         S.save_task(PROJECT, task)
@@ -70,12 +72,19 @@ class TestCleanClose(unittest.TestCase):
         turns = []
         logs = []
         original_turn, original_log = l3.turn, server.log
+        original_snapshot = dispatch.owner_result_snapshot
+        original_ready, original_sync = dispatch.owner_archive_ready, transcript.sync
         l3.turn = lambda project, header, trigger, **_kwargs: turns.append((project, header, trigger)) or {}
         server.log = lambda message: logs.append(message)
+        dispatch.owner_result_snapshot = lambda _project, live: {"task": live}
+        dispatch.owner_archive_ready = lambda _project, _live: True
+        transcript.sync = lambda *_args, **_kwargs: None
         try:
             server.report_turn(PROJECT, task, verdict)
         finally:
             l3.turn, server.log = original_turn, original_log
+            dispatch.owner_result_snapshot = original_snapshot
+            dispatch.owner_archive_ready, transcript.sync = original_ready, original_sync
         return turns, logs
 
     def test_clean_report_closes_without_an_l3_turn_and_posts_one_fyi(self):
