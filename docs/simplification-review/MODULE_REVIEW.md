@@ -41,7 +41,7 @@ approved`, `implemented`, and `merged`.
 | `altitude/transcript.py` (184) | Live provider/event projection with redaction. | Bundle sync/validate/export and the per-event snapshot removed (phase 1b). Generation fencing is revisited in phase 3. | — | implemented |
 | `altitude/status.py` (232) | Aggregates task, helper, report, PR, spend, and error facts for UI/CLI. | Untouched in integration; helper WIP changes it. | Which status facts and freshness/authority guarantees do users and callers require? | unreviewed |
 | `altitude/monitor.py` (99) | Projects L3/L2 sessions, context, and quota. | Untouched in integration; older B3 touches it. | Which session, context, and quota observations are useful and sufficiently reliable? | unreviewed |
-| `altitude/digest.py` (75) | Queue/FYI/WIP text and optional speech output. | Untouched. | Which digest and audio behaviors, if any, are still wanted? | unreviewed |
+| `altitude/digest.py` (47) | Queue/FYI/WIP text. | Phase 1e: speech output dropped. | Text digest only; audio was decided out in DECISIONS.md phase 1e. | implemented |
 | `altitude/server.py` (859) | Scheduler, callbacks, recovery wakeup, HTTP APIs/views, static serving, TLS. | Touched across most integration modules. | Which scheduling, API, projection, serving, and lifecycle behaviors remain required? | unreviewed |
 
 ## Operator, build, and policy files

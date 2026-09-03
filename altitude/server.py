@@ -463,8 +463,7 @@ def morning_digest() -> None:
     now = datetime.now()
     if now.hour >= 8 and _last_digest_day[0] != now.date():
         _last_digest_day[0] = now.date()
-        txt = digest.text()
-        spawn("digest-speak", digest.speak, txt)
+        digest.text()
 
 
 def timer_loop() -> None:
@@ -607,8 +606,6 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in u.path.split("/") if p]
         q = parse_qs(u.query)
         try:
-            if parts and parts[0] == "digest.wav":
-                return self._file(config.ROOT / "digest.wav", "audio/wav")
             if parts and parts[0] == "ca.crt":  # the local CA, for installing on a phone once
                 return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
             if not parts or parts[0] != "api":
@@ -632,7 +629,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
                                    "agents": engines.claude_agents()})
             if api == "digest":
-                return self._json({"text": digest.text(), "audio": (config.ROOT / "digest.wav").exists()})
+                return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
                 return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
             return self._json({"error": "unknown api"}, 404)
@@ -725,8 +722,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}})
                 self._stream_close()
                 return
-            if api == "digest" and len(parts) > 2 and parts[2] == "speak":
-                spawn("digest-speak", digest.speak, digest.text()); return self._json({"ok": True})
             if api == "install-statusline":
                 return self._json(install_statusline())
             return self._json({"error": "unknown api"}, 404)
