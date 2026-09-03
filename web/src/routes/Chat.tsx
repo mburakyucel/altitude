@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, streamChat, useChat, useOverview } from "../data/api";
+import type { ChatEngine } from "../data/api";
 import type { ChatMessage } from "../data/api";
 import { useToast } from "../data/Toast";
 
@@ -93,6 +94,8 @@ export default function Chat() {
   const queryClient = useQueryClient();
 
   const [draft, setDraft] = useState("");
+  // "auto" leaves the engine to the project pin or the weekly quota; a named engine pins the turn.
+  const [engine, setEngine] = useState<ChatEngine | "auto">("auto");
   const [locals, setLocals] = useState<LocalTurn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const nextId = useRef(0);
@@ -122,9 +125,14 @@ export default function Chat() {
     setDraft("");
     setStreaming(true);
     try {
-      const done = await streamChat(project, text, (chunk) => {
-        patch(id, (l) => ({ ...l, assistant: l.assistant + chunk }));
-      });
+      const done = await streamChat(
+        project,
+        text,
+        (chunk) => {
+          patch(id, (l) => ({ ...l, assistant: l.assistant + chunk }));
+        },
+        engine === "auto" ? undefined : engine,
+      );
       if (done.error) {
         patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${done.error ?? ""}` }));
       }
@@ -233,6 +241,18 @@ export default function Chat() {
           >
             {streaming ? "Sending…" : busy ? "Busy" : "Send"}
           </button>
+          <select
+            className="field"
+            aria-label="Engine for this turn"
+            title="Which engine answers this turn; auto follows the project pin or the weekly quota"
+            value={engine}
+            disabled={disabled}
+            onChange={(e) => setEngine(e.target.value as ChatEngine | "auto")}
+          >
+            <option value="auto">Auto</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
           <span className="text-meta text-muted">⌘↵ sends</span>
         </div>
       </form>

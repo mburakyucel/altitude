@@ -471,7 +471,11 @@ export interface ChatDone {
   turns?: number | null;
   cost?: unknown;
   error?: string | null;
+  engine?: string | null;
 }
+
+/** An explicit engine for one L3 turn; undefined leaves the choice to the project pin or the quota. */
+export type ChatEngine = "claude" | "codex";
 
 /**
  * POST /api/chat and stream the NDJSON reply: {"t": "..."} lines feed onText, the final
@@ -482,13 +486,14 @@ export async function streamChat(
   project: string,
   text: string,
   onText: (chunk: string) => void,
+  engine?: ChatEngine,
 ): Promise<ChatDone> {
   setChatStreaming(true);
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project, text }),
+      body: JSON.stringify(engine ? { project, text, engine } : { project, text }),
     });
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
     if (!res.body) throw new ApiError(res.status, "no response body");

@@ -119,6 +119,32 @@ class TestL3Sessions(AltitudeCase):
         codex.assert_not_called()
         self.assertEqual(out["engine"], "claude")
 
+    def test_turn_engine_pins_the_turn_over_project_pin_and_quota(self):
+        seen = {}
+
+        def pick(role, *, forced=None):
+            seen["forced"] = forced
+            return self.choice(forced or "claude")
+
+        with mock.patch.object(config, "project", return_value={"l3_engine": "claude"}), \
+             mock.patch.object(engines, "usage_hold", return_value="2099-01-01T00:00:00+00:00"), \
+             mock.patch.object(l3.route, "pick_engine", side_effect=pick):
+            choice = l3._select(self.project, "codex")
+        self.assertEqual(seen["forced"], "codex")
+        self.assertEqual(choice["engine"], "codex")
+        self.assertEqual(choice["why"], "chosen by Burak for this turn")
+
+    def test_pinned_claude_turn_never_falls_back_to_codex(self):
+        limited = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
+                   "structured": None, "error": "usage limit", "tools": [],
+                   "limited": "2099-01-01T00:00:00+00:00"}
+        with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
+             mock.patch.object(engines, "claude_print", return_value=limited), \
+             mock.patch.object(engines, "codex_exec") as codex:
+            out = l3.turn(self.project, "hello", engine="claude")
+        codex.assert_not_called()
+        self.assertEqual(out["engine"], "claude")
+
 
 if __name__ == "__main__":
     unittest.main()

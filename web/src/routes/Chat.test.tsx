@@ -106,6 +106,41 @@ describe("Chat", () => {
     });
   });
 
+  it("sends the engine chosen for the turn and omits it on auto", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        return streamResponse(['{"t":"ok"}\n{"done":{"session_id":"s1","engine":"codex"}}']);
+      }
+      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+
+    await user.selectOptions(screen.getByLabelText("Engine for this turn"), "codex");
+    await user.type(screen.getByLabelText("Message L3"), "use codex");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(postsToChat(fetchMock)).toHaveLength(1));
+    expect(JSON.parse(String(postsToChat(fetchMock)[0]?.[1]?.body))).toEqual({
+      project: "altitude",
+      text: "use codex",
+      engine: "codex",
+    });
+
+    await user.selectOptions(screen.getByLabelText("Engine for this turn"), "auto");
+    await user.type(screen.getByLabelText("Message L3"), "back to auto");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(postsToChat(fetchMock)).toHaveLength(2));
+    expect(JSON.parse(String(postsToChat(fetchMock)[1]?.[1]?.body))).toEqual({
+      project: "altitude",
+      text: "back to auto",
+    });
+  });
+
   it("toasts 'L3 is busy' on 409 and does not retry", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
