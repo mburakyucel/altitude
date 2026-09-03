@@ -1,14 +1,12 @@
 """The Codex app-server quota reader persists real account-wide limits."""
 import json
-import tempfile
 import unittest
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import patch
 
+from tests.support import AltitudeCase
 from altitude import config, quota_codex, route, state
 
-_route_quota_codex = route.quota_codex
 _default_primary = object()
 
 
@@ -114,29 +112,27 @@ class TestRead(unittest.TestCase):
                 self.assertIn("why", result)
 
 
-class TestRefresh(unittest.TestCase):
+class TestRefresh(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+
     def test_refresh_writes_the_router_file(self):
         reading = {"known": True, "primary_used": 1.0, "read_at": state.now()}
-        with tempfile.TemporaryDirectory(prefix="altitude-codex-quota-") as tmp:
-            with patch.object(config, "MONITOR_DIR", Path(tmp)):
-                with patch.object(quota_codex, "read", return_value=reading):
-                    result = quota_codex.refresh()
-                path = config.MONITOR_DIR / "quota-codex.json"
-                self.assertEqual(state.read_json(path), reading)
-                with patch.object(route, "quota_codex", _route_quota_codex):
-                    self.assertEqual(route.quota_codex(), reading)
+        with patch.object(quota_codex, "read", return_value=reading):
+            result = quota_codex.refresh()
+        self.assertEqual(state.read_json(config.MONITOR_DIR / "quota-codex.json"), reading)
+        self.assertEqual(route.quota_codex(), reading)
         self.assertEqual(result, reading)
 
     def test_refresh_overwrites_stale_success_with_unknown(self):
         stale = {"known": True, "primary_used": 1.0, "read_at": "2026-08-30T00:00:00+00:00"}
         failed = {"known": False, "why": "Codex rate-limit read timed out"}
-        with tempfile.TemporaryDirectory(prefix="altitude-codex-quota-") as tmp:
-            with patch.object(config, "MONITOR_DIR", Path(tmp)):
-                path = config.MONITOR_DIR / "quota-codex.json"
-                state.write_json(path, stale)
-                with patch.object(quota_codex, "read", return_value=failed):
-                    result = quota_codex.refresh()
-                self.assertEqual(state.read_json(path), failed)
+        path = config.MONITOR_DIR / "quota-codex.json"
+        state.write_json(path, stale)
+        with patch.object(quota_codex, "read", return_value=failed):
+            result = quota_codex.refresh()
+        self.assertEqual(state.read_json(path), failed)
         self.assertEqual(result, failed)
 
     def test_refresh_if_due_throttles_attempts(self):

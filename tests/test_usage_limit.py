@@ -1,18 +1,11 @@
 """An exhausted subscription window is detected, held until its reset time, and then resumed."""
 import json
-import os
-import shutil
-import sys
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest import mock
 
-_TMP = tempfile.mkdtemp(prefix="altitude-limit-")
-os.environ["ALTITUDE_HOME"] = _TMP
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, engines, dispatch, monitor, tasks as T, digest  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import state as S, engines, dispatch, monitor, tasks as T, digest
 
 LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 
@@ -34,44 +27,33 @@ class TestDetect(unittest.TestCase):
         self.assertIsNone(engines.usage_limit_in("", {"status": "allowed", "resetsAt": 1}))
 
 
-class TestHold(unittest.TestCase):
+class TestHold(AltitudeCase):
     def setUp(self):
-        config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
-        self._quota = monitor.quota
-        monitor.quota = lambda: {"known": True}
-
-    def tearDown(self):
-        engines.note_usage_limit("2000-01-01T00:00:00+00:00")  # never leave a live hold behind for other tests
-        monitor.quota = self._quota
+        super().setUp()
+        self.private_ledgers()  # the hold file this case writes is its own
+        self.patch(monitor, "quota", return_value={"known": True})
 
     def test_hold_until_reset_then_clear(self):
         future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="seconds")
         self.assertTrue(engines.note_usage_limit(future, "x"))
         self.assertFalse(engines.note_usage_limit(future, "x"), "same reset time is not news twice")
         self.assertEqual(engines.usage_hold(), future)
-        self.assertFalse((dispatch.wip_hold("altitude") or "").startswith("usage limit"),
+        self.assertFalse((dispatch.wip_hold(self.project) or "").startswith("usage limit"),
                          "a Claude hold does not globally freeze Codex dispatch")
-        self.assertTrue(engines.claude_print("hi", cwd=Path(_TMP)).get("limited"), "no call is made while held")
+        self.assertTrue(engines.claude_print("hi", cwd=self.repo).get("limited"), "no call is made while held")
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")
         self.assertIsNone(engines.usage_hold())
 
 
-class TestPollAndResume(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
-
+class TestPollAndResume(AltitudeCase):
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
-        orig = engines.claude_agents, S.list_tasks, engines.claude_job_detail
-        engines.claude_agents = lambda: [{"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}]
-        S.list_tasks = lambda project: [{"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"}]
-        engines.claude_job_detail = lambda aid: (LIMIT, datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc))
-        try:
-            out = dispatch.poll("altitude")
-        finally:
-            engines.claude_agents, S.list_tasks, engines.claude_job_detail = orig
+        self.patch(engines, "claude_agents",
+                   return_value=[{"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}])
+        self.patch(S, "list_tasks",
+                   return_value=[{"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"}])
+        self.patch(engines, "claude_job_detail",
+                   return_value=(LIMIT, datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc)))
+        out = dispatch.poll(self.project)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
 
@@ -88,16 +70,15 @@ class TestPollAndResume(unittest.TestCase):
         base = {"state": "blocked", "resume_after": past, "updated": S.now(), "attempt": 1,
                 "session_id": "s", "agent_id": "w"}
         for i, slug in enumerate(("c-newest", "a-oldest", "b-middle")):
-            S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
-            self.addCleanup(shutil.rmtree, S.task_dir("altitude", slug), ignore_errors=True)
-            S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})
+            S.task_dir(self.project, slug).mkdir(parents=True, exist_ok=True)
+            S.save_task(self.project, {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})
         holds = iter([None, None, "WIP limit: 3 running"])
         with mock.patch.object(dispatch, "wip_hold", side_effect=lambda project, task=None: next(holds)), \
              mock.patch.object(engines, "usage_hold", return_value=None):
-            back = dispatch.resume_due("altitude")
+            back = dispatch.resume_due(self.project)
         self.assertEqual(back, ["a-oldest", "b-middle"])
         # the one still held is Altitude's to resume: not a "Needs you" card, but listed as waiting for a slot
-        self.assertNotIn("c-newest", [d["slug"] for d in T.decisions("altitude")])
+        self.assertNotIn("c-newest", [d["slug"] for d in T.decisions(self.project)])
         self.assertIn(("c-newest", "resume"), [(w["slug"], w["why"]) for w in digest.wip()["waiting"]])
 
 

@@ -1,35 +1,26 @@
 """Temporary model capacity backs off one L2 without rerouting it or raising a system fault."""
-import os
-import sys
-import tempfile
 import unittest
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-temporary-capacity-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, incidents, server, state as S, tasks as T  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import dispatch, engines, incidents, server, state as S
 
 
-class TestTemporaryCapacity(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        cls.repo = _TMP / "repo"
-        cls.repo.mkdir()
-        config.save_projects({"capacity": {"name": "capacity", "path": str(cls.repo), "wip": 4}})
+class TestTemporaryCapacity(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.register(self.project, wip=4)
 
     def _task(self, slug: str = "same-model") -> dict:
-        S.task_dir("capacity", slug).mkdir(parents=True, exist_ok=True)
+        S.task_dir(self.project, slug).mkdir(parents=True, exist_ok=True)
         task = {
             "slug": slug, "title": slug, "request": "continue", "state": "running",
             "created": S.now(), "updated": S.now(), "attempt": 1,
             "session_id": f"session-{slug}", "agent_id": f"agent-{slug}",
             "l2_engine": "codex", "engine_model": "gpt-test-stable",
         }
-        S.save_task("capacity", task)
+        S.save_task(self.project, task)
         return task
 
     def test_detector_requires_the_exact_provider_warning(self):
@@ -47,7 +38,7 @@ class TestTemporaryCapacity(unittest.TestCase):
         }
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
                 mock.patch.object(engines, "codex_worker", return_value=worker):
-            out = dispatch.poll("capacity")
+            out = dispatch.poll(self.project)
 
         self.assertEqual(len(out), 1)
         self.assertTrue(out[0].get("capacity"))
@@ -61,7 +52,7 @@ class TestTemporaryCapacity(unittest.TestCase):
         }
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
                 mock.patch.object(engines, "codex_worker", return_value=worker):
-            out = dispatch.poll("capacity")
+            out = dispatch.poll(self.project)
 
         self.assertEqual(len(out), 1)
         self.assertTrue(out[0].get("limited"))
@@ -69,29 +60,30 @@ class TestTemporaryCapacity(unittest.TestCase):
         with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(engines, "note_usage_limit") as global_hold, \
                 mock.patch.object(engines, "remove_l2_worker", return_value="removed") as removed:
-            server.on_l2_finished("capacity", out[0])
-        switched = S.load_task("capacity", task["slug"])
+            server.on_l2_finished(self.project, out[0])
+        switched = S.load_task(self.project, task["slug"])
         self.assertEqual(switched["state"], "queued", "a fresh attempt on the other engine, from saved progress")
         self.assertEqual((switched["l2_engine"], switched["engine_model"], switched["agent_id"], switched["session_id"]),
                          ("claude", None, None, None))
         self.assertNotIn("resume_after", switched)
-        removed.assert_called_once_with("codex", task["agent_id"], job_root=dispatch.l2_job_root("capacity", task["slug"]))
+        removed.assert_called_once_with("codex", task["agent_id"],
+                                        job_root=dispatch.l2_job_root(self.project, task["slug"]))
         global_hold.assert_not_called()
         fault.assert_not_called()
 
     def test_pinned_engine_parks_until_its_window_reopens(self):
         task = self._task("codex-quota-pinned")
         task["engine"] = "codex"
-        S.save_task("capacity", task)
+        S.save_task(self.project, task)
         worker = {"id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
                   "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)"}
         with mock.patch.object(S, "list_tasks", return_value=[task]), \
                 mock.patch.object(engines, "codex_worker", return_value=worker):
-            out = dispatch.poll("capacity")
+            out = dispatch.poll(self.project)
         with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(engines, "note_usage_limit") as global_hold:
-            server.on_l2_finished("capacity", out[0])
-        held = S.load_task("capacity", task["slug"])
+            server.on_l2_finished(self.project, out[0])
+        held = S.load_task(self.project, task["slug"])
         self.assertEqual(held["state"], "blocked")
         self.assertEqual((held["l2_engine"], held["engine_model"], held["agent_id"]),
                          ("codex", "gpt-test-stable", task["agent_id"]))
@@ -106,9 +98,9 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(server.verify, "verify") as verify:
-            server.on_l2_finished("capacity", item)
+            server.on_l2_finished(self.project, item)
 
-        first = S.load_task("capacity", task["slug"])
+        first = S.load_task(self.project, task["slug"])
         first_wait = (datetime.fromisoformat(first["resume_after"]) - before).total_seconds()
         self.assertEqual(first["state"], "blocked")
         self.assertEqual((first["l2_engine"], first["engine_model"]), ("codex", "gpt-test-stable"))
@@ -120,13 +112,13 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         first["state"] = "running"
         first["updated"] = S.now()
-        S.save_task("capacity", first)
+        S.save_task(self.project, first)
         before_second = datetime.now(timezone.utc)
         with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(server.verify, "verify") as verify:
-            server.on_l2_finished("capacity", {**item, "task": first})
+            server.on_l2_finished(self.project, {**item, "task": first})
 
-        second = S.load_task("capacity", task["slug"])
+        second = S.load_task(self.project, task["slug"])
         second_wait = (datetime.fromisoformat(second["resume_after"]) - before_second).total_seconds()
         self.assertEqual((second["l2_engine"], second["engine_model"]), ("codex", "gpt-test-stable"))
         self.assertEqual(second["capacity_retries"], 2)
@@ -137,7 +129,7 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         second["resume_after"] = "1970-01-01T00:00:00+00:00"
         second["worktree"] = str(self.repo)
-        S.save_task("capacity", second)
+        S.save_task(self.project, second)
         seen = {}
 
         def resume(engine, name, session_id, prompt, **kwargs):
@@ -151,14 +143,14 @@ class TestTemporaryCapacity(unittest.TestCase):
                 mock.patch.object(engines, "worker_live", return_value=False), \
                 mock.patch.object(engines, "resume_l2", side_effect=resume), \
                 mock.patch.object(dispatch.route, "pick_engine", side_effect=AssertionError("must not reroute")):
-            self.assertEqual(dispatch.resume_due("capacity"), [task["slug"]])
-            resumed = dispatch.resume("capacity", task["slug"])
+            self.assertEqual(dispatch.resume_due(self.project), [task["slug"]])
+            resumed = dispatch.resume(self.project, task["slug"])
 
         self.assertEqual(resumed["agent"]["id"], "replacement-worker")
         self.assertEqual((seen["engine"], seen["name"], seen["model"]),
-                         ("codex", f"capacity/{task['slug']}-1", "gpt-test-stable"))
+                         ("codex", f"{self.project}/{task['slug']}-1", "gpt-test-stable"))
         self.assertEqual(seen["session_id"], task["session_id"])
-        self.assertEqual(S.load_task("capacity", task["slug"])["state"], "running")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
 
 if __name__ == "__main__":

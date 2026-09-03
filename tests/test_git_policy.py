@@ -1,54 +1,34 @@
 """Repository policy tests use real repositories, refs, hooks, and pushes."""
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from altitude import git_policy  # noqa: E402
+from tests.support import git, make_repo
+from altitude import git_policy
 
 
 class TestGitPolicy(unittest.TestCase):
     def setUp(self):
-        if not shutil.which("git"):
-            self.skipTest("git not available")
         self.tmp = Path(tempfile.mkdtemp(prefix="alt-git-policy-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = make_repo(self.tmp / "repo")
         self.remote = self.tmp / "origin.git"
-        self.command("git", "init", "--bare", "-q", str(self.remote))
-        self.repo = self.tmp / "repo"
-        self.repo.mkdir()
-        self.git("init", "-q")
-        self.git("symbolic-ref", "HEAD", "refs/heads/main")
         self.configure(self.repo)
-        (self.repo / "README.md").write_text("initial\n")
-        self.git("add", "README.md")
-        self.git("commit", "-q", "-m", "initial")
-        self.git("remote", "add", "origin", str(self.remote))
-        self.git("push", "-q", "-u", "origin", "main")
-        self.command("git", "--git-dir", str(self.remote), "symbolic-ref", "HEAD", "refs/heads/main")
+        git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.remote)   # clones start on main
 
-    def command(self, *args, cwd=None, check=True, input_text=None):
-        result = subprocess.run(
-            list(args), cwd=str(cwd) if cwd else None, input=input_text,
-            capture_output=True, text=True,
-        )
+    def git(self, *args, check=True):
+        """Unlike `support.git`, keeps a refusal: the policy hooks are under test here."""
+        result = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True)
         if check:
-            self.assertEqual(result.returncode, 0, f"{' '.join(args)}: {result.stderr or result.stdout}")
+            self.assertEqual(result.returncode, 0, f"git {' '.join(args)}: {result.stderr or result.stdout}")
         return result
 
-    def git(self, *args, check=True, input_text=None):
-        return self.command(
-            "git", "-C", str(self.repo), *args, check=check, input_text=input_text,
-        )
-
     def configure(self, repo):
-        self.command("git", "-C", str(repo), "config", "user.email", "test@example.invalid")
-        self.command("git", "-C", str(repo), "config", "user.name", "Test User")
-        self.command("git", "-C", str(repo), "config", "commit.gpgsign", "false")
+        git("config", "user.email", "test@example.invalid", cwd=repo)
+        git("config", "user.name", "Test User", cwd=repo)
+        git("config", "commit.gpgsign", "false", cwd=repo)
 
     def commit_file(self, name, content, message, *, no_verify=False):
         path = self.repo / name
@@ -64,14 +44,14 @@ class TestGitPolicy(unittest.TestCase):
 
     def advance_remote(self):
         other = self.tmp / f"other-{len(list(self.tmp.glob('other-*')))}"
-        self.command("git", "clone", "-q", str(self.remote), str(other))
+        git("clone", "-q", str(self.remote), str(other), cwd=self.tmp)
         self.configure(other)
         marker = other / "remote.txt"
         marker.write_text(marker.read_text() + "next\n" if marker.exists() else "next\n")
-        self.command("git", "-C", str(other), "add", "remote.txt")
-        self.command("git", "-C", str(other), "commit", "-q", "-m", "remote advance")
-        self.command("git", "-C", str(other), "push", "-q", "origin", "main")
-        return self.command("git", "-C", str(other), "rev-parse", "HEAD").stdout.strip()
+        git("add", "remote.txt", cwd=other)
+        git("commit", "-q", "-m", "remote advance", cwd=other)
+        git("push", "-q", "origin", "main", cwd=other)
+        return git("rev-parse", "HEAD", cwd=other).strip()
 
     def test_inspection_does_not_fetch_and_reports_local_commits_oldest_first(self):
         initial = self.git("rev-parse", "HEAD").stdout.strip()
@@ -216,9 +196,7 @@ class TestGitPolicy(unittest.TestCase):
 
         allowed = self.git("push", "-u", "origin", "topic", check=False)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
-        remote_topic = self.command(
-            "git", "--git-dir", str(self.remote), "rev-parse", "refs/heads/topic",
-        ).stdout.strip()
+        remote_topic = git("rev-parse", "refs/heads/topic", cwd=self.remote).strip()
         self.assertEqual(remote_topic, self.git("rev-parse", "topic").stdout.strip())
 
     def test_reference_transaction_rejects_local_base_moves_but_allows_fetched_remote_head(self):
@@ -235,7 +213,7 @@ class TestGitPolicy(unittest.TestCase):
         self.assertIn("protected branch update blocked", fast_forward.stderr)
 
         self.git("push", "-q", "origin", "topic")
-        self.command("git", "--git-dir", str(self.remote), "update-ref", "refs/heads/main", topic)
+        git("update-ref", "refs/heads/main", topic, cwd=self.remote)
         self.git("fetch", "-q", "origin", "main")
         allowed = self.git("merge", "--ff-only", "origin/main", check=False)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)

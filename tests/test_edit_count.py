@@ -1,23 +1,22 @@
 """The edit hook accumulates counts across resumed sessions in one dispatch."""
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "edit_count.py"
+from tests.support import REPO, AltitudeCase
+
+HOOK = REPO / "hooks" / "edit_count.py"
 
 
-class EditCountHook(unittest.TestCase):
+class EditCountHook(AltitudeCase):
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix="altitude-edit-count-")
-        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        super().setUp()
+        self.home = self.tmp / "home"  # the hook writes counts under $ALTITUDE_HOME/monitor
 
     def run_hook(self, session_id, file_path, key=None):
-        env = dict(os.environ, ALTITUDE_HOME=self.home)
+        env = dict(os.environ, ALTITUDE_HOME=str(self.home))
         env.pop("ALTITUDE_SESSION_KEY", None)
         if key:
             env["ALTITUDE_SESSION_KEY"] = key
@@ -26,8 +25,7 @@ class EditCountHook(unittest.TestCase):
                               capture_output=True, env=env)
 
     def counts(self, key):
-        path = Path(self.home) / "monitor" / f"counts-{key}.json"
-        return json.loads(path.read_text())
+        return json.loads((self.home / "monitor" / f"counts-{key}.json").read_text())
 
     def test_dispatch_key_accumulates_edits_across_sessions(self):
         key = "demo--task-1"
@@ -35,11 +33,11 @@ class EditCountHook(unittest.TestCase):
         self.assertEqual(self.run_hook("new-session", "b.py", key).returncode, 0)
         self.assertEqual(self.counts(key)["edits"], 2)
         self.assertEqual(self.counts(key)["files"], ["a.py", "b.py"])
-        self.assertFalse((Path(self.home) / "monitor" / "counts-old-session.json").exists())
-        self.assertFalse((Path(self.home) / "monitor" / "counts-new-session.json").exists())
+        self.assertFalse((self.home / "monitor" / "counts-old-session.json").exists())
+        self.assertFalse((self.home / "monitor" / "counts-new-session.json").exists())
 
     def test_first_keyed_edit_does_not_import_session_count(self):
-        mon = Path(self.home) / "monitor"
+        mon = self.home / "monitor"
         mon.mkdir(parents=True, exist_ok=True)
         session_counts = mon / "counts-old-session.json"
         session_counts.write_text(json.dumps({"edits": 4, "files": ["old.py"]}))

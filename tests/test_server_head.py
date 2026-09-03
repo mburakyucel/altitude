@@ -1,18 +1,11 @@
 """HEAD responses match GET metadata without sending an entity body."""
-import os
-import shutil
 import socket
 import sys
-import tempfile
 import threading
 import unittest
-from pathlib import Path
 
-_TMP = tempfile.mkdtemp(prefix="altitude-server-head-")
-os.environ["ALTITUDE_HOME"] = _TMP
-os.environ["ALTITUDE_TIMERS"] = "0"
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, server  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, server
 
 
 class _RecordingHTTPServer(server.ThreadingHTTPServer):
@@ -24,34 +17,24 @@ class _RecordingHTTPServer(server.ThreadingHTTPServer):
         self.errors.append(sys.exc_info())
 
 
-class TestHead(unittest.TestCase):
+class TestHead(AltitudeCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="altitude-head-case-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
+        super().setUp()
+        self.setenv("ALTITUDE_TIMERS", "0")
         self.dist = self.tmp / "web" / "dist"
         self.dist.mkdir(parents=True)
         (self.dist / "index.html").write_bytes(b"<!doctype html><title>Altitude</title>")
         assets = self.dist / "assets"
         assets.mkdir()
         (assets / "app.01234567.js").write_bytes(b"console.log('altitude');")
-
-        self.old_web_dist = config.WEB_DIST
-        config.WEB_DIST = self.dist
-        self.addCleanup(setattr, config, "WEB_DIST", self.old_web_dist)
+        self.patch(config, "WEB_DIST", new=self.dist)
 
         (self.tmp / "digest.wav").write_bytes(b"RIFF-altitude-test-audio")
-        self.old_root = config.ROOT
-        config.ROOT = self.tmp
-        self.addCleanup(setattr, config, "ROOT", self.old_root)
+        self.patch(config, "ROOT", new=self.tmp)
 
-        self.old_overview = server.overview
-        server.overview = lambda: {"state": "ready"}
-        self.addCleanup(setattr, server, "overview", self.old_overview)
-
+        self.patch(server, "overview", new=lambda: {"state": "ready"})
         self.logs = []
-        self.old_log = server.log
-        server.log = self.logs.append
-        self.addCleanup(setattr, server, "log", self.old_log)
+        self.patch(server, "log", new=self.logs.append)
         server.Handler._seen_clients.clear()
 
         self.httpd = _RecordingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -87,33 +70,21 @@ class TestHead(unittest.TestCase):
             headers[name.lower()] = value.strip()
         return status, headers, body
 
-    def _assert_head_matches_get(self, path, expected_status):
-        get_status, get_headers, get_body = self._request("GET", path)
-        head_status, head_headers, head_body = self._request("HEAD", path)
+    def test_head_matches_get_without_body(self):
+        for path, expected_status in (("/", 200), ("/digest.wav", 200), ("/assets/app.01234567.js", 200),
+                                      ("/api/overview", 200), ("/api/definitely-unknown", 404)):
+            with self.subTest(path=path):
+                get_status, get_headers, get_body = self._request("GET", path)
+                head_status, head_headers, head_body = self._request("HEAD", path)
 
-        self.assertEqual(get_status, expected_status)
-        self.assertEqual(head_status, expected_status)
-        for name in ("content-type", "content-length", "cache-control"):
-            self.assertEqual(head_headers[name], get_headers[name])
-        self.assertEqual(int(head_headers["content-length"]), len(get_body))
-        self.assertEqual(head_body, b"")
-        self.assertEqual(self.httpd.errors, [])
-        self.assertNotIn("Traceback", "\n".join(self.logs))
-
-    def test_static_head_matches_get_without_body(self):
-        self._assert_head_matches_get("/", 200)
-
-    def test_file_head_matches_get_without_body(self):
-        self._assert_head_matches_get("/digest.wav", 200)
-
-    def test_hashed_asset_head_matches_get_without_body(self):
-        self._assert_head_matches_get("/assets/app.01234567.js", 200)
-
-    def test_overview_head_matches_get_without_body(self):
-        self._assert_head_matches_get("/api/overview", 200)
-
-    def test_unknown_api_head_matches_get_without_body(self):
-        self._assert_head_matches_get("/api/definitely-unknown", 404)
+                self.assertEqual(get_status, expected_status)
+                self.assertEqual(head_status, expected_status)
+                for name in ("content-type", "content-length", "cache-control"):
+                    self.assertEqual(head_headers[name], get_headers[name])
+                self.assertEqual(int(head_headers["content-length"]), len(get_body))
+                self.assertEqual(head_body, b"")
+                self.assertEqual(self.httpd.errors, [])
+                self.assertNotIn("Traceback", "\n".join(self.logs))
 
     def test_base_class_error_accepts_non_string_log_argument(self):
         status, _, _ = self._request("DELETE", "/api/overview")

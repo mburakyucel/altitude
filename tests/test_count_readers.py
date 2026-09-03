@@ -1,25 +1,19 @@
 """Verify and monitor read only the counter keyed by the task's current attempt."""
 import json
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support import AltitudeCase
 from altitude import config, monitor, state as S, verify
 
 
-class CountReaders(unittest.TestCase):
+class CountReaders(AltitudeCase):
     def setUp(self):
-        self.monitor_dir = Path(tempfile.mkdtemp(prefix="altitude-count-readers-"))
-        self.addCleanup(shutil.rmtree, self.monitor_dir, ignore_errors=True)
-        self.original_monitor_dir = config.MONITOR_DIR
-        config.MONITOR_DIR = self.monitor_dir
-
-    def tearDown(self):
-        config.MONITOR_DIR = self.original_monitor_dir
+        super().setUp()
+        self.private_ledgers()
 
     def write_counts(self, key, **counts):
-        (self.monitor_dir / f"counts-{key}.json").write_text(json.dumps(counts))
+        (config.MONITOR_DIR / f"counts-{key}.json").write_text(json.dumps(counts))
 
     def test_verify_reads_attempt_key_only(self):
         self.write_counts("demo--task-1", edits=3)
@@ -41,14 +35,12 @@ class CountReaders(unittest.TestCase):
         self.write_counts("new-session", edits=9)
         self.write_counts("session-without-dispatch", edits=5)
         self.write_counts("unrelated-session", edits=7)
-        originals = config.load_projects, S.list_tasks, monitor.transcript_context_percent
-        config.load_projects = lambda: {"demo": {"path": "."}}
-        S.list_tasks = lambda project: tasks
-        monitor.transcript_context_percent = lambda session_id, cwd: None
-        try:
-            rows = {row["slug"]: row for row in monitor.sessions() if row.get("kind") == "l2"}
-        finally:
-            config.load_projects, S.list_tasks, monitor.transcript_context_percent = originals
+        self.patch(config, "load_projects", return_value={"demo": {"path": "."}})
+        self.patch(S, "list_tasks", new=lambda project: tasks)
+        self.patch(monitor, "transcript_context_percent", return_value=None)
+
+        rows = {row["slug"]: row for row in monitor.sessions() if row.get("kind") == "l2"}
+
         self.assertEqual(rows["keyed"]["edits"], 3)
         self.assertEqual(rows["unkeyed"]["edits"], 0)
         self.assertEqual(rows["other"]["edits"], 0)

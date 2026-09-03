@@ -1,0 +1,206 @@
+"""The one test fixture: a throwaway runtime home for the process, a private project per test case, and the
+shared fakes (git repositories, the `gh` shim, quiet engines).
+
+Import this before anything from `altitude`: it points HOME and ALTITUDE_HOME at a throwaway directory before
+`altitude.config` freezes its paths (config refuses the live ~/.altitude from a unittest process anyway).
+Run the suite from the repository root: `python3 -m unittest discover tests`.
+"""
+from __future__ import annotations
+
+import atexit
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+REPO = Path(__file__).resolve().parent.parent
+SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
+atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
+(SUITE / "home").mkdir()
+os.environ["HOME"] = str(SUITE / "home")  # dispatch, monitor and server read ~/.claude in production
+os.environ["ALTITUDE_HOME"] = str(SUITE / "altitude")
+os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
+sys.path.insert(0, str(REPO))
+from altitude import config, engines, incidents, monitor  # noqa: E402
+
+ALT = REPO / "bin" / "alt"
+
+#: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
+GH = r'''#!/usr/bin/env python3
+import json, os, subprocess, sys
+d = os.environ["FAKE_GH_DIR"]
+args = sys.argv[1:]
+with open(os.path.join(d, "log.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\n")
+
+def read(name, default=None):
+    p = os.path.join(d, name)
+    return open(p).read() if os.path.exists(p) else default
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+if read("fail.txt") is not None:
+    fail("fake gh failure", 2)
+cmd = tuple(args[:2])
+if cmd == ("pr", "view"):
+    error = read("view_error.txt")
+    if error is not None:  # a broken or logged-out gh, not a missing PR
+        fail(error)
+    if args[2] in json.loads(read("fail_prs.json", "[]")):
+        fail("fake gh PR failure", 2)
+    canned = json.loads(read("prs.json", "{}"))  # PRs by number
+    if args[2] in canned:
+        print(json.dumps(canned[args[2]]))
+    elif read("pr.json") is not None:  # the branch's PR; its tips come from the fake remote
+        body = json.loads(read("pr.json") or "{}")
+        def remote_oid(ref):
+            found = subprocess.run(["git", "ls-remote", "--heads", "origin", ref], capture_output=True, text=True)
+            return found.stdout.split()[0] if found.returncode == 0 and found.stdout.strip() else None
+        body.setdefault("headRefName", "worktree-fix-x")
+        body.setdefault("baseRefName", "main")
+        body.setdefault("headRefOid", remote_oid(body["headRefName"]))
+        body.setdefault("baseRefOid", remote_oid(body["baseRefName"]))
+        print(json.dumps(body))
+    else:
+        fail("no pull requests found for branch " + args[2])
+elif cmd == ("pr", "create"):
+    body = {"number": 101, "url": "https://example.invalid/pr/101", "state": "OPEN",
+            "baseRefName": args[args.index("--base") + 1], "headRefName": args[args.index("--head") + 1]}
+    open(os.path.join(d, "pr.json"), "w").write(json.dumps(body))
+    print(body["url"])
+elif cmd == ("pr", "checks"):
+    body = read("checks.json", '[{"bucket": "pass"}]')
+    if not body.strip():
+        fail("no checks reported on the 'x' branch")
+    print(body)
+elif cmd == ("pr", "merge"):
+    body = json.loads(read("pr.json", "{}") or "{}")
+    body["state"] = "MERGED"
+    open(os.path.join(d, "pr.json"), "w").write(json.dumps(body))
+elif cmd == ("pr", "edit"):
+    pass
+elif cmd == ("pr", "list"):
+    print(read("pr_list.json", "[]"))
+elif cmd == ("run", "list"):
+    print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
+else:
+    fail("fake gh: unhandled " + " ".join(args), 64)
+'''
+
+
+def git(*args: str, cwd: Path) -> str:
+    """Run git in `cwd`; fail the test on error; return stdout."""
+    p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+    if p.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)}: {p.stderr or p.stdout}")
+    return p.stdout
+
+
+def make_repo(repo: Path) -> Path:
+    """`repo` with one commit on main pushed to the bare `origin.git` beside it; `.claude/` is ignored."""
+    repo.mkdir(parents=True, exist_ok=True)
+    git("init", "-q", "-b", "main", cwd=repo)
+    git("config", "commit.gpgsign", "false", cwd=repo)
+    (repo / ".gitignore").write_text(".claude/\n")
+    (repo / "README.md").write_text("readme\n")
+    git("add", "-A", cwd=repo)
+    git("commit", "-q", "-m", "init", cwd=repo)
+    origin = repo.parent / "origin.git"
+    git("init", "-q", "--bare", str(origin), cwd=repo)
+    git("remote", "add", "origin", str(origin), cwd=repo)
+    git("push", "-q", "-u", "origin", "main", cwd=repo)
+    return repo
+
+
+def add_worktree(repo: Path, slug: str) -> Path:
+    """The dispatcher's layout: `.claude/worktrees/<slug>` on branch `worktree-<slug>`."""
+    path = repo / ".claude" / "worktrees" / slug
+    git("worktree", "add", "-q", "-b", f"worktree-{slug}", str(path), cwd=repo)
+    return path
+
+
+class AltitudeCase(unittest.TestCase):
+    """A private project per test case in the shared runtime home, gone again afterwards."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        config.ensure_root()
+        self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        self.project = self._testMethodName.replace("_", "-")[:64]
+        self.register(self.project)
+
+    def register(self, name: str, *, path: Path | None = None, **fields) -> dict:
+        """Register a project for this case; its record and runtime directory are removed afterwards."""
+        projects = config.load_projects()
+        projects[name] = {"name": name, "path": str(path or self.repo), **fields}
+        config.save_projects(projects)
+        self.addCleanup(self._forget, name)
+        return projects[name]
+
+    @staticmethod
+    def _forget(name: str) -> None:
+        projects = config.load_projects()
+        projects.pop(name, None)
+        config.save_projects(projects)
+        shutil.rmtree(config.project_dir(name), ignore_errors=True)
+
+    def setenv(self, key: str, value: str | None) -> None:
+        """Set (or unset, with None) an environment variable for the rest of the case."""
+        old = os.environ.get(key)
+        self.addCleanup(lambda: os.environ.update({key: old}) if old is not None else os.environ.pop(key, None))
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+    def patch(self, target, name: str, *new, **kwargs):
+        """`mock.patch.object` for the rest of the case; returns what it installed."""
+        patcher = mock.patch.object(target, name, *new, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def quiet_engines(self, agents: list[dict] | None = None) -> None:
+        """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
+        self.patch(engines, "claude_agents", return_value=list(agents or []))
+        self.patch(engines, "usage_hold", return_value=None)
+        self.patch(monitor, "quota", return_value={"known": True})
+
+    def private_ledgers(self) -> None:
+        """Point the home-wide files (monitor, incident index, faults, digest) at this case's directory."""
+        (self.tmp / "monitor").mkdir(exist_ok=True)
+        self.patch(config, "MONITOR_DIR", self.tmp / "monitor")
+        self.patch(config, "INCIDENT_INDEX", self.tmp / "incidents.jsonl")
+        self.patch(config, "DIGEST_FILE", self.tmp / "DIGEST.md")
+        self.patch(incidents, "FAULTS", self.tmp / "monitor" / "faults.json")
+
+    def fake_gh(self) -> Path:
+        """Install the gh shim first on PATH; returns the directory the test writes its answers into."""
+        bindir = self.tmp / "bin"
+        bindir.mkdir(exist_ok=True)
+        shim = bindir / "gh"
+        shim.write_text(GH)
+        shim.chmod(0o755)
+        state = self.tmp / "gh-state"
+        state.mkdir(exist_ok=True)
+        self.setenv("PATH", f"{bindir}:{os.environ.get('PATH', '')}")
+        self.setenv("FAKE_GH_DIR", str(state))
+        return state
+
+    def gh_log(self) -> list[list[str]]:
+        log = self.tmp / "gh-state" / "log.jsonl"
+        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    def alt(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+        """Run `bin/alt` as a subprocess against this runtime home."""
+        merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), **(env or {})}
+        return subprocess.run([sys.executable, str(ALT), *args], capture_output=True, text=True, env=merged)

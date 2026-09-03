@@ -2,77 +2,24 @@
 import contextlib
 import io
 import json
-import os
 import runpy
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-task-chat-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP / "home")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, server, state as S, tasks as T  # noqa: E402
-
-CLI = Path(__file__).resolve().parent.parent / "bin" / "alt"
-
-
-@contextlib.contextmanager
-def env(**values):
-    old = {name: os.environ.get(name) for name in values}
-    for name, value in values.items():
-        if value is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = value
-    try:
-        yield
-    finally:
-        for name, value in old.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+from tests.support import ALT, AltitudeCase
+from altitude import dispatch, engines, incidents, server, state as S, tasks as T
 
 
 def cli(argv):
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
-        runpy.run_path(str(CLI))["main"](argv)
+        runpy.run_path(str(ALT))["main"](argv)
     return json.loads(output.getvalue())
 
 
-def launched(worker="agent-new", session="session-new"):
-    """Mocks around one resume so it launches nothing real and returns `worker`."""
-    return contextlib.ExitStack.__enter__(_launch_stack(worker, session))
-
-
-def _launch_stack(worker, session):
-    stack = contextlib.ExitStack()
-    stack.enter_context(mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40))
-    stack.enter_context(mock.patch.object(dispatch, "_validate_task_worktree"))
-    stack.enter_context(mock.patch.object(dispatch, "wip_hold", return_value=None))
-    stack.enter_context(mock.patch.object(engines, "claude_agents", return_value=[]))
-    stack.enter_context(mock.patch.object(engines, "usage_hold", return_value=None))
-    return stack
-
-
-class ChatCase(unittest.TestCase):
-    _number = 0
-
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-
+class ChatCase(AltitudeCase):
     def setUp(self):
-        ChatCase._number += 1
-        self.project = f"task-chat-{self._number}"
-        self.repo = _TMP / self.project / "repo"
-        self.repo.mkdir(parents=True)
-        projects = config.load_projects()
-        projects[self.project] = {"name": self.project, "path": str(self.repo)}
-        config.save_projects(projects)
+        super().setUp()
         task = T.new(self.project, "Direct conversation", "Build the focused change.")
         self.slug = task["slug"]
         self.worktree = self.repo / ".claude" / "worktrees" / self.slug
@@ -86,14 +33,21 @@ class ChatCase(unittest.TestCase):
         task.update({"state": "blocked", "blocked_reason": reason})
         S.save_task(self.project, task)
 
+    def quiet_launch(self):
+        """One resume launches nothing real: base check, worktree validation and the holds are stubbed out."""
+        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch, "_validate_task_worktree")
+        self.patch(dispatch, "wip_hold", return_value=None)
+        self.quiet_engines()
+
     def resume(self, seen, worker="agent-new", session="session-new"):
         def fake(name, session_id, prompt, *, cwd, **kw):
             seen.update(name=name, session_id=session_id, prompt=prompt, cwd=str(cwd), env=kw.get("extra_env") or {})
             return {"returncode": 0, "stdout": "", "stderr": "",
                     "agent": {"id": worker, "sessionId": session, "state": "working"}}
-        with _launch_stack(worker, session) as stack:
-            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", side_effect=fake))
-            return dispatch.resume(self.project, self.slug)
+        self.quiet_launch()
+        self.patch(engines, "claude_resume_bg", side_effect=fake)
+        return dispatch.resume(self.project, self.slug)
 
 
 class TestTaskConversation(ChatCase):
@@ -162,18 +116,24 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(seen["prompt"], "Continue from your progress file.")
 
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
-        with env(ALTITUDE_ACTOR="l2", ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=self.slug, ALTITUDE_ATTEMPT="1"):
-            payload = cli(["task", "reply", "I can implement this directly."])
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        self.setenv("ALTITUDE_PROJECT", self.project)
+        self.setenv("ALTITUDE_TASK", self.slug)
+        self.setenv("ALTITUDE_ATTEMPT", "1")
+        payload = cli(["task", "reply", "I can implement this directly."])
         self.assertEqual((payload["role"], payload["by"]), ("l2", "l2"))
         self.assertEqual(T.task_messages(self.project, self.slug)[0]["text"], "I can implement this directly.")
 
-        with env(ALTITUDE_ACTOR="burak", ALTITUDE_PROJECT=None, ALTITUDE_TASK=None, ALTITUDE_ATTEMPT=None):
-            with self.assertRaisesRegex(SystemExit, "only the current L2"):
-                cli(["--project", self.project, "task", "reply", "forged"])
+        self.setenv("ALTITUDE_ACTOR", "burak")
+        for name in ("ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_ATTEMPT"):
+            self.setenv(name, None)
+        with self.assertRaisesRegex(SystemExit, "only the current L2"):
+            cli(["--project", self.project, "task", "reply", "forged"])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 1)
 
     def test_cli_message_queues_for_a_running_l2_and_resumes_a_blocked_one(self):
-        with env(ALTITUDE_ACTOR="burak"), mock.patch.object(dispatch, "resume") as resume:
+        self.setenv("ALTITUDE_ACTOR", "burak")
+        with mock.patch.object(dispatch, "resume") as resume:
             payload = cli(["--project", self.project, "task", "message", self.slug, "Prefer one PR."])
             resume.assert_not_called()
             self.block()
@@ -221,12 +181,12 @@ class TestResumeBinding(ChatCase):
             return {"returncode": 0, "stdout": "", "stderr": "",
                     "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
 
-        with _launch_stack("agent-new", "session-new") as stack:
-            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", side_effect=launch))
-            stack.enter_context(mock.patch.object(engines, "claude_rm", return_value="removed"))
-            stop = stack.enter_context(mock.patch.object(engines, "claude_stop", return_value="stopped"))
-            with self.assertRaises(T.TransitionError):
-                dispatch.resume(self.project, self.slug)
+        self.quiet_launch()
+        self.patch(engines, "claude_resume_bg", side_effect=launch)
+        self.patch(engines, "claude_rm", return_value="removed")
+        stop = self.patch(engines, "claude_stop", return_value="stopped")
+        with self.assertRaises(T.TransitionError):
+            dispatch.resume(self.project, self.slug)
 
         self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-new"])
         self.assertEqual(S.load_task(self.project, self.slug)["state"], "rejected")
@@ -235,11 +195,11 @@ class TestResumeBinding(ChatCase):
         self.block()
         launched = {"returncode": 0, "stdout": "", "stderr": "",
                     "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
-        with _launch_stack("agent-new", "session-new") as stack:
-            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", return_value=launched))
-            stop = stack.enter_context(mock.patch.object(engines, "claude_stop", return_value="stopped"))
-            stack.enter_context(mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")))
-            fault = stack.enter_context(mock.patch("altitude.incidents.system_fault"))
+        self.quiet_launch()
+        self.patch(engines, "claude_resume_bg", return_value=launched)
+        stop = self.patch(engines, "claude_stop", return_value="stopped")
+        fault = self.patch(incidents, "system_fault")
+        with mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")):
             with self.assertRaisesRegex(RuntimeError, "state disk unavailable"):
                 dispatch.resume(self.project, self.slug)
 

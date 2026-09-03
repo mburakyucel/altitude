@@ -1,28 +1,13 @@
 """Blocked reports may preserve unresolved review findings for resumption."""
 import json
-import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-_TMP = tempfile.mkdtemp(prefix="altitude-open-findings-")
-os.environ["ALTITUDE_HOME"] = _TMP
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, l3, server, state as S, verify  # noqa: E402
-
-PROJECT = "open-findings"
+from tests.support import REPO, AltitudeCase
+from altitude import l3, server, state as S, verify
 
 
-class TestReportOpenFindings(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        projects = config.load_projects()
-        projects[PROJECT] = {"name": PROJECT, "path": _TMP}
-        config.save_projects(projects)
-
+class TestReportOpenFindings(AltitudeCase):
     def _report(self, slug: str, review: list[dict], blocked: str) -> tuple[dict, dict]:
         task = {
             "slug": slug,
@@ -30,8 +15,8 @@ class TestReportOpenFindings(unittest.TestCase):
             "state": "blocked" if blocked else "reported",
             "created": S.now(),
         }
-        S.save_task(PROJECT, task)
-        directory = S.task_dir(PROJECT, slug)
+        S.save_task(self.project, task)
+        directory = S.task_dir(self.project, slug)
         (directory / "progress.md").write_text("complete\n")
         report = {
             "landed": {
@@ -50,7 +35,7 @@ class TestReportOpenFindings(unittest.TestCase):
         }
         S.write_json(directory / "report.json", report)
         with mock.patch.object(verify, "gh", return_value={"state": "MERGED"}):
-            return task, verify._verify(PROJECT, slug)
+            return task, verify._verify(self.project, slug)
 
     def test_blocked_report_accepts_open_finding_and_surfaces_it_in_the_header(self):
         finding_text = "The retry path still loses the original finding text."
@@ -66,7 +51,7 @@ class TestReportOpenFindings(unittest.TestCase):
         self.assertIn("1 open review findings", verdict["signals"])
 
         with mock.patch.object(l3, "turn", return_value={}) as turn:
-            server.report_turn(PROJECT, task, verdict)
+            server.report_turn(self.project, task, verdict)
         header = turn.call_args.args[1]
         self.assertIn("Post-mortem signals:", header)
         self.assertIn("1 open review findings", header)
@@ -107,8 +92,7 @@ class TestReportOpenFindings(unittest.TestCase):
         self.assertFalse(any("review" in signal for signal in verdict["signals"]))
 
     def test_schema_keeps_existing_dispositions_and_allows_open(self):
-        schema_path = Path(__file__).resolve().parent.parent / "schemas" / "report.json"
-        schema = json.loads(schema_path.read_text())
+        schema = json.loads((REPO / "schemas" / "report.json").read_text())
 
         self.assertEqual(
             schema["properties"]["review"]["items"]["properties"]["disposition"]["enum"],

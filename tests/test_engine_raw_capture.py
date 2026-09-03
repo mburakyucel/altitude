@@ -1,12 +1,11 @@
 """Engine adapters return both raw streams, capped by the runtime constant."""
 import io
 import json
-import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from tests.support import AltitudeCase
 from altitude import engines
 
 
@@ -26,22 +25,17 @@ class FakeProcess:
         self.returncode = -9
 
 
-class TestEngineRawCapture(unittest.TestCase):
-    def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory(prefix="altitude-raw-")
-        self.addCleanup(self.tempdir.cleanup)
-        self.root = Path(self.tempdir.name)
-
+class TestEngineRawCapture(AltitudeCase):
     def claude_print(self, process):
-        with mock.patch.object(engines, "usage_hold", return_value=None), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process):
-            return engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
+        self.patch(engines, "usage_hold", return_value=None)
+        self.patch(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process)
+        return engines.claude_print("prompt", cwd=self.tmp, settings=self.tmp / "settings.json")
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
         stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
         with mock.patch.object(engines.subprocess, "Popen", return_value=process):
-            result = engines.codex_exec("prompt", cwd=self.root)
+            result = engines.codex_exec("prompt", cwd=self.tmp)
 
         self.assertEqual(result["raw_stdout"], stdout)
         self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
@@ -57,8 +51,8 @@ class TestEngineRawCapture(unittest.TestCase):
     def test_claude_print_caps_raw_stdout_with_runtime_constant(self):
         raw = "HEAD" + ("x" * 300) + "TAIL"
         cap = 120
-        with mock.patch.object(engines, "RAW_CAPTURE_CAP", cap):
-            result = self.claude_print(FakeProcess(raw))
+        self.patch(engines, "RAW_CAPTURE_CAP", new=cap)
+        result = self.claude_print(FakeProcess(raw))
 
         rendered = result["raw_stdout"]
         self.assertLessEqual(len(rendered.encode()), cap)

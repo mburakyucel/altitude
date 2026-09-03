@@ -4,23 +4,15 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-codex-door-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, state as S, tasks as T  # noqa: E402
+from tests.support import AltitudeCase, add_worktree, make_repo
+from altitude import config, dispatch, engines, state as S, tasks as T
 
-ALT = Path(__file__).resolve().parent.parent / "bin" / "alt"
 PROJECT = "door"
-
-
-def _git(*args, cwd):
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True)
 
 
 class _Stdin(io.BytesIO):
@@ -45,17 +37,12 @@ class FakeProcess:
         self.alive = False
 
 
-class TestCodexAdapter(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        cls.repo = _TMP / "repo"
-        cls.repo.mkdir()
-        _git("init", "-q", "-b", "main", cwd=cls.repo)
-        _git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "root", cwd=cls.repo)
-        cls.worktree = _TMP / "wt"
-        _git("worktree", "add", "-q", "-b", "task", str(cls.worktree), cwd=cls.repo)
-        cls.job_root = _TMP / "jobs"
+class TestCodexAdapter(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        self.worktree = add_worktree(self.repo, "wt")
+        self.job_root = self.tmp / "jobs"
 
     def test_sandbox_roots_are_the_worktree_its_common_dir_and_altitude_home(self):
         settings = engines.codex_sandbox(self.worktree, extra_roots=[engines._git_common_dir(self.worktree)])
@@ -86,7 +73,7 @@ class TestCodexAdapter(unittest.TestCase):
         return res, procs
 
     def test_fresh_turn_runs_codex_exec_in_the_worktree_with_the_persona_in_front(self):
-        persona = _TMP / "l2.md"
+        persona = self.tmp / "l2.md"
         persona.write_text("PERSONA")
         res, procs = self._launch(persona=persona, model="gpt-x")
         self.assertEqual(res["returncode"], 0)
@@ -198,16 +185,13 @@ class TestCodexAdapter(unittest.TestCase):
             self.assertIsNone(engines.window_hold("codex"))
 
 
-class TestDoor(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        config.save_projects({PROJECT: {"name": PROJECT, "path": str(_TMP)}})
+class TestDoor(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.register(PROJECT, path=self.repo)
 
     def _alt(self, *args, env=None):
-        merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_ACTOR": "l2", **(env or {})}
-        return subprocess.run([sys.executable, str(ALT), "--project", PROJECT, *args],
-                              capture_output=True, text=True, env=merged)
+        return self.alt("--project", PROJECT, *args, env={"ALTITUDE_ACTOR": "l2", **(env or {})})
 
     def test_l2_has_only_the_worker_commands(self):
         for args in (("task", "new", "--title", "x", "y"), ("dispatch", "s"), ("task", "resume", "s"),
@@ -238,11 +222,10 @@ class TestDoor(unittest.TestCase):
         self.assertEqual(S.read_events(PROJECT, slug)[-1]["by"], "l2")
 
 
-class TestFreshAttempt(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        config.save_projects({PROJECT: {"name": PROJECT, "path": str(_TMP)}})
+class TestFreshAttempt(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.register(PROJECT, path=self.repo)
 
     def test_requeue_with_a_worker_needs_clear_worker_and_pins_the_next_engine(self):
         task = T.new(PROJECT, "Requeue fixture", "Do it.", actor="burak")

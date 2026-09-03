@@ -1,25 +1,14 @@
 """Claude sessions use one 300k compaction boundary and report percentages against the 1M window."""
 import json
-import os
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-ctx-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-os.environ["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = "30"  # a stray override in the parent must not reach children
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, dispatch, monitor, tasks as T  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, engines, dispatch, monitor, tasks as T
 
 
-class TestContextWindow(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        config.save_projects({"altitude": {"name": "altitude", "path": str(_TMP)}})
-
+class TestContextWindow(AltitudeCase):
     def test_umbrella_numbers(self):
         self.assertEqual(config.CONTEXT_WINDOW, 1_000_000)
         self.assertEqual(config.AUTOCOMPACT_WINDOW, 300_000)
@@ -28,18 +17,19 @@ class TestContextWindow(unittest.TestCase):
         self.assertEqual(engines.context_state(6.3), "ok")
 
     def test_every_launch_states_the_window_explicitly(self):
+        self.setenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "30")  # a stray override in the parent must not reach children
         env = engines.clean_env()
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", env)
         p = engines.claude_settings()
         self.assertEqual(json.loads(p.read_text()), {"autoCompactWindow": 300_000})
-        T.new("altitude", "ctx-task", "req")
-        sp = dispatch.session_settings("altitude", "ctx-task", "key")
+        T.new(self.project, "ctx-task", "req")
+        sp = dispatch.session_settings(self.project, "ctx-task", "key")
         st = json.loads(sp.read_text())
         self.assertEqual(st["autoCompactWindow"], 300_000)
         self.assertNotIn("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", st.get("env", {}))
 
     def test_synthetic_zero_usage_does_not_reset_visible_context(self):
-        root = _TMP / "fake-home"; transcript = root / ".claude" / "projects" / "p" / "sid.jsonl"
+        root = self.tmp / "fake-home"; transcript = root / ".claude" / "projects" / "p" / "sid.jsonl"
         transcript.parent.mkdir(parents=True, exist_ok=True)
         real = {"type": "assistant", "message": {"model": "claude-opus", "usage": {
             "input_tokens": 1000, "cache_read_input_tokens": 135000, "cache_creation_input_tokens": 0}}}

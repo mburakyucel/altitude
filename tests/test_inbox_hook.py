@@ -3,33 +3,17 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-_TMP = tempfile.mkdtemp(prefix="altitude-inbox-hook-")
-os.environ["ALTITUDE_HOME"] = _TMP
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T  # noqa: E402
+from tests.support import REPO, AltitudeCase
+from altitude import config, state as S, tasks as T
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "inbox.py"
+HOOK = REPO / "hooks" / "inbox.py"
 
 
-class InboxHook(unittest.TestCase):
-    _number = 0
-
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-
+class InboxHook(AltitudeCase):
     def setUp(self):
-        InboxHook._number += 1
-        self.project = f"inbox-hook-{self._number}"
-        repo = Path(config.ROOT) / "repos" / self.project
-        repo.mkdir(parents=True)
-        projects = config.load_projects()
-        projects[self.project] = {"name": self.project, "path": str(repo)}
-        config.save_projects(projects)
+        super().setUp()
         task = T.new(self.project, "Hooked task", "request")
         self.slug = task["slug"]
         task.update({"state": "running", "attempt": 1, "session_id": "sid", "agent_id": "aid"})

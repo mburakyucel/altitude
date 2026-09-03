@@ -1,13 +1,8 @@
 """Weekly-first provider routing is explicit, comparable, and can return unavailable."""
-import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-route-")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, monitor, route  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, engines, monitor, route
 
 
 def codex(weekly, short=0):
@@ -15,16 +10,13 @@ def codex(weekly, short=0):
             "secondary_used": short, "secondary_window_minutes": route.SHORT_MINUTES}
 
 
-class TestPickEngine(unittest.TestCase):
+class TestPickEngine(AltitudeCase):
     def setUp(self):
-        self._q, self._cx, self._hold = monitor.quota, route.quota_codex, engines.usage_hold
+        super().setUp()
         self.claude, self.codex = {"known": False}, {"known": False}
-        monitor.quota = lambda: self.claude
-        route.quota_codex = lambda: self.codex
-        engines.usage_hold = lambda: None
-
-    def tearDown(self):
-        monitor.quota, route.quota_codex, engines.usage_hold = self._q, self._cx, self._hold
+        self.patch(monitor, "quota", side_effect=lambda: self.claude)
+        self.patch(route, "quota_codex", side_effect=lambda: self.codex)
+        self.patch(engines, "usage_hold", return_value=None)
 
     def test_override_is_visible_and_unavailable_override_does_not_fallback(self):
         choice = route.pick_engine("l2", forced="claude")
@@ -59,8 +51,6 @@ class TestPickEngine(unittest.TestCase):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
         self.codex = codex(100, short=20)
         self.assertIsNone(route.pick_engine("l2")["engine"])
-
-
 
 
 if __name__ == "__main__":

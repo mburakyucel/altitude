@@ -1,16 +1,14 @@
 """The operator restart stays one guarded, repository-owned command."""
 import importlib.util
-import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.support import REPO
 
-ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "restart_altitude.py"
-os.environ.setdefault("ALTITUDE_HOME", tempfile.mkdtemp(prefix="altitude-restart-home-"))
+SCRIPT = REPO / "scripts" / "restart_altitude.py"
 
 
 def load_script():
@@ -23,28 +21,28 @@ def load_script():
 
 class TestRestartCommand(unittest.TestCase):
     def test_make_exposes_one_operator_command(self):
-        makefile = (ROOT / "Makefile").read_text()
+        makefile = (REPO / "Makefile").read_text()
         restart = makefile.split("restart:", 1)[1].split("\ninstall-service:", 1)[0]
         self.assertIn("python3 scripts/restart_altitude.py", restart)
-        self.assertIn("`make restart`", (ROOT / "README.md").read_text())
+        self.assertIn("`make restart`", (REPO / "README.md").read_text())
         helper = SCRIPT.read_text()
         self.assertIn("fetch_and_require_exact_base", helper)
         self.assertIn("require_idle()", helper)
         self.assertIn('unit_environment().get("ALTITUDE_HOME"', helper)
 
     def test_generated_web_bundle_is_runtime_state_not_tracked_source(self):
-        ignored = (ROOT / ".gitignore").read_text().splitlines()
+        ignored = (REPO / ".gitignore").read_text().splitlines()
         self.assertIn("web/dist/", ignored)
         self.assertIn("web/.dist-*/", ignored)
         tracked = subprocess.run(
-            ["git", "ls-files", "web/dist"], cwd=ROOT, capture_output=True, text=True, check=True,
+            ["git", "ls-files", "web/dist"], cwd=REPO, capture_output=True, text=True, check=True,
         ).stdout.splitlines()
         self.assertEqual(tracked, [])
 
     def test_bundle_validation_rejects_a_missing_bundle(self):
         restart = load_script()
         with self.assertRaises(restart.RestartError):
-            restart.validate_bundle(ROOT / "tests" / "does-not-exist")
+            restart.validate_bundle(REPO / "tests" / "does-not-exist")
 
     def test_failed_restart_restores_previous_bundle(self):
         restart = load_script()
