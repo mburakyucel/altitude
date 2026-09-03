@@ -19,12 +19,17 @@ keys the edit-count telemetry across worker replacements.
 
 ```text
 queued task
+  ├─ self-deploy checkout fast-forwarded to origin/main
   ├─ WIP/lease and Git provenance gates
   ├─ weekly-first provider decision (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
+
+When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
+the provenance gate reads it, and announces a restart pending if the pull carried service code. Only a
+clean checkout on main that is strictly behind moves; every other state still refuses the dispatch.
 
 Routing compares only named seven-day Claude data with a Codex window whose reported duration is
 exactly seven days. A five-hour window is an availability signal, not the main preference score.
@@ -55,7 +60,8 @@ altd queues one message per project listing its active tasks, so L3 resumes what
 1. a task blocked before any launch goes back to the queue;
 2. an exhausted window of a pinned engine or a file lease keeps the task blocked with `resume_after` set and a
    `waiting: …` reason; the tick retries when it is due;
-3. worktree and commit provenance are validated, and a worker that is still live is stopped first;
+3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
+   worktree and commit provenance are validated, and a worker that is still live is stopped first;
 4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
    replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault.
 

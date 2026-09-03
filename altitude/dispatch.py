@@ -58,7 +58,7 @@ def l2_job_root(project: str, slug: str) -> Path:
 
 @contextmanager
 def publication_settlement(project: str):
-    """Fence provenance gates from the remote-merge/service-fast-forward interval."""
+    """Serialize the deployment checkout: one gate at a time fast-forwards it and reads its provenance."""
     path = config.project_dir(project) / ".publication-settlement.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as handle:
@@ -67,6 +67,21 @@ def publication_settlement(project: str):
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def settle_deploy_checkout(project: str, slug: str) -> None:
+    """Do the fast-forward the provenance gate would otherwise only demand.
+
+    I-20260903-075410: an L2 merges its PR while its task is still running, so the deployment checkout stays behind
+    origin/main until that task's report lands, and every dispatch in the window refused. A checkout that is clean,
+    on main and strictly behind moves to exactly origin/main here; anything else stays untouched for
+    `fetch_and_require_exact_base` to refuse with its precise reason."""
+    try:
+        notes = self_deploy_fast_forward(project, slug)
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError, KeyError):
+        return   # not a fast-forward, or no registered checkout to move: the strict gate decides
+    if notes:
+        S.append_event(project, slug, "self-deploy", note="; ".join(notes))
 
 
 def _git_branch(worktree: str | Path) -> str | None:
@@ -240,6 +255,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     repo = config.project_path(project)
     try:
         with publication_settlement(project):
+            settle_deploy_checkout(project, slug)
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
@@ -359,6 +375,7 @@ def resume(project: str, slug: str) -> dict:
     repo = config.project_path(project)
     try:
         with publication_settlement(project):
+            settle_deploy_checkout(project, slug)
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
             # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
             _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
@@ -682,48 +699,53 @@ RESTART_PENDING = "restart-pending.json"
 DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded at start; everything else is read per use
 
 
-def pull_after_done(project: str, task: dict) -> list[str]:
-    """When a project's checkout is its deployment, fast-forward it to
-    origin/main after a task lands, so merged hooks, personas and templates are what the next session runs. Python
-    changes need a restart: those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here."""
-    import subprocess
+def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
+    """When a project's checkout is its deployment, fast-forward it to origin/main, so merged hooks, personas and
+    templates are what the next session runs. Python changes need a restart: those are announced with an FYI and
+    `monitor/restart-pending.json`, never restarted from here.
+
+    The one implementation `pull_after_done` and the dispatch/resume gate share. Returns notes, empty when the
+    project does not deploy from its checkout or the checkout is already at origin/main. Anything that is not a
+    pure fast-forward — dirty, on another branch, ahead of origin, or diverged — raises, and every caller keeps
+    refusing exactly as before."""
     proj = config.project(project)
     if not proj.get("self_deploy", project == "altitude"):
         return []
     repo = config.project_path(project)
-    try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
-        br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
-        if br != "main":
-            return [f"self-deploy skipped: checkout on {br!r}, not main"]
-        git_policy.fetch_origin(repo, "main")
-        git_policy.service_preflight(repo, "main")
-        pull = subprocess.run(["git", "merge", "-q", "--ff-only", "origin/main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
-        if pull.returncode != 0:
-            raise git_policy.GitPolicyError(
-                f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
-            )
-        new = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=15).stdout.strip()
-        if new == head:
-            return []
-        files = subprocess.run(["git", "diff", "--name-only", head, new], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
-    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-        from . import incidents
-        incidents.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
-        T.fyi(project, task.get("slug"), f"self-deploy refused in {repo}: {str(e)[:300]}")
-        return [f"self-deploy refused: {str(e)[:160]}"]
+    origin_sha = git_policy.fetch_origin(repo, "main")
+    state = git_policy.service_preflight(repo, "main")   # clean, on main, neither ahead nor diverged
+    if not state.behind:
+        return []
+    head = state.head
+    pull = subprocess.run(["git", "merge", "-q", "--ff-only", "origin/main"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+    if pull.returncode != 0:
+        raise git_policy.GitPolicyError(
+            f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
+        )
+    files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
     code = [f for f in files if f.startswith(DEPLOY_DIRS)]
-    notes = [f"self-deploy: main {head[:7]} → {new[:7]} ({len(files)} files)"]
+    notes = [f"self-deploy: main {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
     if code:
         pend_p = config.MONITOR_DIR / RESTART_PENDING
         pend = S.read_json(pend_p, {}) or {}
-        pend = {"since": pend.get("since") or S.now(), "head": new, "files": sorted(set(pend.get("files", [])) | set(code))}
+        pend = {"since": pend.get("since") or S.now(), "head": origin_sha, "files": sorted(set(pend.get("files", [])) | set(code))}
         S.write_json(pend_p, pend)
-        T.fyi(project, task.get("slug"), f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
-                                        f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
-                                        "an authorized service restart after verification.")
+        T.fyi(project, slug, f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
+                             f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
+                             "an authorized service restart after verification.")
         notes.append(f"restart pending ({len(code)} code files)")
     return notes
+
+
+def pull_after_done(project: str, task: dict) -> list[str]:
+    """Fast-forward the deployment checkout after a task lands; a checkout it may not move is a fault, not a silent skip."""
+    try:
+        return self_deploy_fast_forward(project, task.get("slug"))
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
+        from . import incidents
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        T.fyi(project, task.get("slug"), f"self-deploy refused in {config.project_path(project)}: {str(e)[:300]}")
+        return [f"self-deploy refused: {str(e)[:160]}"]
 
 
 def _pr_merged_at(repo: Path, task: dict, branch_sha: str) -> bool:
