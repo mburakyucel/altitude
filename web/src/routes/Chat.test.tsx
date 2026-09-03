@@ -296,6 +296,33 @@ describe("Chat", () => {
     await screen.findByText("you · queued · 0m");
   });
 
+  it("shows server work in FIFO position without offering to remove it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) {
+          return jsonResponse({
+            ...chatView,
+            busy: true,
+            queued: [
+              { id: "s1", at: new Date().toISOString(), trigger: "incident", role: "server", text: "check fault" },
+              { id: "q1", at: new Date().toISOString(), trigger: "chat", role: "burak", text: "then answer me" },
+            ],
+          });
+        }
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    renderApp({ route });
+    const serverWork = (await screen.findByText("check fault")).closest("article") as HTMLElement;
+    expect(within(serverWork).getByText("server · queued 1 · incident · 0m")).toBeInTheDocument();
+    expect(within(serverWork).queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.getByText("you · queued 2 · 0m")).toBeInTheDocument();
+  });
+
   // Matching is by turn identity, so repeating an earlier question keeps the new user bubble and reply.
   it("keeps the new turn when the same words are already in the history", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
