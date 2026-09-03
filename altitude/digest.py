@@ -1,8 +1,5 @@
-"""Cross-project user-input queue, WIP summary, digest text, and Kokoro rendering."""
+"""Cross-project user-input queue, WIP summary, and digest text."""
 from __future__ import annotations
-import os
-import subprocess
-from pathlib import Path
 
 from . import config, state as S, tasks as T
 
@@ -48,28 +45,3 @@ def text() -> str:
     S.atomic_write(config.DIGEST_FILE, txt)
     return txt
 
-
-def speak(txt: str) -> Path | None:
-    """Render the digest with the local Kokoro server (the same OpenAI-shaped endpoint voice-tutor's speak.py streams
-    from — that script has no file output, so altd calls the server itself). Returns the wav path; faults are raised."""
-    import json as _json
-    import urllib.request
-    from . import incidents
-    url = os.environ.get("TTS_URL", "http://127.0.0.1:8880/v1/audio/speech")
-    voice = os.environ.get("TTS_VOICE", "af_heart")
-    out = config.ROOT / "digest.wav"
-    body = _json.dumps({"model": "kokoro", "input": txt, "voice": voice, "response_format": "wav"}).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=300) as r:
-            data = r.read()
-    except Exception as e:  # noqa: BLE001 — network/HTTP/timeout: one fault, no silent fallback
-        incidents.system_fault("tts", f"{url}: {e}")
-        return None
-    if not data.startswith(b"RIFF"):
-        incidents.system_fault("tts", f"{url}: response is not a WAV ({len(data)} bytes, starts {data[:12]!r})")
-        return None
-    tmp = out.with_suffix(".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, out)
-    return out

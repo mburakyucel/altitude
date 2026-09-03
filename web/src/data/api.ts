@@ -235,7 +235,6 @@ export const MonitorSchema = z
 export const DigestSchema = z
   .object({
     text: z.string().nullish(),
-    audio: z.boolean(),
   })
   .passthrough();
 
@@ -447,15 +446,6 @@ export function useL3Reset(project: string) {
     queryKey: ["chat", project],
     update: () => undefined,
     failureMessage: "Couldn't reset the L3 session.",
-  });
-}
-
-export function useDigestSpeak() {
-  return useOptimisticMutation<void, unknown, DigestView>({
-    mutationFn: () => post("/api/digest/speak", {}),
-    queryKey: ["digest"],
-    update: () => undefined,
-    failureMessage: "Couldn't start the digest audio.",
   });
 }
 
