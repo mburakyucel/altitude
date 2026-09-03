@@ -90,21 +90,6 @@ def _header(project: str, trigger: str, fresh: bool) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def _sessions(inf: dict) -> dict:
-    sessions = inf.setdefault("sessions", {})
-    # One-way compatibility for state written before provider-neutral L3 sessions.
-    # Once provider-aware state exists, the top-level session is only a display
-    # mirror of the last engine and must never be reinterpreted as Claude.
-    if (inf.get("session_id") and not sessions
-            and inf.get("engine_last") in (None, "claude")):
-        sessions["claude"] = {
-            "session_id": inf.get("session_id"), "context_percent": inf.get("context_percent", 0),
-            "turns": inf.get("turns", 0), "last_turn": inf.get("last_turn"),
-            "rotate_next": inf.get("rotate_next", False), "rotate_reason": inf.get("rotate_reason"),
-        }
-    return sessions
-
-
 def _handoff(history: list[dict], engine: str, since: str | None) -> str:
     """Only the chat missed while another provider owned L3, never a synthetic full transcript replay."""
     missed = [item for item in history if item.get("at") and (not since or item["at"] > since)
@@ -140,7 +125,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
         proj = config.project(project)
         S.regen_state_md(project)
         inf = info(project)
-        sessions = _sessions(inf)
+        sessions = inf.setdefault("sessions", {})
         session = sessions.setdefault(engine, {})
         sid = session.get("session_id")
         over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
@@ -259,7 +244,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
 
 def reset(project: str, reason: str = "manual") -> None:
     inf = info(project)
-    sessions = _sessions(inf)
+    sessions = inf.setdefault("sessions", {})
     engine = inf.get("engine_last") or "claude"
     sessions.setdefault(engine, {}).update({"rotate_next": True, "rotate_reason": reason})
     inf.update({"rotate_next": True, "rotate_reason": reason})

@@ -57,7 +57,7 @@ reported in the PR. Ask him only for a decision not recorded here.
 | 5 | #158, #159, #160 | the guard hook, `actions.py`, `l3_actions.py`, the action schemas, the Codex personas, `codex_isolation_config`, the sandbox preflight, the unit-emptiness proof, the GitHub-issue two-phase approval | `codex_exec` as a plain sandboxed turn; `bin/alt` fences an L2 to its task and attempt; a window stop starts a fresh attempt on the other engine |
 | 6 | #161 | dead branches in `land.py`, `git_policy.py`, `config.py`, `server.py` | the `alt project` and `alt state` parsers, restored with a test |
 | 7 | #162 | the Project page's direct task creation, the `new` and `verify` task actions | Conversation and Live session tabs; the transcript reads every turn of the Codex thread |
-| 8 | #163, #164 | 44 per-module isolation shims, the race families and their machinery, the review directory | `tests/support.py` as the one fixture; `ARCHITECTURE.md` and `SESSION_LIFECYCLE.md` in their final shape; this page |
+| 8 | #163, #164, #165 | 44 per-module isolation shims, the race families and their machinery, the review directory, the last compatibility reader (`l3.py`) and the last history sentences in the live docs | `tests/support.py` as the one fixture; `ARCHITECTURE.md` and `SESSION_LIFECYCLE.md` in their final shape; this page |
 
 | Lines | Before (`97e1197`) | After phase 8 |
 | --- | --- | --- |

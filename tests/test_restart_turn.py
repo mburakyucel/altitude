@@ -12,7 +12,8 @@ class TestRotationIsPersistedBeforeTheTurn(AltitudeCase):
 
     def test_a_restart_mid_turn_does_not_rotate_the_same_session_again(self):
         l3.save_info(self.project, {
-            "session_id": "e9aa9612", "rotate_next": True, "context_percent": 91.0, "turns": 12,
+            "sessions": {"claude": {"session_id": "e9aa9612", "rotate_next": True, "context_percent": 91.0, "turns": 12}},
+            "session_id": "e9aa9612", "engine_last": "claude",
         })
         seen: dict = {}
 

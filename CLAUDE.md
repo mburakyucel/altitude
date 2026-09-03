@@ -34,6 +34,5 @@ A system fault blocks only its own task, files an incident, and leaves one messa
 project's L3. There is no global hold: other tasks keep running. Resume a task blocked by a fault
 once its cause is fixed.
 
-The controlled architecture-cutover restart is complete. Do not start, stop, mask, unmask, or
-restart the service as part of ordinary work. Any lifecycle action requires separate explicit
-authorization and post-change health verification.
+Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle
+action requires separate explicit authorization and post-change health verification.
