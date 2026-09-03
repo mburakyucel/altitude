@@ -50,6 +50,9 @@ class TestSystemFault(unittest.TestCase):
         try:
             with self.assertRaises(RuntimeError):
                 engines.claude_agents()
+            S.task_dir("altitude", "poll-probe").mkdir(parents=True, exist_ok=True)
+            S.save_task("altitude", {"slug": "poll-probe", "title": "poll-probe", "state": "running",
+                                     "l2_engine": "claude", "created": S.now(), "updated": S.now()})
             with self.assertRaises(RuntimeError):
                 dispatch.poll("altitude")  # must propagate, never report "all L2s gone"
         finally:
