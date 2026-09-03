@@ -61,6 +61,16 @@ def start_l3(project: str) -> None:
                      "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
                      "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
             trigger="start")
+    spawn(f"l3-queue:{project}", drain_l3_queue, project)
+
+
+def drain_l3_queue(project: str) -> None:
+    """Run the messages waiting for L3, one turn at a time, until the queue is empty. Every server-side
+    L3 turn asks for a drain when it ends, so a message queued while L3 was busy runs at the turn
+    boundary rather than at the next tick; `spawn` keys the loop per project, so asking twice, or from
+    inside a drained turn, joins the running loop instead of nesting another."""
+    while l3.deliver_queued(project):
+        pass
 
 
 def restart_notice() -> None:
@@ -365,7 +375,7 @@ def tick() -> None:
     for project in list(config.load_projects()):
         try:
             if l3.queue_path(project).exists():
-                spawn(f"l3-queue:{project}", l3.deliver_queued, project)
+                spawn(f"l3-queue:{project}", drain_l3_queue, project)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
@@ -567,7 +577,8 @@ class Handler(BaseHTTPRequestHandler):
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
-                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2]),
+                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]),
+                                   "queued": l3.queued(parts[2]), "l3": l3.info(parts[2]),
                                    "engine": config.project(parts[2]).get("l3_engine")})
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
@@ -646,12 +657,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
                 config.set_l3_engine(o["project"], engine)
                 return self._json({"ok": True, "engine": engine})
+            if api == "chat" and len(parts) > 2 and parts[2] == "remove":
+                project = o["project"]
+                if not l3.drop_queued(project, str(o.get("id") or "")):
+                    return self._json({"error": "that message has already started"}, 409)
+                return self._json({"ok": True, "queued": l3.queued(project)})
             if api == "chat":
                 project, text = o["project"], (o.get("text") or "").strip()
                 if not text:
                     return self._json({"error": "empty"}, 400)
                 if l3.busy(project):
-                    return self._json({"error": "L3 is busy; try again in a moment"}, 409)
+                    # Burak types faster than L3 answers. The message waits for the turn boundary in the
+                    # durable queue instead of bouncing off a busy L3; the running turn drains it there.
+                    row = l3.queue_message(project, text, trigger="chat", role="burak")
+                    spawn(f"l3-queue:{project}", drain_l3_queue, project)
+                    return self._json({"queued": row})
                 self._stream_open()
                 gone: list[BaseException] = []
 
@@ -668,6 +688,7 @@ class Handler(BaseHTTPRequestHandler):
                         log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
 
                 res = l3.turn(project, text, trigger="chat", on_text=send)
+                spawn(f"l3-queue:{project}", drain_l3_queue, project)
                 if gone:
                     return
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})
