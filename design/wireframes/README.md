@@ -1,8 +1,7 @@
 # Wireframes for the simplified product
 
-This set is a design draft for Burak's review (#166). Until he has accepted it, it is not an
-implementation reference. The one exception is the Live session board: Burak asked on 2026-09-03
-that the queued task for the Live session tab follow it.
+Burak approved this wireframe set on 2026-09-03 (#166). It records the accepted design direction;
+implementation work still starts only with Burak's explicit go.
 
 Every board is one static HTML file that shares `wireframes.css`, which imports the build's own
 `web/design/tokens.css`. There is no build step and no script; the only network fetch is the IBM
