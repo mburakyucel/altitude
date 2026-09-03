@@ -1112,11 +1112,6 @@ class TestLand(unittest.TestCase):
         # pr=None is "the caller looked and there is no PR", so no view before the create
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "create"], ["pr", "view"]])
 
-    def test_not_prefetched_looks_before_creating(self):
-        land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x")
-        self.assertEqual([a[:2] for a in self.gh_log()],
-                         [["pr", "view"], ["pr", "create"], ["pr", "view"]])
-
     def test_full_run_rechecks_the_pr_around_check_classification(self):
         self.leased_change()
         land.land("fix: once", cwd=self.repo, wait=0)

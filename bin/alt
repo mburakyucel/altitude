@@ -38,6 +38,12 @@ def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
+    a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default"); a.add_argument("--wip", type=int, default=config.WIP_PER_PROJECT)
+    a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
+    ps.add_parser("list"); ps.add_parser("discover")
+    r = ps.add_parser("remove"); r.add_argument("name")
+    sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise weekly quota routes it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "block"):
