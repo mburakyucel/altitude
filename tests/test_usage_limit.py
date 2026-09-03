@@ -1,11 +1,13 @@
 """An exhausted subscription window is detected, held until its reset time, and then resumed."""
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 _TMP = tempfile.mkdtemp(prefix="altitude-limit-")
 os.environ["ALTITUDE_HOME"] = _TMP
@@ -83,25 +85,20 @@ class TestPollAndResume(unittest.TestCase):
 
     def test_resume_due_is_oldest_first_and_wip_throttled(self):
         past = "2026-01-01T00:00:00+00:00"
-        base = {"state": "blocked", "resume_after": past, "updated": S.now()}
+        base = {"state": "blocked", "resume_after": past, "updated": S.now(), "attempt": 1,
+                "session_id": "s", "agent_id": "w"}
         for i, slug in enumerate(("c-newest", "a-oldest", "b-middle")):
             S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
+            self.addCleanup(shutil.rmtree, S.task_dir("altitude", slug), ignore_errors=True)
             S.save_task("altitude", {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})
-        resumed, holds = [], iter([None, None, "WIP limit: 3 running"])
-        orig = dispatch.resume_blocked, dispatch.wip_hold
-        dispatch.resume_blocked = lambda project, slug, answer, prefix="": resumed.append(slug)
-        dispatch.wip_hold = lambda project, task=None: next(holds)
-        try:
+        holds = iter([None, None, "WIP limit: 3 running"])
+        with mock.patch.object(dispatch, "wip_hold", side_effect=lambda project, task=None: next(holds)), \
+             mock.patch.object(engines, "usage_hold", return_value=None):
             back = dispatch.resume_due("altitude")
-        finally:
-            dispatch.resume_blocked, dispatch.wip_hold = orig
         self.assertEqual(back, ["a-oldest", "b-middle"])
-        # the one still queued is Altitude's to resume: not a "Needs you" card, but listed as waiting for a slot
+        # the one still held is Altitude's to resume: not a "Needs you" card, but listed as waiting for a slot
         self.assertNotIn("c-newest", [d["slug"] for d in T.decisions("altitude")])
         self.assertIn(("c-newest", "resume"), [(w["slug"], w["why"]) for w in digest.wip()["waiting"]])
-        self.assertEqual(resumed, ["a-oldest", "b-middle"])
-        self.assertIsNone(S.load_task("altitude", "a-oldest").get("resume_after"))
-        self.assertEqual(S.load_task("altitude", "c-newest").get("resume_after"), past)
 
 
 if __name__ == "__main__":

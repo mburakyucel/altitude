@@ -10,14 +10,14 @@ from altitude import config, engines, incidents, l1, route, state as S
 
 
 class TestL1PatchNote(unittest.TestCase):
-    def test_final_l1_launch_boundary_checks_the_l2_generation(self):
-        replacement = {"state": "running", "source": "chat", "dispatch_id": "task-1",
-                       "session_id": "session-2", "agent_id": "agent-2", "l2_token": "token-new"}
+    def test_final_l1_launch_boundary_checks_the_l2_attempt(self):
+        replacement = {"state": "running", "source": "chat", "attempt": 2,
+                       "session_id": "session-2", "agent_id": "agent-2"}
         crossed = mock.Mock()
         with mock.patch.object(S, "load_task", return_value=replacement), \
              mock.patch.object(S, "project_lock", return_value=nullcontext()):
-            with self.assertRaisesRegex(l1.T.TransitionError, "ownership changed"):
-                with l1._launch_permission("project", "task", "task-1", "token-old"):
+            with self.assertRaisesRegex(l1.T.TransitionError, "no longer the current L2"):
+                with l1._launch_permission("project", "task", 1):
                     crossed()
         crossed.assert_not_called()
 
@@ -53,8 +53,7 @@ class TestL1PatchNote(unittest.TestCase):
                         S, "load_task", return_value={
                             "state": "running", "worktree": str(root), "source": "chat",
                             "paths": ["fixture.txt"],
-                            "dispatch_id": "task-1", "session_id": "session-1",
-                            "agent_id": "agent-1", "l2_token": "token-1",
+                            "attempt": 1, "session_id": "session-1", "agent_id": "agent-1",
                         }
                     ))
                     stack.enter_context(mock.patch.object(S, "append_event", return_value=None))
@@ -69,7 +68,7 @@ class TestL1PatchNote(unittest.TestCase):
                     stack.enter_context(mock.patch.object(config, "project_path", return_value=root))
                     stack.enter_context(mock.patch.object(l1.subprocess, "Popen", return_value=SimpleNamespace(pid=123)))
                     rec = l1.start("project", slug, brief, role=role, engine=engine, cwd=str(root),
-                                   expected_dispatch_id="task-1", expected_l2_token="token-1")
+                                   expected_attempt=1)
 
                 prompt = (run_dir / f"{rec['name']}.prompt.md").read_text()
                 self.assertEqual(picked, [route_role])

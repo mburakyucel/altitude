@@ -14,8 +14,7 @@ from . import config, dispatch, state as S
 MAX_DEFAULT_TEXT = 4000
 _SECRET_KEY = re.compile(r"(authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)", re.I)
 _SECRET_VALUE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}|\b(?:sk|gh[oprsu])_[A-Za-z0-9_-]{12,}")
-BOUNDARIES = {"dispatched", "resumed", "resume-cancelled", "resume-failed", "resume-held",
-              "replaced", "compacted", "engine-changed", "recovery"}
+BOUNDARIES = {"state", "stopped", "resume-held", "resume-failed", "dispatch-failed"}
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 
 
@@ -36,10 +35,9 @@ def _require_task_access(project: str, slug: str) -> None:
         raise TranscriptAccessError("task path escaped its project")
 
 
-def require_generation(task: dict, *, dispatch_id: str, engine: str, session_id: str) -> None:
-    expected = (str(task.get("dispatch_id") or ""), str(task.get("l2_engine") or "claude"),
-                str(task.get("session_id") or ""))
-    supplied = (str(dispatch_id), str(engine), str(session_id))
+def require_generation(task: dict, *, engine: str, session_id: str) -> None:
+    expected = (str(task.get("l2_engine") or "claude"), str(task.get("session_id") or ""))
+    supplied = (str(engine), str(session_id))
     if not all(supplied) or supplied != expected:
         raise TranscriptAccessError("task generation changed; refresh the Live session view")
 
@@ -143,11 +141,10 @@ def _text(record: dict) -> str:
     return ""
 
 
-def view(project: str, slug: str, *, dispatch_id: str, engine: str, session_id: str,
-         cursor: int = 0, raw: bool = False) -> dict:
+def view(project: str, slug: str, *, engine: str, session_id: str, cursor: int = 0, raw: bool = False) -> dict:
     _require_task_access(project, slug)
     task = S.load_task(project, slug)
-    require_generation(task, dispatch_id=dispatch_id, engine=engine, session_id=session_id)
+    require_generation(task, engine=engine, session_id=session_id)
     platform = S.read_events(project, slug)
     rows = []
     for event in platform:
@@ -173,7 +170,6 @@ def view(project: str, slug: str, *, dispatch_id: str, engine: str, session_id: 
     for seq, row in enumerate(rows):
         row["seq"] = seq
     start = max(0, int(cursor or 0))
-    return {"project": project, "slug": slug, "dispatch_id": dispatch_id, "engine": engine,
-            "session_id": session_id, "cursor": len(rows), "events": rows[start:],
+    return {"project": project, "slug": slug, "engine": engine, "session_id": session_id, "cursor": len(rows), "events": rows[start:],
             "redaction": "credential-shaped keys and values are redacted; hidden model reasoning is never exposed"}
 

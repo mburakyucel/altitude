@@ -108,7 +108,7 @@ class TestTaskStatus(unittest.TestCase):
 
         task = {
             "slug": "task-one", "state": "running", "title": "One status",
-            "attempt": 1, "dispatch_id": "task-one-1", "session_id": "sid-1", "agent_id": "aid-1",
+            "attempt": 1, "session_id": "sid-1", "agent_id": "aid-1",
             "source": "chat", "hold_merge": None, "blocked_reason": None,
             "updated": "2026-08-29T00:00:00+00:00", "worktree": "/tmp/worktree", "branch": "worktree-task-one",
             "paths": ["altitude/status.py", "bin/alt"], "prs": [17],
@@ -142,7 +142,7 @@ class TestTaskStatus(unittest.TestCase):
         result = task_status.status("demo", "task-one")
 
         expected_fields = {
-            "project", "slug", "state", "title", "attempt", "dispatch_id", "session_id",
+            "project", "slug", "state", "title", "attempt", "session_id",
             "agent_id", "source", "hold_merge", "blocked_reason", "updated", "worktree", "branch",
             "counts", "l1_runs", "lease", "other_leases", "hold",
             "wip_hold", "gate", "repository", "report_json", "prs", "main_run", "errors",
@@ -307,7 +307,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertIsNone(result["wip_hold"])
         self.assertEqual(result["wip_hold"], dispatch.wip_hold("demo", task))
 
-    def test_dispatch_keyed_counts_are_read(self):
+    def test_attempt_keyed_counts_are_read(self):
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json",
                      {"edits": 11})
         result = task_status.status("demo", "task-one")

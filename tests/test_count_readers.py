@@ -1,4 +1,4 @@
-"""Verify and monitor read only dispatch-keyed counters."""
+"""Verify and monitor read only the counter keyed by the task's current attempt."""
 import json
 import shutil
 import tempfile
@@ -21,21 +21,21 @@ class CountReaders(unittest.TestCase):
     def write_counts(self, key, **counts):
         (self.monitor_dir / f"counts-{key}.json").write_text(json.dumps(counts))
 
-    def test_verify_reads_dispatch_key_only(self):
+    def test_verify_reads_attempt_key_only(self):
         self.write_counts("demo--task-1", edits=3)
         self.write_counts("new-session", edits=9)
-        keyed = verify._spend({}, "demo", {"dispatch_id": "task-1", "session_id": "new-session"}, Path("."))
+        keyed = verify._spend({}, "demo", {"slug": "task", "attempt": 1, "session_id": "new-session"}, Path("."))
         self.assertEqual(keyed["spend"]["edits_hook"], 3)
 
         self.write_counts("unrelated-session", edits=6)
-        missing = verify._spend({}, "demo", {"dispatch_id": "task-2", "session_id": "unrelated-session"}, Path("."))
+        missing = verify._spend({}, "demo", {"slug": "task", "attempt": 2, "session_id": "unrelated-session"}, Path("."))
         self.assertIsNone(missing["spend"]["edits_hook"])
 
-    def test_monitor_reads_dispatch_key_only(self):
+    def test_monitor_reads_attempt_key_only(self):
         tasks = [
-            {"slug": "keyed", "state": "running", "dispatch_id": "keyed-1", "session_id": "new-session"},
+            {"slug": "keyed", "state": "running", "attempt": 1, "session_id": "new-session"},
             {"slug": "unkeyed", "state": "blocked", "session_id": "session-without-dispatch"},
-            {"slug": "other", "state": "reported", "dispatch_id": "other-1", "session_id": "unrelated-session"},
+            {"slug": "other", "state": "reported", "attempt": 1, "session_id": "unrelated-session"},
         ]
         self.write_counts("demo--keyed-1", edits=3)
         self.write_counts("new-session", edits=9)

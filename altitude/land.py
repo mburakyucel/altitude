@@ -86,8 +86,8 @@ def _require_current_publisher(project: str, slug: str, task: dict, authority: d
 
     A hand-run command has no actor (or explicitly names Burak). Every automated
     caller must be the L2 that owns the task now: L1s and control-plane actors do
-    not publish. Physical worker replacement first proves the old worker stopped;
-    the capability token remains stable only within this dispatch attempt.
+    not publish. The attempt number names the L2 that owns the task now: a
+    replaced worker keeps it, a relaunch from the queue does not.
     """
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     if actor is None or actor == "burak":
@@ -96,13 +96,9 @@ def _require_current_publisher(project: str, slug: str, task: dict, authority: d
         raise LandError(f"actor {actor!r} cannot land {project}/{slug}; only the current L2 or Burak may land")
     if task.get("state") != "running":
         raise LandError(f"current L2 cannot land {project}/{slug}: task is not running")
-    dispatch_id = authority.get("dispatch_id") if authority is not None else os.environ.get("ALTITUDE_DISPATCH_ID")
-    if not dispatch_id or task.get("dispatch_id") != dispatch_id:
-        raise LandError(f"current L2 cannot land {project}/{slug}: dispatch ownership changed")
-    l2_token = (authority.get("l2_token") if authority is not None
-                else os.environ.get("ALTITUDE_L2_TOKEN") or os.environ.get("ALTITUDE_L2_CAPABILITY"))
-    if not l2_token or task.get("l2_token") != l2_token:
-        raise LandError(f"current L2 cannot land {project}/{slug}: ownership capability changed")
+    attempt = authority.get("attempt") if authority is not None else os.environ.get("ALTITUDE_ATTEMPT")
+    if not attempt or str(task.get("attempt")) != str(attempt):
+        raise LandError(f"current L2 cannot land {project}/{slug}: attempt {attempt} is no longer current")
 
 
 def _changes(root: Path) -> list[tuple[str, list[str]]]:

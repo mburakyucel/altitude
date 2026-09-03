@@ -34,8 +34,8 @@ class TestL3Actions(unittest.TestCase):
 
     def task(self, title="Task", state="running", **updates):
         task = T.new("p", title, "request")
-        task.update({"state": state, "dispatch_id": f"{task['slug']}-1", "session_id": "session-1",
-                     "agent_id": "agent-1", "l2_engine": "claude", **updates})
+        task.update({"state": state, "attempt": 1, "session_id": "session-1", "agent_id": "agent-1",
+                     "l2_engine": "claude", **updates})
         S.save_task("p", task)
         return task
 
@@ -113,27 +113,36 @@ class TestL3Actions(unittest.TestCase):
                                                 "digest": "done"}), action_id="9" * 64)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "reported")
 
-    def test_resume_requires_and_fences_the_exact_blocked_session(self):
+    def test_resume_queues_the_answer_and_resumes_only_a_blocked_task(self):
         task = self.task(state="blocked")
-        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}) as resume:
+        with mock.patch.object(dispatch, "resume", return_value={"agent": {"id": "agent-2"}}) as resume:
             result = l3_actions.apply(
                 "p", envelope({"type": "task_resume", "slug": task["slug"], "answer": "continue"}),
                 action_id="e" * 64,
             )
-        self.assertFalse(result[0]["deferred"])
-        resume.assert_called_once_with(
-            "p", task["slug"], "continue", prefix="L3: ", expected_state="blocked",
-            expected_dispatch_id=task["dispatch_id"], expected_session_id="session-1", expected_agent_id="agent-1",
-        )
+        self.assertIsNone(result[0]["held"])
+        resume.assert_called_once_with("p", task["slug"])
+        [message] = T.task_messages("p", task["slug"])
+        self.assertEqual((message["role"], message["by"], message["text"]), ("burak", "l3", "continue"))
+        self.assertEqual([row["text"] for row in T.pending("p", task["slug"])], ["continue"])
 
-        missing = self.task(title="No session", state="blocked", session_id=None, agent_id=None)
-        with mock.patch.object(T, "resume") as unsafe_resume:
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "no exact blocked L2 session"):
+        held = self.task(title="Held", state="blocked")
+        with mock.patch.object(dispatch, "resume", return_value={"held": "usage limit: resets later"}):
+            result = l3_actions.apply(
+                "p", envelope({"type": "task_resume", "slug": held["slug"], "answer": "later"}),
+                action_id="f" * 64,
+            )
+        self.assertEqual(result[0]["held"], "usage limit: resets later")
+
+        running = self.task(title="Running", state="running")
+        with mock.patch.object(dispatch, "resume") as unsafe_resume:
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "only a blocked task"):
                 l3_actions.apply(
-                    "p", envelope({"type": "task_resume", "slug": missing["slug"], "answer": "continue"}),
-                    action_id="f" * 64,
+                    "p", envelope({"type": "task_resume", "slug": running["slug"], "answer": "continue"}),
+                    action_id="a" * 63 + "b",
                 )
         unsafe_resume.assert_not_called()
+        self.assertEqual(T.task_messages("p", running["slug"]), [])
 
     def test_resume_persists_journaled_paths_before_dispatch(self):
         task = self.task(state="blocked", paths=[])
@@ -142,9 +151,9 @@ class TestL3Actions(unittest.TestCase):
 
         def resume(*_args, **_kwargs):
             self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
-            return {"deferred": False}
+            return {"agent": {"id": "agent-2"}}
 
-        with mock.patch.object(dispatch, "resume_blocked", side_effect=resume):
+        with mock.patch.object(dispatch, "resume", side_effect=resume):
             l3_actions.apply("p", envelope(action), action_id="0" * 63 + "1")
 
         self.assertEqual(S.load_task("p", task["slug"])["paths"], action["paths"])
@@ -155,21 +164,21 @@ class TestL3Actions(unittest.TestCase):
         action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
                   "paths": ["src/shared.py"]}
 
-        with mock.patch.object(dispatch, "resume_blocked") as resume:
+        with mock.patch.object(dispatch, "resume") as resume:
             with self.assertRaisesRegex(l3_actions.L3ActionError, "file lease"):
                 l3_actions.apply("p", envelope(action), action_id="0" * 63 + "2")
 
         resume.assert_not_called()
         self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
 
-    def test_resume_paths_roll_back_when_exact_resume_is_refused(self):
+    def test_resume_paths_roll_back_when_the_resume_is_refused(self):
         task = self.task(state="blocked", paths=["existing.py"])
         action = {"type": "task_resume", "slug": task["slug"], "answer": "continue",
                   "paths": ["src/new.py"]}
 
-        with mock.patch.object(dispatch, "resume_blocked",
-                               side_effect=T.TransitionError("session changed")):
-            with self.assertRaisesRegex(l3_actions.L3ActionError, "session changed"):
+        with mock.patch.object(dispatch, "resume",
+                               side_effect=T.TransitionError("still live after stop")):
+            with self.assertRaisesRegex(l3_actions.L3ActionError, "still live after stop"):
                 l3_actions.apply("p", envelope(action), action_id="0" * 63 + "3")
 
         self.assertEqual(S.load_task("p", task["slug"])["paths"], ["existing.py"])
@@ -178,7 +187,7 @@ class TestL3Actions(unittest.TestCase):
         task = self.task(state="blocked", paths=["existing.py"])
         action = {"type": "task_resume", "slug": task["slug"], "paths": ["src/new.py"]}
 
-        with mock.patch.object(dispatch, "resume_blocked", return_value={"deferred": False}):
+        with mock.patch.object(dispatch, "resume", return_value={"agent": {"id": "agent-2"}}):
             l3_actions.apply("p", envelope(action), action_id="0" * 63 + "7")
 
         self.assertEqual(S.load_task("p", task["slug"])["paths"],
@@ -188,7 +197,7 @@ class TestL3Actions(unittest.TestCase):
         task = self.task(state="blocked", paths=[])
         for index, invalid in enumerate(("../outside.py", "/absolute.py", "src//empty.py"), 4):
             action = {"type": "task_resume", "slug": task["slug"], "paths": [invalid]}
-            with mock.patch.object(dispatch, "resume_blocked") as resume:
+            with mock.patch.object(dispatch, "resume") as resume:
                 with self.assertRaisesRegex(l3_actions.L3ActionError, "invalid repo-relative path"):
                     l3_actions.apply("p", envelope(action), action_id="0" * 63 + str(index))
             resume.assert_not_called()

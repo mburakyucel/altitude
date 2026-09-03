@@ -31,13 +31,10 @@ cannot launch subagents directly. When code changes are needed, one L2 owns them
 
 L2 receives the request, repository context, lease, worktree, branch, and merge policy. It chooses
 the lightest useful execution shape. Its human-facing conversation is stored separately from tool
-logs, so Burak can steer it directly without routing every exchange through L3. Dispatch and
-capability identifiers fence specific L2 reply, completion, landing, and helper paths; other command
-paths apply different subsets of checks. Live Session steering also supplies the displayed
-session/engine generation to reject stale views.
-The normal Task and Project composers currently omit their displayed generation, so those requests
-target the generation current when the server acquires the task lock; this is a known review item,
-not a guarantee of stale-page rejection.
+logs, so Burak can message it directly without routing every exchange through L3. Messages queue on
+the task and reach the worker at its next checkpoint; an explicit Stop aborts a worker. The attempt
+number fences L2 reply, completion, landing, and helper paths to the current L2; other command paths
+apply different subsets of checks.
 
 L1 and reviewer runs are optional, tracked children of the L2 task. Their engine may be selected
 per run. An implementer receives a sublease, leaves the parent commit unchanged, and returns a

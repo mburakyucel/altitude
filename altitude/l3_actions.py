@@ -151,9 +151,7 @@ def _resume_paths(project: str, task: dict, paths: object) -> tuple[list[str], l
         live = S.load_task(project, task["slug"])
         for label, expected, actual in (
             ("state", "blocked", live.get("state")),
-            ("dispatch", task.get("dispatch_id"), live.get("dispatch_id")),
-            ("session", task.get("session_id"), live.get("session_id")),
-            ("agent", task.get("agent_id"), live.get("agent_id")),
+            ("attempt", task.get("attempt"), live.get("attempt")),
         ):
             if expected != actual:
                 raise L3ActionError(
@@ -173,9 +171,7 @@ def _rollback_resume_paths(project: str, task: dict, declared: list[str], previo
     """Undo only our own lease write; never overwrite a newer task generation."""
     with S.project_lock(project):
         live = S.load_task(project, task["slug"])
-        if (live.get("state") == "blocked" and live.get("dispatch_id") == task.get("dispatch_id")
-                and live.get("session_id") == task.get("session_id")
-                and live.get("agent_id") == task.get("agent_id")
+        if (live.get("state") == "blocked" and live.get("attempt") == task.get("attempt")
                 and live.get("paths") == declared):
             live["paths"] = previous
             S.save_task(project, live)
@@ -279,36 +275,32 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
         if task.get("state") != "reported" or _worker_live(project, task):
             raise L3ActionError(f"{slug}: L3 may complete only a reported task with no live L2 worker")
         done = T.done(project, slug, actor="l3", digest=str(action.get("digest") or ""),
-                      expected_state="reported", expected_dispatch_id=task.get("dispatch_id"),
-                      expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"))
+                      expected_state="reported", expected_attempt=task.get("attempt"))
         return {"type": kind, "slug": slug, "state": done["state"]}
     if kind == "task_block":
         task = S.load_task(project, _need(slug, "slug"))
         if task.get("state") not in ("running", "reported") or _worker_live(project, task):
             raise L3ActionError(f"{slug}: L3 cannot block a live or non-running/non-reported task")
         blocked = T.block(project, slug, _need(action.get("reason"), "reason"), actor="l3",
-                          expected_state=task.get("state"), expected_dispatch_id=task.get("dispatch_id"),
-                          expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"))
+                          expected_state=task.get("state"))
         return {"type": kind, "slug": slug, "state": blocked["state"]}
     if kind == "task_resume":
         task = S.load_task(project, _need(slug, "slug"))
-        if task.get("state") != "blocked" or not task.get("session_id") or not task.get("agent_id"):
-            raise L3ActionError(f"{slug}: task has no exact blocked L2 session to resume")
-        answer = str(action.get("answer") or action.get("reason") or "Continue from the durable task state.")
+        if task.get("state") != "blocked":
+            raise L3ActionError(f"{slug}: only a blocked task can be resumed")
+        answer = str(action.get("answer") or action.get("reason") or "").strip()
         paths = action.get("paths") or []
         persisted = _resume_paths(project, task, paths) if paths else None
         try:
-            result = dispatch.resume_blocked(project, slug, answer, prefix="L3: ",
-                                             expected_state="blocked",
-                                             expected_dispatch_id=task.get("dispatch_id"),
-                                             expected_session_id=task.get("session_id"),
-                                             expected_agent_id=task.get("agent_id"))
+            if answer:
+                T.message(project, slug, "burak", answer, by="l3")
+            result = dispatch.resume(project, slug)
         except Exception:
             if persisted is not None:
                 declared_paths, previous_paths = persisted
                 _rollback_resume_paths(project, task, declared_paths, previous_paths)
             raise
-        return {"type": kind, "slug": slug, "deferred": bool(result.get("deferred"))}
+        return {"type": kind, "slug": slug, "held": result.get("held")}
     if kind == "task_fyi":
         T.fyi(project, _need(slug, "slug"), _need(action.get("text"), "text"), actor="l3")
         return {"type": kind, "slug": slug}

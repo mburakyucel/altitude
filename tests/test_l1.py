@@ -79,8 +79,7 @@ class TestL1Runs(unittest.TestCase):
         route.quota_codex = lambda: {"known": False}
 
     def setUp(self):
-        keys = ("ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK",
-                "ALTITUDE_DISPATCH_ID", "ALTITUDE_L2_TOKEN")
+        keys = ("ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_ATTEMPT")
         self._owner_env = {key: os.environ.get(key) for key in keys}
 
     def tearDown(self):
@@ -101,12 +100,10 @@ class TestL1Runs(unittest.TestCase):
             t = S.load_task("altitude", slug)
             t.update({"worktree": str(worktree), "branch": f"worktree-{slug}", "state": "running",
                       "paths": ["fixture.txt"],
-                      "dispatch_id": f"{slug}-1", "session_id": f"session-{slug}",
-                      "agent_id": f"agent-{slug}", "l2_token": f"token-{slug}"})
+                      "attempt": 1, "session_id": f"session-{slug}", "agent_id": f"agent-{slug}"})
             S.save_task("altitude", t)
         os.environ.update({"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": "altitude",
-                           "ALTITUDE_TASK": slug, "ALTITUDE_DISPATCH_ID": f"{slug}-1",
-                           "ALTITUDE_L2_TOKEN": f"token-{slug}"})
+                           "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"})
         brief = S.task_dir("altitude", slug) / "sub-1.md"; brief.write_text("# sub-brief\nchange one thing\n")
         return slug, brief
 
@@ -228,9 +225,8 @@ class TestL1Runs(unittest.TestCase):
 
     def test_stale_and_blocked_l2s_cannot_launch_l1(self):
         slug, brief = self._task("l1-owner-fence")
-        with self.assertRaisesRegex(T.TransitionError, "ownership changed"):
-            l1.start("altitude", slug, brief, expected_dispatch_id=f"{slug}-1",
-                     expected_l2_token="stale-token")
+        with self.assertRaisesRegex(T.TransitionError, "no longer the current L2"):
+            l1.start("altitude", slug, brief, expected_attempt=2)
 
         with S.project_lock("altitude"):
             task = S.load_task("altitude", slug)

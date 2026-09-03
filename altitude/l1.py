@@ -90,37 +90,33 @@ def _alive(pid: int | None) -> bool:
         return False
 
 
-def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token: str | None) -> None:
+def _require_current_l2(task: dict, slug: str, attempt: int | None) -> None:
     if task.get("state") != "running":
         raise T.TransitionError(f"{slug}: optional L1s may launch only for the current running L2")
-    if not dispatch_id or not l2_token:
-        raise T.TransitionError(f"{slug}: current L2 dispatch and capability are required")
-    if task.get("dispatch_id") != dispatch_id or task.get("l2_token") != l2_token:
-        raise T.TransitionError(f"{slug}: L2 ownership changed before the L1 launch")
+    if not attempt or task.get("attempt") != attempt:
+        raise T.TransitionError(f"{slug}: attempt {attempt} is no longer the current L2")
     if not task.get("session_id") or not task.get("agent_id"):
         raise T.TransitionError(f"{slug}: current L2 has no concrete session and agent")
 
 
 @contextmanager
-def _launch_permission(project: str, slug: str, dispatch_id: str, l2_token: str):
+def _launch_permission(project: str, slug: str, attempt: int):
     """Fence the final L1 Popen against a concurrent L2 replacement."""
     with S.project_lock(project):
-        _require_current_l2(S.load_task(project, slug), slug, dispatch_id, l2_token)
+        _require_current_l2(S.load_task(project, slug), slug, attempt)
         yield
 
 
 def start(project: str, slug: str, brief: Path, *, role: str = "implementer", engine: str | None = None,
           model: str | None = None, name: str | None = None, cwd: str | None = None,
-          paths: list[str] | None = None,
-          expected_dispatch_id: str | None = None, expected_l2_token: str | None = None) -> dict:
+          paths: list[str] | None = None, expected_attempt: int | None = None) -> dict:
     if role not in ("implementer", "reviewer"):
         raise T.TransitionError("role must be implementer or reviewer")
     if not Path(brief).exists():
         raise T.TransitionError(f"brief not found: {brief}")
     task = S.load_task(project, slug)
-    expected_dispatch_id = expected_dispatch_id or os.environ.get("ALTITUDE_DISPATCH_ID")
-    expected_l2_token = expected_l2_token or os.environ.get("ALTITUDE_L2_TOKEN")
-    _require_current_l2(task, slug, expected_dispatch_id, expected_l2_token)
+    expected_attempt = expected_attempt or int(os.environ.get("ALTITUDE_ATTEMPT") or 0)
+    _require_current_l2(task, slug, expected_attempt)
     lock_path = runs_dir(project, slug) / ".lock"
     with open(lock_path, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -134,13 +130,12 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
         if name in used_names:
             raise T.TransitionError(f"run {name!r} already exists")
         return _spawn(project, slug, brief, task, role=role, engine=engine, model=model, name=name, cwd=cwd,
-                      paths=paths, n=n, author=author, runs=runs, expected_dispatch_id=expected_dispatch_id,
-                      expected_l2_token=expected_l2_token)
+                      paths=paths, n=n, author=author, runs=runs, expected_attempt=expected_attempt)
 
 
 def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engine: str | None, model: str | None,
            name: str, cwd: str | None, paths: list[str] | None, n: int, author: str | None, runs: list[dict],
-           expected_dispatch_id: str, expected_l2_token: str) -> dict:
+           expected_attempt: int) -> dict:
     """Route, make the worktree, write the prompt, and start the detached wrapper."""
     choice = route.pick_engine("reviewer" if role == "reviewer" else "l1", forced=engine,
                                other_than=author if role == "reviewer" else None)
@@ -239,7 +234,7 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
     log = open(runs_dir(project, slug) / f"{name}.log", "ab")
     env = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l1"}
     try:
-        with _launch_permission(project, slug, expected_dispatch_id, expected_l2_token):
+        with _launch_permission(project, slug, expected_attempt):
             child = subprocess.Popen([sys.executable, str(config.REPO / "bin" / "alt"), "l1", "_exec", slug, name], cwd=str(workdir),
                                      stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     except T.TransitionError as e:

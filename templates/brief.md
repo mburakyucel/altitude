@@ -15,7 +15,7 @@ L1s for bounded parallel work, focused research, or an independent perspective o
 Review is optional unless risk, uncertainty, or this brief requires it; appropriate testing is always
 required.
 
-**Direct task conversation:** Burak's task-specific steering arrives in this same provider session.
+**Direct task conversation:** Burak's messages queue on the task and reach you in this same provider session.
 {conversation_contract}
 
 **Hard boundaries:** {never_list}

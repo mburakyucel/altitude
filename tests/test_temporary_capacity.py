@@ -25,7 +25,7 @@ class TestTemporaryCapacity(unittest.TestCase):
         S.task_dir("capacity", slug).mkdir(parents=True, exist_ok=True)
         task = {
             "slug": slug, "title": slug, "request": "continue", "state": "running",
-            "created": S.now(), "updated": S.now(), "dispatch_id": f"{slug}-1",
+            "created": S.now(), "updated": S.now(), "attempt": 1,
             "session_id": f"session-{slug}", "agent_id": f"agent-{slug}",
             "l2_engine": "codex", "engine_model": "gpt-test-stable",
         }
@@ -92,7 +92,6 @@ class TestTemporaryCapacity(unittest.TestCase):
         self.assertEqual(first["capacity_retries"], 1)
         self.assertGreaterEqual(first_wait, 28)
         self.assertLessEqual(first_wait, 31)
-        self.assertIn("same codex provider and gpt-test-stable model", first["resume_answer"])
         fault.assert_not_called()
         verify.assert_not_called()
 
@@ -115,7 +114,6 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         second["resume_after"] = "1970-01-01T00:00:00+00:00"
         second["worktree"] = str(self.repo)
-        second["l2_token"] = "stable-capability"
         S.save_task("capacity", second)
         seen = {}
 
@@ -127,14 +125,17 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(engines, "stop_l2_worker", return_value="stopped"), \
+                mock.patch.object(dispatch, "_l2_worker_live", return_value=False), \
                 mock.patch.object(engines, "resume_l2", side_effect=resume), \
                 mock.patch.object(dispatch.route, "pick_engine", side_effect=AssertionError("must not reroute")):
-            resumed = dispatch.resume_due("capacity")
+            self.assertEqual(dispatch.resume_due("capacity"), [task["slug"]])
+            resumed = dispatch.resume("capacity", task["slug"])
 
-        self.assertEqual(resumed, [task["slug"]])
-        self.assertEqual((seen["engine"], seen["model"]), ("codex", "gpt-test-stable"))
+        self.assertEqual(resumed["agent"]["id"], "replacement-worker")
+        self.assertEqual((seen["engine"], seen["name"], seen["model"]),
+                         ("codex", f"capacity/{task['slug']}-1", "gpt-test-stable"))
         self.assertEqual(seen["session_id"], task["session_id"])
+        self.assertEqual(S.load_task("capacity", task["slug"])["state"], "running")
 
 
 if __name__ == "__main__":

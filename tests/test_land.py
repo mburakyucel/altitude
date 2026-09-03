@@ -95,8 +95,7 @@ class TestLand(unittest.TestCase):
         self._setenv("ALTITUDE_PROJECT", "demo")
         self._setenv("ALTITUDE_TASK", "fix-x")
         self._setenv("ALTITUDE_ACTOR", "burak")
-        self._setenv("ALTITUDE_DISPATCH_ID", "")
-        self._setenv("ALTITUDE_L2_TOKEN", "")
+        self._setenv("ALTITUDE_ATTEMPT", "")
         d = S.tasks_dir("demo") / "fix-x"
         d.mkdir(parents=True)
         (d / "status.json").write_text(json.dumps(
@@ -136,14 +135,13 @@ class TestLand(unittest.TestCase):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("changed\n")
 
-    def set_current_l2(self, *, state="running", dispatch_id="fix-x-1", token="current-token"):
+    def set_current_l2(self, *, state="running", attempt=1):
         path = S.tasks_dir("demo") / "fix-x" / "status.json"
         task = json.loads(path.read_text())
-        task.update({"state": state, "dispatch_id": dispatch_id, "l2_token": token})
+        task.update({"state": state, "attempt": attempt})
         path.write_text(json.dumps(task))
         self._setenv("ALTITUDE_ACTOR", "l2")
-        self._setenv("ALTITUDE_DISPATCH_ID", dispatch_id)
-        self._setenv("ALTITUDE_L2_TOKEN", token)
+        self._setenv("ALTITUDE_ATTEMPT", str(attempt))
 
     def record_commands(self):
         commands = []
@@ -243,25 +241,20 @@ class TestLand(unittest.TestCase):
                     land.land("must refuse", cwd=self.repo, wait=0)
         self.assert_no_publish_mutation(commands)
 
-    def test_stale_l2_generation_cannot_land(self):
-        self.set_current_l2()
-        os.environ["ALTITUDE_L2_TOKEN"] = "replaced-token"
-        self.leased_change()
-        commands = self.record_commands()
-        with self.assertRaisesRegex(land.LandError, "ownership capability changed"):
-            land.land("must refuse", cwd=self.repo, wait=0)
-        self.assert_no_publish_mutation(commands)
-
-    def test_l2_must_own_the_running_dispatch(self):
-        self.set_current_l2()
+    def test_l2_must_own_the_running_attempt(self):
+        self.set_current_l2(attempt=2)
         self.leased_change()
         commands = self.record_commands()
 
-        os.environ["ALTITUDE_DISPATCH_ID"] = "fix-x-0"
-        with self.assertRaisesRegex(land.LandError, "dispatch ownership changed"):
+        os.environ["ALTITUDE_ATTEMPT"] = "1"
+        with self.assertRaisesRegex(land.LandError, "attempt 1 is no longer current"):
             land.land("must refuse", cwd=self.repo, wait=0)
 
-        os.environ["ALTITUDE_DISPATCH_ID"] = "fix-x-1"
+        os.environ["ALTITUDE_ATTEMPT"] = ""
+        with self.assertRaisesRegex(land.LandError, "no longer current"):
+            land.land("must refuse", cwd=self.repo, wait=0)
+
+        os.environ["ALTITUDE_ATTEMPT"] = "2"
         task_path = S.tasks_dir("demo") / "fix-x" / "status.json"
         task = json.loads(task_path.read_text())
         task["state"] = "reported"

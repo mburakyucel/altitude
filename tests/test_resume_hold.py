@@ -1,4 +1,4 @@
-"""A blocked task queued to resume keeps its file lease until it can run."""
+"""A blocked task Altitude cannot bring back yet keeps its file lease and waits for the next tick."""
 import contextlib
 import io
 import json
@@ -13,8 +13,7 @@ from unittest import mock
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-resume-hold-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, state as S, tasks as T  # noqa: E402
-from altitude import monitor  # noqa: E402
+from altitude import config, dispatch, engines, monitor, state as S, tasks as T  # noqa: E402
 
 
 class TestResumeHold(unittest.TestCase):
@@ -25,105 +24,90 @@ class TestResumeHold(unittest.TestCase):
         self.project = f"resume-hold-{self._number}"
         self.repo = _TMP / self.project / "repo"
         self.repo.mkdir(parents=True)
-        config.save_projects({self.project: {
-            "name": self.project, "path": str(self.repo), "wip": 20,
-        }})
+        config.save_projects({self.project: {"name": self.project, "path": str(self.repo), "wip": 20}})
+        self.launched = []
+        patches = [
+            mock.patch.object(engines, "usage_hold", return_value=None),
+            mock.patch.object(monitor, "quota", return_value={"known": True}),
+            mock.patch.object(engines, "claude_agents", return_value=[]),
+            mock.patch.object(engines, "claude_stop", return_value="stopped"),
+            mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40),
+            mock.patch.object(dispatch, "_validate_task_worktree"),
+            mock.patch.object(engines, "resume_l2", side_effect=self._resume_l2),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
 
-        self.resumed = []
-        self.stopped = []
-        self.originals = (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
-                          engines.usage_hold, monitor.quota)
-        dispatch.resume_session = self._resume_session
-        engines.claude_stop = self.stopped.append
-        engines.claude_agents = lambda: []
-        engines.usage_hold = lambda: None
-        monitor.quota = lambda: {"known": True}
-
-    def tearDown(self):
-        (dispatch.resume_session, engines.claude_stop, engines.claude_agents,
-         engines.usage_hold, monitor.quota) = self.originals
-
-    def _resume_session(self, project, slug, text, session_id=None, **_expected):
-        self.resumed.append({"project": project, "slug": slug, "text": text, "session_id": session_id})
-        with S.project_lock(project):
-            task = S.load_task(project, slug)
-            task["agent_id"] = f"new-{slug}"
-            S.save_task(project, task)
-        return {"agent": {"id": f"new-{slug}", "sessionId": task["session_id"]}, "stdout": ""}
+    def _resume_l2(self, engine, name, session_id, prompt, **_kw):
+        slug = name.split("/", 1)[1].rsplit("-", 1)[0]
+        self.launched.append({"slug": slug, "prompt": prompt, "session_id": session_id})
+        return {"returncode": 0, "stdout": "", "stderr": "",
+                "agent": {"id": f"new-{slug}", "sessionId": session_id, "state": "working"}}
 
     def _task(self, title, state, path, created):
         task = T.new(self.project, title, "request", actor="l3", paths=[path])
-        task.update({
-            "state": state,
-            "created": created,
-            "dispatch_id": f"{task['slug']}-1",
-            "session_id": f"session-{task['slug']}",
-            "agent_id": f"agent-{task['slug']}",
-            "worktree": str(self.repo),
-        })
+        task.update({"state": state, "created": created, "attempt": 1, "session_id": f"session-{task['slug']}",
+                     "agent_id": f"agent-{task['slug']}", "worktree": str(self.repo)})
         S.save_task(self.project, task)
         return task
 
-    def test_blocked_resume_waits_for_running_holder_and_records_answer(self):
+    def test_resume_held_by_a_running_lease_holder_waits_with_the_reason(self):
         self._task("running holder", "running", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         blocked = self._task("blocked worker", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
+        T.message(self.project, blocked["slug"], "burak", "Use the selected value.")
 
-        result = dispatch.resume_blocked(self.project, blocked["slug"], "Use the selected value.", prefix="Altitude: ")
+        result = dispatch.resume(self.project, blocked["slug"])
 
         task = S.load_task(self.project, blocked["slug"])
-        self.assertTrue(result["deferred"])
+        self.assertIn("file lease: `running-holder` is running", result["held"])
         self.assertEqual(task["state"], "blocked")
-        self.assertIn("waiting for lease: `running-holder`", task["blocked_reason"])
+        self.assertEqual(task["blocked_reason"], f"waiting: {result['held']}")
         self.assertIn("altitude/shared.py", task["blocked_reason"])
-        self.assertEqual(task["resume_answer"], "Use the selected value.")
-        self.assertEqual(task["resume_prefix"], "Altitude: ")
         self.assertTrue(task["resume_after"])
-        self.assertEqual(self.resumed, [])
-        self.assertEqual(self.stopped, [])
+        self.assertEqual([m["text"] for m in T.pending(self.project, blocked["slug"])], ["Use the selected value."])
+        self.assertEqual(S.read_events(self.project, blocked["slug"])[-1]["kind"], "resume-held")
+        self.assertEqual(self.launched, [])
 
-    def test_due_resume_uses_stored_answer_after_holder_finishes(self):
+    def test_due_resume_delivers_the_waiting_message_after_the_holder_finishes(self):
         holder = self._task("active lease", "running", "bin/alt", "2026-01-01T00:00:00+00:00")
         blocked = self._task("waiting resume", "blocked", "bin/alt", "2026-01-02T00:00:00+00:00")
-        blocked["blocked_reason"] = "Which retry strategy should I use?"
-        S.save_task(self.project, blocked)
-        dispatch.resume_blocked(self.project, blocked["slug"], "Use the focused retry.", prefix="Altitude: ")
-        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_question"],
-                         "Which retry strategy should I use?")
+        T.message(self.project, blocked["slug"], "burak", "Use the focused retry.")
+        dispatch.resume(self.project, blocked["slug"])
+        self.assertEqual(dispatch.resume_due(self.project), [], "the lease still holds it")
         holder["state"] = "done"
         S.save_task(self.project, holder)
 
-        resumed = dispatch.resume_due(self.project)
+        self.assertEqual(dispatch.resume_due(self.project), [blocked["slug"]])
+        result = dispatch.resume(self.project, blocked["slug"])
 
         task = S.load_task(self.project, blocked["slug"])
-        self.assertEqual(resumed, [blocked["slug"]])
+        self.assertEqual(result["agent"]["id"], f"new-{blocked['slug']}")
         self.assertEqual(task["state"], "running")
-        self.assertEqual(self.resumed[0]["text"],
-                         "Altitude: Use the focused retry.\nContinue from your progress file; finish to *done* and rewrite the report.")
-        self.assertEqual(task["blocked_question"], "Which retry strategy should I use?")
         self.assertNotIn("resume_after", task)
-        self.assertNotIn("resume_answer", task)
-        self.assertNotIn("resume_prefix", task)
+        self.assertTrue(self.launched[0]["prompt"].endswith("\nUse the focused retry."), self.launched)
+        self.assertEqual(T.pending(self.project, blocked["slug"]), [])
 
-    def test_non_lease_resume_hold_uses_generic_waiting_wording(self):
+    def test_usage_window_hold_uses_generic_waiting_wording(self):
         blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
-        engines.usage_hold = lambda: "2026-01-03T00:00:00+00:00"
+        with mock.patch.object(engines, "usage_hold", return_value="2026-01-03T00:00:00+00:00"):
+            result = dispatch.resume(self.project, blocked["slug"])
+            self.assertEqual(dispatch.resume_due(self.project), [])
 
-        result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue later.")
-
-        waiting = "waiting: usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
-        self.assertEqual(result["waiting"], waiting)
-        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_reason"], waiting)
+        hold = "usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
+        self.assertEqual(result, {"held": hold})
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_reason"], f"waiting: {hold}")
+        self.assertEqual(self.launched, [])
 
     def test_resume_without_overlap_reattaches_immediately(self):
         self._task("unrelated holder", "running", "altitude/other.py", "2026-01-01T00:00:00+00:00")
         blocked = self._task("free resume", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
 
-        result = dispatch.resume_blocked(self.project, blocked["slug"], "Continue now.")
+        result = dispatch.resume(self.project, blocked["slug"])
 
-        self.assertFalse(result["deferred"])
+        self.assertEqual(result["agent"]["id"], f"new-{blocked['slug']}")
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
-        self.assertEqual([call["slug"] for call in self.resumed], [blocked["slug"]])
-        self.assertEqual(self.stopped, [], "the mocked public resume seam owns worker replacement in this test")
+        self.assertEqual([call["slug"] for call in self.launched], [blocked["slug"]])
 
     def test_only_blocked_task_with_pending_resume_holds_its_files(self):
         pending = self._task("pending lease", "blocked", "altitude/pending.py", "2026-01-01T00:00:00+00:00")
@@ -149,60 +133,35 @@ class TestResumeHold(unittest.TestCase):
 
         self.assertIn(f"`{pending['slug']}` is blocked with a pending resume", hold or "")
 
-    def test_overlapping_pending_resumes_choose_oldest_without_deadlock(self):
+    def test_overlapping_pending_resumes_come_back_oldest_first_without_deadlock(self):
         oldest = self._task("oldest resume", "blocked", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         youngest = self._task("youngest resume", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
         for task in (oldest, youngest):
             task["resume_after"] = "2026-01-03T00:00:00+00:00"
-            task["resume_answer"] = f"Resume {task['slug']}"
             S.save_task(self.project, task)
 
         self.assertIsNone(dispatch.wip_hold(self.project, oldest))
         self.assertIn(f"`{oldest['slug']}`", dispatch.wip_hold(self.project, youngest) or "")
+        self.assertEqual(dispatch.resume_due(self.project), [oldest["slug"]])
 
-        resumed = dispatch.resume_due(self.project)
-
-        self.assertEqual(resumed, [oldest["slug"]])
-        self.assertEqual(S.load_task(self.project, oldest["slug"])["state"], "running")
-        self.assertEqual(S.load_task(self.project, youngest["slug"])["state"], "blocked")
-        self.assertTrue(S.load_task(self.project, youngest["slug"])["resume_after"])
-
-    def test_cli_resume_payloads_for_deferred_and_running(self):
+    def test_cli_resume_reports_a_hold_or_the_new_worker(self):
         main = runpy.run_path(str(Path(__file__).resolve().parent.parent / "bin" / "alt"))["main"]
         blocked = self._task("cli resume", "blocked", "altitude/cli.py", "2026-01-01T00:00:00+00:00")
-        original = dispatch.resume_blocked
 
-        def invoke(fake):
-            dispatch.resume_blocked = fake
+        def invoke():
             output = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(output):
-                    main(["--project", self.project, "task", "resume", blocked["slug"], "--answer", "Continue."])
-            finally:
-                dispatch.resume_blocked = original
+            with contextlib.redirect_stdout(output):
+                main(["--project", self.project, "task", "resume", blocked["slug"]])
             return json.loads(output.getvalue())
 
-        def deferred(project, slug, answer, prefix=""):
-            task = S.load_task(project, slug)
-            task["blocked_reason"] = "waiting: usage limit: test window"
-            S.save_task(project, task)
-            return {"deferred": True}
+        with mock.patch.object(engines, "usage_hold", return_value="2026-01-03T00:00:00+00:00"):
+            held = invoke()
+        self.assertTrue(held["held"].startswith("usage limit"), held)
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "blocked")
 
-        deferred_payload = invoke(deferred)
-        self.assertEqual(deferred_payload["state"], "blocked")
-        self.assertTrue(deferred_payload["deferred"])
-        self.assertEqual(deferred_payload["waiting"], "waiting: usage limit: test window")
-
-        def resumed(project, slug, answer, prefix=""):
-            task = S.load_task(project, slug)
-            task["state"] = "running"
-            S.save_task(project, task)
-            return {"deferred": False, "agent": {"id": "new-cli-agent"}}
-
-        running_payload = invoke(resumed)
-        self.assertEqual(running_payload["state"], "running")
-        self.assertFalse(running_payload["deferred"])
-        self.assertEqual(running_payload["agent"], "new-cli-agent")
+        running = invoke()
+        self.assertEqual(running["agent"]["id"], f"new-{blocked['slug']}")
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
 
 
 if __name__ == "__main__":
