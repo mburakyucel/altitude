@@ -199,6 +199,146 @@
   .toast-timer[data-paused="true"] {
     animation-play-state: paused;
   }
+
+  /* Live session: a task's worker session read like a Claude Code window. */
+  .session {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  .session-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: var(--text-meta);
+    color: var(--text-muted);
+  }
+  .session-marker {
+    font-family: var(--font-mono);
+    color: var(--accent-text);
+  }
+  .session-time {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-label);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .session-prompt {
+    padding: 12px 16px;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius-card) var(--radius-card) 0;
+    background: var(--accent-tint);
+  }
+  .session-reply {
+    padding: 4px 0 4px 16px;
+  }
+  .session-prose {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  .session-prose p {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+  .session-prose code,
+  .session-call {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+  .session-code,
+  .session-out {
+    margin: 0;
+    max-height: 24rem;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: var(--text-meta);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: auto;
+  }
+  .session-tool {
+    margin-left: 16px;
+    padding-left: 12px;
+    border-left: 3px solid var(--hairline);
+    min-width: 0;
+  }
+  .session-tool > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-height: 32px;
+    padding: 4px 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    list-style: none;
+  }
+  .session-tool > summary::-webkit-details-marker {
+    display: none;
+  }
+  .session-tool > summary::before {
+    content: "▸";
+    font-size: var(--text-label);
+    color: var(--text-muted);
+  }
+  .session-tool[open] > summary::before {
+    content: "▾";
+  }
+  .session-tool[data-error="true"] > summary {
+    color: var(--danger);
+  }
+  .session-tool > .session-out {
+    margin: 4px 0 8px;
+  }
+  .session-call {
+    min-width: 0;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  .session-hint {
+    font-size: var(--text-label);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .session-boundary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    font-size: var(--text-label);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .session-boundary::before,
+  .session-boundary::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--border);
+  }
+  .session-boundary .session-time {
+    margin-left: 0;
+  }
+  .session-error {
+    font-size: var(--text-meta);
+    color: var(--danger);
+  }
+  .session-notice {
+    margin: 0;
+    font-size: var(--text-meta);
+    color: var(--text-muted);
+    white-space: pre-wrap;
+  }
 }
 
 /* Unlayered safe-area padding overrides the shell utilities only on Chat. */

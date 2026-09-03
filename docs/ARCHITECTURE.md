@@ -127,9 +127,11 @@ project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota
 stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. A task has two views. The Conversation
-tab is the human-readable Burak/L2 exchange; the Live session tab shows the worker's own session log
-(Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events.
-Operational events remain an audit detail.
+tab is the human-readable Burak/L2 exchange; the Live session tab reads the worker's own session log
+(Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events as a
+Claude Code window: prompts, replies, and each tool call as one row with its output folded under it,
+task boundaries as thin separators, hidden reasoning never shown, and Raw mode for the complete redacted
+records. Operational events remain an audit detail.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
