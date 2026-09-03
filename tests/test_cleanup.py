@@ -95,7 +95,7 @@ class TestCleanup(unittest.TestCase):
             self.assertTrue(self.listed(task) and self.branch_exists(task), notes)
             self.assertIn(reason, self.last_event(task["slug"])["reason"])
             self.assertTrue(any(reason in n for n in notes), notes)
-        with mock.patch.object(dispatch, "_l2_worker_live", return_value=True):
+        with mock.patch.object(engines, "worker_live", return_value=True):
             notes = dispatch.cleanup_after_done(self.project, live)
         self.assertTrue(self.listed(live), notes)
         self.assertIn("still running", self.last_event("live")["reason"])

@@ -248,11 +248,13 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
 
 
 def block(project: str, slug: str, reason: str, actor: str = "altd", *,
-          expected_state: str | None = None, updates: dict | None = None) -> dict:
+          expected_state: str | None = None, expected_attempt: int | None = None, updates: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        if expected_attempt is not None and task.get("attempt") != expected_attempt:
+            raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
         task.update(updates or {})
         task["blocked_reason"] = reason
         return _move(project, task, "blocked", actor, reason=reason)
@@ -270,13 +272,19 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
         return _move(project, task, "running", actor, **ev)
 
 
-def requeue(project: str, slug: str, actor: str = "altd", **ev) -> dict:
-    """A task blocked before any launch goes back to the queue; dispatch retries it from scratch."""
+def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None = None,
+            clear_worker: bool = False, **ev) -> dict:
+    """blocked → queued: a task blocked before any launch, or a fresh attempt after a worker's window ran out.
+
+    The next dispatch routes by quota again unless ``engine`` names the one to use; ``clear_worker`` drops the
+    exhausted worker's identity so the fresh attempt starts from the task's saved progress, not its transcript."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task.get("agent_id"):
+        if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
-        task["blocked_reason"] = None
+        task.update({"blocked_reason": None, "agent_id": None, "session_id": None, "l2_engine": engine,
+                     "engine_model": None, "routing": None})
+        task.pop("resume_after", None)
         return _move(project, task, "queued", actor, **ev)
 
 

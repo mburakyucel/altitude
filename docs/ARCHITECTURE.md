@@ -74,22 +74,23 @@ branches cannot be updated outside the guarded landing path. The trusted landing
 lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 
-Claude workers use a direct CLI contract: the backend applies the identity, clean-Git, lease,
-provenance, and merge-policy checks relevant to each command and effect boundary. Codex workers have no control capability or
-Git-publication authority. A Codex L2 may write only in its task worktree under an explicit
-permission profile; its Git common directory and Altitude state are outside that writable surface,
-and hosted tools and model-command network access are disabled. The inner Codex sandbox hides host PIDs, while the
-entire process tree runs in a transient user cgroup. Only after the unit is empty does a trusted broker validate its
-strict, inert final action and perform any requested state change or landing operation.
+Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
+Altitude is the `alt` CLI, and the backend validates each command against the task record under the
+project lock: an L2 may reply, block, complete, and land only its own task and current attempt.
+Claude runs under its permission profile. Codex keeps its native workspace-write sandbox as
+containment, with the task worktree, its Git common directory, and the Altitude home as writable
+roots and the network on, and uses the same door. Altitude reads its thread and usage from the
+worker's stdout JSONL; a turn that ends without a report, a block, or a completion blocks the task
+as ended without a report, exactly like a Claude session that exits early.
 
-Codex L3 uses the same containment and broker boundary. It receives a disposable writable runtime directory while
+Codex L3 still runs as a contained turn that returns an inert action to a trusted broker; it moves to the
+`alt` door in the next phase-5 PR. It receives a disposable writable runtime directory while
 the full Altitude runtime root (`ALTITUDE_HOME`) and the selected project checkout are explicit read-only roots. The
 prompt normally points the coordinator at compact state, but the sandbox technically permits reads throughout those
 roots. This gives the Codex runtime scratch space without write access to source or durable Altitude state.
 The user manager creates the transient containment service, so Altitude keeps its own `NoNewPrivileges` hardening
 while nested bwrap initializes inside the dedicated service. The outer launcher alone receives the user-session bus;
-the Codex child starts from an empty environment rebuilt from a narrow allowlist, with that bus, its runtime socket
-tree, ambient service credentials, and scoped L2 capabilities removed. The inner sandbox hides host PIDs; no
+the Codex child starts from Altitude's clean environment without that bus or its runtime socket tree. The inner sandbox hides host PIDs; no
 deterministic host-PID canary is implemented on this baseline. The trusted host can stop the whole cgroup.
 A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
 draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
@@ -97,7 +98,8 @@ draft until Burak sends the exact draft-specific approval phrase; secret-shaped 
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
-with backoff and a usage-window stop parks the task until the window reopens, each as one task event.
+with backoff; a usage-window stop starts a fresh attempt on the other engine from the task's `progress.md`,
+or parks a task pinned to one engine until its window reopens; each writes one task event.
 Tier two is L3: whatever remains blocks only its own task, files private incident evidence (one
 incident per fault kind per day), and leaves one message in the project's L3 queue. The server
 delivers that message as a turn when L3 is free and an engine is available; L3 records the learning
@@ -128,5 +130,5 @@ That mismatch is retained here as current behavior pending the module-by-module 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, and hooks
 describe current executable behavior. Documentation under `docs/simplification-review/` separately
 catalogues unmerged candidates and must not be read as runtime behavior. Hooks supply Claude-side message delivery
-and telemetry; permission profiles, process containment, and backend validation form the Codex
+and telemetry; Codex's own sandbox and the backend's validation of every `alt` command form the Codex
 execution boundary. Superseded designs remain in Git history, not in the active tree.

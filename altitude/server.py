@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, state as S, tasks as T, transcript, verify
+from . import config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, route, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -102,7 +102,7 @@ def on_l2_finished(project: str, item: dict) -> None:
             return
         log(f"[{project}/{slug}] {engine}/{model} temporarily at capacity → retry {retry} after {delay}s")
         return
-    if item.get("limited"):  # hold, remember when to come back, and announce the window once
+    if item.get("limited"):  # park until the window reopens, or start a fresh attempt on the other engine
         until, a = item["limited"], item.get("agent") or {}
         engine = t.get("l2_engine") or "claude"
         # Claude's hold file is consumed only by Claude turns. A Codex limit must not freeze Claude work.
@@ -114,9 +114,18 @@ def on_l2_finished(project: str, item: dict) -> None:
         except T.TransitionError:
             log(f"[{project}/{slug}] usage-limit result lost a concurrent lifecycle race; ignored")
             return
+        other = "codex" if engine == "claude" else "claude"
+        switch = route.pick_engine("l2", forced=other) if not t.get("engine") else {"engine": None}
+        if switch.get("engine"):
+            engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
+            T.requeue(project, slug, engine=other, clear_worker=True,
+                      reason=f"{engine} window exhausted until {until}; fresh attempt on {other} from saved progress")
+            T.fyi(project, slug, f"{engine} usage window hit (resets {until}). {slug} continues as a fresh attempt "
+                                 f"on {other} from its progress file.", actor="altd")
+            log(f"[{project}/{slug}] L2 hit the usage limit → requeued for {other}")
+            return
         if news:
-            T.fyi(project, slug, f"{engine} usage window hit. This L2 resumes after {until}; the other provider remains available.",
-                  actor="altd")
+            T.fyi(project, slug, f"{engine} usage window hit. This L2 resumes after {until}.", actor="altd")
         log(f"[{project}/{slug}] L2 hit the usage limit → blocked until {until}")
         return
     with S.project_lock(project):  # a new report: whatever L3 did with the previous one no longer counts
@@ -126,9 +135,7 @@ def on_l2_finished(project: str, item: dict) -> None:
         S.save_task(project, t0)
     if item.get("needs_input"):
         a = item.get("agent") or {}
-        attach = (f"Attach: `claude attach {a.get('id', '')}` or "
-                  if (t.get("l2_engine") or "claude") == "claude" else "")
-        reason = f"L2 is idle without a report — probably waiting for permission or an answer. {attach}message the L2 directly."
+        reason = "L2 is idle without a report — probably waiting for permission or an answer; message the L2 directly."
         try:
             block_snapshot(reason)
         except T.TransitionError:
@@ -150,22 +157,6 @@ def on_l2_finished(project: str, item: dict) -> None:
                                f"{engine} worker state=failed", project=project, task=slug)
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
-    if (t.get("l2_engine") or "claude") == "codex":
-        item = {**item, "task": t}
-        try:
-            handled = actions.process_l2(project, item)
-        except actions.ActionError as exc:
-            try:
-                block_snapshot(f"contained Codex action refused: {exc}", updates={"resume_after": S.now()})
-            except T.TransitionError:
-                log(f"[{project}/{slug}] Codex action correction lost a concurrent lifecycle race; ignored")
-                return
-            T.enqueue(project, slug, f"Altitude action schema correction: {exc}")
-            log(f"[{project}/{slug}] Codex action refused; the correction resumes the same thread: {exc}")
-            return
-        if handled.get("kind") != "report":
-            log(f"[{project}/{slug}] contained Codex action handled: {handled.get('kind')}")
-            return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
     T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})

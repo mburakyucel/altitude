@@ -32,11 +32,12 @@ five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source fo
 
 ## Repository and runtime
 
-`altitude/` is a standard-library Python package. `bin/alt` is the CLI, `personas/` contains the
-L2 and L3 roles for each engine, and `schemas/` defines broker actions and code-delivery reports.
-`hooks/` supplies Claude-side message delivery and telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
-an inert action for trusted backend validation. `web/` is the React UI built into `web/dist/` for
-the Python server to serve.
+`altitude/` is a standard-library Python package. `bin/alt` is the CLI and the only door a worker
+has into Altitude: the backend validates every command against the task record under the project
+lock. `personas/` contains the L2 and L3 roles, and `schemas/` defines code-delivery reports and the
+L3 action contract. `hooks/` supplies Claude-side message delivery and telemetry. A Codex L2 runs in
+Codex's own workspace-write sandbox and uses the same door. `web/` is the React UI built into
+`web/dist/` for the Python server to serve.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
 tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private
