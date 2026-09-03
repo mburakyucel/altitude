@@ -44,6 +44,27 @@ class TestSystemFault(AltitudeCase):
         self.assertNotEqual(other["incident"], first["incident"])
         self.assertEqual(len(self.queued()), 2)
 
+    def test_l2_reports_an_environment_fault_through_its_block_door(self):
+        # The first Codex task after the rebuild blocked on a read-only worktree gitdir with a plain block, so the
+        # cause sat in the Inbox as a question for Burak and L3 never saw it (2026-09-03).
+        task = T.new(PROJECT, "fault door", "request", actor="burak")
+        task.update({"state": "running", "attempt": 2}); S.save_task(PROJECT, task)
+        slug = task["slug"]
+        worker = {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"}
+        out = self.alt("--project", PROJECT, "task", "block", slug, "--reason", "gitdir is read-only", "--fault", env=worker)
+        self.assertNotEqual(out.returncode, 0); self.assertIn("no longer current", out.stderr)
+        self.assertEqual(S.load_task(PROJECT, slug)["state"], "running")
+        worker["ALTITUDE_ATTEMPT"] = "2"
+        out = self.alt("--project", PROJECT, "task", "block", slug, "--reason", "gitdir is read-only", "--fault", env=worker)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        filed = json.loads(out.stdout)
+        self.assertEqual(filed["kind"], f"worker:{slug}"); self.assertTrue(filed["incident"].startswith("I-"))
+        blocked = S.load_task(PROJECT, slug)
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertIn(f"system fault [worker:{slug}]: gitdir is read-only", blocked["blocked_reason"])
+        self.assertEqual([row["trigger"] for row in self.queued()], ["incident"])
+        self.assertIn(slug, self.queued()[0]["text"])
+
     def test_repair_task_fault_reaches_the_inbox_without_waking_l3(self):
         task = T.new(PROJECT, "repair probe", "request", actor="burak", source="recovery")
         incidents.system_fault("repair-kind", "repair broke", project=PROJECT, task=task["slug"])

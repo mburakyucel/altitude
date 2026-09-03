@@ -34,7 +34,8 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 ## Faults and service state
 
 A system fault blocks only its own task, files an incident, and leaves one message for the
-project's L3. There is no global hold: other tasks keep running. Resume a task blocked by a fault
+project's L3, whether altd detected it or an L2 reported it with `alt task block --fault`. L3 fixes
+the cause or creates the one repair task; Burak is not the one to repair the machine. There is no global hold: other tasks keep running. Resume a task blocked by a fault
 once its cause is fixed.
 
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle
