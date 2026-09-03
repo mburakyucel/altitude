@@ -5,7 +5,7 @@ import { useOverview } from "./data/api";
 import Inbox from "./routes/Inbox";
 import Projects from "./routes/Projects";
 import Project from "./routes/Project";
-import Task from "./routes/Task";
+import Task, { TaskConversation } from "./routes/Task";
 import Chat from "./routes/Chat";
 import Monitor from "./routes/Monitor";
 import LiveSession from "./routes/LiveSession";
@@ -27,8 +27,14 @@ export const routes: RouteObject[] = [
       { path: "/", element: <Inbox /> },
       { path: "/projects", element: <Projects /> },
       { path: "/projects/:name", element: <Project /> },
-      { path: "/projects/:name/tasks/:slug", element: <Task /> },
-      { path: "/projects/:name/tasks/:slug/live", element: <LiveSession /> },
+      {
+        path: "/projects/:name/tasks/:slug",
+        element: <Task />,
+        children: [
+          { index: true, element: <TaskConversation /> },
+          { path: "live", element: <LiveSession /> },
+        ],
+      },
       { path: "/chat", element: <ChatRedirect /> },
       { path: "/chat/:name", element: <Chat /> },
       { path: "/monitor", element: <Monitor /> },

@@ -375,8 +375,6 @@ export interface TaskActionInput {
   slug: string;
   action: string;
   reason?: string;
-  title?: string;
-  request?: string;
 }
 
 export function useTaskAction(project: string) {

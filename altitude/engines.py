@@ -469,6 +469,20 @@ def _codex_events(path: Path) -> list[dict]:
         return []
 
 
+def codex_turns(job_root: Path, session_id: str) -> list[Path]:
+    """The stdout JSONL of every turn of one thread under `job_root`, oldest first (one worker record per turn)."""
+    turns = []
+    for record_path in Path(job_root).glob("*.json"):
+        record = S.read_json(record_path, None)
+        if not isinstance(record, dict):
+            continue
+        stdout = _codex_paths(job_root, record_path.stem)["stdout"]
+        thread = _codex_thread(_codex_events(stdout)) or record.get("session_id")
+        if thread == session_id and stdout.is_file():
+            turns.append((str(record.get("started_at") or ""), record_path.stem, stdout))
+    return [path for _, _, path in sorted(turns)]
+
+
 def _codex_thread(events: list[dict]) -> str | None:
     for event in events:
         if event.get("type") == "thread.started" and event.get("thread_id"):

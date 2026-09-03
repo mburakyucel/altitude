@@ -1,7 +1,7 @@
 # Altitude architecture
 
-> **Scope:** This document describes executable `main` after phase 5 of the module-by-module
-> simplification (one engine contract, 2026-09-03). The
+> **Scope:** This document describes executable `main` after phase 7 of the module-by-module
+> simplification (Chat-only intake and the Live session tab, 2026-09-03). The
 > [2026-09-02 review checkpoint](simplification-review/README.md) records the closed `simplify/*`
 > drafts, the decisions, and the remaining phases.
 
@@ -114,12 +114,11 @@ lifecycle action requires separate authorization and post-change health verifica
 ## Interfaces and storage
 
 The Python server owns state transitions and JSON APIs. The React app provides Inbox, Projects,
-Chat, and Monitor navigation plus project/task detail routes. Task chat is a human-readable Burak/L2
-conversation; operational events remain an audit detail.
-
-The Project page's control labeled as a new request for L3 currently posts a direct task-creation
-action to the server; it does not run an L3 turn. Project Chat is the actual L3 conversation entry.
-That mismatch is retained here as current behavior pending the module-by-module UI/intake review.
+Chat, and Monitor navigation plus project/task detail routes. Chat is the only way to create a task
+from the web: the L3 turn creates it through `alt task new`. A task has two views. The Conversation
+tab is the human-readable Burak/L2 exchange; the Live session tab shows the worker's own session log
+(Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events.
+Operational events remain an audit detail.
 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, and hooks
 describe current executable behavior. Documentation under `docs/simplification-review/` separately

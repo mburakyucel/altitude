@@ -174,24 +174,4 @@ describe("Project", () => {
     expect(within(stuckCard).queryByText(/operational hold/)).toBeNull();
     expect(stuckCard).toHaveClass("border-danger/40");
   });
-
-  it("creates a new task directly", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
-
-    await user.type(await screen.findByLabelText("New request"), "Ship the badge");
-    await user.click(screen.getByRole("button", { name: "Add" }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "",
-      action: "new",
-      title: "Ship the badge",
-      request: "Ship the badge",
-    });
-  });
 });

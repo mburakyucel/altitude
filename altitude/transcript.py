@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from . import config, dispatch, state as S
+from . import config, dispatch, engines, state as S
 
 MAX_DEFAULT_TEXT = 4000
 _SECRET_KEY = re.compile(r"(authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)", re.I)
@@ -84,42 +84,30 @@ def _claude_path(session_id: str) -> Path | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _engine_paths(project: str, slug: str, task: dict, events: list[dict]) -> list[tuple[str, str, Path]]:
-    engine = str(task.get("l2_engine") or "claude")
-    identities = []
-    for ev in [*events, task]:
-        sid, aid = str(ev.get("session_id") or ""), str(ev.get("agent_id") or "")
-        eng = str(ev.get("engine") or engine)
-        key = (eng, sid, aid)
-        if sid and key not in identities:
-            identities.append(key)
-    paths = []
-    for eng, sid, aid in identities:
-        if eng == "claude":
-            path = _claude_path(sid)
-        elif eng == "codex" and aid and "/" not in aid and "\\" not in aid:
-            path = dispatch.l2_job_root(project, slug) / f"{aid}.stdout.jsonl"
-        else:
-            path = None
-        if path and path.is_file():
-            paths.append((eng, sid, path))
-    return paths
+def _engine_paths(project: str, slug: str, task: dict) -> list[Path]:
+    """The session files behind the task's current worker: Claude's one session JSONL, or every turn of the
+    Codex thread (each turn is a worker record in the task's job root)."""
+    engine, session_id = str(task.get("l2_engine") or "claude"), str(task.get("session_id") or "")
+    if engine == "codex":
+        return engines.codex_turns(dispatch.l2_job_root(project, slug), session_id)
+    path = _claude_path(session_id)
+    return [path] if path and path.is_file() else []
 
 
-def _kind(engine: str, record: dict) -> str:
+def _kind(record: dict) -> str:
     typ = str(record.get("type") or record.get("kind") or "event")
-    if typ in ("assistant", "user", "system"):
+    item = record.get("item") if isinstance(record.get("item"), dict) else {}
+    item_type = str(item.get("type") or "")
+    if typ in ("assistant", "user", "system") or item_type == "agent_message":
         return "message"
-    if "tool" in typ or typ.startswith("item."):
-        item = record.get("item") if isinstance(record.get("item"), dict) else {}
-        item_type = str(item.get("type") or "")
-        if "command" in item_type:
-            return "command"
-        if "file" in item_type or "patch" in item_type:
-            return "file"
-        return "tool"
     if typ in ("error", "turn.failed"):
         return "error"
+    if "command" in item_type:
+        return "command"
+    if "file" in item_type or "patch" in item_type:
+        return "file"
+    if "tool" in typ or (item_type and item_type != "reasoning"):
+        return "tool"
     return "engine"
 
 
@@ -130,9 +118,13 @@ def _text(record: dict) -> str:
             return value
     item = record.get("item")
     if isinstance(item, dict):
-        for key in ("text", "command", "aggregated_output", "path"):
+        for key in ("text", "command", "aggregated_output"):
             if isinstance(item.get(key), str):
                 return item[key]
+        changes = item.get("changes")
+        if isinstance(changes, list):
+            return "\n".join(f"{c.get('kind') or 'change'} {c.get('path') or ''}".rstrip()
+                             for c in changes if isinstance(c, dict))
     message = record.get("message")
     if isinstance(message, dict):
         content = message.get("content")
@@ -152,18 +144,18 @@ def view(project: str, slug: str, *, engine: str, session_id: str, cursor: int =
         rows.append({"source": "platform", "kind": "boundary" if kind in BOUNDARIES else "platform",
                      "type": kind, "at": event.get("at"), "session_id": event.get("session_id"),
                      "text": kind.replace("-", " "), "raw": _redact(event) if raw else None})
-    for eng, sid, path in _engine_paths(project, slug, task, platform):
+    for path in _engine_paths(project, slug, task):
         for record, error in _read_jsonl(path):
             if error:
-                rows.append({"source": eng, "kind": "error", "type": "record-error", "at": None,
-                             "session_id": sid, "text": error, "raw": None})
+                rows.append({"source": engine, "kind": "error", "type": "record-error", "at": None,
+                             "session_id": session_id, "text": error, "raw": None})
                 continue
             assert record is not None
             safe = _redact(record)
             text = _text(safe)
-            rows.append({"source": eng, "kind": _kind(eng, safe),
+            rows.append({"source": engine, "kind": _kind(safe),
                          "type": str(safe.get("type") or safe.get("kind") or "event"),
-                         "at": safe.get("timestamp") or safe.get("at"), "session_id": sid,
+                         "at": safe.get("timestamp") or safe.get("at"), "session_id": session_id,
                          "text": text if raw or len(text) <= MAX_DEFAULT_TEXT else text[:MAX_DEFAULT_TEXT] + "\n… output collapsed",
                          "truncated": not raw and len(text) > MAX_DEFAULT_TEXT,
                          "raw": safe if raw else None})

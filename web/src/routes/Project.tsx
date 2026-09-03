@@ -212,40 +212,6 @@ function DecisionCard({ project, row }: { project: string; row: ProjectDecision 
   );
 }
 
-function NewTask({ project }: { project: string }) {
-  const [title, setTitle] = useState("");
-  const act = useTaskAction(project);
-  return (
-    <form
-      className="flex flex-wrap items-center gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const request = title.trim();
-        if (!request) return;
-        act.mutate({
-          project,
-          slug: "",
-          action: "new",
-          title: request,
-          request,
-        });
-        setTitle("");
-      }}
-    >
-      <input
-        className="field flex-1"
-        placeholder="New request for L3 (creates a task)…"
-        aria-label="New request"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <button type="submit" className="btn btn-primary" disabled={act.isPending || !title.trim()}>
-        Add
-      </button>
-    </form>
-  );
-}
-
 function L3Card({ project, data }: { project: string; data: Record<string, unknown> }) {
   const reset = useL3Reset(project);
   const l3 = dict(data.l3);
@@ -316,7 +282,6 @@ export default function Project() {
       </header>
 
       <L3Card project={name} data={raw} />
-      <NewTask project={name} />
 
       {decisions.length > 0 ? (
         <section className="space-y-3">

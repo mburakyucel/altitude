@@ -85,7 +85,7 @@ The current logical/physical identity split is:
 | Faults/incidents | [`incidents.py`](../../altitude/incidents.py) | Blocks the faulting task, deduplicates faults into incident evidence, and queues one L3 message per incident (phase 2). |
 | Transcript/status | [`transcript.py`](../../altitude/transcript.py), [`status.py`](../../altitude/status.py), [`monitor.py`](../../altitude/monitor.py) | Generation-fenced live transcript with redaction (portable bundles removed in phase 1b), task rollups, provider/session/context/quota monitoring. |
 | Operator interface | [`bin/alt`](../../bin/alt), [`scripts/restart_altitude.py`](../../scripts/restart_altitude.py), `Makefile` | CLI commands, guarded restart/build/health workflow, tests, service install, and operational inspection. |
-| Web UI | [`web/src`](../../web/src) | Projects, Inbox, project detail, L3 chat, task conversation, monitor, and opt-in live transcript. |
+| Web UI | [`web/src`](../../web/src) | Projects, Inbox, project detail, L3 chat, task conversation, monitor, and live transcript (a task tab since phase 7). |
 
 ## Important current cross-cuts
 
@@ -94,7 +94,7 @@ The current logical/physical identity split is:
 Codex L3 may create a task through a validated L3 action; Claude L3 may use scoped `alt task new`.
 Separately, the Project page's “new request for L3” form posts `action: "new"` directly to the
 server, which calls `tasks.new` and schedules dispatch without an L3 turn. The label and behavior
-therefore disagree.
+therefore disagree. (Phase 7 removed the form; Chat is the only web intake.)
 
 ### Dual execution contracts
 
@@ -119,7 +119,7 @@ worktree/recovery gates, and launches a replacement with the same provider sessi
 `codex exec resume`; Claude uses `claude --resume`. This is actual `main` behavior, not merely a
 proposal.
 
-The Live Session composer sends the displayed dispatch/session/engine identifiers. The normal Task
+(Phase 7 removed the Live session composer.) The Live Session composer sent the displayed dispatch/session/engine identifiers. The normal Task
 and Project composers do not send those optional fields, so their messages target the generation
 current when the server acquires the task lock instead of reliably rejecting a stale page.
 

@@ -147,6 +147,21 @@
     background: var(--accent-tint);
     color: var(--accent-text);
   }
+  .tab {
+    padding: 8px 12px;
+    margin-bottom: -1px;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .tab:hover {
+    color: var(--text-primary);
+  }
+  .tab[aria-current="page"] {
+    border-bottom-color: var(--accent);
+    color: var(--accent-text);
+  }
   .bar {
     height: 6px;
     border-radius: var(--radius-pill);
