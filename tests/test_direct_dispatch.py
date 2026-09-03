@@ -102,7 +102,7 @@ class TestDirectDispatch(unittest.TestCase):
         self.assertTrue(token)
         self.assertEqual(launch.call_args.kwargs["extra_env"]["ALTITUDE_L2_TOKEN"], token)
         self.assertEqual(running["l2_engine"], "codex")
-        self.assertIn("default policy", running["routing"]["why"])
+        self.assertIn("default policy", running["routing"])
 
 if __name__ == "__main__":
     unittest.main()

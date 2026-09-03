@@ -221,7 +221,7 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
 
 def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | None, agent_id: str | None,
              worktree: str | None, branch: str | None, l2_token: str, l2_engine: str = "claude",
-             engine_model: str | None = None, routing: dict | None = None, actor: str = "altd") -> dict:
+             engine_model: str | None = None, routing: str | None = None, actor: str = "altd") -> dict:
     if not session_id or not agent_id or not l2_token:
         raise TransitionError(f"{slug}: dispatch requires a concrete worker, session, and L2 capability")
     with S.project_lock(project):

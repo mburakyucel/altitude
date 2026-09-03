@@ -60,7 +60,7 @@ Stated goal: **elegant, simple, modular, human-readable, robust.**
 | 1b | `transcript.py`, `state.py` per-event rewrite | live view over the provider's own JSONL; no bundles | none |
 | 1c | `dispatch.cleanup_after_done` family (~460) | ancestor-of-`origin/main` and no live worker, then remove worktree and branch | none |
 | 1d | `github_intake.py` (231) | fetch the issue once at task creation, inline into the request | none |
-| 1e | `digest.py` TTS, incident id allocator, four resume fields, routing snapshot | drop, timestamp id, one field, reason string | none |
+| 1e | `digest.py` TTS, incident id allocator, routing snapshot | drop, timestamp id, reason string. The four resume fields (`resume_after`, `resume_answer`, `resume_prefix`, `resume_exact_prompt`) move to phase 3: decision 2 replaces kill-and-resume steering, so consolidating them first would be done twice | none |
 | 2 | `recovery.py`, `incidents.py`, `server.tick` | incident record plus blocked task; two-tier handling; manual hold/release | decision 4 |
 | 3 | `dispatch.py` steering, `tasks.py` identity, `server.on_l2_finished` | queued delivery, explicit stop; slug + attempt + provider session; one project lock | decision 2 |
 | 4 | `l1.py`, `schemas/review.json`, `personas/l1.md`, `personas/reviewer.md`, helper status | deleted; persona carries the delegation guidance | decision 5 |

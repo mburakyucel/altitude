@@ -2,9 +2,8 @@
 
 Routing is weekly-first because the weekly allowance is the scarce resource. A
 short window is only an availability signal: it can rule an engine out, but it
-never makes an engine with less weekly headroom look preferable. The raw quota
-evidence travels with every decision so a task never silently changes providers
-between brief creation and launch.
+never makes an engine with less weekly headroom look preferable. The decision
+persists on the task as one reason string.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -41,8 +40,8 @@ def _number(value) -> float | None:
     return number if 0 <= number <= 100 else None
 
 
-def _codex_window(data: dict, minutes: int) -> dict | None:
-    """Return only an explicitly identified duration; never guess primary/secondary semantics."""
+def _codex_window(data: dict, minutes: int) -> float | None:
+    """Percent used of an explicitly identified window; never guess primary/secondary semantics."""
     for prefix in ("primary", "secondary"):
         try:
             duration = int(data.get(f"{prefix}_window_minutes"))
@@ -50,46 +49,23 @@ def _codex_window(data: dict, minutes: int) -> dict | None:
             continue
         used = _number(data.get(f"{prefix}_used"))
         if duration == minutes and used is not None:
-            return {"used": used, "resets": data.get(f"{prefix}_resets"), "minutes": duration}
+            return used
     return None
 
 
-def quota_snapshot() -> dict:
-    """Normalize comparable windows while retaining the provider's raw observation."""
+def _usage() -> dict[str, tuple[float | None, float | None]]:
+    """Per engine: (weekly % used, short-window % used); None when unknown."""
     from . import engines
     from .monitor import quota
-
-    claude_raw = quota() or {"known": False}
-    codex_raw = quota_codex() or {"known": False}
-    claude_weekly = _number(claude_raw.get("seven_day")) if claude_raw.get("known") else None
-    claude_short = _number(claude_raw.get("five_hour")) if claude_raw.get("known") else None
-    claude_hold = engines.usage_hold()
-    if claude_hold:
-        claude_short = 100.0
-    codex_week = _codex_window(codex_raw, WEEK_MINUTES) if codex_raw.get("known") else None
-    codex_short = _codex_window(codex_raw, SHORT_MINUTES) if codex_raw.get("known") else None
-    return {
-        "claude": {
-            "weekly_used": claude_weekly,
-            "short_used": claude_short,
-            "weekly_resets": claude_raw.get("seven_day_resets"),
-            "short_resets": claude_hold or claude_raw.get("five_hour_resets"),
-            "observed_at": claude_raw.get("at"),
-            "raw": claude_raw,
-        },
-        "codex": {
-            "weekly_used": codex_week.get("used") if codex_week else None,
-            "short_used": codex_short.get("used") if codex_short else None,
-            "weekly_resets": codex_week.get("resets") if codex_week else None,
-            "short_resets": codex_short.get("resets") if codex_short else None,
-            "observed_at": codex_raw.get("read_at"),
-            "raw": codex_raw,
-        },
-    }
+    claude, codex = quota() or {}, quota_codex()
+    claude_week = _number(claude.get("seven_day")) if claude.get("known") else None
+    claude_short = 100.0 if engines.usage_hold() else (_number(claude.get("five_hour")) if claude.get("known") else None)
+    codex_week = _codex_window(codex, WEEK_MINUTES) if codex.get("known") else None
+    codex_short = _codex_window(codex, SHORT_MINUTES) if codex.get("known") else None
+    return {"claude": (claude_week, claude_short), "codex": (codex_week, codex_short)}
 
 
-def _unavailable(observation: dict) -> str | None:
-    weekly, short = observation.get("weekly_used"), observation.get("short_used")
+def _unavailable(weekly: float | None, short: float | None) -> str | None:
     if weekly is not None and weekly >= 100:
         return "weekly window exhausted"
     if short is not None and short >= 100:
@@ -102,31 +78,30 @@ def _default(role: str) -> str:
 
 
 def pick_engine(role: str, *, forced: str | None = None, other_than: str | None = None) -> dict:
-    """Return a persisted-ready ``{engine, why, quota}`` decision.
+    """Return ``{engine, why}``; ``engine`` is None when nothing is available.
 
-    ``other_than`` remains for call compatibility but never overrides quota:
-    independent review is useful, but not worth draining the scarcer weekly seat.
+    ``other_than`` never overrides quota: independent review is useful, but not
+    worth draining the scarcer weekly seat.
     """
     if forced and forced not in config.ENGINES:
         raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
-    quota = quota_snapshot()
-    unavailable = {engine: _unavailable(quota[engine]) for engine in config.ENGINES}
+    usage = _usage()
+    unavailable = {engine: _unavailable(*usage[engine]) for engine in config.ENGINES}
     if forced:
         if unavailable[forced]:
-            return {"engine": None, "why": f"forced {forced} is unavailable: {unavailable[forced]}",
-                    "quota": quota, "requested_engine": forced}
-        return {"engine": forced, "why": "forced by task or project policy", "quota": quota}
+            return {"engine": None, "why": f"forced {forced} is unavailable: {unavailable[forced]}"}
+        return {"engine": forced, "why": "forced by task or project policy"}
 
     available = [engine for engine in config.ENGINES if unavailable[engine] is None]
     if not available:
         why = "; ".join(f"{engine}: {unavailable[engine]}" for engine in config.ENGINES)
-        return {"engine": None, "why": f"no engine available ({why})", "quota": quota}
+        return {"engine": None, "why": f"no engine available ({why})"}
     if len(available) == 1:
         engine = available[0]
         other = next(item for item in config.ENGINES if item != engine)
-        return {"engine": engine, "why": f"{other} unavailable: {unavailable[other]}", "quota": quota}
+        return {"engine": engine, "why": f"{other} unavailable: {unavailable[other]}"}
 
-    weekly = {engine: quota[engine].get("weekly_used") for engine in available}
+    weekly = {engine: usage[engine][0] for engine in available}
     comparable = [engine for engine in available if weekly[engine] is not None]
     default = _default(role)
     if len(comparable) == 2:
@@ -143,4 +118,4 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
         why = f"weekly quotas unknown or incomparable → default policy {engine}"
     if other_than and engine == other_than:
         why += "; reviewer stayed on quota-selected engine instead of forcing provider diversity"
-    return {"engine": engine, "why": why, "quota": quota}
+    return {"engine": engine, "why": why}

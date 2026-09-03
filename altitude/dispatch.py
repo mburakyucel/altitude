@@ -280,7 +280,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
                           if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
         task.update({"dispatching": S.now(), "l2_engine": engine, "engine_model": selected_model,
-                     "routing": choice})
+                     "routing": choice["why"]})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
     dispatch_id = f"{slug}-{attempt}"
@@ -314,7 +314,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         worktree = str(worktree_path)
         T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]), l2_token=l2_token,
-                   l2_engine=engine, engine_model=selected_model, routing=choice)
+                   l2_engine=engine, engine_model=selected_model, routing=choice["why"])
     except T.TransitionError as exc:
         if agent.get("id"):
             try:
@@ -336,7 +336,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             except Exception:  # noqa: BLE001 — preserve the launch fault; recovery owns any orphaned worker
                 pass
         raise record_dispatch_failure(project, slug, exc) from exc
-    return {"dispatch_id": dispatch_id, "engine": engine, "routing": choice,
+    return {"dispatch_id": dispatch_id, "engine": engine, "routing": choice["why"],
             "agent": agent, "stdout": res.get("stdout", "")}
 
 
