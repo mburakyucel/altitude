@@ -262,6 +262,8 @@ export const ChatViewSchema = z
     history: z.array(ChatMessageSchema),
     busy: z.boolean(),
     l3: z.record(z.string(), z.unknown()).nullish(),
+    /** The project's L3 engine pin; null or absent means the weekly quota decides. */
+    engine: z.enum(["claude", "codex"]).nullish(),
   })
   .passthrough();
 
@@ -454,6 +456,21 @@ export function useL3Reset(project: string) {
   });
 }
 
+export type L3Engine = "claude" | "codex";
+
+/**
+ * Pin the project's L3 to one engine, or clear the pin with null so the weekly quota decides. The
+ * pin covers chat and server-triggered turns alike and stays until changed.
+ */
+export function useL3Engine(project: string) {
+  return useOptimisticMutation<L3Engine | null, unknown, ChatView>({
+    mutationFn: (engine) => post("/api/l3/engine", { project, engine }),
+    queryKey: ["chat", project],
+    update: (cached, engine) => cached && { ...cached, engine },
+    failureMessage: "Couldn't change the L3 engine.",
+  });
+}
+
 export function useRestart() {
   return useOptimisticMutation<void, unknown, Overview>({
     mutationFn: () => post("/api/restart", {}),
@@ -474,9 +491,6 @@ export interface ChatDone {
   engine?: string | null;
 }
 
-/** An explicit engine for one L3 turn; undefined leaves the choice to the project pin or the quota. */
-export type ChatEngine = "claude" | "codex";
-
 /**
  * POST /api/chat and stream the NDJSON reply: {"t": "..."} lines feed onText, the final
  * {"done": {...}} is returned (the caller surfaces done.error). Polling is paused for the
@@ -486,14 +500,13 @@ export async function streamChat(
   project: string,
   text: string,
   onText: (chunk: string) => void,
-  engine?: ChatEngine,
 ): Promise<ChatDone> {
   setChatStreaming(true);
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(engine ? { project, text, engine } : { project, text }),
+      body: JSON.stringify({ project, text }),
     });
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
     if (!res.body) throw new ApiError(res.status, "no response body");

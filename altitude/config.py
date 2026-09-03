@@ -94,6 +94,21 @@ def project(name: str) -> dict:
     return p
 
 
+def set_l3_engine(name: str, engine: str | None) -> dict:
+    """Pin the project's L3 to one engine, or clear the pin with None; the next L3 turn follows it."""
+    if engine and engine not in ENGINES:
+        raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
+    projects = load_projects()
+    if name not in projects:
+        raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
+    if engine:
+        projects[name]["l3_engine"] = engine
+    else:
+        projects[name].pop("l3_engine", None)
+    save_projects(projects)
+    return projects[name]
+
+
 def project_path(name: str) -> Path:
     return Path(project(name)["path"]).expanduser()
 

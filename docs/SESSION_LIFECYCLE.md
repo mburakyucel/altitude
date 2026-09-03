@@ -30,7 +30,10 @@ Routing compares only named seven-day Claude data with a Codex window whose repo
 exactly seven days. A five-hour window is an availability signal, not the main preference score.
 Unknown or incomparable weekly data uses the configured default, currently Codex, and records that
 fact. An exhausted short or weekly window rules out only that provider. If both are unavailable,
-the task stays queued. An explicit provider pin never silently falls back.
+the task stays queued. An explicit provider pin never silently falls back. An L3 turn stays on the
+engine that ran the previous one unless that engine is unavailable or the other has fifteen points more
+weekly headroom, so the transcript and its prompt cache stay warm instead of alternating between two
+close quotas.
 
 Altitude does not infer separate Fable and Opus allowances from an account-wide meter. A model pin
 is honored inside the selected provider; model switching requires explicit observable policy rather
@@ -84,8 +87,9 @@ blocks the task as ended without a report, exactly like a Claude session that ex
 
 ## L3 sessions and provider changes
 
-L3 stores separate Claude and Codex session records. Burak can pin one turn to either provider from
-the Chat composer or `alt chat --engine`; a pinned turn runs there or reports the hold, and never
+L3 stores separate Claude and Codex session records. The Chat composer's engine choice pins the
+project's L3 to Claude or Codex, for chat and server-triggered turns alike, until it is set back to
+Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never
 falls back. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
 human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
