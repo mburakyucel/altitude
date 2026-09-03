@@ -5,8 +5,7 @@ manage agent plumbing. L3 is the project coordinator. Each active task has one d
 L2 owner, and that L2 may work alone or delegate bounded slices to its engine's own subagents.
 
 Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
-[`design/wireframes/README.md`](design/wireframes/README.md).
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work.
 
 The 2026-09 module-by-module simplification is complete. [`docs/SIMPLIFICATION.md`](docs/SIMPLIFICATION.md)
 records Burak's paradigm decisions, the working rules that still apply to every PR, and what each
