@@ -1,5 +1,5 @@
 """File leases and capacity limits let independent L2 tasks run without collisions."""
-import os, sys, tempfile, unittest
+import os, shutil, sys, tempfile, unittest
 from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-par-")
 ROOT = Path(__file__).resolve().parent.parent
@@ -11,6 +11,7 @@ class TestLeases(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         config.ensure_root()
+        shutil.rmtree(S.tasks_dir("p"), ignore_errors=True)  # other modules' tasks share this runtime home
         config.save_projects({"p": {"name": "p", "path": config.ROOT.as_posix()}})
         engines.claude_agents = lambda: []  # no live sessions
 

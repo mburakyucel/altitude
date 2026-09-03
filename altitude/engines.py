@@ -1,14 +1,11 @@
 """Headless Claude Code and Codex command builders and runners."""
 from __future__ import annotations
-import ast
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
-import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -35,37 +32,6 @@ CODEX_PATCH_NOTE = (
     "`apply_patch` through the exec tool and pass the patch on stdin; this stays inside the Codex workspace-write "
     "sandbox and its configured writable roots."
 )
-
-
-def codex_isolation_config(cwd: Path, *, writable: bool = True,
-                           readable_roots: list[Path] | None = None) -> list[str]:
-    """Suppress mutable user/project/plugin sources; managed host policy remains authoritative.
-
-    User config and rules are ignored by command-line flags, and plugins are disabled. Do not synthesize a dynamic
-    ``projects.<path>.trust_level`` override: the Codex strict schema rejects that mutable map before it can report a
-    thread identity. Hooks are disabled for these headless turns; the Codex permission profile and
-    whole-turn containment, not shell-text automation, are the write and process boundaries. Host-managed
-    requirements remain authoritative.
-    """
-    profile = "altitude_worker" if writable else "altitude_reader"
-    access = "write" if writable else "read"
-    # Start from Codex's maintained workspace baseline so its own executable/runtime remain available, then deny the
-    # broad root and reopen only minimal runtime paths plus the effective workspace roots. Coordinators narrow those
-    # roots to read; every worker keeps Git/Codex metadata read-only.
-    parent = ":workspace"
-    codex_binary = Path(shutil.which(config.CODEX_BIN) or config.CODEX_BIN).resolve()
-    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}").resolve()
-    extra_reads = "".join(f", {json.dumps(str(Path(root).resolve()))}=\"read\""
-                          for root in [codex_binary, *(readable_roots or [])])
-    filesystem = ('{ ":root"="deny", ":minimal"="read", '
-                  f'":workspace_roots"={{ "."="{access}", ".git"="read", ".codex"="read" }}'
-                  f', {json.dumps(str(runtime_dir))}="deny"{extra_reads} }}')
-    return ["features.hooks=false", "features.plugins=false",
-            "features.remote_plugin=false", "features.apps=false", "features.multi_agent=false",
-            "features.goals=false", 'web_search="disabled"', 'approval_policy="never"',
-            "shell_environment_policy.ignore_default_excludes=false",
-            f"default_permissions=\"{profile}\"", f"permissions.{profile}.extends=\"{parent}\"",
-            f"permissions.{profile}.filesystem={filesystem}"]
 
 
 def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
@@ -455,20 +421,6 @@ def claude_rm(agent_id: str) -> str:
     return (p.stdout + p.stderr).strip()
 
 
-class CodexSandboxPreflightError(RuntimeError):
-    """A workspace-write turn cannot start because its host sandbox cannot safely write every promised root."""
-
-    def __init__(self, roots: list[str], detail: str):
-        self.roots = list(roots)
-        detail = str(detail).strip() or "unknown bwrap failure"
-        self.detail = detail if len(detail) <= 500 else detail[:245] + " ... " + detail[-250:]
-        super().__init__(f"Codex sandbox preflight failed for {', '.join(self.roots)}: {self.detail}")
-
-
-class CodexContainmentError(RuntimeError):
-    """A Codex turn cannot start or finish without a proven-empty transient cgroup."""
-
-
 def _codex_unit(worker_id: str) -> str:
     """A systemd-safe, collision-resistant transient service name."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(worker_id))
@@ -492,224 +444,29 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
 
 
-def _systemd_unit_properties(unit: str) -> dict[str, str]:
-    """Read the security-relevant state of one transient user unit, failing closed with no user bus."""
-    cmd = [SYSTEMCTL_BIN, "--user", "show", unit, "--property=LoadState", "--property=ActiveState",
-           "--property=SubState", "--property=ControlGroup"]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
-                                env=codex_env(retain_user_bus=True))
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise CodexContainmentError(f"cannot inspect Codex containment unit {unit}: {exc}") from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "systemctl show failed").strip()
-        # A collected transient unit is expected to disappear. This response proves the user manager was reached;
-        # connection/permission failures remain hard failures.
-        if "could not be found" in detail.lower() or "not found" in detail.lower():
-            return {"LoadState": "not-found", "ActiveState": "inactive", "SubState": "dead",
-                    "ControlGroup": ""}
-        raise CodexContainmentError(f"cannot inspect Codex containment unit {unit}: {detail[:500]}")
-    props: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        key, separator, value = line.partition("=")
-        if separator:
-            props[key] = value
-    required = {"LoadState", "ActiveState", "ControlGroup"}
-    if not required.issubset(props):
-        raise CodexContainmentError(f"incomplete systemd state for Codex containment unit {unit}")
-    return props
-
-
-def _cgroup_unpopulated(control_group: str) -> bool:
-    """Prove a v2 cgroup and all descendants are empty; a removed cgroup is also empty."""
-    if not control_group:
-        return True
-    relative = Path(control_group.lstrip("/"))
-    if ".." in relative.parts:
-        return False
-    events = Path("/sys/fs/cgroup") / relative / "cgroup.events"
-    try:
-        values = dict(line.split(None, 1) for line in events.read_text().splitlines() if len(line.split(None, 1)) == 2)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
-    return values.get("populated") == "0"
-
-
-def _codex_unit_empty(unit: str) -> bool:
-    props = _systemd_unit_properties(unit)
-    if props.get("LoadState") == "not-found":
-        return True
-    if props.get("ActiveState") not in ("inactive", "failed"):
-        return False
-    return _cgroup_unpopulated(props.get("ControlGroup") or "")
-
-
-def _wait_codex_unit_empty(unit: str, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while True:
-        if _codex_unit_empty(unit):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
-
-
-def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
-    """Stop every process in the transient service, escalating to cgroup-wide SIGKILL if needed."""
-    try:
-        stopped = subprocess.run([SYSTEMCTL_BIN, "--user", "stop", "--no-block", unit],
-                                 capture_output=True, text=True,
-                                 timeout=timeout, env=codex_env(retain_user_bus=True))
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise CodexContainmentError(f"cannot stop Codex containment unit {unit}: {exc}") from exc
-    if stopped.returncode != 0 and not _codex_unit_empty(unit):
-        detail = (stopped.stderr or stopped.stdout or "systemctl stop failed").strip()
-        raise CodexContainmentError(f"cannot stop Codex containment unit {unit}: {detail[:500]}")
-    if _wait_codex_unit_empty(unit, timeout):
-        return
-    if _codex_unit_empty(unit):
-        return
-    killed = subprocess.run([SYSTEMCTL_BIN, "--user", "kill", "--kill-who=all", "--signal=SIGKILL", unit],
-                            capture_output=True, text=True, timeout=timeout,
-                            env=codex_env(retain_user_bus=True))
-    if killed.returncode != 0 and _codex_unit_empty(unit):
-        return
-    if killed.returncode != 0 or not _wait_codex_unit_empty(unit, timeout):
-        detail = (killed.stderr or killed.stdout or "unit remained populated").strip()
-        raise CodexContainmentError(f"Codex containment unit {unit} did not empty: {detail[:500]}")
-
-
-def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
-    """Return every root a workspace-write override promises; malformed overrides are not promises.
-
-    Non-existent roots stay in the list so the in-sandbox write fails closed instead of silently narrowing access.
-    """
-    base = Path(cwd).resolve()
-    roots = [str(base)]
-    for override in extra_config or []:
-        key, separator, value = override.partition("=")
-        if not separator or key.strip() != "sandbox_workspace_write.writable_roots":
-            continue
-        try:
-            parsed = ast.literal_eval(value.strip())
-        except (SyntaxError, ValueError):
-            logger.warning("Codex sandbox preflight ignored unparseable writable-roots override: %r", override)
-            continue
-        if isinstance(parsed, (list, tuple)):
-            roots.extend(str((base / root).resolve()) for root in parsed if isinstance(root, str))
-    return list(dict.fromkeys(roots))
-
-
-def _codex_network_access(extra_config: list[str] | None) -> bool:
-    """Return the effective workspace-write network setting from Codex's TOML-style overrides."""
-    network_access = False
-    for override in extra_config or []:
-        key, separator, value = override.partition("=")
-        if not separator or key.strip() != "sandbox_workspace_write.network_access":
-            continue
-        normalized = value.strip().lower()
-        if normalized in {"true", "false"}:
-            network_access = normalized == "true"
-    return network_access
-
-
-def codex_sandbox_preflight(cwd: Path, extra_config: list[str] | None = None, timeout: int = 15) -> None:
-    """Prove the requested Linux sandbox can create, sync, and remove a sentinel in every writable root.
-
-    `codex sandbox` cannot express these inline roots reliably, so probe the capability Codex depends on directly.
-    Other platforms and hosts without bwrap stay available with one warning.
-    """
-    if not sys.platform.startswith("linux"):
-        logger.warning("Codex sandbox preflight skipped: platform is not Linux")
-        return
-    bwrap = shutil.which("bwrap")
-    if not bwrap:
-        logger.warning("Codex sandbox preflight skipped: bwrap is not resolvable")
-        return
-    roots = codex_probe_roots(cwd, extra_config)
-    sentinel = f".altitude-codex-write-probe-{uuid.uuid4().hex}"
-    script = """set -eu
-name=$1
-shift
-for root do
-    probe=$root/$name
-    { printf '%s\\n' altitude-codex-write-probe > "$probe" && sync "$probe" && rm -f "$probe"; } || {
-        status=$?
-        printf 'codex sandbox preflight failed for root: %s\\n' "$root" >&2
-        exit "$status"
-    }
-done
-"""
-    cmd = [bwrap, "--dev-bind", "/", "/", "--unshare-user"]
-    if not _codex_network_access(extra_config):
-        cmd.append("--unshare-net")
-    cmd += ["--die-with-parent", "/bin/sh", "-c", script, "altitude-codex-write-probe", sentinel, *roots]
-    unit = _codex_unit(f"preflight-{uuid.uuid4().hex}")
-    launcher_env = codex_env(retain_user_bus=True)
-    contained_cmd = _codex_service_command(unit, cmd, codex_env())
-    detail = ""
-    try:
-        probe = subprocess.run(contained_cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                               env=launcher_env)
-        try:
-            empty = _wait_codex_unit_empty(unit)
-        except CodexContainmentError as exc:
-            empty = False
-            detail = str(exc)
-        if probe.returncode == 0 and empty:
-            return
-        if not empty:
-            try:
-                _stop_codex_unit(unit)
-            except CodexContainmentError as exc:
-                detail = str(exc)
-            detail = detail or f"Codex sandbox preflight service {unit} remained populated"
-        else:
-            detail = probe.stderr or f"bwrap exited {probe.returncode} without stderr"
-    except subprocess.TimeoutExpired as exc:
-        try:
-            _stop_codex_unit(unit)
-        except CodexContainmentError as stop_exc:
-            detail = str(stop_exc)
-        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
-        detail = detail or stderr or f"bwrap timed out after {timeout} seconds"
-    except OSError as exc:
-        detail = f"{type(exc).__name__}: {exc}"
-    cleanup_errors = []
-    for root in roots:
-        try:
-            (Path(root) / sentinel).unlink()
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            cleanup_errors.append(f"{root}: {type(exc).__name__}: {exc}")
-    if cleanup_errors:
-        detail = f"{detail.rstrip()}; cleanup failed: {'; '.join(cleanup_errors)}"
-    raise CodexSandboxPreflightError(roots, detail)
-
-
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
     root = Path(job_root)
     return {"record": root / f"{worker_id}.json", "stdout": root / f"{worker_id}.stdout.jsonl",
             "stderr": root / f"{worker_id}.stderr.log"}
 
 
-def _codex_events(path: Path) -> list[dict]:
-    try:
-        lines = path.read_text(errors="replace").splitlines()
-    except OSError:
-        return []
+def _codex_parse(text: str) -> list[dict]:
     events = []
-    for line in lines:
+    for line in text.splitlines():
         try:
             event = json.loads(line)
         except ValueError:
-            continue
+            continue  # an incomplete final record is read again next time
         if isinstance(event, dict):
             events.append(event)
     return events
+
+
+def _codex_events(path: Path) -> list[dict]:
+    try:
+        return _codex_parse(path.read_text(errors="replace"))
+    except OSError:
+        return []
 
 
 def _codex_thread(events: list[dict]) -> str | None:
@@ -734,15 +491,15 @@ def _git_common_dir(cwd: Path) -> Path:
     return Path(p.stdout.strip())
 
 
-def codex_sandbox(cwd: Path) -> list[str]:
-    """Codex's own workspace-write sandbox is the worker's containment (`-c` overrides, verified with codex 0.152).
+def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
+    """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
 
-    Writable roots must exist because Codex bind-mounts them: the task worktree, its Git common directory so the
-    worker can commit and push, and the Altitude home so `alt` can record what the worker reports. Network stays
-    on for `git push`, `gh`, and the repository's own tests. The sandboxed shell inherits the launch environment,
-    so the task identity variables reach `alt` unchanged.
+    Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
+    Git common directory so it can commit and push), and the Altitude home so `alt` can record what the turn
+    reports. Everything else is readable. Network stays on for `git push`, `gh`, and the repository's own tests.
+    The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
     """
-    roots = [Path(cwd).resolve(), _git_common_dir(cwd), config.ROOT.resolve()]
+    roots = [Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()]
     return ['sandbox_mode="workspace-write"',
             "sandbox_workspace_write.writable_roots=" + json.dumps([str(root) for root in roots]),
             "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
@@ -810,7 +567,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
     if model:
         cmd += ["-m", model]
-    for setting in codex_sandbox(cwd):
+    for setting in codex_sandbox(cwd, extra_roots=[_git_common_dir(cwd)]):
         cmd += ["-c", setting]
     cmd += [resume, "-"] if resume else ["-"]
     text = prompt if resume else (
@@ -952,136 +709,41 @@ def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> boo
     return any(a.get("cwd") == wt and a.get("state") not in ("failed", "done", "stopped") for a in claude_agents())
 
 
-def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",
-               model: str | None = None, timeout: int = 900, extra_config: list[str] | None = None,
-               effort: str | None = None, extra_env: dict | None = None,
-               fault_context: dict[str, str] | None = None, resume: str | None = None,
-               on_start=None, contain: bool | None = None,
-               readable_roots: list[Path] | None = None) -> dict:
-    """Codex headless (L3 turns) — verified: needs stdin closed, -o for
-    the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from
-    the `turn.completed` events on stdout. Workspace-write turns are contained by default; ``contain=True`` also
-    places a read-only coordinator turn in a transient cgroup before it may return trusted actions."""
-    try:
-        effective_config = [*(extra_config or []), *codex_isolation_config(
-            cwd, writable=sandbox == "workspace-write", readable_roots=readable_roots)]
-    except RuntimeError as exc:
-        return {"text": "", "structured": None, "returncode": 1, "engine_started": False,
-                "fault_recorded": None, "usage": {}, "error": str(exc),
-                "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
-                "raw_stderr_truncated": False}
-    if sandbox == "workspace-write":
-        try:
-            codex_sandbox_preflight(cwd, effective_config)
-        except CodexSandboxPreflightError as exc:
-            from . import incidents  # local import avoids the incident/engine module cycle
-            fault_recorded = None
-            try:
-                incidents.system_fault("codex-sandbox", f"roots={exc.roots!r}; {exc.detail}",
-                                     **(fault_context or {}))
-                fault_recorded = "codex-sandbox"
-            except Exception:  # noqa: BLE001 — fault persistence must not replace the deterministic gate failure
-                logger.exception("Failed to record Codex sandbox preflight system fault")
-            error = str(exc)
-            if len(error) > 500:
-                error = error[:245] + " ... " + error[-250:]
-            # Callers already persist and stamp ordinary failures; returning that contract avoids duplicate faults
-            # and stranded L3 turns while still guaranteeing Codex was never invoked.
-            return {"text": "", "structured": None, "returncode": 1, "engine_started": False,
-                    "fault_recorded": fault_recorded,
-                    "usage": {}, "error": error,
-                    "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False,
-                    "raw_stderr_truncated": False}
-    with tempfile.NamedTemporaryFile("r", suffix=".out", delete=False) as outf:
-        out_path = outf.name
-    if resume:
-        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", out_path, "--skip-git-repo-check",
-               "--ignore-user-config", "--ignore-rules"]
-    else:
-        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", out_path, "-C", str(cwd),
-               "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
-    if schema:
-        cmd += ["--output-schema", str(schema)]
+def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
+               extra_env: dict | None = None, resume: str | None = None, on_start=None) -> dict:
+    """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
+    codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
+    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
+    cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), "--json", "--strict-config",
+           "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
     if model:
         cmd += ["-m", model]
-    for kv in effective_config:
-        cmd += ["-c", kv]
+    for setting in codex_sandbox(cwd):
+        cmd += ["-c", setting]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    contained = sandbox == "workspace-write" if contain is None else contain
-    unit = _codex_unit(f"sync-{uuid.uuid4().hex}") if contained else None
-    containment_error = None
+    cmd += [resume, "-"] if resume else ["-"]
+    unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
+    proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    if on_start:
+        on_start(proc.pid)
     try:
-        env = codex_env(extra_env, retain_user_bus=bool(unit))
-        child_env = codex_env(extra_env)
-        argv = cmd + ([resume, prompt] if resume else [prompt])
-        contained_argv = _codex_service_command(unit, argv, child_env) if unit else argv
-        if on_start:
-            proc = subprocess.Popen(contained_argv, cwd=str(cwd), stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL, env=env,
-                                    start_new_session=True)
-            on_start(proc.pid)
-            try:
-                stdout, stderr = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    if unit:
-                        _stop_codex_unit(unit)
-                finally:
-                    proc.kill(); stdout, stderr = proc.communicate()
-                raise
-            p = subprocess.CompletedProcess(contained_argv, proc.returncode, stdout, stderr)
-        else:
-            try:
-                p = subprocess.run(contained_argv, cwd=str(cwd), capture_output=True, text=True, timeout=timeout,
-                                   stdin=subprocess.DEVNULL, env=env)
-            except subprocess.TimeoutExpired:
-                if unit:
-                    _stop_codex_unit(unit)
-                raise
-        if unit:
-            try:
-                if not _wait_codex_unit_empty(unit):
-                    _stop_codex_unit(unit)
-                if not _codex_unit_empty(unit):
-                    raise CodexContainmentError(f"Codex containment unit {unit} remained populated after the turn")
-            except CodexContainmentError as exc:
-                containment_error = str(exc)
-        text = Path(out_path).read_text() if Path(out_path).exists() else ""
-    finally:
-        try:
-            os.unlink(out_path)
-        except OSError:
-            pass
-    structured = None
-    try:
-        structured = json.loads(text)
-    except ValueError:
-        pass
-    usage, messages, session_id, reported_session_id = {}, [], resume, None
-    for line in (p.stdout or "").splitlines():
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if ev.get("type") == "thread.started" and ev.get("thread_id"):
-            session_id = reported_session_id = str(ev["thread_id"])
-        elif ev.get("type") == "turn.completed" and isinstance(ev.get("usage"), dict):
-            usage = dict(ev["usage"])
-        elif ev.get("type") == "item.completed" and (ev.get("item") or {}).get("type") == "agent_message":
-            messages.append(str((ev["item"] or {}).get("text") or ""))
-    if not text.strip() and messages:  # no -o file (or empty): the last agent message is the answer
-        text = messages[-1]
-    if containment_error:
-        # Never expose an actionable answer while a descendant could still be running. Raw streams remain local
-        # diagnostic evidence, while L3 sees a deterministic engine failure.
-        text, structured = "", None
-    return {"text": text.strip(), "structured": structured,
-            "returncode": 1 if containment_error else p.returncode, "usage": usage,
-            "session_id": session_id, "reported_session_id": reported_session_id,
-            "unit": unit, "containment_empty": (not containment_error) if unit else None,
-            "error": containment_error or (None if p.returncode == 0 else p.stderr.strip()[:500]),
-            "raw_stdout": p.stdout or "", "raw_stderr": p.stderr or "",
+        stdout, stderr = proc.communicate(prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
+        proc.kill()
+        proc.communicate()
+        raise
+    events = _codex_parse(stdout or "")
+    messages = [str((event.get("item") or {}).get("text") or "") for event in events
+                if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
+    thread = _codex_thread(events)
+    return {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
+            "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
+            "error": None if proc.returncode == 0 else (stderr or "").strip()[:500],
+            "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
 
 

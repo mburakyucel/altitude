@@ -9,7 +9,7 @@ from unittest import mock
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-l3-sessions-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, l3, route, state as S  # noqa: E402
+from altitude import config, engines, l3  # noqa: E402
 
 
 class TestL3Sessions(unittest.TestCase):
@@ -33,9 +33,7 @@ class TestL3Sessions(unittest.TestCase):
             calls.append((prompt, kwargs.get("resume")))
             sid = kwargs.get("resume") or "cx-1"
             return {"text": "codex answer", "session_id": sid, "reported_session_id": sid,
-                    "error": None, "usage": {"input_tokens": 1200, "cached_input_tokens": 900},
-                    "structured": {"message": "codex answer", "actions": []}, "returncode": 0,
-                    "containment_empty": True}
+                    "error": None, "usage": {"input_tokens": 1200, "cached_input_tokens": 900}, "returncode": 0}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
@@ -48,64 +46,23 @@ class TestL3Sessions(unittest.TestCase):
         self.assertNotIn("# You are the L3", calls[1][0], "persona is not replayed into a resumed transcript")
         self.assertEqual(l3.info("k")["sessions"]["codex"]["usage"]["cached_input_tokens"], 900)
 
-    def test_codex_l3_gets_project_context_read_only(self):
+    def test_codex_l3_runs_the_shared_persona_from_a_scratch_directory(self):
         seen = {}
 
-        def fake_codex(_prompt, **kwargs):
-            seen.update(kwargs)
+        def fake_codex(prompt, **kwargs):
+            seen.update(kwargs, prompt=prompt)
             return {"text": "coordinated", "session_id": "cx-state", "reported_session_id": "cx-state",
-                    "error": None, "usage": {"input_tokens": 100},
-                    "structured": {"message": "coordinated", "actions": []}, "returncode": 0,
-                    "containment_empty": True}
+                    "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
-            l3.turn("k", "coordinate this")
+            out = l3.turn("k", "coordinate this")
 
         self.assertEqual(Path(seen["cwd"]), config.project_dir("k") / "l3-codex-runtime")
-        self.assertEqual(seen["sandbox"], "workspace-write")
-        self.assertEqual([Path(path) for path in seen["readable_roots"]],
-                         [config.ROOT, config.project_path("k")])
-
-    def test_codex_new_task_brief_in_text_is_applied(self):
-        brief = "Implement issue #127 as one focused documentation change."
-        structured = {"message": "Queued the task.", "actions": [{
-            "type": "new_task", "slug": "implement-github-issue-127",
-            "title": "Implement GitHub issue #127", "text": brief, "request": None,
-            "source": "chat", "engine": "codex", "model": None, "paths": [],
-            "reason": None, "digest": None, "answer": None, "hold_merge": None,
-            "merge_hold": None, "incident": None, "labels": [],
-        }]}
-        result = {"text": "", "session_id": "cx-live", "reported_session_id": "cx-live",
-                  "error": None, "usage": {"input_tokens": 100}, "structured": structured,
-                  "returncode": 0, "containment_empty": True}
-
-        with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", return_value=result), \
-             mock.patch("altitude.github_intake.inline", return_value=None):
-            out = l3.turn("k", "Implement GitHub issue #127 now")
-
-        self.assertTrue(out["completed"])
-        self.assertIsNone(out["error"])
-        task = S.load_task("k", out["actions"][0]["slug"])
-        self.assertEqual(task["engine"], "codex")
-        self.assertEqual((S.task_dir("k", task["slug"]) / "request.md").read_text(), brief + "\n")
-
-    def test_github_issue_action_returns_a_human_approval_phrase(self):
-        source = "Please preserve this sidecar idea as a GitHub issue"
-        structured = {"message": "I prepared it.", "actions": [{
-            "type": "github_issue", "title": "sidecar idea", "text": source, "labels": [],
-        }]}
-        result = {"text": "", "session_id": "cx-draft", "reported_session_id": "cx-draft",
-                  "error": None, "usage": {"input_tokens": 100}, "structured": structured,
-                  "returncode": 0, "containment_empty": True}
-        pending = [{"type": "github_issue", "id": "1234567890abcdef12345678", "pending_review": True}]
-        with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", return_value=result), \
-             mock.patch("altitude.l3_actions.apply", return_value=pending) as apply:
-            out = l3.turn("k", source)
-        self.assertIn("approve GitHub issue publication 1234567890abcdef12345678", out["text"])
-        self.assertEqual(apply.call_args.kwargs["github_issue_source"], source)
+        self.assertTrue(seen["prompt"].startswith((config.PERSONAS / "l3.md").read_text()), "one persona per role")
+        self.assertEqual(seen["extra_env"]["ALTITUDE_ACTOR"], "l3")
+        self.assertNotIn("schema", seen)
+        self.assertEqual((out["completed"], out["text"]), (True, "coordinated"))
 
     def test_alternating_providers_preserves_both_session_ids(self):
         choices = [self.choice("claude"), self.choice("codex"), self.choice("claude")]
@@ -120,9 +77,7 @@ class TestL3Sessions(unittest.TestCase):
         def fake_codex(_prompt, **kwargs):
             sid = kwargs.get("resume") or "cx-1"
             return {"text": "codex answer", "session_id": sid, "reported_session_id": sid, "error": None,
-                    "usage": {"input_tokens": 100},
-                    "structured": {"message": "codex answer", "actions": []}, "returncode": 0,
-                    "containment_empty": True}
+                    "usage": {"input_tokens": 100}, "returncode": 0}
 
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "claude_print", side_effect=fake_claude), \
@@ -139,9 +94,7 @@ class TestL3Sessions(unittest.TestCase):
 
         def fake_codex(_prompt, **_kwargs):
             return {"text": "codex answer", "session_id": "cx-1", "reported_session_id": "cx-1",
-                    "error": None, "usage": {"input_tokens": 100},
-                    "structured": {"message": "codex answer", "actions": []}, "returncode": 0,
-                    "containment_empty": True}
+                    "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
 
         def fake_claude(_prompt, **kwargs):
             self.assertIsNone(kwargs.get("resume"))
@@ -161,9 +114,7 @@ class TestL3Sessions(unittest.TestCase):
     def test_codex_resume_rejects_a_different_thread(self):
         l3.save_info("k", {"sessions": {"codex": {"session_id": "cx-1"}}, "engine_last": "codex"})
         result = {"text": "wrong thread answer", "session_id": "cx-2", "reported_session_id": "cx-2",
-                  "error": None, "usage": {"input_tokens": 100},
-                  "structured": {"message": "wrong thread answer", "actions": []}, "returncode": 0,
-                  "containment_empty": True}
+                  "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", return_value=result):
             out = l3.turn("k", "continue")

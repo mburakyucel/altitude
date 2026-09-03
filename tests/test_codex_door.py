@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-codex-door-"))
@@ -57,7 +58,7 @@ class TestCodexAdapter(unittest.TestCase):
         cls.job_root = _TMP / "jobs"
 
     def test_sandbox_roots_are_the_worktree_its_common_dir_and_altitude_home(self):
-        settings = engines.codex_sandbox(self.worktree)
+        settings = engines.codex_sandbox(self.worktree, extra_roots=[engines._git_common_dir(self.worktree)])
         roots_setting = next(s for s in settings if s.startswith("sandbox_workspace_write.writable_roots="))
         roots = json.loads(roots_setting.split("=", 1)[1])
         self.assertEqual(roots, [str(self.worktree.resolve()), str((self.repo / ".git").resolve()),
@@ -76,6 +77,7 @@ class TestCodexAdapter(unittest.TestCase):
 
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
              mock.patch.object(engines, "codex_sandbox", return_value=["s1", "s2"]), \
+             mock.patch.object(engines, "_git_common_dir", return_value=self.repo / ".git"), \
              mock.patch.object(engines, "_codex_service_command",
                                side_effect=lambda unit, command, env: ["svc", unit, *command]), \
              mock.patch.object(engines, "_unit_active", return_value=False):
@@ -150,6 +152,45 @@ class TestCodexAdapter(unittest.TestCase):
              mock.patch.object(engines, "_unit_active", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "still running"):
                 engines.codex_stop(wid, job_root=self.job_root)
+
+    def test_service_launcher_is_synchronous_and_scrubs_the_user_bus_before_codex_starts(self):
+        child_env = {"PATH": os.environ["PATH"], "ALTITUDE_PROJECT": "altitude", "ALTITUDE_TASK": "task"}
+        script = ('import json, os; print(json.dumps({'
+                  '"project": os.environ.get("ALTITUDE_PROJECT"), "task": os.environ.get("ALTITUDE_TASK"), '
+                  '"secret": os.environ.get("MANAGER_FAKE_SECRET"), "bus": os.environ.get("DBUS_SESSION_BUS_ADDRESS")}))')
+        command = engines._codex_service_command("altitude-codex-test.service", [sys.executable, "-c", script], child_env)
+        for flag in ("--wait", "--pipe", "--property=NoNewPrivileges=no", "--property=KillMode=control-group"):
+            self.assertIn(flag, command)
+        child = command[command.index("--") + 1:]
+        self.assertEqual(child[:2], [engines.ENV_BIN, "-i"])
+        result = subprocess.run(child, capture_output=True, text=True, check=True,
+                                env={"PATH": os.environ["PATH"], "MANAGER_FAKE_SECRET": "must-not-cross",
+                                     "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
+        self.assertEqual(json.loads(result.stdout), {"project": "altitude", "task": "task", "secret": None, "bus": None})
+
+    def test_synchronous_turn_sends_the_prompt_on_stdin_and_reads_the_last_message(self):
+        stdout = "\n".join(json.dumps(e) for e in (
+            {"type": "thread.started", "thread_id": "thr-l3"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "first"}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "the answer"}},
+            {"type": "turn.completed", "usage": {"input_tokens": 7}})) + "\n"
+        seen = {}
+
+        def popen(cmd, **kw):
+            seen["cmd"] = cmd
+            return SimpleNamespace(pid=9, returncode=0,
+                                   communicate=lambda text, timeout=None: seen.update(stdin=text) or (stdout, ""))
+
+        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
+             mock.patch.object(engines, "_codex_service_command", side_effect=lambda unit, command, env: command):
+            out = engines.codex_exec("hello", cwd=self.worktree, effort="high", resume="thr-l3",
+                                     extra_env={"ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(seen["cmd"][:3], [config.CODEX_BIN, "exec", "resume"])
+        self.assertEqual(seen["cmd"][-2:], ["thr-l3", "-"])
+        self.assertIn('model_reasoning_effort="high"', seen["cmd"])
+        self.assertEqual(seen["stdin"], "hello")
+        self.assertEqual((out["text"], out["reported_session_id"], out["usage"], out["error"]),
+                         ("the answer", "thr-l3", {"input_tokens": 7}, None))
 
     def test_window_hold_belongs_to_claude_only(self):
         with mock.patch.object(engines, "usage_hold", return_value="2030-01-01T00:00:00+00:00"):

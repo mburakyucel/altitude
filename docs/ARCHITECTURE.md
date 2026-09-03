@@ -1,9 +1,9 @@
 # Altitude architecture
 
-> **Scope:** This document describes executable `main` at commit `97e1197`. The comprehensive
-> simplification branches are not merged or accepted. See the
-> [2026-09-02 module-by-module review checkpoint](simplification-review/README.md) for the current
-> code/candidate boundary and continuation instructions.
+> **Scope:** This document describes executable `main` after phase 5 of the module-by-module
+> simplification (one engine contract, 2026-09-03). The
+> [2026-09-02 review checkpoint](simplification-review/README.md) records the closed `simplify/*`
+> drafts, the decisions, and the remaining phases.
 
 Altitude has a small coordination layer, one task owner, and mechanical safety rails. Model judgment chooses how much decomposition a request needs; code enforces task
 ownership, isolation, launch holds, and the PR boundary.
@@ -83,17 +83,11 @@ roots and the network on, and uses the same door. Altitude reads its thread and 
 worker's stdout JSONL; a turn that ends without a report, a block, or a completion blocks the task
 as ended without a report, exactly like a Claude session that exits early.
 
-Codex L3 still runs as a contained turn that returns an inert action to a trusted broker; it moves to the
-`alt` door in the next phase-5 PR. It receives a disposable writable runtime directory while
-the full Altitude runtime root (`ALTITUDE_HOME`) and the selected project checkout are explicit read-only roots. The
-prompt normally points the coordinator at compact state, but the sandbox technically permits reads throughout those
-roots. This gives the Codex runtime scratch space without write access to source or durable Altitude state.
-The user manager creates the transient containment service, so Altitude keeps its own `NoNewPrivileges` hardening
-while nested bwrap initializes inside the dedicated service. The outer launcher alone receives the user-session bus;
-the Codex child starts from Altitude's clean environment without that bus or its runtime socket tree. The inner sandbox hides host PIDs; no
-deterministic host-PID canary is implemented on this baseline. The trusted host can stop the whole cgroup.
-A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
-draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
+Codex L3 uses the same door from a disposable runtime directory under the project's Altitude folder: the sandbox
+writes only there and to the Altitude home, the project checkout is readable, and the network is on for `gh`. The
+user manager creates the transient unit, so Altitude keeps its own `NoNewPrivileges` hardening while nested bwrap
+initializes inside it; the outer launcher alone receives the user-session bus, and the Codex child starts from
+Altitude's clean environment without it. The host can stop the whole unit.
 
 ## Faults
 
