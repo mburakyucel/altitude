@@ -69,6 +69,16 @@ class TestRestartCommand(unittest.TestCase):
             self.assertEqual((dist / "version").read_text(), "old")
             self.assertFalse(staging.exists())
 
+    def test_a_blocked_task_with_an_idle_claude_job_does_not_hold_the_restart(self):
+        restart = load_script()
+        task = {"slug": "checkpointed", "agent_id": "b0cdaeb1", "l2_engine": "claude", "state": "blocked"}
+        idle = [{"id": "b0cdaeb1", "state": "blocked", "status": "idle"}]
+        busy = [{"id": "b0cdaeb1", "state": "blocked", "status": "busy"}]
+        self.assertFalse(restart.worker_is_live("altitude", task, idle))
+        self.assertTrue(restart.worker_is_live("altitude", task, busy))
+        self.assertFalse(restart.worker_is_live("altitude", task, [{"id": "b0cdaeb1", "state": "stopped", "status": "exited"}]))
+        self.assertFalse(restart.worker_is_live("altitude", task, []))
+
 
 if __name__ == "__main__":
     unittest.main()
