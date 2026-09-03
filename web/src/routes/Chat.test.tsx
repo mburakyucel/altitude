@@ -1,5 +1,9 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+// @ts-expect-error Node types are not part of the browser app's TypeScript surface.
+import { execFileSync } from "node:child_process";
+// @ts-expect-error Node types are not part of the browser app's TypeScript surface.
+import { rmSync } from "node:fs";
 import { renderApp } from "../test/render";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -54,6 +58,126 @@ function postsToChat(mock: ReturnType<typeof vi.fn>) {
 
 const route = "/chat/altitude";
 
+function productionStyles(): string {
+  const script = String.raw`
+    import { build } from "vite";
+    const result = await build({ logLevel: "silent", build: { write: false,
+      rollupOptions: { input: "src/styles.css" } } });
+    const output = Array.isArray(result) ? result.flatMap((bundle) => bundle.output) : result.output;
+    const css = output.find((file) => file.type === "asset" && file.fileName.endsWith(".css"));
+    if (!css || typeof css.source !== "string") {
+      throw new Error("Vite did not build the app stylesheet");
+    }
+    process.stdout.write(css.source);
+  `;
+  return execFileSync("node", ["--input-type=module", "-e", script], { encoding: "utf8" });
+}
+
+function mobileLayout(body: string, styles: string, width: number, height: number) {
+  const profile = `/tmp/altitude-chat-layout-${Date.now()}-${Math.random()}`;
+  const html = `<!doctype html>
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>${styles}</style></head><body>${body}</body></html>`;
+  const chromeScript = String.raw`
+    import { spawn } from "node:child_process";
+    const [html, width, height, profile] = process.argv.slice(1);
+    const chrome = spawn("google-chrome", ["--headless=new", "--no-sandbox", "--disable-gpu",
+      "--disable-dev-shm-usage", "--disable-extensions", "--no-first-run",
+      "--remote-debugging-pipe", "--user-data-dir=" + profile, "about:blank"],
+      { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
+    const stopped = new Promise((resolve) => chrome.once("exit", resolve));
+    let serial = 0;
+    let buffer = "";
+    const pending = new Map();
+    chrome.stdio[4].setEncoding("utf8");
+    chrome.stdio[4].on("data", (chunk) => {
+      buffer += chunk;
+      let end;
+      while ((end = buffer.indexOf("\0")) !== -1) {
+        const raw = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        if (!raw) continue;
+        const message = JSON.parse(raw);
+        const waiting = pending.get(message.id);
+        if (waiting) {
+          clearTimeout(waiting.timer);
+          pending.delete(message.id);
+          waiting.resolve(message);
+        }
+      }
+    });
+    function cdp(method, params = {}, sessionId) {
+      const id = ++serial;
+      chrome.stdio[3].write(JSON.stringify({ id, method, params,
+        ...(sessionId ? { sessionId } : {}) }) + "\0");
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Chrome timeout: " + method)), 10000);
+        pending.set(id, { resolve, timer });
+      });
+    }
+    try {
+      let page;
+      for (let attempt = 0; attempt < 50 && !page; attempt += 1) {
+        const targets = await cdp("Target.getTargets");
+        page = targets.result.targetInfos.find((target) => target.type === "page");
+        if (!page) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const attached = await cdp("Target.attachToTarget", { targetId: page.targetId, flatten: true });
+      const session = attached.result.sessionId;
+      await cdp("Emulation.setDeviceMetricsOverride", { width: Number(width), height: Number(height),
+        deviceScaleFactor: 3, mobile: false, screenWidth: Number(width), screenHeight: Number(height) }, session);
+      await cdp("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 }, session);
+      await cdp("Page.navigate", { url: "data:text/html;charset=utf-8," + encodeURIComponent(html) }, session);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const ready = await cdp("Runtime.evaluate", { expression:
+          "document.readyState === 'complete' && Boolean(document.querySelector('.chat-route'))",
+          returnByValue: true }, session);
+        if (ready.result.result.value) break;
+        if (attempt === 99) throw new Error("Chrome did not render Chat");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const measured = await cdp("Runtime.evaluate", { expression: "(() => {" +
+        "const route = document.querySelector('.chat-route');" +
+        "const transcript = document.querySelector('[aria-label=Transcript]');" +
+        "const nodes = [document.documentElement, document.body, document.querySelector('main')," +
+        "route, transcript, route.querySelector('header'), route.querySelector('nav')," +
+        "route.querySelector('form'), route.querySelector('textarea')," +
+        "...route.querySelectorAll('article, article p, article span, .pill')];" +
+        "const bounds = route.getBoundingClientRect();" +
+        "return { viewport: innerWidth, touch: matchMedia('(hover: none) and (pointer: coarse)').matches," +
+        "nodes: nodes.map((node) => {" +
+        "const rect = node.getBoundingClientRect(); return { tag: node.tagName, classes: node.className," +
+        "clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, left: rect.left, right: rect.right," +
+        "routeLeft: bounds.left, routeRight: bounds.right }; }) }; })()", returnByValue: true }, session);
+      console.log(JSON.stringify(measured.result.result.value));
+    } finally {
+      chrome.kill("SIGTERM");
+      await stopped;
+    }
+  `;
+
+  try {
+    const output = execFileSync("node", ["--input-type=module", "-e", chromeScript,
+      html, String(width), String(height), profile], { encoding: "utf8" });
+    return JSON.parse(output) as {
+      viewport: number;
+      touch: boolean;
+      nodes: Array<{
+        tag: string;
+        classes: string;
+        clientWidth: number;
+        scrollWidth: number;
+        left: number;
+        right: number;
+        routeLeft: number;
+        routeRight: number;
+      }>;
+    };
+  } finally {
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
 describe("Chat", () => {
   it("renders the L3 history", async () => {
     vi.stubGlobal(
@@ -89,10 +213,85 @@ describe("Chat", () => {
 
     expect(chatRoute).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
     expect(chatRoute?.parentElement).toBe(screen.getByRole("main"));
-    expect(transcript).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(transcript).toHaveClass(
+      "min-h-0",
+      "min-w-0",
+      "flex-1",
+      "overflow-x-hidden",
+      "overflow-y-auto",
+    );
     expect(transcript).not.toContainElement(screen.getByLabelText("Message L3"));
     expect(transcript).not.toContainElement(screen.getByRole("navigation", { name: "Projects" }));
     expect(screen.getByLabelText("Message L3")).toHaveClass("chat-composer");
+  });
+
+  it("contains hostile chat content at iPhone portrait and landscape widths", async () => {
+    const unbroken = "https://example.test/" + "x".repeat(500);
+    const streaming = "stream-" + "s".repeat(500);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) {
+        return jsonResponse({
+          ...overview,
+          projects: [
+            ...overview.projects,
+            { name: `project-${"p".repeat(100)}`, managed: true },
+          ],
+        });
+      }
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        return streamResponse([`{"t":"${streaming}"}\n`, '{"done":{"error":null}}']);
+      }
+      if (url.includes("/api/chat")) {
+        return jsonResponse({
+          ...chatView,
+          busy: true,
+          history: [
+            { at: "2026-09-03T00:00:00Z", role: "user", text: unbroken },
+            {
+              at: "2026-09-03T00:00:01Z",
+              role: "assistant",
+              text: unbroken,
+              trigger: `trigger-${"t".repeat(100)}`,
+            },
+          ],
+          queued: [
+            {
+              id: "q1",
+              at: "2026-09-03T00:00:02Z",
+              trigger: "chat",
+              role: "burak",
+              text: `queued-${"q".repeat(500)}`,
+            },
+          ],
+        });
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findAllByText(unbroken);
+    fireEvent.change(screen.getByLabelText("Message L3"), { target: { value: unbroken } });
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await waitFor(() => expect(postsToChat(fetchMock)).toHaveLength(1));
+    await screen.findByText(streaming);
+    const css = productionStyles();
+
+    for (const [width, height] of [[390, 844], [844, 390]] as const) {
+      const layout = mobileLayout(document.body.innerHTML, css, width, height);
+      expect(layout.viewport).toBe(width);
+      expect(layout.touch).toBe(true);
+      const overflow: string[] = [];
+      for (const node of layout.nodes) {
+        const shell = ["HTML", "BODY", "MAIN"].includes(node.tag);
+        const label = `${node.tag}.${node.classes}`;
+        if (node.scrollWidth > node.clientWidth) overflow.push(`${label} scrolls sideways`);
+        if (node.left < (shell ? 0 : node.routeLeft) - 0.5) overflow.push(`${label} crosses left`);
+        if (node.right > (shell ? width : node.routeRight) + 0.5) overflow.push(`${label} crosses right`);
+      }
+      expect(overflow, `${width}x${height} horizontal overflow`).toEqual([]);
+    }
   });
 
   it("streams the reply into the transcript across chunk boundaries", async () => {

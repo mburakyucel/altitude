@@ -45,14 +45,14 @@ function Bubble({
   const mine = role === "user";
   return (
     <article
-      className={`card max-w-[85%] space-y-1 ${mine ? "ml-auto" : "mr-auto"}`}
+      className={`card min-w-0 max-w-[85%] space-y-1 [overflow-wrap:anywhere] ${mine ? "ml-auto" : "mr-auto"}`}
       data-role={role}
     >
-      <p className="flex items-center gap-2 text-meta text-muted">
-        <span>{meta}</span>
+      <p className="flex min-w-0 items-center gap-2 text-meta text-muted">
+        <span className="min-w-0 flex-1">{meta}</span>
         {action}
       </p>
-      <p className="whitespace-pre-wrap text-body text-ink-2">{text}</p>
+      <p className="min-w-0 whitespace-pre-wrap text-body text-ink-2">{text}</p>
     </article>
   );
 }
@@ -103,7 +103,7 @@ function QueuedBubble({
       ])}
       text={m.text}
       action={mine ? (
-        <button type="button" className="btn btn-ghost ml-auto" onClick={onRemove}>
+        <button type="button" className="btn btn-ghost ml-auto shrink-0" onClick={onRemove}>
           Remove
         </button>
       ) : null}
@@ -216,13 +216,13 @@ export default function Chat() {
   const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
   return (
-    <div className="chat-route mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-baseline gap-3">
+    <div className="chat-route mx-auto flex min-h-0 w-full min-w-0 max-w-3xl flex-1 flex-col gap-4 overflow-hidden">
+      <header className="flex min-w-0 shrink-0 flex-wrap items-baseline gap-3 [overflow-wrap:anywhere]">
         <h1 className="text-page-title font-semibold">Chat</h1>
-        <Link className="text-meta text-muted" to={`/projects/${project}`}>
+        <Link className="min-w-0 text-meta text-muted" to={`/projects/${project}`}>
           {project}
         </Link>
-        <span className="ml-auto text-meta text-muted">
+        <span className="ml-auto min-w-0 text-meta text-muted">
           {[
             busy ? "busy" : null,
             queued.length > 0 ? `${queued.length} queued` : null,
@@ -236,12 +236,12 @@ export default function Chat() {
       </header>
 
       {switchable.length > 0 ? (
-        <nav className="flex shrink-0 flex-wrap gap-2" aria-label="Projects">
+        <nav className="flex min-w-0 shrink-0 flex-wrap gap-2" aria-label="Projects">
           {switchable.map((p) => (
             <NavLink
               key={p.name}
               to={`/chat/${p.name}`}
-              className="pill hover:text-ink aria-[current=page]:border-accent-tint-border aria-[current=page]:bg-accent-tint aria-[current=page]:text-accent-ink"
+              className="pill min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere] hover:text-ink aria-[current=page]:border-accent-tint-border aria-[current=page]:bg-accent-tint aria-[current=page]:text-accent-ink"
             >
               {p.name}
             </NavLink>
@@ -251,7 +251,7 @@ export default function Chat() {
 
       <section
         ref={transcript}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto"
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto"
         aria-label="Transcript"
         onScroll={(event) => {
           const node = event.currentTarget;
@@ -265,7 +265,7 @@ export default function Chat() {
           <HistoryBubble key={`${m.at ?? "m"}-${i}`} m={m} />
         ))}
         {pending.map((l) => (
-          <div key={l.id} className="flex flex-col gap-3">
+          <div key={l.id} className="flex min-w-0 flex-col gap-3">
             <Bubble
               role="user"
               meta={metaLine("user", [l.queueing ? "queueing" : "sending"])}
@@ -291,7 +291,7 @@ export default function Chat() {
       </section>
 
       <form
-        className="flex shrink-0 flex-col gap-2"
+        className="flex min-w-0 shrink-0 flex-col gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -312,7 +312,7 @@ export default function Chat() {
             }
           }}
         />
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <button
             type="submit"
             className="btn btn-primary"
@@ -321,7 +321,7 @@ export default function Chat() {
             {streaming ? "Sending…" : busy ? "Queue" : "Send"}
           </button>
           <select
-            className="field"
+            className="field min-w-0"
             aria-label="L3 engine"
             title="Which engine runs L3 for this project until you change it; Auto follows the weekly quota"
             value={chat.data?.engine ?? "auto"}
