@@ -84,8 +84,9 @@ blocks the task as ended without a report, exactly like a Claude session that ex
 
 ## L3 sessions and provider changes
 
-L3 stores separate Claude and Codex session records. A quota-selected turn resumes only the chosen
-provider's session. When the other provider handled intervening chat, Altitude supplies the missed
+L3 stores separate Claude and Codex session records. Burak can pin one turn to either provider from
+the Chat composer or `alt chat --engine`; a pinned turn runs there or reports the hold, and never
+falls back. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
 human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
 automatically replayed on Codex because that could duplicate side effects. Provider selection changes

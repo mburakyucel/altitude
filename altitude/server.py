@@ -615,14 +615,17 @@ class Handler(BaseHTTPRequestHandler):
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
             if api == "chat":
                 project, text = o["project"], (o.get("text") or "").strip()
+                engine = o.get("engine") or None
                 if not text:
                     return self._json({"error": "empty"}, 400)
+                if engine and engine not in config.ENGINES:
+                    return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
                 if l3.busy(project):
                     return self._json({"error": "L3 is busy; try again in a moment"}, 409)
                 self._stream_open()
                 send = lambda t: self._stream_send({"t": t})  # noqa: E731
-                res = l3.turn(project, text, trigger="chat", on_text=send)
-                self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}})
+                res = l3.turn(project, text, trigger="chat", engine=engine, on_text=send)
+                self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})
                 self._stream_close()
                 return
             if api == "restart":

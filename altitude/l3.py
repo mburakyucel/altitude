@@ -100,23 +100,29 @@ def _handoff(history: list[dict], engine: str, since: str | None) -> str:
     return "[altitude] Cross-provider chat missed by this session (oldest first):\n" + "\n".join(lines) + "\n\n"
 
 
-def _select(project: str) -> dict:
+def _select(project: str, engine: str | None = None) -> dict:
+    """The engine for one turn: Burak's choice for this turn, else the project pin, else the quota route."""
     proj = config.project(project)
-    forced = proj.get("l3_engine")
+    forced = engine or proj.get("l3_engine")
     held = engines.usage_hold()
     if held and not forced:
         choice = route.pick_engine("l3", forced="codex")
         if choice.get("engine"):
             choice["why"] = f"Claude short-window hold until {held}; " + choice["why"]
         return choice
-    return route.pick_engine("l3", forced=forced)
+    choice = route.pick_engine("l3", forced=forced)
+    if engine and choice.get("engine"):
+        choice["why"] = "chosen by Burak for this turn"
+    return choice
 
 
-def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_start=None,
-         model: str | None = None) -> dict:
-    """Run one L3 turn. Weekly quota selects a provider; each provider resumes only its own transcript."""
+def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
+         on_text=None, on_start=None, model: str | None = None) -> dict:
+    """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
+    a provider. Each provider resumes only its own transcript."""
+    requested = engine
     with lock(project):
-        choice = _select(project)
+        choice = _select(project, requested)
         if not choice.get("engine"):
             return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                     "turns": 0, "structured": None, "error": f"engine hold: {choice['why']}", "tools": [],
@@ -158,7 +164,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_s
                         "routing": choice})
             # A provider-limit result can follow tool side effects. Never replay such a turn automatically elsewhere.
             if (res.get("limited") and not res.get("text") and not res.get("tools")
-                    and not proj.get("l3_engine")):
+                    and not requested and not proj.get("l3_engine")):
                 fallback = route.pick_engine("l3", forced="codex")
                 if fallback.get("engine"):
                     fallback["why"] = f"Claude window closed before producing output; {fallback['why']}"
