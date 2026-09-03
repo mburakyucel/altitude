@@ -645,8 +645,23 @@ class Handler(BaseHTTPRequestHandler):
                 if l3.busy(project):
                     return self._json({"error": "L3 is busy; try again in a moment"}, 409)
                 self._stream_open()
-                send = lambda t: self._stream_send({"t": t})  # noqa: E731
+                gone: list[BaseException] = []
+
+                def send(t: str) -> None:
+                    # The turn owns its answer, not the page that started it. 2026-09-03 07:54Z: Burak refreshed
+                    # Chat mid-turn; the write error unwound the turn, the answer was never logged and the
+                    # session bookkeeping was skipped. A lost client ends the stream and nothing else.
+                    if gone:
+                        return
+                    try:
+                        self._stream_send({"t": t})
+                    except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:
+                        gone.append(e)
+                        log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
+
                 res = l3.turn(project, text, trigger="chat", on_text=send)
+                if gone:
+                    return
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})
                 self._stream_close()
                 return

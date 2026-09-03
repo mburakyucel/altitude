@@ -110,7 +110,9 @@ The Python server owns state transitions and JSON APIs. The React app provides I
 Chat, and Monitor navigation plus project/task detail routes. Chat is the only way to create a task
 from the web: the L3 turn creates it through `alt task new`. The composer's engine choice pins the
 project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
-stays on the previous engine unless the other has clearly more headroom. A task has two views. The Conversation
+stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
+not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
+lands in the history. A task has two views. The Conversation
 tab is the human-readable Burak/L2 exchange; the Live session tab shows the worker's own session log
 (Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events.
 Operational events remain an audit detail.

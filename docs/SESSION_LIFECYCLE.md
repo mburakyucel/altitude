@@ -93,7 +93,8 @@ blocks the task as ended without a report, exactly like a Claude session that ex
 L3 stores separate Claude and Codex session records. The Chat composer's engine choice pins the
 project's L3 to Claude or Codex, for chat and server-triggered turns alike, until it is set back to
 Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never
-falls back. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
+falls back. A turn started from Chat finishes and is recorded even when the page that started it
+leaves mid-stream. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
 human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
 automatically replayed on Codex because that could duplicate side effects. Provider selection changes
