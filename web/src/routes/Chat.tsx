@@ -99,7 +99,8 @@ export default function Chat() {
   const [locals, setLocals] = useState<LocalTurn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const nextId = useRef(0);
-  const foot = useRef<HTMLDivElement>(null);
+  const transcript = useRef<HTMLElement>(null);
+  const following = useRef(true);
 
   const history = chat.data?.history ?? [];
   const busy = chat.data?.busy ?? false;
@@ -108,10 +109,16 @@ export default function Chat() {
   // dropped in the same render as the refetched history that moved past it — never earlier, so a
   // repeated message keeps its bubble and its streamed reply, and never later, so it never doubles.
   const pending = locals.filter((l) => l.base === sig);
+  const streamed = pending.map((l) => `${l.id}:${l.assistant.length}`).join(",");
 
   useEffect(() => {
-    foot.current?.scrollIntoView?.({ block: "end" });
-  }, [history.length, pending.length]);
+    following.current = true;
+  }, [project]);
+
+  useEffect(() => {
+    const node = transcript.current;
+    if (node && following.current) node.scrollTop = node.scrollHeight;
+  }, [project, sig, streamed]);
 
   const patch = (id: number, fn: (turn: LocalTurn) => LocalTurn) => {
     setLocals((prev) => prev.map((l) => (l.id === id ? fn(l) : l)));
@@ -121,6 +128,7 @@ export default function Chat() {
     const text = draft.trim();
     if (!text || streaming || busy) return;
     const id = (nextId.current += 1);
+    following.current = true;
     setLocals((prev) => [...prev, { id, user: text, assistant: "", base: sig }]);
     setDraft("");
     setStreaming(true);
@@ -158,8 +166,8 @@ export default function Chat() {
   const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4">
-      <header className="flex flex-wrap items-baseline gap-3">
+    <div className="chat-route mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-baseline gap-3">
         <h1 className="text-page-title font-semibold">Chat</h1>
         <Link className="text-meta text-muted" to={`/projects/${project}`}>
           {project}
@@ -177,7 +185,7 @@ export default function Chat() {
       </header>
 
       {switchable.length > 0 ? (
-        <nav className="flex flex-wrap gap-2" aria-label="Projects">
+        <nav className="flex shrink-0 flex-wrap gap-2" aria-label="Projects">
           {switchable.map((p) => (
             <NavLink
               key={p.name}
@@ -190,7 +198,15 @@ export default function Chat() {
         </nav>
       ) : null}
 
-      <section className="flex flex-col gap-3" aria-label="Transcript">
+      <section
+        ref={transcript}
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto"
+        aria-label="Transcript"
+        onScroll={(event) => {
+          const node = event.currentTarget;
+          following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+        }}
+      >
         {history.length === 0 && pending.length === 0 ? (
           <p className="text-muted">No messages yet.</p>
         ) : null}
@@ -203,18 +219,17 @@ export default function Chat() {
             <Bubble role="assistant" meta={metaLine("assistant", ["streaming"])} text={l.assistant} />
           </div>
         ))}
-        <div ref={foot} />
       </section>
 
       <form
-        className="flex flex-col gap-2"
+        className="flex shrink-0 flex-col gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
         }}
       >
         <textarea
-          className="field w-full"
+          className="chat-composer field w-full"
           aria-label="Message L3"
           placeholder="Talk to L3 about roadmap, architecture, or what to build"
           rows={3}
