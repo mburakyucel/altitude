@@ -66,7 +66,6 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
     const agentState = str(agent.state);
     meta.push(`L2 ${status}${agentState ? `/${agentState}` : ""}`);
     meta.push(`ctx ${num(live.context_percent) ?? "?"}%`);
-    meta.push(`L1 runs ${num(live.l1_runs) ?? 0}`);
     meta.push(`edits ${num(live.edits) ?? 0}`);
   }
   const prs = arr(raw.prs);

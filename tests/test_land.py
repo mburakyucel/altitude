@@ -233,8 +233,8 @@ class TestLand(unittest.TestCase):
     def test_non_l2_automated_actors_cannot_land(self):
         self.leased_change()
         commands = self.record_commands()
-        self._setenv("ALTITUDE_ACTOR", "l1")
-        for actor in ("l1", "l3", "altd"):
+        self._setenv("ALTITUDE_ACTOR", "l3")
+        for actor in ("l3", "altd"):
             with self.subTest(actor=actor):
                 os.environ["ALTITUDE_ACTOR"] = actor
                 with self.assertRaisesRegex(land.LandError, "only the current L2 or Burak"):

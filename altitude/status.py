@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from . import config, dispatch, git_policy, l1, state as S, verify
+from . import config, dispatch, git_policy, state as S, verify
 
 
 _TASK_FIELDS = (
@@ -39,13 +39,13 @@ def _check_summary(rollup: object) -> dict:
     return summary
 
 
-def _pr_numbers(task: dict, runs: list[dict], report: object, errors: list[str]) -> list[int]:
+def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
     task_prs = task.get("prs") or []
     if not isinstance(task_prs, list):
         _error(errors, "prs", "task PR list is not a list")
         task_prs = []
     numbers = set()
-    for value in task_prs + [run.get("pr") for run in runs]:
+    for value in task_prs:
         if type(value) is int or (isinstance(value, str) and value.isdigit()):
             numbers.add(int(value))
         elif value is not None:
@@ -71,7 +71,7 @@ def status(project: str, slug: str) -> dict:
     out = {
         "project": project, "slug": slug,
         **{field: None for field in _TASK_FIELDS},
-        "counts": None, "l1_runs": None,
+        "counts": None,
         "lease": [], "other_leases": [], "hold": None, "wip_hold": None, "gate": None,
         "repository": None, "report_json": None, "prs": [], "main_run": None, "errors": errors,
     }
@@ -104,25 +104,7 @@ def status(project: str, slug: str) -> dict:
         except Exception as e:
             _error(errors, "counts", e)
 
-    runs: list[dict] = []
     if task:
-        try:
-            l1_dir = S.task_dir(project, slug) / "l1"
-            raw_runs = l1.list_runs(project, slug) if l1_dir.is_dir() else []
-            for run in raw_runs:
-                result = run.get("result") or {}
-                compact = {key: run.get(key) for key in ("name", "role", "engine", "done")}
-                compact["pr"] = result.get("pr") if isinstance(result, dict) else None
-                if not compact["done"] and not l1._alive(run.get("pid")):
-                    compact["stale"] = True
-                runs.append(compact)
-            out["l1_runs"] = {
-                "in_flight": sum(not run.get("done") and not run.get("stale") for run in runs),
-                "runs": runs,
-            }
-        except Exception as e:
-            _error(errors, "l1_runs", e)
-
         try:
             out["lease"] = dispatch.task_paths(project, task)
         except Exception as e:
@@ -162,7 +144,7 @@ def status(project: str, slug: str) -> dict:
     except Exception as e:
         _error(errors, "report_json", e)
 
-    numbers = _pr_numbers(task, runs, report, errors)
+    numbers = _pr_numbers(task, report, errors)
     branch = task.get("branch")
     if not numbers and not branch:
         return out
@@ -180,7 +162,7 @@ def status(project: str, slug: str) -> dict:
             if not isinstance(listed, list):
                 raise verify.VerifierFault("gh pr list returned a non-list result")
             numbers = _pr_numbers({"prs": [entry.get("number") for entry in listed
-                                             if isinstance(entry, dict)]}, [], None, errors)
+                                             if isinstance(entry, dict)]}, None, errors)
         except verify.VerifierFault as e:
             _error(errors, "prs", e)
     if not numbers:

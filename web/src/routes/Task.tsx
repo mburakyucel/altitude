@@ -166,7 +166,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <section className="card space-y-1">
           <h2 className="label">Activity</h2>
           <p className="text-meta text-muted">
-            turns {num(spend["turns"]) ?? 0} · L1 runs {num(spend["subagent_launches_reported"]) ?? 0}
+            turns {num(spend["turns"]) ?? 0} · subagents {num(spend["subagent_launches_reported"]) ?? 0}
             {" · "}edits {num(spend["edits_hook"]) ?? 0} · retries {num(spend["retries"]) ?? 0}
           </p>
         </section>
@@ -176,7 +176,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         <section className="card space-y-1">
           <h2 className="label">Live</h2>
           <p className="text-body text-ink-2">
-            {str(liveState["status"]) || str(live["state"]) || "running"} · L1 runs {num(live["l1_runs"]) ?? 0}
+            {str(liveState["status"]) || str(live["state"]) || "running"}
           </p>
           <p className="text-meta text-muted">
             edits {num(live["edits"]) ?? 0}

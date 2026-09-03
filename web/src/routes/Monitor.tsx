@@ -5,7 +5,7 @@ import type { Quota, Session } from "../data/api";
 /**
  * Seat quota, one card per live session, and the raw list of
  * Claude worker processes. `/api/monitor` rows are passthrough, so the columns that
- * only some kinds carry (cwd, l1_runs, edits, agent, rotate_next)
+ * only some kinds carry (cwd, edits, agent, rotate_next)
  * arrive typed `unknown` and are narrowed here rather than in api.ts.
  */
 function str(value: unknown): string {
@@ -84,10 +84,7 @@ function SessionCard({ session }: { session: Session }) {
   const when = age(session.at);
 
   const meta: string[] = [`context ${context ?? "?"}%`];
-  if (session["l1_runs"] != null) {
-    meta.push(`L1 runs ${num(session["l1_runs"]) ?? 0}`);
-    meta.push(`edits ${num(session["edits"]) ?? 0}`);
-  }
+  if (session["edits"] != null) meta.push(`edits ${num(session["edits"]) ?? 0}`);
   const status = [str(agent["status"]), str(agent["state"])].filter(Boolean).join(" ");
   if (status) meta.push(status);
   if (str(session.context_state)) meta.push(str(session.context_state));

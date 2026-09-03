@@ -11,53 +11,111 @@
     "digest",
     "blocked_reason",
     "continue_reason",
-    "helpers",
     "outcome"
   ],
   "properties": {
-    "message": {"type": "string"},
+    "message": {
+      "type": "string"
+    },
     "action": {
       "type": "string",
-      "enum": ["publish", "complete_no_code", "block", "request_helpers", "continue"]
+      "enum": [
+        "publish",
+        "complete_no_code",
+        "block",
+        "continue"
+      ]
     },
-    "commit_message": {"type": ["string", "null"]},
-    "pr_title": {"type": ["string", "null"]},
-    "merge": {"type": ["boolean", "null"]},
-    "digest": {"type": ["string", "null"]},
-    "blocked_reason": {"type": ["string", "null"]},
-    "continue_reason": {"type": ["string", "null"]},
-    "helpers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["role", "brief", "engine", "model", "paths"],
-        "properties": {
-          "role": {"type": "string", "enum": ["implementer", "reviewer"]},
-          "brief": {"type": "string"},
-          "engine": {"type": ["string", "null"], "enum": ["claude", "codex", null]},
-          "model": {"type": ["string", "null"]},
-          "paths": {"type": "array", "items": {"type": "string"}}
-        }
-      }
+    "commit_message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pr_title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "merge": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "digest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocked_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "continue_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "outcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["deploy", "review", "decisions", "fyi", "follow_ups", "deviations", "spend"],
+      "required": [
+        "deploy",
+        "review",
+        "decisions",
+        "fyi",
+        "follow_ups",
+        "deviations",
+        "spend"
+      ],
       "properties": {
-        "deploy": {"type": "string"},
+        "deploy": {
+          "type": "string"
+        },
         "review": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["summary", "severity", "disposition", "reason"],
+            "required": [
+              "summary",
+              "severity",
+              "disposition",
+              "reason"
+            ],
             "properties": {
-              "summary": {"type": ["string", "null"]},
-              "severity": {"type": ["string", "null"]},
-              "disposition": {"type": "string", "enum": ["fixed", "dismissed", "open"]},
-              "reason": {"type": ["string", "null"]}
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "severity": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "disposition": {
+                "type": "string",
+                "enum": [
+                  "fixed",
+                  "dismissed",
+                  "open"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },
@@ -66,37 +124,98 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["question", "answer", "options"],
+            "required": [
+              "question",
+              "answer",
+              "options"
+            ],
             "properties": {
-              "question": {"type": "string"},
-              "answer": {"type": ["string", "null"]},
-              "options": {"type": "array", "items": {"type": "string"}}
+              "question": {
+                "type": "string"
+              },
+              "answer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           }
         },
-        "fyi": {"type": "array", "items": {"type": "string"}},
-        "follow_ups": {"type": "array", "items": {"type": "string"}},
+        "fyi": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "follow_ups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "deviations": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["description", "reason"],
+            "required": [
+              "description",
+              "reason"
+            ],
             "properties": {
-              "description": {"type": "string"},
-              "reason": {"type": ["string", "null"]}
+              "description": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },
         "spend": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["turns", "subagent_launches", "retries", "reverts"],
+          "required": [
+            "turns",
+            "subagent_launches",
+            "retries",
+            "reverts"
+          ],
           "properties": {
-            "turns": {"type": ["integer", "null"]},
-            "subagent_launches": {"type": ["integer", "null"]},
-            "retries": {"type": ["integer", "null"]},
-            "reverts": {"type": ["integer", "null"]}
+            "turns": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "subagent_launches": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "retries": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reverts": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
           }
         }
       }

@@ -5,8 +5,7 @@
 > [2026-09-02 module-by-module review checkpoint](simplification-review/README.md) for the current
 > code/candidate boundary and continuation instructions.
 
-Altitude has a small coordination layer, one task owner, optional bounded helpers, and mechanical
-safety rails. Model judgment chooses how much decomposition a request needs; code enforces task
+Altitude has a small coordination layer, one task owner, and mechanical safety rails. Model judgment chooses how much decomposition a request needs; code enforces task
 ownership, isolation, launch holds, and the PR boundary.
 
 ```text
@@ -16,8 +15,7 @@ Burak
   │                                                  └─ coordinates one task
   └─ task questions and steering ◄───────────────► L2 owner
                                                      ├─ may implement directly
-                                                     ├─ may use 0..N bounded L1s
-                                                     └─ may use an independent reviewer
+                                                     └─ may delegate to its engine's own subagents
 
 L2 worktree/branch ─► checks/review ─► PR ─► merge ─► archive task
 system fault ─► blocked task + private incident ─► one queued L3 message
@@ -33,13 +31,14 @@ L2 receives the request, repository context, lease, worktree, branch, and merge 
 the lightest useful execution shape. Its human-facing conversation is stored separately from tool
 logs, so Burak can message it directly without routing every exchange through L3. Messages queue on
 the task and reach the worker at its next checkpoint; an explicit Stop aborts a worker. The attempt
-number fences L2 reply, completion, landing, and helper paths to the current L2; other command paths
+number fences L2 reply, completion, and landing to the current L2; other command paths
 apply different subsets of checks.
 
-L1 and reviewer runs are optional, tracked children of the L2 task. Their engine may be selected
-per run. An implementer receives a sublease, leaves the parent commit unchanged, and returns a
-validated binary patch plus a summary to L2; a reviewer returns structured findings. Neither
-commits, opens a PR, or integrates its own work. The L2 chooses what to use; ownership never transfers.
+Helpers are engine-native. The L2 may delegate bounded slices to its engine's own subagents
+(Claude Code's Agent tool, Codex's equivalent); Altitude does not track them, and ownership never
+transfers. Helper customization lives in engine-native files (agent definitions, skills, hooks). The
+L2 persona carries brief delegation and context-hygiene guidance and asks for a small `progress.md`
+(goal, done, next, how to verify) refreshed at milestones, never kept as a log.
 
 L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provider choice and keeps
 that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
@@ -94,9 +93,6 @@ tree, ambient service credentials, and scoped L2 capabilities removed. The inner
 deterministic host-PID canary is implemented on this baseline. The trusted host can stop the whole cgroup.
 A GitHub-issue action can save only the exact current user message under a title quoted from it. It remains a private
 draft until Burak sends the exact draft-specific approval phrase; secret-shaped content is still refused.
-L1 implementers receive narrower write subleases; the
-trusted wrapper verifies that their parent commit did not move and captures their changes as a
-patch for the owning L2 to evaluate.
 
 ## Faults
 

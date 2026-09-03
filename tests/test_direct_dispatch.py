@@ -9,7 +9,7 @@ from unittest import mock
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-direct-dispatch-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from altitude import config, dispatch, l1, server, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, server, state as S, tasks as T  # noqa: E402
 
 
 class TestDirectDispatch(unittest.TestCase):
@@ -25,7 +25,6 @@ class TestDirectDispatch(unittest.TestCase):
         for removed in ("class", "envelope", "proposal_attempts", "decision", "estimate"):
             self.assertNotIn(removed, task)
         self.assertEqual(T.decisions("direct"), [])
-        self.assertEqual(l1.list_runs("direct", task["slug"]), [], "zero-L1 execution is valid")
 
     def test_server_has_no_classifier_proposal_or_critic_entrypoint(self):
         self.assertFalse(hasattr(server, "size_task"))

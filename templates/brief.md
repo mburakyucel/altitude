@@ -2,16 +2,16 @@
 
 **Goal:** {title}
 
-**Owner:** one L2 ({engine}, {model}) owns this task end-to-end in `{branch}`. You may implement directly or use
-zero, one, or several L1s when that materially helps. Any L1 result is input that you own
-and integrate; it is not a transfer of responsibility.
+**Owner:** one L2 ({engine}, {model}) owns this task end-to-end in `{branch}`. Implement directly, or delegate
+bounded slices to your engine's own subagents when that materially helps. Any delegated result is input that
+you own and integrate; it is not a transfer of responsibility.
 
 **Definition of done:** every code change goes through a PR; {merge_policy} The applicable repository
 checks pass and the merged result is verified where relevant. {completion_contract}
 Where the repository has no CI, run the full local test suite on the exact merge candidate.
 
-**Judgment-based execution:** use the lightest sound approach. Direct implementation is normal. Use
-L1s for bounded parallel work, focused research, or an independent perspective only when useful.
+**Judgment-based execution:** use the lightest sound approach. Direct implementation is normal. Delegate
+bounded parallel work, focused research, or an independent perspective only when useful.
 Review is optional unless risk, uncertainty, or this brief requires it; appropriate testing is always
 required.
 

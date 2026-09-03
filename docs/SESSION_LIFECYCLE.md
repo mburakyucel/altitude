@@ -37,7 +37,7 @@ identities on purpose:
 | `agent_id` | current Claude job or Codex OS worker | every physical replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
 
-The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, helper launches, completion, and landing name it, so
+The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
 a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
 keys the edit-count telemetry across worker replacements.
 
@@ -102,7 +102,7 @@ result until that containment unit is empty.
 A Codex L2's final response is a strict, inert action object. After worker exit, the trusted broker
 validates the object against the current task state, worker, and lease. The
 broker—not the model process—may then post the human-facing message, land a PR, complete a no-code
-task, block, continue the same thread, or launch optional helpers.
+task, block, or continue the same thread.
 
 ## L3 sessions and provider changes
 

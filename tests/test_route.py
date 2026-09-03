@@ -60,12 +60,7 @@ class TestPickEngine(unittest.TestCase):
         self.codex = codex(100, short=20)
         self.assertIsNone(route.pick_engine("l2")["engine"])
 
-    def test_review_does_not_force_the_scarcer_provider(self):
-        self.claude = {"known": True, "five_hour": 10, "seven_day": 70}
-        self.codex = codex(20, short=10)
-        choice = route.pick_engine("reviewer", other_than="codex")
-        self.assertEqual(choice["engine"], "codex")
-        self.assertIn("instead of forcing provider diversity", choice["why"])
+
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ class TestModels(unittest.TestCase):
 
     def test_tiers(self):
         self.assertEqual(config.MODELS["l3"], "fable")            # judgement at the top
-        self.assertEqual(config.MODELS["l1"], "opus")             # coding at least Opus
-        self.assertEqual(set(config.MODELS), {"l3", "l2", "l1", "reviewer"})
+        self.assertEqual(config.MODELS["l2"], "opus")             # coding at least Opus
+        self.assertEqual(set(config.MODELS), {"l3", "l2"})
 
     def test_task_carries_explicit_model_only(self):
         t = T.new("p", "plain", "r", actor="burak")

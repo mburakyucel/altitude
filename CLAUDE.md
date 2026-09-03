@@ -16,9 +16,8 @@ them in `DECISIONS.md`; ask Burak only for a decision that is not recorded there
 - L3 is Burak's project-level point of contact. It uses judgment to answer, coordinate, or create
   one task owned by one L2.
 - L2 owns a task end-to-end and talks directly with Burak about task-specific questions. It may
-  implement directly or launch zero, one, or several bounded L1s or an optional reviewer.
-- L1 implements or investigates only its bounded brief. The reviewer independently evaluates a
-  bounded result. Neither owns the parent task.
+  implement directly or delegate bounded slices to its engine's own subagents; Altitude does not
+  track them, and delegation never transfers ownership.
 
 ## Boundaries
 

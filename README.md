@@ -2,7 +2,7 @@
 
 Altitude turns a project-level conversation into isolated, reviewable work without making Burak
 manage agent plumbing. L3 is the project coordinator. Each active task has one directly reachable
-L2 owner, and that L2 may work alone or use optional L1 implementers and reviewers.
+L2 owner, and that L2 may work alone or delegate bounded slices to its engine's own subagents.
 
 Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
@@ -33,9 +33,8 @@ five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source fo
 ## Repository and runtime
 
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI, `personas/` contains the
-three execution roles plus the optional reviewer, and `schemas/` defines broker actions,
-code-delivery reports, and reviewer reports. `hooks/` supplies Claude-side command guardrails and
-telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
+L2 and L3 roles for each engine, and `schemas/` defines broker actions and code-delivery reports.
+`hooks/` supplies Claude-side command guardrails, message delivery, and telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
 an inert action for trusted backend validation. `web/` is the React UI built into `web/dist/` for
 the Python server to serve.
 

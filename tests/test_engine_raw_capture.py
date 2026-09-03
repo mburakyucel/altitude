@@ -1,0 +1,72 @@
+"""Engine adapters return both raw streams, capped by the runtime constant."""
+import io
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from altitude import engines
+
+
+class FakeProcess:
+    pid = 123
+    returncode = 0
+
+    def __init__(self, stdout="", stderr=""):
+        self.stdin = io.StringIO()
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
+
+    def wait(self):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+
+class TestEngineRawCapture(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory(prefix="altitude-raw-")
+        self.addCleanup(self.tempdir.cleanup)
+        self.root = Path(self.tempdir.name)
+
+    def claude_print(self, process):
+        with mock.patch.object(engines, "usage_hold", return_value=None), \
+             mock.patch.object(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process):
+            return engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
+
+    def test_codex_exec_returns_both_complete_raw_streams(self):
+        completed = SimpleNamespace(
+            stdout=json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n",
+            stderr="codex diagnostic\n",
+            returncode=0,
+        )
+        with mock.patch.object(engines.subprocess, "run", return_value=completed):
+            result = engines.codex_exec("prompt", cwd=self.root)
+
+        self.assertEqual(result["raw_stdout"], completed.stdout)
+        self.assertEqual(result["raw_stderr"], completed.stderr)
+
+    def test_claude_print_returns_raw_stream_json_and_stderr(self):
+        event = {"type": "result", "result": "done", "session_id": "sid", "is_error": False}
+        result = self.claude_print(FakeProcess(json.dumps(event) + "\n", "claude diagnostic\n"))
+
+        self.assertEqual(result["raw_stdout"], json.dumps(event) + "\n")
+        self.assertEqual(result["raw_stderr"], "claude diagnostic\n")
+
+    def test_claude_print_caps_raw_stdout_with_runtime_constant(self):
+        raw = "HEAD" + ("x" * 300) + "TAIL"
+        cap = 120
+        with mock.patch.object(engines, "RAW_CAPTURE_CAP", cap):
+            result = self.claude_print(FakeProcess(raw))
+
+        rendered = result["raw_stdout"]
+        self.assertLessEqual(len(rendered.encode()), cap)
+        self.assertTrue(rendered.startswith("HEAD"))
+        self.assertTrue(rendered.endswith("TAIL"))
+
+
+if __name__ == "__main__":
+    unittest.main()
