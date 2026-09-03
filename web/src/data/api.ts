@@ -134,6 +134,16 @@ export const ProjectRowSchema = z
   })
   .passthrough();
 
+// monitor/restart-pending.json (written by dispatch.pull_after_done) plus what the Restart button waits for.
+export const RestartSchema = z
+  .object({
+    since: z.string().nullish(),
+    head: z.string().nullish(),
+    files: z.array(z.string()).nullish(),
+    waiting_for: z.array(z.string()),
+  })
+  .passthrough();
+
 export const OverviewSchema = z
   .object({
     projects: z.array(ProjectRowSchema),
@@ -141,6 +151,7 @@ export const OverviewSchema = z
     fyis: z.array(FyiSchema),
     wip: WipSchema,
     quota: QuotaSchema,
+    restart: RestartSchema.nullish(),
     now: z.string().nullish(),
   })
   .passthrough();
@@ -260,6 +271,7 @@ export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Fyi = z.infer<typeof FyiSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
+export type Restart = z.infer<typeof RestartSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
@@ -446,6 +458,15 @@ export function useL3Reset(project: string) {
     queryKey: ["chat", project],
     update: () => undefined,
     failureMessage: "Couldn't reset the L3 session.",
+  });
+}
+
+export function useRestart() {
+  return useOptimisticMutation<void, unknown, Overview>({
+    mutationFn: () => post("/api/restart", {}),
+    queryKey: ["overview"],
+    update: () => undefined,
+    failureMessage: "Couldn't start the restart.",
   });
 }
 

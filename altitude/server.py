@@ -5,6 +5,7 @@ import mimetypes
 import os
 import ssl
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -651,6 +652,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if api == "install-statusline":
                 return self._json(install_statusline())
+            if api == "restart":
+                status = restart_status()
+                if not status:
+                    return self._json({"error": "no restart is pending"}, 409)
+                if status["waiting_for"]:
+                    return self._json({"error": "restart waits for " + ", ".join(status["waiting_for"])}, 409)
+                return self._json(restart_service())
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"POST {self.path}: client went away ({type(e).__name__}: {e})")
@@ -663,6 +671,31 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
+def restart_status() -> dict | None:
+    """The restart-pending flag plus what the page's Restart button waits for; None when nothing is pending."""
+    pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
+    if not pending:
+        return None
+    projects = list(config.load_projects())
+    waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
+               if t.get("dispatching") or t.get("state") in ("running", "reported")]
+    waiting += [f"{p} L3" for p in projects if l3.busy(p)]
+    return {**pending, "waiting_for": waiting}
+
+
+def restart_service() -> dict:
+    """Run the operator restart script as a transient user unit: outside altd's cgroup, it survives the restart."""
+    unit = f"altitude-restart-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+    cmd = [engines.SYSTEMD_RUN_BIN, "--user", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
+           f"--setenv=PATH={os.environ.get('PATH', '')}", "--",
+           sys.executable, str(config.REPO / "scripts" / "restart_altitude.py")]
+    res = subprocess.run(cmd, cwd=str(config.REPO), capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        raise RuntimeError(f"systemd-run refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
+    log(f"restart requested from the page → unit {unit}; follow it with: journalctl --user -u {unit}")
+    return {"ok": True, "unit": unit}
+
+
 def overview() -> dict:
     projects = config.discover_projects()
     for p in projects:
@@ -672,7 +705,7 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "fyis": digest.fyis(30), "wip": digest.wip(), "quota": monitor.quota(),
-            "now": S.now()}
+            "restart": restart_status(), "now": S.now()}
 
 
 def project_view(name: str) -> dict:
