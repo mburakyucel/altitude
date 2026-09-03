@@ -27,7 +27,7 @@ function num(v: unknown): number | null {
 }
 
 function metaLine(role: string, parts: Array<string | null>): string {
-  const label = role === "user" ? "you" : "L3";
+  const label = role === "user" ? "you" : role === "server" ? "server" : "L3";
   return [label, ...parts.filter((p): p is string => Boolean(p))].join(" · ");
 }
 
@@ -92,20 +92,21 @@ function QueuedBubble({
   position: number | null;
   onRemove: () => void;
 }) {
+  const mine = m.trigger === "chat" && m.role === "burak";
   return (
     <Bubble
-      role="user"
-      meta={metaLine("user", [
+      role={mine ? "user" : "assistant"}
+      meta={metaLine(mine ? "user" : (m.role ?? "server"), [
         position != null ? `queued ${position}` : "queued",
         m.trigger && m.trigger !== "chat" ? m.trigger : null,
         age(m.at) || null,
       ])}
       text={m.text}
-      action={
+      action={mine ? (
         <button type="button" className="btn btn-ghost ml-auto" onClick={onRemove}>
           Remove
         </button>
-      }
+      ) : null}
     />
   );
 }

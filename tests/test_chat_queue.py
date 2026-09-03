@@ -105,6 +105,11 @@ class TestChatQueue(AltitudeCase):
         self.assertEqual(status, 409)
         self.assertIn("already started", out["error"])
 
+        server_row = l3.queue_message(self.project, "report landed", trigger="report-landed")
+        status, _ = self.post_json("/api/chat/remove", {"project": self.project, "id": server_row["id"]})
+        self.assertEqual(status, 409, "Burak may take back chat, not queued server work")
+        self.assertEqual([row["id"] for row in self.queue_rows()], [server_row["id"]])
+
     # ---- draining -----------------------------------------------------------
 
     def deliverable(self):
@@ -137,6 +142,33 @@ class TestChatQueue(AltitudeCase):
             self.assertTrue(drained.wait(10), "the queue waited for the next tick instead of the turn boundary")
         self.assertEqual(calls, ["status?", "while you were busy"])
         self.assertEqual(self.queue_rows(), [])
+
+    def test_a_drain_request_arriving_as_the_loop_empties_is_not_lost(self):
+        first_check, release, second_check = threading.Event(), threading.Event(), threading.Event()
+        calls = []
+
+        def deliver(project):
+            calls.append(project)
+            if len(calls) == 1:
+                first_check.set()
+                release.wait(10)
+            else:
+                second_check.set()
+            return None
+
+        with mock.patch.object(l3, "deliver_queued", new=deliver), mock.patch.object(l3, "busy", return_value=False):
+            self.assertTrue(server.request_l3_drain(self.project))
+            self.assertTrue(first_check.wait(5))
+            self.assertFalse(server.request_l3_drain(self.project), "the existing keyed loop owns the second request")
+            release.set()
+            self.assertTrue(second_check.wait(5), "the request was dropped while the drain loop exited")
+
+    def test_every_server_turn_requests_a_drain_even_when_the_turn_errors(self):
+        with mock.patch.object(l3, "turn", side_effect=RuntimeError("provider failed")), \
+             mock.patch.object(server, "request_l3_drain") as request:
+            with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                server.server_l3_turn(self.project, "hello", trigger="chat")
+        request.assert_called_once_with(self.project)
 
     # ---- restarts -----------------------------------------------------------
 

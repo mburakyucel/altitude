@@ -19,6 +19,7 @@ from . import config, digest, dispatch, engines, git_policy, incidents, l3, moni
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
+_l3_drain_requested: set[str] = set()
 CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
 
 
@@ -55,22 +56,52 @@ def spawn(key: str, fn, *a) -> bool:
 
 # ---- workflows the timers and buttons trigger --------------------------------
 
-def start_l3(project: str) -> None:
-    # The start reply is a conversation with Burak, not a turn log.
-    l3.turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
-                     "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
-                     "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
-            trigger="start")
-    spawn(f"l3-queue:{project}", drain_l3_queue, project)
+def request_l3_drain(project: str) -> bool:
+    """Ask the project's one drain loop to run. A request that arrives while the loop is finishing
+    is remembered, so a turn boundary cannot miss a message queued at the same instant."""
+    key = f"l3-queue:{project}"
+    with _bg_guard:
+        _l3_drain_requested.add(project)
+        current = _bg.get(key)
+        if current and current.is_alive():
+            return False
+    return spawn(key, drain_l3_queue, project)
 
 
 def drain_l3_queue(project: str) -> None:
     """Run the messages waiting for L3, one turn at a time, until the queue is empty. Every server-side
     L3 turn asks for a drain when it ends, so a message queued while L3 was busy runs at the turn
-    boundary rather than at the next tick; `spawn` keys the loop per project, so asking twice, or from
-    inside a drained turn, joins the running loop instead of nesting another."""
-    while l3.deliver_queued(project):
-        pass
+    boundary rather than at the next tick. Requests coalesce into this keyed loop instead of nesting
+    another; if another turn owns L3, that turn's completion makes the next request."""
+    key = f"l3-queue:{project}"
+    while True:
+        with _bg_guard:
+            _l3_drain_requested.discard(project)
+        while l3.deliver_queued(project):
+            pass
+        with _bg_guard:
+            if project in _l3_drain_requested and not l3.busy(project):
+                continue
+            _l3_drain_requested.discard(project)
+            if _bg.get(key) is threading.current_thread():
+                _bg.pop(key, None)
+            return
+
+
+def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
+    """Run one server-owned turn and request its queue drain at the turn boundary, success or error."""
+    try:
+        return l3.turn(project, prompt, **kwargs)
+    finally:
+        request_l3_drain(project)
+
+
+def start_l3(project: str) -> None:
+    # The start reply is a conversation with Burak, not a turn log.
+    server_l3_turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
+                            "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
+                            "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
+                   trigger="start")
 
 
 def restart_notice() -> None:
@@ -283,7 +314,7 @@ def report_turn(project: str, t: dict, v: dict) -> None:
               "Put ids, slugs, file names, code, and spend figures in the task record — the card `--detail`, "
               "the digest, the FYI, or the task folder — not in the reply text. Close with at most two plain sentences saying what happened "
               "and whether anything waits on Burak.")
-    res = l3.turn(project, header, trigger="report-landed")
+    res = server_l3_turn(project, header, trigger="report-landed")
     if not (res or {}).get("completed") or (res or {}).get("error"):
         detail = (res or {}).get("error") or "L3 turn did not complete"
         log(f"[{project}/{slug}] report turn unfinished: {detail}")  # not stamped: stranded-report retry owns it
@@ -375,7 +406,7 @@ def tick() -> None:
     for project in list(config.load_projects()):
         try:
             if l3.queue_path(project).exists():
-                spawn(f"l3-queue:{project}", drain_l3_queue, project)
+                request_l3_drain(project)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
@@ -670,7 +701,7 @@ class Handler(BaseHTTPRequestHandler):
                     # Burak types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
                     row = l3.queue_message(project, text, trigger="chat", role="burak")
-                    spawn(f"l3-queue:{project}", drain_l3_queue, project)
+                    request_l3_drain(project)
                     return self._json({"queued": row})
                 self._stream_open()
                 gone: list[BaseException] = []
@@ -687,8 +718,7 @@ class Handler(BaseHTTPRequestHandler):
                         gone.append(e)
                         log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
 
-                res = l3.turn(project, text, trigger="chat", on_text=send)
-                spawn(f"l3-queue:{project}", drain_l3_queue, project)
+                res = server_l3_turn(project, text, trigger="chat", on_text=send)
                 if gone:
                     return
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})

@@ -74,7 +74,8 @@ def _write_queue(path: Path, rows: list[dict]) -> None:
 
 def queued(project: str) -> list[dict]:
     """The messages waiting for L3, oldest first. A queued message is dropped or run, never edited."""
-    return _queue_rows(queue_path(project))
+    with S.project_lock(project):
+        return _queue_rows(queue_path(project))
 
 
 def queue_message(project: str, text: str, *, trigger: str, role: str = "server") -> dict:
@@ -90,11 +91,12 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
 
 
 def drop_queued(project: str, message_id: str) -> bool:
-    """Drop one message that has not started. False once its turn has taken it off the queue."""
+    """Drop one of Burak's chat messages that has not started. Server work is not editable."""
     path = queue_path(project)
     with S.project_lock(project):
         rows = _queue_rows(path)
-        rest = [row for row in rows if row.get("id") != message_id]
+        rest = [row for row in rows
+                if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != "burak"]
         if len(rest) == len(rows):
             return False
         _write_queue(path, rest)
