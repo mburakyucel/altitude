@@ -541,7 +541,8 @@ class Handler(BaseHTTPRequestHandler):
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
-                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2])})
+                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]), "l3": l3.info(parts[2]),
+                                   "engine": config.project(parts[2]).get("l3_engine")})
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
@@ -613,18 +614,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
-            if api == "chat":
-                project, text = o["project"], (o.get("text") or "").strip()
+            if api == "l3" and len(parts) > 2 and parts[2] == "engine":
                 engine = o.get("engine") or None
-                if not text:
-                    return self._json({"error": "empty"}, 400)
                 if engine and engine not in config.ENGINES:
                     return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
+                config.set_l3_engine(o["project"], engine)
+                return self._json({"ok": True, "engine": engine})
+            if api == "chat":
+                project, text = o["project"], (o.get("text") or "").strip()
+                if not text:
+                    return self._json({"error": "empty"}, 400)
                 if l3.busy(project):
                     return self._json({"error": "L3 is busy; try again in a moment"}, 409)
                 self._stream_open()
                 send = lambda t: self._stream_send({"t": t})  # noqa: E731
-                res = l3.turn(project, text, trigger="chat", engine=engine, on_text=send)
+                res = l3.turn(project, text, trigger="chat", on_text=send)
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})
                 self._stream_close()
                 return

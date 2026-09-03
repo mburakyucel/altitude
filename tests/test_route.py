@@ -52,6 +52,27 @@ class TestPickEngine(AltitudeCase):
         self.codex = codex(100, short=20)
         self.assertIsNone(route.pick_engine("l2")["engine"])
 
+    def test_a_session_stays_on_its_engine_under_the_switch_margin(self):
+        # Two close quotas would otherwise alternate every turn, paying a cold cache and a handoff each time.
+        self.claude = {"known": True, "five_hour": 10, "seven_day": 20}
+        self.codex = codex(30)
+        self.assertEqual(route.pick_engine("l3")["engine"], "claude")
+        choice = route.pick_engine("l3", current="codex")
+        self.assertEqual(choice["engine"], "codex")
+        self.assertIn("staying on codex", choice["why"]); self.assertIn("10.0 points", choice["why"])
+        self.claude = {"known": False}
+        choice = route.pick_engine("l3", current="claude")
+        self.assertEqual(choice["engine"], "claude"); self.assertIn("not comparable", choice["why"])
+
+    def test_a_session_moves_for_a_clear_lead_or_an_unavailable_engine(self):
+        self.claude = {"known": True, "five_hour": 10, "seven_day": 20}
+        self.codex = codex(40)
+        choice = route.pick_engine("l3", current="codex")
+        self.assertEqual(choice["engine"], "claude"); self.assertIn("more weekly headroom", choice["why"])
+        self.codex = codex(30, short=100)
+        self.assertEqual(route.pick_engine("l3", current="codex")["engine"], "claude")
+        self.assertEqual(route.pick_engine("l3", forced="claude", current="codex")["engine"], "claude")
+
 
 if __name__ == "__main__":
     unittest.main()

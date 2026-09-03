@@ -110,7 +110,7 @@ def _select(project: str, engine: str | None = None) -> dict:
         if choice.get("engine"):
             choice["why"] = f"Claude short-window hold until {held}; " + choice["why"]
         return choice
-    choice = route.pick_engine("l3", forced=forced)
+    choice = route.pick_engine("l3", forced=forced, current=info(project).get("engine_last"))
     if engine and choice.get("engine"):
         choice["why"] = "chosen by Burak for this turn"
     return choice

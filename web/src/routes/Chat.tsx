@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, streamChat, useChat, useOverview } from "../data/api";
-import type { ChatEngine } from "../data/api";
+import { ApiError, streamChat, useChat, useL3Engine, useOverview } from "../data/api";
+import type { L3Engine } from "../data/api";
 import type { ChatMessage } from "../data/api";
 import { useToast } from "../data/Toast";
 
@@ -94,8 +94,8 @@ export default function Chat() {
   const queryClient = useQueryClient();
 
   const [draft, setDraft] = useState("");
-  // "auto" leaves the engine to the project pin or the weekly quota; a named engine pins the turn.
-  const [engine, setEngine] = useState<ChatEngine | "auto">("auto");
+  // The project's L3 engine pin: a named engine holds every L3 turn there until set back to Auto.
+  const pin = useL3Engine(project);
   const [locals, setLocals] = useState<LocalTurn[]>([]);
   const [streaming, setStreaming] = useState(false);
   const nextId = useRef(0);
@@ -125,14 +125,9 @@ export default function Chat() {
     setDraft("");
     setStreaming(true);
     try {
-      const done = await streamChat(
-        project,
-        text,
-        (chunk) => {
-          patch(id, (l) => ({ ...l, assistant: l.assistant + chunk }));
-        },
-        engine === "auto" ? undefined : engine,
-      );
+      const done = await streamChat(project, text, (chunk) => {
+        patch(id, (l) => ({ ...l, assistant: l.assistant + chunk }));
+      });
       if (done.error) {
         patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${done.error ?? ""}` }));
       }
@@ -243,11 +238,10 @@ export default function Chat() {
           </button>
           <select
             className="field"
-            aria-label="Engine for this turn"
-            title="Which engine answers this turn; auto follows the project pin or the weekly quota"
-            value={engine}
-            disabled={disabled}
-            onChange={(e) => setEngine(e.target.value as ChatEngine | "auto")}
+            aria-label="L3 engine"
+            title="Which engine runs L3 for this project until you change it; Auto follows the weekly quota"
+            value={chat.data?.engine ?? "auto"}
+            onChange={(e) => pin.mutate(e.target.value === "auto" ? null : (e.target.value as L3Engine))}
           >
             <option value="auto">Auto</option>
             <option value="claude">Claude</option>

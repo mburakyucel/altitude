@@ -106,39 +106,38 @@ describe("Chat", () => {
     });
   });
 
-  it("sends the engine chosen for the turn and omits it on auto", async () => {
+  it("pins the project's L3 to the chosen engine and clears the pin on Auto", async () => {
+    // The server keeps the pin; the refetched chat view carries it back after each change.
+    let pinned: string | null = null;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/overview")) return jsonResponse(overview);
-      if (url.includes("/api/chat") && init?.method === "POST") {
-        return streamResponse(['{"t":"ok"}\n{"done":{"session_id":"s1","engine":"codex"}}']);
+      if (url.includes("/api/l3/engine")) {
+        pinned = (JSON.parse(String(init?.body)) as { engine: string | null }).engine;
+        return jsonResponse({ ok: true, engine: pinned });
       }
-      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      if (url.includes("/api/chat")) return jsonResponse({ ...chatView, engine: pinned });
       return jsonResponse({ error: "not found" }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
+    const pins = () =>
+      fetchMock.mock.calls
+        .filter(([u]) => String(u).includes("/api/l3/engine"))
+        .map(([, init]) => JSON.parse(String((init as RequestInit | undefined)?.body)) as unknown);
 
     const { user } = renderApp({ route });
     await screen.findByText("how is it going?");
+    const select = screen.getByLabelText("L3 engine") as HTMLSelectElement;
+    expect(select.value).toBe("auto");
 
-    await user.selectOptions(screen.getByLabelText("Engine for this turn"), "codex");
-    await user.type(screen.getByLabelText("Message L3"), "use codex");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(postsToChat(fetchMock)).toHaveLength(1));
-    expect(JSON.parse(String(postsToChat(fetchMock)[0]?.[1]?.body))).toEqual({
-      project: "altitude",
-      text: "use codex",
-      engine: "codex",
-    });
+    await user.selectOptions(select, "codex");
+    await waitFor(() => expect(pins()).toEqual([{ project: "altitude", engine: "codex" }]));
+    await waitFor(() => expect(select.value).toBe("codex"));
 
-    await user.selectOptions(screen.getByLabelText("Engine for this turn"), "auto");
-    await user.type(screen.getByLabelText("Message L3"), "back to auto");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(postsToChat(fetchMock)).toHaveLength(2));
-    expect(JSON.parse(String(postsToChat(fetchMock)[1]?.[1]?.body))).toEqual({
-      project: "altitude",
-      text: "back to auto",
-    });
+    await user.selectOptions(select, "auto");
+    await waitFor(() => expect(pins()).toHaveLength(2));
+    expect(pins()[1]).toEqual({ project: "altitude", engine: null });
+    await waitFor(() => expect(select.value).toBe("auto"));
   });
 
   it("toasts 'L3 is busy' on 409 and does not retry", async () => {

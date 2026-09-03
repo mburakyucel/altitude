@@ -73,8 +73,16 @@ def _unavailable(weekly: float | None, short: float | None) -> str | None:
     return None
 
 
-def pick_engine(role: str, *, forced: str | None = None) -> dict:
-    """Return ``{engine, why}``; ``engine`` is None when nothing is available."""
+SWITCH_MARGIN = 15.0  # weekly points of extra headroom the other engine needs before a session moves
+
+
+def pick_engine(role: str, *, forced: str | None = None, current: str | None = None) -> dict:
+    """Return ``{engine, why}``; ``engine`` is None when nothing is available.
+
+    ``current`` is the engine that ran the previous turn of a long-lived session (L3). Staying keeps that
+    transcript and its prompt cache warm, so the route moves only when ``current`` is unavailable or the other
+    engine has SWITCH_MARGIN more weekly headroom; without it two close quotas would alternate every turn.
+    """
     if forced and forced not in config.ENGINES:
         raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
     usage = _usage()
@@ -108,4 +116,10 @@ def pick_engine(role: str, *, forced: str | None = None) -> dict:
     else:
         engine = default if default in available else available[0]
         why = f"weekly quotas unknown or incomparable → default policy {engine}"
+    if current in available and engine != current:
+        lead = weekly[current] - weekly[engine] if current in comparable and engine in comparable else None
+        if lead is None or lead < SWITCH_MARGIN:
+            reason = (f"{engine} has {lead:.1f} points more weekly headroom, under the {SWITCH_MARGIN:.0f}-point switch margin"
+                      if lead is not None else "weekly quotas are not comparable")
+            engine, why = current, f"staying on {current}: {reason}"
     return {"engine": engine, "why": why}
