@@ -41,7 +41,7 @@ identities on purpose:
 | `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
 | `agent_id` | current Claude job or Codex OS worker | every physical replacement |
 | `l2_token` | backend ownership fence for the logical L2 attempt | stable for the attempt; old workers are stopped before replacement |
-| `routing` | reason plus quota evidence used at launch | written once with fresh dispatch |
+| `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
 
 ## Fresh dispatch
 
@@ -49,7 +49,7 @@ identities on purpose:
 queued task
   ├─ recovery/WIP/lease and Git provenance gates
   ├─ weekly-first provider decision (or explicit task/project pin)
-  ├─ persist l2_engine + model + reason + raw quota evidence
+  ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
