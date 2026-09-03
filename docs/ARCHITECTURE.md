@@ -16,6 +16,7 @@ Burak
 
 L2 worktree/branch ─► checks/review ─► PR ─► merge ─► archive task
 system fault ─► blocked task + private incident ─► one queued L3 message
+L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escalates (Inbox card for Burak)
 ```
 
 ## Responsibilities
@@ -54,7 +55,10 @@ refuses that shortcut when the task branch changed. Code work uses the verified 
 
 Queued tasks wait for WIP, lease, and engine availability gates. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
-operational hold, a worker failure, a verifier fault, or a report gap. Deferral is not an active
+operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
+first, which answers from the record or escalates one plain dilemma to Burak; only a block flagged
+for Burak or an escalation is an Inbox card. After a restart L3 receives the active tasks and resumes
+the ones a fault had stopped. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
 `STATE.md` is regenerated from active task records and contains only work relevant to the next L3

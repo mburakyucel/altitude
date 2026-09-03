@@ -192,7 +192,7 @@ export const TaskMessageSchema = z
   .object({
     id: z.string(),
     at: z.string().nullish(),
-    role: z.enum(["burak", "l2"]),
+    role: z.enum(["burak", "l2", "l3"]),
     text: z.string(),
   })
   .passthrough();

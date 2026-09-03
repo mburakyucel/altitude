@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
-from altitude import dispatch, engines, incidents, server, state as S, tasks as T
+from altitude import dispatch, engines, incidents, server, state as S, tasks as T, l3
 
 
 def cli(argv):
@@ -108,6 +108,57 @@ class TestTaskConversation(ChatCase):
         self.assertIsNone(task["blocked_reason"])
         self.assertEqual(T.pending(self.project, self.slug), [], "delivered messages leave the inbox")
         self.assertEqual([m["text"] for m in T.task_messages(self.project, self.slug)], ["Use the existing API."])
+
+    def worker_env(self):
+        return {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+
+    def l3_queue(self):
+        p = l3.queue_path(self.project)
+        return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
+
+    def test_l2_block_goes_to_l3_first_and_a_flagged_one_to_burak(self):
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Keep the old API?", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["waiting_on"]), ("blocked", "l3"))
+        self.assertEqual(T.decisions(self.project), [], "a block waiting on L3 is not a card for Burak")
+        queued = self.l3_queue()
+        self.assertEqual([row["trigger"] for row in queued], ["block"])
+        self.assertIn(self.slug, queued[0]["text"]); self.assertIn("Keep the old API?", queued[0]["text"])
+        self.assertIn("alt task escalate", queued[0]["text"])
+
+        task.update({"state": "running"}); S.save_task(self.project, task)
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?", "--for-burak",
+                       env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], "burak")
+        cards = T.decisions(self.project)
+        self.assertEqual([c["question"] for c in cards], ["Stopped mid-task: Which colour?"])
+        self.assertEqual(len(self.l3_queue()), 1, "a block flagged for Burak does not wake L3")
+
+    def test_l3_answers_a_block_or_escalates_it_as_one_dilemma(self):
+        self.block("Keep the old API?")
+        task = S.load_task(self.project, self.slug); task["waiting_on"] = "l3"; S.save_task(self.project, task)
+        T.escalate(self.project, self.slug, "Keep the old API (recommended) or break it now?")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], task["escalated"]), ("burak", True))
+        self.assertEqual([c["question"] for c in T.decisions(self.project)],
+                         ["L3 asks: Keep the old API (recommended) or break it now?"])
+        self.assertEqual(S.read_events(self.project, self.slug)[-1]["kind"], "escalated")
+        with self.assertRaises(T.TransitionError):
+            T.escalate(self.project, self.slug, "")
+
+        T.message(self.project, self.slug, "l3", "Keep it; the brief says no breaking changes.")
+        seen = {}
+        self.resume(seen)
+        self.assertTrue(seen["prompt"].startswith("Message from L3 ("), seen["prompt"])
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["state"], "running")
+        for key in ("waiting_on", "escalated", "fault"):
+            self.assertNotIn(key, task, f"{key} leaves with the block")
+        out = self.alt("--project", self.project, "task", "message", self.slug, "Also keep the tests.", env={"ALTITUDE_ACTOR": "l3"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(T.task_messages(self.project, self.slug)[-1]["role"], "l3")
 
     def test_resume_without_a_message_continues_from_the_progress_file(self):
         self.block()

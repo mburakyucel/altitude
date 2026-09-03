@@ -63,6 +63,24 @@ def start_l3(project: str) -> None:
             trigger="start")
 
 
+def restart_notice() -> None:
+    """One message per project with active tasks: L3 resumes what a fault had stopped and leaves Burak's to him."""
+    for project in config.load_projects():
+        active = [t for t in S.list_tasks(project) if t["state"] in ("running", "blocked", "reported")]
+        if not active:
+            continue
+        lines = []
+        for t in active:
+            tag = (f"fault {t['fault']}" if t.get("fault") else f"waiting on {t.get('waiting_on', 'burak')}"
+                   if t["state"] == "blocked" else t["state"])
+            lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
+        l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
+                         + "\n\nCheck each with `alt task status <slug>`. Resume a task blocked by a fault the restart should "
+                         "have fixed (`alt task resume <slug>`); leave a task waiting on Burak to him; a running task keeps "
+                         "its worker. Reply in two or three plain sentences.", trigger="restart")
+        log(f"[{project}] restart notice queued for L3 ({len(active)} active tasks)")
+
+
 def on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
@@ -743,6 +761,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     host = host or config.HOST
     port = port or config.PORT
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        restart_notice()
         threading.Thread(target=timer_loop, name="timers", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")

@@ -77,7 +77,7 @@ function ConversationMessage({ message }: { message: TaskMessage }) {
       data-role={message.role}
     >
       <p className="text-meta text-muted">
-        {mine ? "You" : "L2"}
+        {mine ? "You" : message.role === "l3" ? "L3" : "L2"}
         {when ? ` · ${when}` : ""}
       </p>
       <p className="whitespace-pre-wrap text-body text-ink-2">{message.text}</p>
