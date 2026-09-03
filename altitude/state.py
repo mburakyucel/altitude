@@ -20,6 +20,15 @@ def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Flush the directory entry so a completed rename survives power loss."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write(path: Path, text: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -30,6 +39,7 @@ def atomic_write(path: Path, text: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         try:
             os.unlink(tmp)
