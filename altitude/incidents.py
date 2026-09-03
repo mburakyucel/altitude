@@ -6,6 +6,7 @@ import os
 import re
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config, state as S, tasks as T
@@ -102,62 +103,18 @@ def index() -> list[dict]:
     return out
 
 
-_IID = re.compile(r"^I-(\d+)$")
-INCIDENT_ID_ATTEMPTS = 20
-
-
-@contextmanager
-def _alloc_lock(directory: Path):
-    """Use a dedicated leaf lock for incident-id allocation, never ``S.project_lock``.
-
-    It is taken only around the allocate+reserve loop below, which acquires nothing else, so it can neither nest
-    with itself nor invert an order against the project lock."""
-    directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / ".alloc.lock", "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
+    """Reserve `I-<UTC stamp>.md` with an exclusive create; a same-second neighbour gets a numeric suffix."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    for n in range(1, 100):
+        iid = f"I-{stamp}" if n == 1 else f"I-{stamp}-{n}"
+        path = directory / f"{iid}.md"
         try:
-            yield
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
-
-
-def _issued_incident_numbers(project: str) -> list[int]:
-    """Every incident number this project has already issued, wherever it was recorded: the global index, the
-    per-project ledger, the Altitude-side folder `new_incident` writes, and the repo copy. Anything that is not a
-    strict `I-NNN` is skipped rather than crashed on."""
-    nums: list[int] = []
-
-    def take(value: object) -> None:
-        m = _IID.match(str(value))
-        if m:
-            nums.append(int(m.group(1)))
-
-    for r in index():
-        if r.get("project") == project:
-            take(r.get("id"))
-    ledger = config.project_dir(project) / "incidents.jsonl"
-    if ledger.exists():
-        for line in ledger.read_text().splitlines():
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(row, dict):
-                take(row.get("id"))
-    for d in (config.project_dir(project) / "incidents", config.project_path(project) / "docs" / "incidents"):
-        if d.is_dir():
-            for f in d.glob("I-*.md"):
-                take(f.stem)
-    return nums
-
-
-def next_incident_id(project: str) -> str:
-    """Return one past the highest id ever issued, never a row count.
-
-    This preserves uniqueness across gaps and duplicate historical rows.
-    """
-    nums = _issued_incident_numbers(project)
-    return f"I-{(max(nums) + 1) if nums else 1:03d}"
+            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return iid, path
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"cannot file an incident in {directory}: every id for {stamp} is taken")
 
 
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
@@ -165,36 +122,18 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     """Write incident evidence into the project's Altitude state.
 
     Filing an incident never creates a task or schedules a healing workflow.
-    Safe to call while holding any project lock: allocation takes a leaf lock of its own."""
+    Safe to call while holding any project lock: reserving the file takes no lock."""
     template = (config.TEMPLATES / "incident.md").read_text()
     fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=what.strip(), evidence=evidence.strip(),
                   cause=cause.strip(), status="watch")
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)
-    # Render once before anything is reserved, with a placeholder id: a template placeholder this function does not
-    # pass — or a stray brace in incident.md — must blow up here, not after O_EXCL has burned an id and left a
-    # zero-byte file behind. The real id is not known until the reservation succeeds, and only that value differs,
-    # so if this pass renders the one below cannot fail.
-    template.format(id="I-000", **fields)
-    # Reserve the id with an exclusive create, then fill the file atomically. The empty file is the
-    # reservation and holds the id against every other racer — process or thread — while `atomic_write` replaces
-    # it whole, so a crash mid-write can never leave a half-parsed incident. An existing incidents/I-NNN.md is
-    # never overwritten: we take the next free id, or give up loudly. The lock only stops racers spinning here.
-    iid, path = "", d
-    with _alloc_lock(d):
-        for _ in range(INCIDENT_ID_ATTEMPTS):
-            iid = next_incident_id(project)
-            path = d / f"{iid}.md"
-            try:
-                os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            except FileExistsError:
-                continue                    # someone took it between the max and the open — recompute and retry
-            break
-        else:
-            raise RuntimeError(f"cannot file an incident on {project}: {iid or '(none allocated)'} already exists at {path} "
-                               f"and so did every id tried before it ({INCIDENT_ID_ATTEMPTS} attempts); an existing incident "
-                               "file is never overwritten")
-    S.atomic_write(path, template.format(id=iid, **fields))
+    iid, path = _reserve_incident_file(d)
+    try:
+        S.atomic_write(path, template.format(id=iid, **fields))
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "cause": cause.strip()[:200]}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:

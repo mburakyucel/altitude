@@ -199,13 +199,13 @@ class TestAmendIndex(TempHome, unittest.TestCase):
                                         cause="the worktree base was not refreshed", tags=["git"])
 
     def test_amended_cause_replaces_the_indexed_cause_without_adding_a_row(self):
-        before = incidents.next_incident_id("demo")
+        before = sorted(p.name for p in (self.root / "demo" / "incidents").glob("I-*.md"))
         incidents.amend_incident("demo", self.inc["id"], cause="the remote base was fetched too late",
                                reason="root cause was wrong", actor="burak")
         rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["cause"], "the remote base was fetched too late")
-        self.assertEqual(incidents.next_incident_id("demo"), before)      # no row appended, no id burned
+        self.assertEqual(sorted(p.name for p in (self.root / "demo" / "incidents").glob("I-*.md")), before)  # no new file
         per_project = (self.root / "demo" / "incidents.jsonl").read_text().splitlines()
         self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the remote base was fetched too late"])
 
