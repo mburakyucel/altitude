@@ -110,5 +110,4 @@ Operational events remain an audit detail.
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
 that `git_policy` installs into every managed repository, the Claude inbox hook, and the statusline
-monitor. Superseded designs live in Git history and in the [simplification record](SIMPLIFICATION.md),
-not in the active tree.
+monitor. [SIMPLIFICATION.md](SIMPLIFICATION.md) records why the system has this shape.
