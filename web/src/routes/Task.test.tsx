@@ -65,7 +65,7 @@ const transcript = {
   cursor: 2,
   events: [
     { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "state" },
-    { seq: 1, source: "claude", kind: "message", type: "assistant", at: null, text: "Reading the timer code" },
+    { seq: 1, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
   ],
   redaction: "credential-shaped keys and values are redacted",
 };

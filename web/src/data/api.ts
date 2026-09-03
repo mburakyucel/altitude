@@ -213,9 +213,14 @@ export const TaskViewSchema = z
   })
   .passthrough();
 
+// One row of the Live session timeline. `role` says who speaks (user, assistant, tool, system); a tool call
+// carries its tool, a one-line summary, and the tool_use_id its result row shares; a Codex command carries
+// its own output.
 export const TranscriptEventSchema = z.object({
-  seq: z.number(), source: z.string(), kind: z.string(), type: z.string(),
+  seq: z.number(), source: z.string(), kind: z.string(), type: z.string(), role: z.string().nullish(),
   at: z.string().nullish(), session_id: z.string().nullish(), text: z.string(),
+  tool: z.string().nullish(), summary: z.string().nullish(), tool_use_id: z.string().nullish(),
+  output: z.string().nullish(), status: z.string().nullish(), error: z.boolean().nullish(),
   truncated: z.boolean().nullish(), raw: z.unknown().nullish(),
 }).passthrough();
 export const TranscriptSchema = z.object({
