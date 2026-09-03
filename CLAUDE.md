@@ -20,6 +20,9 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 - Keep one active task in one isolated worktree and branch. Never develop in the deployment
   checkout, reuse another task's branch, or bypass the PR path.
 - Preserve unrelated and in-progress work. Stay inside the request and declared lease.
+- Ship the docs with the change: a PR that changes behavior updates `README.md`,
+  `docs/ARCHITECTURE.md`, and `docs/SESSION_LIFECYCLE.md` wherever they describe that behavior, in
+  the same PR and in present tense. Include those files in the lease.
 - Use `alt task status` for orientation and `alt land` for the guarded commit, push, PR, checks,
   and optional merge path.
 - Do not turn an incident or review finding into another task or session. Record evidence;
