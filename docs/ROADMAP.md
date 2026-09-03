@@ -1,18 +1,10 @@
 # Roadmap
 
-## Current runtime stabilization
+## Simplification (complete)
 
-The earlier stabilization cutover and its separately authorized controlled restart are complete.
-This statement does not approve the later comprehensive simplification proposal or its local
-implementation branches. Service lifecycle remains separate from ordinary source work and requires
-explicit authorization.
-
-## Comprehensive simplification review
-
-The comprehensive simplification is being redone module by module from `main` under the decisions
-and phase order in [DECISIONS.md](simplification-review/DECISIONS.md). The five draft PRs from the
-earlier attempt are closed. The [review checkpoint](simplification-review/README.md) records the
-facts the decisions were based on.
+The module-by-module simplification finished on 2026-09-03; [SIMPLIFICATION.md](SIMPLIFICATION.md)
+holds the decisions, the working rules that still apply, and the deletion ledger. Service lifecycle
+stays separate from ordinary source work and requires explicit authorization.
 
 ## Current product work
 

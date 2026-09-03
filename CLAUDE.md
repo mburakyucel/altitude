@@ -3,13 +3,9 @@
 Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
 description; Git history is the archive.
 
-The comprehensive simplification is being redone module by module from `main`. Read
-`docs/simplification-review/DECISIONS.md` first: it records Burak's six paradigm decisions
-(2026-09-02), the working rules for every module PR, and the phase order. The five `simplify/*`
-draft PRs are closed; no `simplify/*` branch is a source for new work.
-
-Phase 1 deletions need no further decision. Later phases start only under the decision that gates
-them in `DECISIONS.md`; ask Burak only for a decision that is not recorded there.
+`docs/SIMPLIFICATION.md` records Burak's six paradigm decisions (2026-09-02) and the working rules
+for every PR: deletion first, every added check names the incident it prevents, the six review
+questions answered in the PR body, full suites. Ask Burak only for a decision not recorded there.
 
 ## Roles
 

@@ -8,11 +8,9 @@ Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
 [`design/wireframes/README.md`](design/wireframes/README.md).
 
-The comprehensive simplification is being redone module by module from `main`. Burak's paradigm
-decisions, the working rules, and the phase order are in
-[`docs/simplification-review/DECISIONS.md`](docs/simplification-review/DECISIONS.md); the
-[review checkpoint](docs/simplification-review/README.md) records the facts they were based on. The
-five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source for new work.
+The 2026-09 module-by-module simplification is complete. [`docs/SIMPLIFICATION.md`](docs/SIMPLIFICATION.md)
+records Burak's paradigm decisions, the working rules that still apply to every PR, and what each
+phase deleted.
 
 ## Current operating model
 
@@ -34,8 +32,9 @@ five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source fo
 
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI and the only door a worker
 has into Altitude: the backend validates every command against the task record under the project
-lock. `personas/` contains the L2 and L3 roles, and `schemas/` defines code-delivery reports. `hooks/` supplies Claude-side message delivery and telemetry. A Codex L2 runs in
-Codex's own workspace-write sandbox and uses the same door. `web/` is the React UI built into
+lock. `personas/` contains the L2 and L3 roles, and `schemas/` defines code-delivery reports. `hooks/` holds the Git hooks installed into every managed
+repository, the Claude inbox hook, and the statusline monitor. A Codex L2 runs in Codex's own
+workspace-write sandbox and uses the same door. `web/` is the React UI built into
 `web/dist/` for the Python server to serve.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
@@ -54,9 +53,8 @@ bin/alt --project <name> task status <slug>
 
 ## Service lifecycle
 
-The controlled architecture-cutover restart was completed and smoke-verified on 2026-08-31.
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-Any later lifecycle change requires separate explicit authorization and post-change health checks.
+A lifecycle change requires separate explicit authorization and post-change health checks.
 
 For an operator-authorized restart, press Restart on the web app's restart-pending banner (shown
 once nothing is running) or run `make restart` from the deployed primary checkout. The
