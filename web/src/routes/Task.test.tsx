@@ -22,7 +22,7 @@ const running = {
   slug: "fix-timer",
   state: "running",
   title: "Fix the timer",
-  dispatch_id: "d-1",
+  attempt: 1,
   session_id: "0123456789abcdef",
   agent_id: "a-9",
   worktree: ".claude/worktrees/fix-timer",
@@ -88,7 +88,7 @@ describe("Task", () => {
     await screen.findByText("Fix the timer");
     expect(screen.getByText("running")).toBeInTheDocument();
     expect(screen.getAllByText(/L1 runs 2/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/dispatch d-1/)).toBeInTheDocument();
+    expect(screen.getByText(/attempt 1/)).toBeInTheDocument();
     expect(screen.getByText(/session 01234567 /)).toBeInTheDocument();
     expect(screen.getByText(/attach: claude attach a-9/)).toBeInTheDocument();
     expect(screen.getByText("REQUEST BODY")).toBeInTheDocument();

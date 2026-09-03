@@ -77,6 +77,18 @@ def project_lock(project: str):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def session_key(project: str, slug: str, attempt: int) -> str:
+    """One name per task attempt, shared by the L2's environment and the files written under it."""
+    return f"{project}--{slug}-{attempt}"
+
+
+def counts_path(project: str, task: dict) -> Path | None:
+    """The edit counter `hooks/edit_count.py` keeps for the task's current attempt."""
+    if not task.get("attempt"):
+        return None
+    return config.MONITOR_DIR / f"counts-{session_key(project, task['slug'], task['attempt'])}.json"
+
+
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:40].rstrip("-") or "task"
@@ -207,8 +219,8 @@ def regen_state_md(project: str) -> str:
         lines.append(f"### {s} ({len(ts)})")
         for t in ts:
             extra = []
-            if t.get("dispatch_id"):
-                extra.append(t["dispatch_id"])
+            if t.get("attempt"):
+                extra.append(f"attempt {t['attempt']}")
             if t.get("prs"):
                 extra.append("PRs " + ", ".join(str(p) for p in t["prs"]))
             if t.get("blocked_reason"):

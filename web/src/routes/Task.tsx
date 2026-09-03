@@ -5,7 +5,7 @@ import { useL2Message, useTask, useTaskAction } from "../data/api";
 import type { TaskMessage, TaskView } from "../data/api";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
-// fields (dispatch_id, session_id, worktree, spend, live, ...) arrives typed
+// fields (attempt, session_id, worktree, spend, live, ...) arrives typed
 // `unknown`, so narrow it here rather than widening the schema in api.ts.
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
@@ -28,6 +28,7 @@ interface ActionSpec {
 
 const ACTIONS: ActionSpec[] = [
   { action: "dispatch", label: "Dispatch", states: ["queued"] },
+  { action: "stop", label: "Stop", states: ["running"] },
   { action: "done", label: "Mark done", states: ["reported"] },
   {
     action: "reject",
@@ -98,7 +99,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   const files = Object.entries(task.files ?? {});
   const messages = task.messages ?? [];
   const events = task.events ?? [];
-  const dispatchId = str(task["dispatch_id"]);
+  const attempt = typeof task["attempt"] === "number" ? String(task["attempt"]) : "";
   const sessionId = str(task["session_id"]);
   const agentId = str(task["agent_id"]);
   const engine = str(task["l2_engine"]) || "claude";
@@ -140,7 +141,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
           <h1 className="text-page-title font-semibold">{task.title || slug}</h1>
         </div>
         <p className="text-meta text-muted">
-          {slug} · {engine} · dispatch {dispatchId || "—"} · session {sessionId ? sessionId.slice(0, 8) : "—"} ·
+          {slug} · {engine} · attempt {attempt || "—"} · session {sessionId ? sessionId.slice(0, 8) : "—"} ·
           worktree {worktree || "—"}
           {branch ? ` · branch ${branch}` : ""}
           {model ? ` · model ${model}` : ""}
@@ -157,7 +158,7 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         ) : null}
       </header>
 
-      {dispatchId && sessionId ? (
+      {sessionId ? (
         <Link className="btn w-fit" to={`/projects/${project}/tasks/${slug}/live`}>Live session</Link>
       ) : null}
 

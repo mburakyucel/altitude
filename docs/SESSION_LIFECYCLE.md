@@ -1,8 +1,7 @@
 # Engine and session lifecycle
 
-> **Scope:** This document describes executable `main` at commit `97e1197`, including its current
-> stop-and-replace steering behavior. It does not describe the unmerged simplification branches or
-> an App Server steering design. See the
+> **Scope:** This document describes executable `main` after phase 3 of the module-by-module
+> simplification (queued steering, 2026-09-03). See the
 > [2026-09-02 review checkpoint](simplification-review/README.md).
 
 ## Live L2 transcript
@@ -21,27 +20,26 @@ kept in the task directory) together with Altitude's task events. Altitude does 
 transcripts. The durable human record is the task conversation; provider stores follow the provider's own
 retention, and archival moves the whole task directory, so Codex worker records travel with it.
 
-Transcript reads and steering from the Live Session view carry the project, task, dispatch generation, engine, and
-displayed session. A mismatch fails closed and asks that viewer to refresh. The normal Task and Project composers
-currently omit those optional displayed-generation fields, so they address the generation that is current when the
-server acquires the task lock; stale-page rejection is not guaranteed on those two surfaces. Steering then ends
-the current physical worker turn and resumes the same logical engine conversation in a newly owned worker; Codex
-normally retains its thread id, while Claude retains its resumable session id. Altitude records the old and new
-worker/session identities in the `resumed` event. The reader recognizes additional compatibility event names, but
-this baseline has no producer for separate replacement, compaction, engine-change, or recovery boundary events. A parser error or incomplete final JSONL record is displayed
-as viewer evidence and retried on the next poll; it never changes task or worker state.
+Transcript reads from the Live Session view carry the project, task, engine, and displayed session. A mismatch
+fails closed and asks that viewer to refresh. Messages are not fenced to a displayed session: they queue on the
+task and reach whichever worker owns it at its next checkpoint (see "Messages, resume, and stop"). Task state
+changes and stop/resume records are the timeline's boundary events. A parser error or incomplete final JSONL
+record is displayed as viewer evidence and retried on the next poll; it never changes task or worker state.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
 identities on purpose:
 
 | Field | Meaning | Changes when |
 | --- | --- | --- |
-| `dispatch_id` | one L2 attempt | the task is dispatched again as a new attempt |
+| `attempt` | one L2 attempt, counted from 1 | the task is dispatched again from the queue |
 | `l2_engine` | provider for that attempt | only on a fresh attempt, never a transparent resume |
 | `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
 | `agent_id` | current Claude job or Codex OS worker | every physical replacement |
-| `l2_token` | backend ownership fence for the logical L2 attempt | stable for the attempt; old workers are stopped before replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
+
+The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, helper launches, completion, and landing name it, so
+a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
+keys the edit-count telemetry across worker replacements.
 
 ## Fresh dispatch
 
@@ -64,26 +62,33 @@ Altitude does not infer separate Fable and Opus allowances from an account-wide 
 is honored inside the selected provider; model switching requires explicit observable policy rather
 than a guessed quota relationship.
 
-## Message and resume
+## Messages, resume, and stop
 
-Burak's message is first appended to the task's durable human conversation with its `dispatch_id`
-and `session_id`. The surrounding resume operation separately validates current task state and
-worker identity; those values are not fields in the message row. Under the task's resume lock Altitude then:
+A message from Burak (task page, chat through L3, or `alt task message`) is appended to the task's durable
+conversation and to its inbox. Nothing is killed. A running Claude L2 receives the inbox at its next checkpoint:
+the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the
+session is about to stop. A running Codex L2 receives it when its current turn ends: the broker's next-turn hold
+leaves the task blocked with `resume_after`, and the tick resumes it with the inbox. A blocked task resumes at
+once with the message. Delivered messages leave the inbox; the conversation keeps them.
 
-1. validates that snapshot and the task worktree/commit provenance;
-2. stops the current physical worker and confirms it is no longer live;
-3. resumes the task's already-selected provider conversation;
-4. atomically binds the replacement worker (and Claude's replacement session id, when it changes).
+`dispatch.resume` is the only way a session is launched again:
 
-Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
-A failed resume blocks the task and leaves the provider conversation and task evidence to L3. A
-cross-provider continuation is a deliberate new attempt based on saved work, not a fake transcript
-resume.
+1. a task blocked before any launch goes back to the queue;
+2. an exhausted Claude window or a file lease keeps the task blocked with `resume_after` set and a
+   `waiting: …` reason; the tick retries when it is due;
+3. worktree and commit provenance are validated, and an idle worker that is still live is stopped first;
+4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
+   replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault.
+
+**Stop** (task page, `alt task stop`) blocks the task first and then stops its worker, so the poll never reads
+the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. A failed
+resume blocks the task with an incident and leaves the provider conversation to L3. A cross-provider
+continuation is a deliberate new attempt based on saved work, not a fake transcript resume.
 
 Claude resume uses `claude --bg --resume`. Its L2 contract is direct: the persona may invoke the
 scoped Altitude CLI, while the backend applies the identity, clean-Git, lease, provenance, and merge
-policy checks relevant to each command and effect boundary. Claude hooks add command guardrails
-and telemetry; they are not the backend authority check.
+policy checks relevant to each command and effect boundary. Claude hooks add command guardrails,
+telemetry, and inbox delivery; they are not the backend authority check.
 
 Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
 is private task evidence; `thread.started.thread_id` is the session identity and
@@ -95,7 +100,7 @@ complete turn, including descendant processes, is placed in a transient user cgr
 result until that containment unit is empty.
 
 A Codex L2's final response is a strict, inert action object. After worker exit, the trusted broker
-validates the object against the current dispatch, session, worker, and lease state. The
+validates the object against the current task state, worker, and lease. The
 broker—not the model process—may then post the human-facing message, land a PR, complete a no-code
 task, block, continue the same thread, or launch optional helpers.
 
@@ -117,7 +122,7 @@ task ownership.
 
 For contained Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and
 are unset before Codex starts. The child receives an allowlisted environment; ambient tokens, API keys, SSH agents,
-Git credential helpers, and the L2 capability are absent. The inner sandbox hides host PIDs; this baseline has no
+and Git credential helpers are absent. The inner sandbox hides host PIDs; this baseline has no
 deterministic host-PID canary. A model-requested GitHub issue cannot contain synthesized private context: the broker
 stores only the exact current chat message, with a title quoted from it, as a private draft. Publication requires a
 second exact, draft-specific approval message from Burak, and secret-shaped content remains a hard refusal.

@@ -29,88 +29,100 @@ class TransitionError(Exception):
 TASK_MESSAGE_ROLES = ("burak", "l2")
 
 
-def append_task_message(project: str, slug: str, role: str, text: str, *,
-                        expected_dispatch_id: str, expected_session_id: str | None = None,
-                        expected_state: str | None = None, expected_l2_token: str | None = None,
-                        actor: str | None = None) -> dict:
-    """Append one human-facing task message for the exact current L2 dispatch.
+def _append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as stream:
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
-    The conversation is an append-only JSONL artifact separate from operational events and
-    engine output.  Every writer must name the dispatch it believes it owns; stale pages and
-    stale L2 processes therefore fail before they can speak into a replacement task.  The
-    project lock serializes the append with lifecycle changes, and fsync makes a successful
-    return a durable message rather than a buffered best effort.
-    """
+
+def _rows(path: Path, what: str) -> list[dict]:
+    """Read one JSONL file of messages, failing loudly on a corrupt record."""
+    if not path.exists():
+        return []
+    rows = []
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"corrupt {what} in {path} at line {number}: {exc}") from exc
+        if not isinstance(row, dict) or not isinstance(row.get("text"), str) or not row.get("id"):
+            raise ValueError(f"corrupt {what} in {path} at line {number}: invalid message")
+        rows.append(row)
+    return rows
+
+
+def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
+            expected_attempt: int | None = None) -> dict:
+    """Append one message to the task conversation. Burak's messages also wait in the task's inbox until the worker
+    reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
+    the current one."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
     if not text:
         raise TransitionError("task message is empty")
-    if not expected_dispatch_id:
-        raise TransitionError("task message has no dispatch owner")
-    if role == "l2" and not expected_l2_token:
-        raise TransitionError("L2 message has no ownership capability")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        allowed_states = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
-        if task.get("state") not in allowed_states:
-            raise TransitionError(f"{slug}: cannot message L2 in {task.get('state')} state")
-        if task.get("dispatch_id") != expected_dispatch_id:
-            raise TransitionError(
-                f"{slug}: L2 dispatch changed from {expected_dispatch_id!r} "
-                f"to {task.get('dispatch_id')!r}"
-            )
-        if expected_session_id is not None and task.get("session_id") != expected_session_id:
-            raise TransitionError(f"{slug}: L2 session changed before the message was recorded")
-        if expected_l2_token is not None and task.get("l2_token") != expected_l2_token:
-            raise TransitionError(f"{slug}: L2 ownership capability changed before the message was recorded")
-        if expected_state is not None and task.get("state") != expected_state:
-            raise TransitionError(
-                f"{slug}: task changed from {expected_state} to {task.get('state')} "
-                "before the message was recorded"
-            )
-        message = {
-            "id": uuid.uuid4().hex,
-            "at": S.now(),
-            "role": role,
-            "text": text,
-            "dispatch_id": task["dispatch_id"],
-            "session_id": task.get("session_id"),
-            "by": actor or role,
-        }
-        path = S.task_dir(project, slug) / "conversation.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as stream:
-            stream.write(json.dumps(message, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        S.append_event(project, slug, "task-message", message_id=message["id"], role=role,
-                       dispatch_id=task["dispatch_id"], by=message["by"])
-        return message
+        allowed = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
+        if task.get("state") not in allowed:
+            raise TransitionError(f"{slug}: cannot message the L2 in {task.get('state')} state")
+        if expected_attempt is not None and task.get("attempt") != expected_attempt:
+            raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
+        row = {"id": uuid.uuid4().hex, "at": S.now(), "role": role, "text": text, "by": by or role}
+        d = S.task_dir(project, slug)
+        _append_jsonl(d / "conversation.jsonl", row)
+        if role == "burak":
+            _append_jsonl(d / "inbox.jsonl", row)
+        S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
+        return row
+
+
+def enqueue(project: str, slug: str, text: str, *, by: str = "altitude") -> dict:
+    """Leave control-plane text for the worker's next checkpoint without a conversation entry."""
+    row = {"id": uuid.uuid4().hex, "at": S.now(), "text": text, "by": by}
+    with S.project_lock(project):
+        _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", row)
+    return row
 
 
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
-    """Read the durable task conversation, failing loudly on a corrupt record."""
-    path = S.task_dir(project, slug) / "conversation.jsonl"
-    if not path.exists():
-        return []
-    lines = path.read_text().splitlines()
+    """The durable task conversation."""
+    rows = _rows(S.task_dir(project, slug) / "conversation.jsonl", "task conversation")
+    if any(row.get("role") not in TASK_MESSAGE_ROLES for row in rows):
+        raise ValueError(f"corrupt task conversation of {project}/{slug}: invalid role")
     if limit is not None:
         count = max(0, int(limit))
-        lines = lines[-count:] if count else []
-    messages = []
-    for line_number, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        try:
-            message = json.loads(line)
-        except ValueError as exc:
-            raise ValueError(f"corrupt task conversation in {path} at line {line_number}: {exc}") from exc
-        if (not isinstance(message, dict) or message.get("role") not in TASK_MESSAGE_ROLES
-                or not isinstance(message.get("text"), str)):
-            raise ValueError(f"corrupt task conversation in {path} at line {line_number}: invalid message")
-        messages.append(message)
-    return messages
+        rows = rows[-count:] if count else []
+    return rows
+
+
+def pending(project: str, slug: str) -> list[dict]:
+    """What waits for the worker's next checkpoint."""
+    return _rows(S.task_dir(project, slug) / "inbox.jsonl", "task inbox")
+
+
+def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dict]:
+    """Remove delivered messages from the inbox (all of them, or only `ids`) and return them."""
+    path = S.task_dir(project, slug) / "inbox.jsonl"
+    with S.project_lock(project):
+        rows = _rows(path, "task inbox")
+        taken = [row for row in rows if ids is None or row["id"] in ids]
+        left = [row for row in rows if row not in taken]
+        if left:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+        else:
+            path.unlink(missing_ok=True)
+    return taken
+
+
+def render_inbox(rows: list[dict]) -> str:
+    """The messages as the worker reads them."""
+    return "\n\n".join(f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}):\n{row['text']}"
+                       for row in rows)
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
@@ -169,11 +181,11 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         d.mkdir(parents=True)
         S.atomic_write(d / "request.md", request.rstrip() + "\n")
         task = {"slug": slug, "title": title, "state": "queued", "created": S.now(),
-                "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
+                "attempt": 0, "session_id": None, "agent_id": None,
                 "worktree": None,
                 "branch": None, "prs": [], "spend": {}, "blocked_reason": None, "source": source,
                 "verified": None, "model": model, "engine": engine, "l2_engine": None,
-                "engine_model": None, "routing": None, "l2_token": None,
+                "engine_model": None, "routing": None,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
         S.save_task(project, task)
@@ -200,22 +212,17 @@ def brief(project: str, slug: str, brief_md: str, actor: str = "l3") -> Path:
         return d / "brief.md"
 
 
-def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | None, agent_id: str | None,
-             worktree: str | None, branch: str | None, l2_token: str, l2_engine: str = "claude",
+def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, agent_id: str | None,
+             worktree: str | None, branch: str | None, l2_engine: str = "claude",
              engine_model: str | None = None, routing: str | None = None, actor: str = "altd") -> dict:
-    if not session_id or not agent_id or not l2_token:
-        raise TransitionError(f"{slug}: dispatch requires a concrete worker, session, and L2 capability")
+    if not session_id or not agent_id:
+        raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        previous_dispatch_id = task.get("dispatch_id")
-        task.update({"dispatch_id": dispatch_id, "session_id": session_id, "agent_id": agent_id,
-                     "l2_token": l2_token, "worktree": worktree, "branch": branch, "blocked_reason": None,
-                     "l2_engine": l2_engine, "engine_model": engine_model, "routing": routing,
-                     "dispatched": S.now()})
-        if previous_dispatch_id and previous_dispatch_id != dispatch_id:
-            task["previous_dispatch_id"] = previous_dispatch_id
-        task["attempt"] = int(dispatch_id.rsplit("-", 1)[-1]) if dispatch_id.rsplit("-", 1)[-1].isdigit() else task["attempt"] + 1
-        return _move(project, task, "running", actor, dispatch_id=dispatch_id, session_id=session_id)
+        task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
+                     "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
+                     "routing": routing, "dispatched": S.now()})
+        return _move(project, task, "running", actor, attempt=attempt, session_id=session_id)
 
 
 def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
@@ -241,47 +248,25 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
 
 
 def block(project: str, slug: str, reason: str, actor: str = "altd", *,
-          expected_state: str | None = None, expected_dispatch_id: str | None = None,
-          expected_session_id: str | None = None, expected_agent_id: str | None = None,
-          expected_pending_identity: dict | None = None, updates: dict | None = None) -> dict:
+          expected_state: str | None = None, updates: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        for label, expected, actual in (
-            ("state", expected_state, task.get("state")),
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("agent", expected_agent_id, task.get("agent_id")),
-        ):
-            if expected is not None and expected != actual:
-                raise TransitionError(f"{slug}: {label} changed before block ({expected!r} → {actual!r})")
-        if expected_pending_identity is not None:
-            pending = task.get("pending_action") or {}
-            if pending.get("identity") != expected_pending_identity:
-                raise TransitionError(f"{slug}: pending action changed before block")
+        if expected_state is not None and task.get("state") != expected_state:
+            raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         task.update(updates or {})
         task["blocked_reason"] = reason
         return _move(project, task, "blocked", actor, reason=reason)
 
 
-def resume(project: str, slug: str, actor: str = "altd", *,
-           expected_state: str | None = None, expected_dispatch_id: str | None = None,
-           expected_session_id: str | None = None, expected_agent_id: str | None = None,
-           expected_pending_identity: dict | None = None, **ev) -> dict:
+def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None = None,
+           session_id: str | None = None, **ev) -> dict:
+    """blocked → running. With a worker, the task is bound to it; a resumed Claude session may carry a new id."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        for label, expected, actual in (
-            ("state", expected_state, task.get("state")),
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("agent", expected_agent_id, task.get("agent_id")),
-        ):
-            if expected is not None and expected != actual:
-                raise TransitionError(f"{slug}: {label} changed before resume ({expected!r} → {actual!r})")
-        if expected_pending_identity is not None:
-            pending = task.get("pending_action") or {}
-            if pending.get("identity") != expected_pending_identity:
-                raise TransitionError(f"{slug}: pending action changed before resume")
+        if agent_id:
+            task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
         task["blocked_reason"] = None
+        task.pop("resume_after", None)
         return _move(project, task, "running", actor, **ev)
 
 
@@ -313,35 +298,21 @@ def _require_no_code_change(task: dict) -> None:
 
 
 def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
-         expected_state: str | None = None, expected_dispatch_id: str | None = None,
-         expected_session_id: str | None = None, expected_agent_id: str | None = None,
-         expected_l2_token: str | None = None) -> dict:
+         expected_state: str | None = None, expected_attempt: int | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if actor == "l2":
-            if (not expected_dispatch_id or not expected_l2_token
-                    or task.get("dispatch_id") != expected_dispatch_id
-                    or task.get("l2_token") != expected_l2_token):
-                raise TransitionError(f"{slug}: L2 ownership changed before completion")
+        if expected_state is not None and task.get("state") != expected_state:
+            raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        if expected_attempt is not None and task.get("attempt") != expected_attempt:
+            raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
+        if actor == "l2":  # archived by the server once this worker has exited
             if task.get("state") != "running":
                 raise TransitionError(f"{slug}: L2 can complete only its running task")
             _require_no_code_change(task)
-            task["completion_requested"] = {"at": S.now(), "digest": digest,
-                                            "dispatch_id": expected_dispatch_id,
-                                            "agent_id": task.get("agent_id"),
-                                            "session_id": task.get("session_id")}
+            task["completion_requested"] = {"at": S.now(), "digest": digest}
             S.save_task(project, task)
-            S.append_event(project, slug, "completion-requested", by=actor,
-                           dispatch_id=expected_dispatch_id)
+            S.append_event(project, slug, "completion-requested", by=actor)
             return task
-        for label, expected, actual in (
-            ("state", expected_state, task.get("state")),
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("agent", expected_agent_id, task.get("agent_id")),
-        ):
-            if expected is not None and expected != actual:
-                raise TransitionError(f"{slug}: {label} changed before completion ({expected!r} → {actual!r})")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
         if digest:
@@ -351,22 +322,15 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
         return task
 
 
-def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
-                        expected_agent_id: str | None, expected_session_id: str | None,
-                        actor: str = "altd") -> dict:
-    """Archive a no-code L2 completion only after its physical worker has exited."""
+def finalize_completion(project: str, slug: str, actor: str = "altd") -> dict:
+    """Archive a no-code L2 completion once its worker has exited."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        request = task.get("completion_requested") or {}
-        expected = (expected_dispatch_id, expected_agent_id, expected_session_id)
-        current = (task.get("dispatch_id"), task.get("agent_id"), task.get("session_id"))
-        requested = (request.get("dispatch_id"), request.get("agent_id"), request.get("session_id"))
-        if task.get("state") != "running" or current != expected or requested != expected:
-            raise TransitionError(f"{slug}: completion ownership changed before worker exit")
+        request = task.pop("completion_requested", None)
+        if task.get("state") != "running" or not request:
+            raise TransitionError(f"{slug}: no completion to finalize")
         _require_no_code_change(task)
         digest = str(request.get("digest") or "")
-        task.pop("completion_requested", None)
-        task.pop("pending_action", None)
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
         if digest:
@@ -425,8 +389,7 @@ def decisions(project: str) -> list[dict]:
     """Tasks blocked on user input. Ordinary task steering happens directly with the L2."""
     out = []
     for t in S.list_tasks(project):
-        if (t["state"] == "blocked" and not t.get("resume_after")
-                and not t.get("pending_action")):  # operational waits are not user decisions
+        if t["state"] == "blocked" and not t.get("resume_after"):  # a hold is Altitude's wait, not a decision
             out.append({"project": project, "slug": t["slug"], "title": t["title"],
                         "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
                         "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",

@@ -1,8 +1,9 @@
 """Trusted post-turn actions for contained Codex L2 workers.
 
 The model can edit ordinary files in its isolated worktree and return inert JSON. It cannot write Altitude state,
-Git metadata, or the network. Only this control-plane module, after the worker's whole cgroup is empty and its
-dispatch identity is still current, may turn that JSON into state changes, helper launches, or PR publication.
+Git metadata, or the network. Only this control-plane module, after the worker's whole cgroup is empty, may turn
+that JSON into state changes, helper launches, or PR publication. Codex works in turns: between them the task is
+held for a moment and the next prompt waits in the task inbox, which the next tick's resume folds in.
 """
 from __future__ import annotations
 
@@ -11,17 +12,12 @@ from pathlib import Path
 
 from . import config, dispatch, engines, land, l1, state as S, tasks as T
 
-ACTION_FIELDS = ("dispatch_id", "session_id", "agent_id")
 MAX_HELPERS = 4
 MAX_HELPER_RESULT_BYTES = engines.RAW_CAPTURE_CAP
 
 
 class ActionError(RuntimeError):
     """An untrusted or stale action was refused before privileged side effects."""
-
-
-def _identity(task: dict) -> dict:
-    return {key: task.get(key) for key in ACTION_FIELDS}
 
 
 def _validate_shape(action: object) -> dict:
@@ -53,75 +49,18 @@ def _validate_shape(action: object) -> dict:
     return action
 
 
-def _claim(project: str, task: dict, action: dict) -> dict:
-    """Fence and durably claim one action before any external or state side effect."""
-    with S.project_lock(project):
-        live = S.load_task(project, task["slug"])
-        if live.get("state") not in ("running", "blocked") or _identity(live) != _identity(task):
-            raise ActionError(f"{task['slug']}: L2 ownership changed before action handling")
-        existing = live.get("pending_action")
-        record = {"action": action, "identity": _identity(task), "claimed": S.now(),
-                  "message_posted": False}
-        if existing:
-            if existing.get("identity") != record["identity"] or existing.get("action") != action:
-                raise ActionError(f"{task['slug']}: a different action is already pending")
-            record = existing
-        else:
-            live["pending_action"] = record
-            S.save_task(project, live)
-            S.append_event(project, task["slug"], "l2-action-claimed", action=action["action"],
-                           agent_id=task.get("agent_id"))
-        return record
-
-
-def _clear(project: str, slug: str, identity: dict) -> None:
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        pending = task.get("pending_action") or {}
-        if pending.get("identity") == identity:
-            task.pop("pending_action", None)
-            S.save_task(project, task)
-
-
-def _post_message(project: str, task: dict, record: dict) -> None:
-    text = str((record.get("action") or {}).get("message") or "").strip()
-    if not text or record.get("message_posted"):
-        return
-    T.append_task_message(project, task["slug"], "l2", text,
-                          expected_dispatch_id=str(task.get("dispatch_id") or ""),
-                          expected_l2_token=str(task.get("l2_token") or ""), actor="l2")
-    with S.project_lock(project):
-        live = S.load_task(project, task["slug"])
-        pending = live.get("pending_action") or {}
-        if pending.get("identity") == _identity(task):
-            pending["message_posted"] = True
-            live["pending_action"] = pending
-            S.save_task(project, live)
-
-
 def _require_contained_exit(project: str, task: dict) -> None:
     job_root = dispatch.l2_job_root(project, task["slug"])
     if not engines.codex_containment_empty(str(task.get("agent_id") or ""), job_root=job_root):
         raise ActionError(f"{task['slug']}: Codex worker containment is not empty")
 
 
-def _resume_same(project: str, task: dict, prompt: str) -> dict:
-    if task.get("state") == "blocked":
-        result = dispatch.resume_blocked(
-            project, task["slug"], prompt, prefix="Altitude control plane: ",
-            expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-            expected_agent_id=task.get("agent_id"), expected_state="blocked",
-        )
-    else:
-        result = dispatch.resume_session(
-            project, task["slug"], prompt,
-            expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-            expected_agent_id=task.get("agent_id"), expected_state=task.get("state"),
-        )
-    # Clear only after a replacement worker is durably bound.
-    _clear(project, task["slug"], _identity(task))
-    return {"kind": "pending" if result.get("deferred") else "resumed",
-            "agent": result.get("agent"), "reason": result.get("waiting")}
+def next_turn(project: str, task: dict, prompt: str) -> dict:
+    """Hold the task between two Codex turns and leave the next prompt in its inbox for the tick to resume with."""
+    T.block(project, task["slug"], "between Codex turns", actor="altd", expected_state="running",
+            updates={"resume_after": S.now()})
+    T.enqueue(project, task["slug"], prompt)
+    return {"kind": "pending"}
 
 
 def _report(action: dict, result: dict, task: dict) -> dict:
@@ -170,15 +109,13 @@ def _publish(project: str, task: dict, action: dict) -> dict:
                 pr_title=str(action.get("pr_title") or "").strip() or None,
                 merge=wants_merge, wait=int(proj.get("land_wait") or 600),
                 base="main", test_cmd=test_cmd, cwd=Path(task["worktree"]),
-                authority={"actor": "l2", "dispatch_id": task.get("dispatch_id"),
-                           "l2_token": task.get("l2_token")},
+                authority={"actor": "l2", "attempt": task.get("attempt")},
             )
         finally:
             if wants_merge:
                 dispatch.pull_after_done(project, task)
     report = _report(action, result, task)
     S.write_json(S.task_dir(project, task["slug"]) / "report.json", report)
-    _clear(project, task["slug"], _identity(task))
     return {"kind": "report", "land": result, "report": report}
 
 
@@ -193,8 +130,7 @@ def _helpers(project: str, task: dict, action: dict) -> dict:
         records.append(existing or l1.start(
             project, task["slug"], brief, role=helper["role"], engine=helper.get("engine"),
             model=helper.get("model"), paths=helper.get("paths") or None, name=name,
-            expected_dispatch_id=str(task.get("dispatch_id") or ""),
-            expected_l2_token=str(task.get("l2_token") or ""),
+            expected_attempt=task.get("attempt"),
         ))
     waits = [l1.wait(project, task["slug"], record["name"], timeout=config.L1_TIMEOUT) for record in records]
     results = [wait.get("run") or {"name": record["name"], "error": "helper wait timed out"}
@@ -222,7 +158,7 @@ def _helpers(project: str, task: dict, action: dict) -> dict:
               f"your next schema-valid action:\n{json.dumps(compact, sort_keys=True)}")
     if len(prompt.encode("utf-8")) > MAX_HELPER_RESULT_BYTES:
         raise T.TransitionError("helper results exceed the bounded L2 handoff size")
-    return _resume_same(project, task, prompt)
+    return next_turn(project, task, prompt)
 
 
 def process_l2(project: str, item: dict) -> dict:
@@ -232,49 +168,35 @@ def process_l2(project: str, item: dict) -> dict:
         raise ActionError("trusted action broker accepts only contained Codex L2 workers")
     action = _validate_shape(item.get("action") or (item.get("agent") or {}).get("action"))
     _require_contained_exit(project, task)
-    record = _claim(project, task, action)
+    if task.get("state") != "running":
+        raise ActionError(f"{task['slug']}: Codex action arrived for a {task.get('state')} task")
+    text = str(action.get("message") or "").strip()
+    if text:
+        T.message(project, task["slug"], "l2", text, by="l2")
     try:
-        live = S.load_task(project, task["slug"])
-        if live.get("state") == "blocked":
-            live = T.resume(project, task["slug"], actor="altd", trusted_action=True,
-                            expected_state="blocked", expected_dispatch_id=task.get("dispatch_id"),
-                            expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"),
-                            expected_pending_identity=_identity(task))
-        task = live
-        _post_message(project, task, record)
         kind = action["action"]
         if kind == "publish":
             return _publish(project, task, action)
         if kind == "complete_no_code":
             with S.project_lock(project):
                 live = S.load_task(project, task["slug"])
-                if (live.get("state") != "running" or _identity(live) != _identity(task)
-                        or (live.get("pending_action") or {}).get("identity") != _identity(task)):
+                if live.get("state") != "running" or live.get("agent_id") != task.get("agent_id"):
                     raise T.TransitionError(f"{task['slug']}: completion ownership changed")
-                live["completion_requested"] = {"at": S.now(), "digest": action["digest"], **_identity(task)}
+                live["completion_requested"] = {"at": S.now(), "digest": action["digest"]}
                 S.save_task(project, live)
-            done = T.finalize_completion(project, task["slug"],
-                                         expected_dispatch_id=str(task.get("dispatch_id") or ""),
-                                         expected_agent_id=task.get("agent_id"),
-                                         expected_session_id=task.get("session_id"))
-            return {"kind": "done", "task": done}
+            return {"kind": "done", "task": T.finalize_completion(project, task["slug"])}
         if kind == "block":
-            blocked = T.block(project, task["slug"], str(action["blocked_reason"]), actor="l2",
-                              expected_state="running", expected_dispatch_id=task.get("dispatch_id"),
-                              expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"),
-                              expected_pending_identity=_identity(task))
-            _clear(project, task["slug"], _identity(task))
+            blocked = T.block(project, task["slug"], str(action["blocked_reason"]), actor="l2", expected_state="running")
             return {"kind": "blocked", "task": blocked}
         if kind == "request_helpers":
             return _helpers(project, task, action)
-        return _resume_same(project, task, "Continue for this exact reason from your previous action: "
-                           + str(action["continue_reason"]))
+        return next_turn(project, task, "Continue for this exact reason from your previous action: "
+                         + str(action["continue_reason"]))
     except (land.LandError, T.TransitionError, OSError, ValueError) as exc:
         kind = str(action.get("action") or "unknown")
         S.append_event(project, task["slug"], "l2-action-refused", action=kind, reason=str(exc)[:300])
         try:
-            live = S.load_task(project, task["slug"])
-            return _resume_same(project, live,
-                                f"Trusted {kind} action was refused without changing providers: {exc}")
-        except T.TransitionError as resume_exc:
-            raise ActionError(f"{kind} action and same-thread correction were fenced: {resume_exc}") from resume_exc
+            return next_turn(project, S.load_task(project, task["slug"]),
+                             f"Trusted {kind} action was refused without changing providers: {exc}")
+        except T.TransitionError as hold_exc:
+            raise ActionError(f"{kind} action and same-thread correction were fenced: {hold_exc}") from hold_exc

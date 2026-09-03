@@ -95,8 +95,7 @@ def _verify(project: str, slug: str) -> dict:
 
 
 def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None) -> dict:
-    dispatch_id = task.get("dispatch_id")
-    counts_p = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
+    counts_p = S.counts_path(project, task)
     hook = (S.read_json(counts_p, {}) if counts_p else {}) or {}
     out["spend"] = {"turns": (sp or {}).get("turns"), "subagent_launches_reported": (sp or {}).get("subagent_launches"),
                     "edits_hook": hook.get("edits"),

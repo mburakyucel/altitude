@@ -53,10 +53,9 @@ class TestResumeRebinds(unittest.TestCase):
         slug = "stale-finished-worker"
         S.task_dir("altitude", slug).mkdir(parents=True, exist_ok=True)
         old = {"slug": slug, "title": slug, "created": S.now(), "state": "running",
-               "dispatch_id": f"{slug}-1", "session_id": "session-a", "agent_id": "agent-a",
-               "l2_engine": "claude"}
+               "attempt": 1, "session_id": "session-a", "agent_id": "agent-a", "l2_engine": "claude"}
         S.save_task("altitude", old)
-        replacement = {**old, "dispatch_id": f"{slug}-2", "session_id": "session-b", "agent_id": "agent-b"}
+        replacement = {**old, "session_id": "session-b", "agent_id": "agent-b"}
         S.save_task("altitude", replacement)
 
         with mock.patch.object(T, "block") as block, mock.patch.object(server.incidents, "system_fault") as fault:
@@ -65,60 +64,63 @@ class TestResumeRebinds(unittest.TestCase):
         block.assert_not_called()
         fault.assert_not_called()
         current = S.load_task("altitude", slug)
-        self.assertEqual((current["state"], current["dispatch_id"], current["agent_id"]),
-                         ("running", f"{slug}-2", "agent-b"))
+        self.assertEqual((current["state"], current["agent_id"]), ("running", "agent-b"))
 
     def test_resume_binds_task_to_the_new_worker_in_its_worktree(self):
         wt = Path(_TMP) / "wt-resume"; wt.mkdir(exist_ok=True)
         S.task_dir("altitude", "resume-me").mkdir(parents=True, exist_ok=True)
         S.save_task("altitude", {"slug": "resume-me", "title": "resume-me", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "old-sid", "agent_id": "old",
-                                 "dispatch_id": "resume-me-1", "l2_token": "old-token", "worktree": str(wt)})
+                                 "attempt": 1, "worktree": str(wt)})
         seen = {}
         def fake_resume(name, sid, prompt, *, cwd, **kw):
-            seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {}); return {"stdout": "", "stderr": "", "returncode": 0}
-        rows = [{"id": "old", "name": "altitude/resume-me-1", "sessionId": "old-sid", "state": "failed", "startedAt": 1},
-                {"id": "new", "name": "altitude/resume-me-1", "sessionId": "new-sid", "state": "working", "startedAt": 2}]
+            seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {})
+            return {"stdout": "", "stderr": "", "returncode": 0, "agent": {"id": "new", "sessionId": "new-sid", "state": "working"}}
+        rows = [{"id": "old", "name": "altitude/resume-me-1", "sessionId": "old-sid", "state": "working", "status": "idle", "pid": 1, "startedAt": 1, "cwd": str(wt)}]
         with mock.patch.object(engines, "claude_resume_bg", fake_resume), \
              mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
+             mock.patch.object(engines, "claude_stop", side_effect=lambda _id: rows.clear() or "stopped") as stop, \
+             mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree") as validate:
-            res = dispatch.resume_session("altitude", "resume-me", "go")
+            res = dispatch.resume("altitude", "resume-me")
         validate.assert_called_once()
-        self.assertEqual(seen["cwd"], str(wt))
+        self.assertEqual((seen["name"], seen["sid"], seen["cwd"]), ("altitude/resume-me-1", "old-sid", str(wt)))
         self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), "altitude--resume-me-1")
         t = S.load_task("altitude", "resume-me")
-        self.assertEqual((t["agent_id"], t["session_id"]), ("new", "new-sid"))
-        self.assertEqual(t["l2_token"], "old-token", "logical L2 ownership survives a physical worker replacement")
+        self.assertEqual((t["state"], t["agent_id"], t["session_id"], t["attempt"]), ("running", "new", "new-sid", 1),
+                         "the attempt survives a physical worker replacement")
         self.assertEqual(res["agent"]["id"], "new")
         stop.assert_called_once_with("old")
 
     def test_resume_without_worktree_is_a_dispatch_again(self):
         S.task_dir("altitude", "no-wt").mkdir(parents=True, exist_ok=True)
-        S.save_task("altitude", {"slug": "no-wt", "title": "no-wt", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "s", "agent_id": "a", "dispatch_id": "no-wt-1",
+        S.save_task("altitude", {"slug": "no-wt", "title": "no-wt", "created": S.now(), "updated": S.now(), "state": "blocked", "session_id": "s", "agent_id": "a", "attempt": 1,
                                  "worktree": str(Path(_TMP) / "gone")})
-        with self.assertRaises(T.TransitionError):
-            dispatch.resume_session("altitude", "no-wt", "go")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None):
+            with self.assertRaisesRegex(T.TransitionError, "worktree missing"):
+                dispatch.resume("altitude", "no-wt")
 
     def test_resume_without_a_concrete_replacement_never_rebinds(self):
         wt = Path(_TMP) / "wt-no-replacement"; wt.mkdir(exist_ok=True)
         S.task_dir("altitude", "no-replacement").mkdir(parents=True, exist_ok=True)
         original = {"slug": "no-replacement", "title": "no-replacement", "created": S.now(),
-                    "state": "running", "session_id": "old-sid", "agent_id": "old-agent",
-                    "dispatch_id": "no-replacement-1", "l2_token": "old-token", "worktree": str(wt)}
+                    "state": "blocked", "session_id": "old-sid", "agent_id": "old-agent",
+                    "attempt": 1, "worktree": str(wt)}
         S.save_task("altitude", original)
         with mock.patch.object(engines, "claude_resume_bg", return_value={
                  "stdout": "started", "stderr": "", "returncode": 0,
              }), mock.patch.object(engines, "claude_agents", return_value=[]), \
+             mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch("altitude.incidents.system_fault") as fault:
             with self.assertRaisesRegex(RuntimeError, "no concrete live worker"):
-                dispatch.resume_session("altitude", "no-replacement", "go")
+                dispatch.resume("altitude", "no-replacement")
 
         current = S.load_task("altitude", "no-replacement")
-        self.assertEqual((current["session_id"], current["agent_id"], current["l2_token"]),
-                         ("old-sid", "old-agent", "old-token"))
+        self.assertEqual((current["state"], current["session_id"], current["agent_id"]),
+                         ("blocked", "old-sid", "old-agent"))
+        self.assertEqual(S.read_events("altitude", "no-replacement")[-1]["kind"], "resume-failed")
         fault.assert_called_once()
 
     def test_resume_provenance_failure_never_launches_the_engine(self):
@@ -127,17 +129,18 @@ class TestResumeRebinds(unittest.TestCase):
         S.save_task("altitude", {
             "slug": "refused-resume", "title": "refused-resume", "created": S.now(), "updated": S.now(),
             "state": "blocked", "session_id": "old", "agent_id": "old-agent",
-            "dispatch_id": "refused-resume-1", "worktree": str(wt),
+            "attempt": 1, "worktree": str(wt),
         })
 
         with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(
                  dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
              ), \
              mock.patch("altitude.incidents.system_fault") as fault, \
              mock.patch.object(engines, "claude_resume_bg") as launch:
             with self.assertRaisesRegex(T.TransitionError, "foreign commit"):
-                dispatch.resume_session("altitude", "refused-resume", "go")
+                dispatch.resume("altitude", "refused-resume")
 
         fault.assert_called_once()
         launch.assert_not_called()

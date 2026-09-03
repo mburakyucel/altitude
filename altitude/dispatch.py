@@ -1,9 +1,8 @@
-"""Dispatch one task-owning L2 in its worktree, monitor it, and safely resume its session."""
+"""Dispatch one task-owning L2 in its worktree, monitor it, and start its session again once it stopped."""
 from __future__ import annotations
 from contextlib import contextmanager
 import fcntl
 import json
-import secrets
 import subprocess
 from datetime import datetime, timezone
 import re
@@ -30,10 +29,10 @@ def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchF
     return DispatchFailure(f"dispatch failed: {reason}")
 
 
-def record_resume_failure(project: str, slug: str, previous: str, error: object) -> RuntimeError:
-    """Record a failed replacement launch as a system fault; the fault blocks the task."""
+def record_resume_failure(project: str, slug: str, error: object) -> RuntimeError:
+    """Record a failed session relaunch as a system fault; the task stays blocked with the incident."""
     reason = str(error)[:300]
-    S.append_event(project, slug, "resume-failed", previous=previous, reason=reason)
+    S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
     incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
     return RuntimeError(f"resume of {project}/{slug} failed: {reason}")
@@ -186,8 +185,9 @@ def build_brief(project: str, slug: str) -> str:
             "research/proposal task with no repository changes, return `complete_no_code` with the durable result."
         )
         conversation_contract = (
-            "Put a concise reply in the final action's `message`. If a decision is genuinely required, return "
-            "`block` with the exact question; the same Codex thread is resumed with Burak's answer."
+            "Put a concise reply in the final action's `message`. His queued messages open your next turn in this "
+            "same thread. If a decision is genuinely required, return `block` with the exact question; his answer "
+            "resumes the thread."
         )
         publication_contract = (
             "The Codex command sandbox can write only ordinary worktree files; Git metadata, Altitude state, and "
@@ -201,8 +201,10 @@ def build_brief(project: str, slug: str) -> str:
             "Altitude finalizes it only after this worker exits."
         )
         conversation_contract = (
-            "Reply in plain language with `alt task reply \"<message>\"`. Ask directly only when the repository and "
-            "brief cannot resolve the choice; checkpoint `progress.md`, send the question, then block."
+            "They reach you after a tool call or when you are about to stop. Reply in plain language with "
+            "`alt task reply \"<message>\"`. Ask directly only when the repository and brief cannot resolve the "
+            "choice: checkpoint `progress.md`, reply with the question, then `alt task block \"$ALTITUDE_TASK\" "
+            "--reason \"<question>\"` and stop; the answer resumes this session."
         )
         publication_contract = (
             "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
@@ -223,11 +225,15 @@ def build_brief(project: str, slug: str) -> str:
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-dispatch settings: repository guardrails and passive edit telemetry."""
+    """Per-attempt settings: repository guardrails, edit telemetry, and the inbox hook that hands Burak's queued
+    messages to the worker after a tool call or when it is about to stop."""
     hooks = config.HOOKS
+    inbox = [{"type": "command", "command": f"python3 {hooks / 'inbox.py'}", "timeout": 10}]
     settings = {"hooks": {
         "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
-        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]}],
+        "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]},
+                        {"hooks": inbox}],
+        "Stop": [{"hooks": inbox}],
     }, "env": {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug, "ALTITUDE_ACTOR": "l2",
                "ALTITUDE_SESSION_KEY": session_key},
         "autoCompactWindow": config.AUTOCOMPACT_WINDOW}
@@ -283,18 +289,15 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
                      "routing": choice["why"]})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
-    dispatch_id = f"{slug}-{attempt}"
-    name = f"{project}/{dispatch_id}"
-    l2_token = secrets.token_urlsafe(24)
     agent = {}
     try:
         brief_md = build_brief(project, slug)
         T.brief(project, slug, brief_md, actor="altd")
-        settings = session_settings(project, slug, f"{project}--{dispatch_id}")
+        settings = session_settings(project, slug, S.session_key(project, slug, attempt))
         persona = config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md")
         res = engines.start_l2(
-            engine, name, brief_md, cwd=worktree_path, persona=persona, model=selected_model, settings=settings,
-            extra_env=l2_env(project, {"slug": slug, "dispatch_id": dispatch_id, "l2_token": l2_token}),
+            engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=persona,
+            model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),
             job_root=l2_job_root(project, slug))
     except Exception as exc:
         raise record_dispatch_failure(project, slug, exc) from exc
@@ -305,8 +308,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         if not agent.get("id") or not agent.get("sessionId"):
             raise RuntimeError(f"{engine} L2 returned without a concrete worker id and session id")
         worktree = str(worktree_path)
-        T.dispatch(project, slug, dispatch_id=dispatch_id, session_id=agent["sessionId"], agent_id=agent["id"],
-                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]), l2_token=l2_token,
+        T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
+                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]),
                    l2_engine=engine, engine_model=selected_model, routing=choice["why"])
     except T.TransitionError as exc:
         if agent.get("id"):
@@ -329,81 +332,45 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
             except Exception:  # noqa: BLE001 — preserve the launch fault; the incident records any orphaned worker
                 pass
         raise record_dispatch_failure(project, slug, exc) from exc
-    return {"dispatch_id": dispatch_id, "engine": engine, "routing": choice["why"],
+    return {"attempt": attempt, "engine": engine, "routing": choice["why"],
             "agent": agent, "stdout": res.get("stdout", "")}
 
 
-def l2_env(project: str, task: dict) -> dict:
-    """The ownership identity every fresh or resumed L2 session needs."""
-    return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": task["slug"],
-            "ALTITUDE_ACTOR": "l2", "ALTITUDE_SESSION_KEY": f"{project}--{task['dispatch_id']}",
-            "ALTITUDE_DISPATCH_ID": str(task["dispatch_id"]),
-            "ALTITUDE_L2_TOKEN": str(task["l2_token"]),
-            # Codex strips TOKEN-named values from model subprocesses. This alias
-            # retains only the current task attempt's scoped capability.
-            "ALTITUDE_L2_CAPABILITY": str(task["l2_token"])}
+def worker_name(project: str, slug: str, attempt: int) -> str:
+    return f"{project}/{slug}-{attempt}"
 
 
-@contextmanager
-def _resume_lock(project: str, slug: str):
-    """Serialize replacements of one L2 across the server and human-run CLI processes."""
-    path = S.task_dir(project, slug) / ".resume.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+def l2_env(project: str, slug: str, attempt: int) -> dict:
+    """What every L2 process needs to name its task and attempt to `alt`."""
+    return {"ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": project, "ALTITUDE_TASK": slug,
+            "ALTITUDE_ACTOR": "l2", "ALTITUDE_ATTEMPT": str(attempt),
+            "ALTITUDE_SESSION_KEY": S.session_key(project, slug, attempt)}
 
 
-def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str | None = None,
-                             expected_session_id: str | None = None,
-                             expected_agent_id: str | None = None,
-                             expected_state: str | None = None) -> None:
-    if task.get("state") not in ("running", "blocked"):
-        raise T.TransitionError(f"{slug}: L2 can be resumed only while running or blocked (state {task.get('state')})")
-    checks = (
-        ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-        ("session", expected_session_id, task.get("session_id")),
-        ("agent", expected_agent_id, task.get("agent_id")),
-        ("state", expected_state, task.get("state")),
-    )
-    for label, expected, current in checks:
-        if expected is not None and current != expected:
-            raise T.TransitionError(f"{slug}: L2 {label} changed before resume ({expected!r} → {current!r})")
+def resume(project: str, slug: str) -> dict:
+    """Start a blocked task's provider session again in its worktree, with whatever waits in its inbox.
 
-
-def _resume_session_locked(project: str, slug: str, text: str, session_id: str | None = None, *,
-                           expected_dispatch_id: str | None = None,
-                           expected_session_id: str | None = None,
-                           expected_agent_id: str | None = None,
-                           expected_state: str | None = None) -> dict:
-    """Stop the current physical worker, then resume its provider conversation with ``text``.
-
-    The task dispatch and L2 capability token are logical ownership and stay stable. The physical worker changes on
-    every turn. Claude may also return a replacement session id; Codex keeps its thread id. We never overlap two
-    writers in one worktree, and a running task never silently crosses providers.
-    """
+    This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
+    worker exited or sits idle without a report (that worker is stopped first). A task blocked before any launch goes
+    back to the queue. A file lease or an exhausted usage window keeps the task blocked with `resume_after` set, and
+    the next tick tries again."""
     task = S.load_task(project, slug)
-    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                             expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
-    if not task.get("l2_token"):
-        # Compatibility for sessions dispatched before the worker capability existed. It becomes stable now.
+    if task["state"] != "blocked":
+        raise T.TransitionError(f"{slug} is {task['state']}, not blocked")
+    if not task.get("agent_id") or not task.get("session_id"):
+        T.requeue(project, slug)
+        return {"requeued": True}
+    window = engines.usage_hold() if l2_engine(task) == "claude" else None
+    hold = f"usage limit: subscription window exhausted, resets {window}" if window else wip_hold(project, task)
+    if hold:
         with S.project_lock(project):
-            current = S.load_task(project, slug)
-            _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
-                                     expected_session_id=task.get("session_id"),
-                                     expected_agent_id=task.get("agent_id"), expected_state=task.get("state"))
-            current["l2_token"] = secrets.token_urlsafe(24)
-            S.save_task(project, current)
-            task = current
-    sid = session_id or task.get("session_id")
-    if not sid:
-        raise T.TransitionError("no session to resume; dispatch again")
-    if session_id is not None and task.get("session_id") != session_id:
-        raise T.TransitionError(f"{slug}: requested session is no longer the current L2 session")
+            task = S.load_task(project, slug)
+            if task["state"] == "blocked":
+                task["resume_after"] = task.get("resume_after") or S.now()
+                task["blocked_reason"] = f"waiting: {hold}"
+                S.save_task(project, task)
+        S.append_event(project, slug, "resume-held", hold=hold)
+        return {"held": hold}
     cwd = Path(task.get("worktree") or "")
     if not task.get("worktree") or not cwd.is_dir():
         raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
@@ -411,227 +378,73 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
     try:
         with publication_settlement(project):
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
-            # A resume is specifically how an agent continues uncommitted work, so dirt is allowed here; path,
-            # branch, and every committed ancestor remain strict.
+            # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
             _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError) as exc:
         from . import incidents
         incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
-    # Provenance checks may take a network round trip. Re-read before spending an engine launch.
-    current = S.load_task(project, slug)
-    _require_resume_snapshot(current, slug, expected_dispatch_id=task.get("dispatch_id"),
-                             expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                             expected_state=task.get("state"))
-    task = current
-    name = f"{project}/{task['dispatch_id']}"
-    engine = l2_engine(task)
-    job_root = l2_job_root(project, slug)
-    old_worker = task.get("agent_id")
-    if old_worker:
-        try:
-            engines.stop_l2_worker(engine, old_worker, job_root=job_root)
-            if engine == "claude":
-                old = next((row for row in engines.claude_agents() if row.get("id") == old_worker), None)
-                if old and old.get("state") not in ("failed", "done", "stopped") and old.get("status") != "exited":
-                    raise RuntimeError(f"Claude worker {old_worker} is still live after stop")
-        except Exception as exc:
-            raise record_resume_failure(project, slug, sid, f"old worker could not be stopped: {exc}") from exc
+    engine, job_root = l2_engine(task), l2_job_root(project, slug)
+    if _l2_worker_live(project, task):
+        engines.stop_l2_worker(engine, task["agent_id"], job_root=job_root)
+        if _l2_worker_live(project, task):
+            raise T.TransitionError(f"{slug}: worker {task['agent_id']} is still live after stop; try again")
+    rows = T.pending(project, slug)
+    prompt = T.render_inbox(rows) or "Continue from your progress file."
     try:
         res = engines.resume_l2(
-            engine, name, sid, text, cwd=cwd, persona=config.PERSONAS / "l2.md",
+            engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
+            persona=config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md"),
             model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
-            extra_env=l2_env(project, task), job_root=job_root)
-    except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
-    try:
-        if engine == "claude":
-            live = [a for a in engines.claude_agents()
-                    if a.get("name") == name and a.get("state") not in ("failed", "done", "stopped")
-                    and a.get("sessionId") and a.get("id") and a.get("id") != old_worker]
-        else:
-            row = res.get("agent") or {}
-            live = [row] if row.get("id") and row.get("sessionId") and row.get("state") == "working" else []
-    except Exception as exc:
-        raise record_resume_failure(project, slug, sid, exc) from exc
-    if res.get("returncode") != 0 or not live:
-        for row in live:
-            try:
-                engines.stop_l2_worker(engine, row["id"], job_root=job_root)
-            except Exception:  # noqa: BLE001 — the launch failure is recorded below
-                pass
-        note = res.get("stderr", "")[:200] or res.get("stdout", "")[:200]
+            extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root)
+        worker = res.get("agent") or {}
         if res.get("returncode") != 0:
-            detail = note or f"resume launcher exited {res.get('returncode')}"
-        else:
-            detail = "no concrete live worker"
-            if note:
-                detail += f" ({note})"
-        raise record_resume_failure(project, slug, sid, detail)
-    new = max(live, key=lambda a: a.get("startedAt") or 0)
-    changed = None
+            raise RuntimeError(res.get("stderr") or res.get("stdout") or f"exit {res.get('returncode')}")
+        if not worker.get("id") or not worker.get("sessionId"):
+            raise RuntimeError("no concrete live worker")
+    except Exception as exc:
+        raise record_resume_failure(project, slug, exc) from exc
     try:
-        with S.project_lock(project):
-            t = S.load_task(project, slug)
-            try:
-                _require_resume_snapshot(t, slug, expected_dispatch_id=task.get("dispatch_id"),
-                                         expected_session_id=sid, expected_agent_id=task.get("agent_id"),
-                                         expected_state=task.get("state"))
-            except T.TransitionError as exc:
-                changed = exc
-            else:
-                t["agent_id"], t["session_id"] = new["id"], new["sessionId"]
-                t.pop("completion_requested", None)
-                S.save_task(project, t)
-    except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held
-        try:
-            engines.stop_l2_worker(engine, new["id"], job_root=job_root)
-        except Exception:  # noqa: BLE001 — the incident records any worker the stop could not reach
-            pass
-        raise record_resume_failure(project, slug, sid, f"could not bind replacement worker: {exc}") from exc
-    if changed is not None:
-        engines.stop_l2_worker(engine, new["id"], job_root=job_root)
-        S.append_event(project, slug, "resume-cancelled", agent_id=new["id"], session_id=new["sessionId"],
-                       reason=str(changed))
-        raise T.TransitionError(f"{slug}: task generation changed during resume; replacement worker stopped") from changed
-    S.append_event(project, slug, "resumed", engine=engine, agent_id=new.get("id"),
-                   session_id=new.get("sessionId"), previous_session=sid, previous_worker=old_worker)
-    res["agent"] = new
-    return res
+        T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
+                 previous_worker=task["agent_id"])
+    except Exception as exc:  # the task moved on, or its state could not be written: nothing may own the new worker
+        engines.stop_l2_worker(engine, worker["id"], job_root=job_root)
+        if isinstance(exc, T.TransitionError):
+            raise
+        raise record_resume_failure(project, slug, exc) from exc
+    T.take_inbox(project, slug, {row["id"] for row in rows})
+    return {"agent": worker}
 
 
-def resume_session(project: str, slug: str, text: str, session_id: str | None = None, **expected) -> dict:
-    with _resume_lock(project, slug):
-        return _resume_session_locked(project, slug, text, session_id, **expected)
-
-
-def _resume_blocked_locked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", *,
-                           expected_dispatch_id: str | None = None,
-                           expected_session_id: str | None = None,
-                           expected_agent_id: str | None = None,
-                           expected_state: str | None = None,
-                           locked_resume: bool = True) -> dict:
+def stop(project: str, slug: str, *, by: str = "burak") -> dict:
+    """Abort the task's worker. The task blocks; a message or Resume starts the same session again, Reject ends it."""
     task = S.load_task(project, slug)
-    _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                             expected_session_id=expected_session_id,
-                             expected_agent_id=expected_agent_id, expected_state=expected_state)
-    if task["state"] == "blocked" and not task.get("agent_id"):
-        T.requeue(project, slug, answer=answer)  # blocked before any launch: dispatch retries it from scratch
-        return {"deferred": False, "requeued": True}
-    if task["state"] == "blocked":
-        provider_hold = engines.usage_hold() if l2_engine(task) == "claude" else None
-        hold = (f"usage limit: subscription window exhausted, resets {provider_hold}"
-                if provider_hold else wip_hold(project, task))
-        if hold:
-            waiting = (f"waiting for lease: {hold.removeprefix('file lease: ')}"
-                       if hold.startswith("file lease: ") else f"waiting: {hold}")
-            with S.project_lock(project):
-                task = S.load_task(project, slug)
-                _require_resume_snapshot(task, slug, expected_dispatch_id=expected_dispatch_id,
-                                         expected_session_id=expected_session_id,
-                                         expected_agent_id=expected_agent_id, expected_state=expected_state)
-                if "blocked_question" not in task:
-                    task["blocked_question"] = task.get("blocked_reason")
-                task["resume_answer"] = answer
-                task["resume_prefix"] = prefix
-                task["resume_after"] = S.now()
-                task["blocked_reason"] = waiting
-                S.save_task(project, task)
-                S.append_event(project, slug, "resume-deferred", hold=hold, reason=waiting)
-            return {"deferred": True, "hold": hold, "waiting": waiting}
-    prompt = f"{prefix}{answer}\nContinue from your progress file; finish to *done* and rewrite the report."
-    expected = {key: value for key, value in {
-        "expected_dispatch_id": expected_dispatch_id,
-        "expected_session_id": expected_session_id,
-        "expected_agent_id": expected_agent_id,
-        "expected_state": expected_state,
-    }.items() if value is not None}
-    if locked_resume:
-        res = _resume_session_locked(project, slug, prompt, **expected)
-    else:
-        # Keep the public resume seam used by callers and tests; it owns its own cross-process lock.
-        res = resume_session(project, slug, prompt, **expected)
-    new_agent = res.get("agent") or {}
-    T.resume(project, slug, answer=answer, expected_state="blocked",
-             expected_dispatch_id=task.get("dispatch_id"),
-             expected_session_id=new_agent.get("sessionId") or task.get("session_id"),
-             expected_agent_id=new_agent.get("id") or task.get("agent_id"))
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        task.pop("resume_after", None)
-        task.pop("resume_answer", None)
-        task.pop("resume_prefix", None)
-        S.save_task(project, task)
-    res["deferred"] = False
-    return res
-
-
-def resume_blocked(project: str, slug: str, answer: str, prefix: str = "Burak's answer: ", **expected) -> dict:
-    return _resume_blocked_locked(project, slug, answer, prefix, locked_resume=False, **expected)
-
-
-def message_l2(project: str, slug: str, text: str, *, expected_dispatch_id: str | None = None,
-               expected_session_id: str | None = None, expected_engine: str | None = None) -> dict:
-    """Persist Burak's message and deliver it only to the L2 attempt snapshot he addressed."""
-    text = str(text or "").strip()
-    if not text:
-        raise T.TransitionError("task message is empty")
-    with _resume_lock(project, slug):
-        task = S.load_task(project, slug)
-        _require_resume_snapshot(task, slug)
-        for label, expected, actual in (
-            ("dispatch", expected_dispatch_id, task.get("dispatch_id")),
-            ("session", expected_session_id, task.get("session_id")),
-            ("engine", expected_engine, l2_engine(task)),
-        ):
-            if expected is not None and str(expected) != str(actual or ""):
-                raise T.TransitionError(f"{slug}: {label} changed; refresh before steering")
-        if not task.get("dispatch_id") or not task.get("session_id"):
-            raise T.TransitionError(f"{slug}: no current L2 dispatch ownership")
-        expected = {
-            "expected_dispatch_id": task["dispatch_id"],
-            "expected_session_id": task["session_id"],
-            "expected_agent_id": task.get("agent_id"),
-            "expected_state": task["state"],
-        }
-        message = T.append_task_message(
-            project, slug, "burak", text, actor="burak",
-            expected_dispatch_id=task["dispatch_id"], expected_session_id=task["session_id"],
-            expected_state=task["state"],
-        )
-        if task["state"] == "blocked":
-            result = _resume_blocked_locked(project, slug, text, **expected)
-        else:
-            result = _resume_session_locked(project, slug, text, **expected)
-        return {**result, "message": message}
+    if task["state"] == "running":  # block first, so the poll does not read the exiting worker as a death
+        T.block(project, slug, f"stopped by {by}", actor=by, expected_state="running")
+    elif task["state"] != "blocked":
+        raise T.TransitionError(f"{slug} is {task['state']}; nothing to stop")
+    if task.get("agent_id"):
+        note = engines.stop_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
+        S.append_event(project, slug, "stopped", agent_id=task["agent_id"], by=by, note=str(note or "")[:200])
+    return S.load_task(project, slug)
 
 
 def resume_due(project: str) -> list[str]:
-    """Tasks blocked by an exhausted window come back by themselves once it reopens — oldest first, WIP-throttled."""
-    now, back = S.now(), []
-    due = [t for t in S.list_tasks(project) if t["state"] == "blocked" and t.get("resume_after") and t["resume_after"] <= now]
-    for t in sorted(due, key=_resume_order):
+    """Blocked tasks Altitude brings back itself, oldest first: a hold that has elapsed, or a message waiting for a
+    worker that exited. An exhausted usage window or a file lease keeps a task waiting."""
+    now, due = S.now(), []
+    for t in sorted(S.list_tasks(project), key=_resume_order):
+        if t["state"] != "blocked" or not t.get("agent_id"):
+            continue
+        after = t.get("resume_after") or ""
+        if after > now or (not after and not T.pending(project, t["slug"])):
+            continue
         if l2_engine(t) == "claude" and engines.usage_hold():
             continue
         if wip_hold(project, t):
             continue  # a lease holds this one; a younger unrelated task may still go
-        if "resume_answer" in t:
-            answer = t["resume_answer"]
-            prefix = t.get("resume_prefix", "")
-        else:
-            answer = "The usage window has reopened; Altitude held you, nothing is wrong with the task."
-            prefix = ""
-        res = resume_blocked(project, t["slug"], answer, prefix=prefix)
-        if res and res.get("deferred"):
-            continue
-        with S.project_lock(project):
-            t2 = S.load_task(project, t["slug"])
-            t2.pop("resume_after", None)
-            t2.pop("resume_answer", None)
-            t2.pop("resume_prefix", None)
-            S.save_task(project, t2)
-        back.append(t["slug"])
-    return back
+        due.append(t["slug"])
+    return due
 
 
 def _resume_order(task: dict) -> tuple[str, str]:

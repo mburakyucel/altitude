@@ -68,44 +68,39 @@ def on_l2_finished(project: str, item: dict) -> None:
     slug = t["slug"]
     with S.project_lock(project):
         live = S.load_task(project, slug)
-        snapshot = (t.get("state"), t.get("dispatch_id"), t.get("session_id"), t.get("agent_id"))
-        current = (live.get("state"), live.get("dispatch_id"), live.get("session_id"), live.get("agent_id"))
+        snapshot = (t.get("state"), t.get("agent_id"))
+        current = (live.get("state"), live.get("agent_id"))
     if current != snapshot:
         log(f"[{project}/{slug}] ignored stale finished worker snapshot {snapshot} → {current}")
         return
     t = live  # include completion/action fields that may have landed after poll took its worker snapshot
 
     def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
-        return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"),
-                       expected_dispatch_id=t.get("dispatch_id"), expected_session_id=t.get("session_id"),
-                       expected_agent_id=t.get("agent_id"), updates=updates)
+        return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"), updates=updates)
 
     if t.get("completion_requested"):
         a = item.get("agent") or {}
         if a.get("state") == "working" or a.get("status") in ("busy", "idle"):
             raise RuntimeError(f"{project}/{slug}: completion reached finished handling while its L2 is still live")
-        T.finalize_completion(project, slug, expected_dispatch_id=str(t.get("dispatch_id") or ""),
-                              expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"))
+        T.finalize_completion(project, slug)
         log(f"[{project}/{slug}] no-code completion finalized after the L2 worker exited")
         return
     if item.get("capacity"):
         # Provider capacity is local to this task/model, unlike an exhausted subscription window or a system fault.
         # Keep its logical L2 identity and retry the same conversation after bounded exponential-ish backoff.
-        attempt = max(0, int(t.get("capacity_retries") or 0)) + 1
-        delay = CAPACITY_RETRY_DELAYS[min(attempt - 1, len(CAPACITY_RETRY_DELAYS) - 1)]
+        retry = max(0, int(t.get("capacity_retries") or 0)) + 1
+        delay = CAPACITY_RETRY_DELAYS[min(retry - 1, len(CAPACITY_RETRY_DELAYS) - 1)]
         until = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds")
         engine = t.get("l2_engine") or "claude"
         model = t.get("engine_model") or "provider default"
-        updates = {"capacity_retries": attempt, "resume_after": until,
-                   "resume_answer": (f"Temporary capacity backoff elapsed. Retry with the same {engine} provider "
-                                     f"and {model} model."), "resume_prefix": "Altitude: "}
+        updates = {"capacity_retries": retry, "resume_after": until}
         try:
             block_snapshot(f"{engine} model {model} is temporarily at capacity; "
                            f"Altitude retries this same L2 after {until}", updates=updates)
         except T.TransitionError:
             log(f"[{project}/{slug}] capacity result lost a concurrent lifecycle race; ignored")
             return
-        log(f"[{project}/{slug}] {engine}/{model} temporarily at capacity → retry {attempt} after {delay}s")
+        log(f"[{project}/{slug}] {engine}/{model} temporarily at capacity → retry {retry} after {delay}s")
         return
     if item.get("limited"):  # hold, remember when to come back, and announce the window once
         until, a = item["limited"], item.get("agent") or {}
@@ -151,7 +146,7 @@ def on_l2_finished(project: str, item: dict) -> None:
         except T.TransitionError:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return
-        incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} ({t.get('dispatch_id')}) died without a report: "
+        incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} (attempt {t.get('attempt')}) died without a report: "
                                f"{engine} worker state=failed", project=project, task=slug)
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
@@ -161,16 +156,12 @@ def on_l2_finished(project: str, item: dict) -> None:
             handled = actions.process_l2(project, item)
         except actions.ActionError as exc:
             try:
-                blocked = block_snapshot(f"contained Codex action refused: {exc}")
-                dispatch.resume_blocked(
-                    project, slug, str(exc), prefix="Altitude action schema correction: ",
-                    expected_state="blocked", expected_dispatch_id=blocked.get("dispatch_id"),
-                    expected_session_id=blocked.get("session_id"), expected_agent_id=blocked.get("agent_id"),
-                )
+                block_snapshot(f"contained Codex action refused: {exc}", updates={"resume_after": S.now()})
             except T.TransitionError:
                 log(f"[{project}/{slug}] Codex action correction lost a concurrent lifecycle race; ignored")
                 return
-            log(f"[{project}/{slug}] Codex action refused and resumed in the same thread: {exc}")
+            T.enqueue(project, slug, f"Altitude action schema correction: {exc}")
+            log(f"[{project}/{slug}] Codex action refused; the correction resumes the same thread: {exc}")
             return
         if handled.get("kind") != "report":
             log(f"[{project}/{slug}] contained Codex action handled: {handled.get('kind')}")
@@ -331,7 +322,7 @@ def dispatch_waiting(project: str) -> None:
             return
         try:
             res = dispatch.run(project, t["slug"])
-            log(f"[{project}/{t['slug']}] dispatched {res['dispatch_id']} agent={res['agent'].get('id') if res.get('agent') else None}")
+            log(f"[{project}/{t['slug']}] dispatched attempt {res['attempt']} agent={res['agent'].get('id') if res.get('agent') else None}")
         except dispatch.DispatchFailure as e:
             log(f"[{project}/{t['slug']}] {e}")
         except T.TransitionError as e:
@@ -367,7 +358,7 @@ def tick() -> None:
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
             for slug in dispatch.resume_due(project):
-                log(f"[{project}/{slug}] resumed: the usage window reopened")
+                spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
@@ -548,7 +539,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "transcript" and len(parts) > 3:
                 try:
                     return self._json(transcript.view(
-                        parts[2], parts[3], dispatch_id=q.get("dispatch_id", [""])[0],
+                        parts[2], parts[3],
                         engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
                         cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"))
                 except (KeyError, transcript.TranscriptAccessError):
@@ -597,10 +588,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "only blocked tasks need a user decision"}, 409)
                 choice = ["Resume", "Reject"][int(opt)]
                 if choice == "Resume":
-                    if t.get("session_id"):
-                        spawn(f"resume:{project}:{slug}", dispatch.resume_blocked, project, slug, o.get("note") or "continue")
-                    else:
-                        T.resume(project, slug, actor="burak")
+                    if o.get("note"):
+                        T.message(project, slug, "burak", str(o["note"]))
+                    spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
                 else:
                     T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
@@ -611,6 +601,8 @@ class Handler(BaseHTTPRequestHandler):
                     T.reject(project, slug, reason, actor="burak")
                 elif action == "done":
                     T.done(project, slug, actor="burak")
+                elif action == "stop":
+                    dispatch.stop(project, slug)
                 elif action == "dispatch":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
                 elif action == "verify":
@@ -628,14 +620,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     return self._json({"error": "empty task message"}, 400)
                 try:
-                    res = dispatch.message_l2(
-                        project, slug, text, expected_dispatch_id=o.get("dispatch_id"),
-                        expected_session_id=o.get("session_id"), expected_engine=o.get("engine"))
+                    message = T.message(project, slug, "burak", text)
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
-                return self._json({"ok": True, "message": res["message"],
-                                   "deferred": bool(res.get("deferred")),
-                                   "stdout": res.get("stdout"), "stderr": res.get("stderr")})
+                if S.load_task(project, slug).get("state") == "blocked":
+                    spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
+                return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
             if api == "chat":

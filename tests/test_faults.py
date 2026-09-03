@@ -71,7 +71,7 @@ class TestSystemFault(unittest.TestCase):
     def test_task_blocked_before_launch_is_queued_again_on_resume(self):
         task = T.new("altitude", "requeue probe", "request", actor="burak")
         incidents.system_fault("launch-kind", "launch broke", project="altitude", task=task["slug"])
-        res = dispatch.resume_blocked("altitude", task["slug"], "cause fixed")
+        res = dispatch.resume("altitude", task["slug"])
         self.assertTrue(res["requeued"])
         self.assertEqual(S.load_task("altitude", task["slug"])["state"], "queued")
 

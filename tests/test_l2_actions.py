@@ -29,9 +29,8 @@ class TestL2Actions(unittest.TestCase):
 
     def task(self, title="Codex task"):
         task = T.new("p", title, "request")
-        task.update({"state": "running", "dispatch_id": f"{task['slug']}-1", "session_id": "thread-1",
-                     "agent_id": "worker-1", "l2_engine": "codex", "l2_token": "token-1",
-                     "attempt": 1, "worktree": str(self.repo)})
+        task.update({"state": "running", "attempt": 1, "session_id": "thread-1", "agent_id": "worker-1",
+                     "l2_engine": "codex", "worktree": str(self.repo)})
         S.save_task("p", task)
         return task
 
@@ -59,17 +58,21 @@ class TestL2Actions(unittest.TestCase):
         result = {"name": "helper-1-1", "role": "implementer", "engine": "codex",
                   "patch": str(patch_path), "summary": "ready", "error": None}
         with mock.patch.object(l1, "load", return_value=None), \
-             mock.patch.object(l1, "start", return_value=record), \
-             mock.patch.object(l1, "wait", return_value={"run": result}), \
-             mock.patch.object(dispatch, "resume_session", return_value={"agent": {"id": "worker-2"}}) as resume:
+             mock.patch.object(l1, "start", return_value=record) as start, \
+             mock.patch.object(l1, "wait", return_value={"run": result}):
             handled = actions._helpers("p", task, action)  # noqa: SLF001 -- broker contract test
-        self.assertEqual(handled["kind"], "resumed")
-        prompt = resume.call_args.args[2]
+        self.assertEqual(handled["kind"], "pending")
+        self.assertEqual(start.call_args.kwargs["expected_attempt"], 1)
+        held = S.load_task("p", task["slug"])
+        self.assertEqual((held["state"], held["blocked_reason"]), ("blocked", "between Codex turns"))
+        self.assertTrue(held["resume_after"])
+        [pending] = T.pending("p", task["slug"])
+        prompt = pending["text"]
         self.assertIn("diff --git a/x b/x", prompt)
         self.assertNotIn(str(patch_path), prompt)
         self.assertIn("No patch was auto-applied", prompt)
 
-    def test_merged_publish_settles_self_deploy_before_retry_resume(self):
+    def test_merged_publish_settles_self_deploy_before_the_retry_turn(self):
         task = self.task("post merge settlement")
         action = {"action": "publish", "commit_message": "fix: settle merge", "merge": True}
         phase = {"merged": False, "settled": False}
@@ -83,19 +86,21 @@ class TestL2Actions(unittest.TestCase):
             phase["settled"] = True
             return ["self-deploy settled"]
 
-        def resume(_project, _slug, _prompt, **_expected):
-            self.assertTrue(phase["settled"], "retry must not reach provenance before self-deploy settles")
-            return {"agent": {"id": "worker-2"}}
+        def next_turn(_project, _task, prompt):
+            self.assertTrue(phase["settled"], "the retry turn must not be queued before self-deploy settles")
+            self.assertIn("Trusted publish action was refused", prompt)
+            return {"kind": "pending"}
 
         with mock.patch.object(engines, "codex_containment_empty", return_value=True), \
              mock.patch.object(actions.land, "land", side_effect=merged_then_retry), \
              mock.patch.object(dispatch, "pull_after_done", side_effect=settle) as pulled, \
-             mock.patch.object(dispatch, "resume_session", side_effect=resume):
+             mock.patch.object(actions, "next_turn", side_effect=next_turn) as retry:
             result = actions.process_l2("p", self.item(task, action))
 
-        self.assertEqual(result["kind"], "resumed")
+        self.assertEqual(result["kind"], "pending")
         pulled.assert_called_once_with("p", mock.ANY)
-        self.assertNotIn("pending_action", S.load_task("p", task["slug"]))
+        retry.assert_called_once()
+        self.assertEqual(S.read_events("p", task["slug"])[-1]["kind"], "l2-action-refused")
 
     def test_provenance_gate_waits_for_publication_settlement(self):
         entered = threading.Event()

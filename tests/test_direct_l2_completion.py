@@ -32,20 +32,17 @@ class TestDirectL2Completion(unittest.TestCase):
         worktree = self.repo / ".claude" / "worktrees" / task["slug"]
         subprocess.run(["git", "worktree", "add", "-q", "-b", f"worktree-{task['slug']}", str(worktree),
                         "origin/main"], cwd=self.repo, check=True)
-        task.update({"state": "running", "dispatch_id": f"{task['slug']}-1", "session_id": "session",
-                     "agent_id": "worker", "l2_token": "token", "worktree": str(worktree),
-                     "branch": f"worktree-{task['slug']}"})
+        task.update({"state": "running", "attempt": 1, "session_id": "session", "agent_id": "worker",
+                     "worktree": str(worktree), "branch": f"worktree-{task['slug']}"})
         S.save_task("p", task)
         return task, worktree
 
     def test_unchanged_branch_can_close_without_report_artifacts(self):
         task, _ = self.task("Architecture proposal")
-        requested = T.done("p", task["slug"], actor="l2", digest="Proposal saved in issue #1.",
-                           expected_dispatch_id=task["dispatch_id"], expected_l2_token="token")
+        requested = T.done("p", task["slug"], actor="l2", digest="Proposal saved in issue #1.", expected_attempt=1)
         self.assertEqual(requested["state"], "running")
-        self.assertEqual(requested["completion_requested"]["agent_id"], "worker")
-        result = T.finalize_completion("p", task["slug"], expected_dispatch_id=task["dispatch_id"],
-                                       expected_agent_id="worker", expected_session_id="session")
+        self.assertEqual(requested["completion_requested"]["digest"], "Proposal saved in issue #1.")
+        result = T.finalize_completion("p", task["slug"])
         self.assertEqual(result["state"], "done")
         self.assertFalse((S.task_dir("p", task["slug"]) / "report.json").exists())
 
@@ -56,14 +53,12 @@ class TestDirectL2Completion(unittest.TestCase):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "change"],
                        cwd=worktree, check=True)
         with self.assertRaisesRegex(T.TransitionError, "use alt land"):
-            T.done("p", task["slug"], actor="l2", digest="done",
-                   expected_dispatch_id=task["dispatch_id"], expected_l2_token="token")
+            T.done("p", task["slug"], actor="l2", digest="done", expected_attempt=1)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
 
     def test_completion_request_never_archives_a_live_worker(self):
         task, _ = self.task("Still exiting")
-        T.done("p", task["slug"], actor="l2", digest="result",
-               expected_dispatch_id=task["dispatch_id"], expected_l2_token="token")
+        T.done("p", task["slug"], actor="l2", digest="result", expected_attempt=1)
         snapshot = S.load_task("p", task["slug"])
         with self.assertRaisesRegex(RuntimeError, "still live"):
             server.on_l2_finished("p", {"task": snapshot,

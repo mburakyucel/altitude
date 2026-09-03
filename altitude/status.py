@@ -9,7 +9,7 @@ from . import config, dispatch, git_policy, l1, state as S, verify
 
 
 _TASK_FIELDS = (
-    "state", "title", "attempt", "dispatch_id", "session_id", "agent_id", "source",
+    "state", "title", "attempt", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
     "engine_model", "routing",
 )
@@ -94,8 +94,7 @@ def status(project: str, slug: str) -> dict:
         for field in _TASK_FIELDS:
             out[field] = task.get(field)
 
-    dispatch_id = task.get("dispatch_id")
-    counts_path = config.MONITOR_DIR / f"counts-{project}--{dispatch_id}.json" if dispatch_id else None
+    counts_path = S.counts_path(project, task)
     if counts_path is not None and counts_path.exists():
         try:
             counts = S.read_json(counts_path, {})

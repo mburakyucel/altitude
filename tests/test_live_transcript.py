@@ -23,16 +23,16 @@ class TestLiveTranscript(unittest.TestCase):
         config.save_projects(projects)
         task = T.new(self.project, "Observed work", "Do it")
         self.slug = task["slug"]
-        task.update({"state": "running", "dispatch_id": "observed-1", "l2_engine": "codex",
+        task.update({"state": "running", "attempt": 1, "l2_engine": "codex",
                      "session_id": "thread-1", "agent_id": "worker-2"})
         S.save_task(self.project, task)
-        S.append_event(self.project, self.slug, "resumed", engine="codex", agent_id="worker-2",
-                       session_id="thread-1", previous_worker="worker-1")
+        S.append_event(self.project, self.slug, "state", frm="blocked", to="running", by="altd", engine="codex",
+                       agent_id="worker-2", session_id="thread-1", previous_worker="worker-1")
         self.old = _TMP / self.project / "old.jsonl"
         self.new = _TMP / self.project / "new.jsonl"
 
     def _view(self, **kwargs):
-        args = {"dispatch_id": "observed-1", "engine": "codex", "session_id": "thread-1"}
+        args = {"engine": "codex", "session_id": "thread-1"}
         args.update(kwargs)
         paths = [("codex", "thread-1", self.old), ("codex", "thread-1", self.new)]
         with mock.patch.object(transcript, "_engine_paths", return_value=paths):
@@ -54,9 +54,9 @@ class TestLiveTranscript(unittest.TestCase):
         errors = [e["text"] for e in self._view()["events"] if e["kind"] == "error"]
         self.assertEqual(errors, ["corrupt record 1", "partial record; waiting for completion"])
 
-    def test_generation_fence_rejects_stale_or_incomplete_identity(self):
+    def test_session_fence_rejects_stale_or_incomplete_identity(self):
         self.old.write_text(""); self.new.write_text("")
-        for changed in ({"dispatch_id": "old"}, {"engine": "claude"}, {"session_id": "old"}, {"session_id": ""}):
+        for changed in ({"engine": "claude"}, {"session_id": "old"}, {"session_id": ""}):
             with self.assertRaisesRegex(transcript.TranscriptAccessError, "generation changed"):
                 self._view(**changed)
 
@@ -64,7 +64,7 @@ class TestLiveTranscript(unittest.TestCase):
         self.assertIsNone(transcript._claude_path("../../etc/passwd"))
         for project, slug in (("../etc", self.slug), (self.project, "../status"), ("unmanaged", "task")):
             with self.assertRaises(transcript.TranscriptAccessError):
-                transcript.view(project, slug, dispatch_id="x", engine="codex", session_id="x")
+                transcript.view(project, slug, engine="codex", session_id="x")
         self.old.write_text(json.dumps({"type": "item.completed", "authorization": "Bearer abcdefghijklmnop",
                                         "output": "token ghp_abcdefghijklmnop"}) + "\n")
         self.new.write_text("")

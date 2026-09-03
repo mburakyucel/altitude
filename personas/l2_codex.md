@@ -23,4 +23,4 @@ update for Burak in `message`, then choose exactly one action:
 
 Fill `outcome` for publication and use null/empty values elsewhere. Never encode shell commands, credentials,
 alternate worktrees, base refs, test commands, or lease expansion in an action. Altitude resumes this same provider
-thread with helper results, Burak's answer, temporary-capacity recovery, or a publication refusal.
+thread with helper results, Burak's queued messages, temporary-capacity recovery, or a publication refusal.

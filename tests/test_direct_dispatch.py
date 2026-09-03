@@ -41,7 +41,7 @@ class TestDirectDispatch(unittest.TestCase):
 
     def test_waiting_task_dispatches_directly_to_l2(self):
         queued = {"slug": "direct-one", "state": "queued"}
-        result = {"dispatch_id": "direct-one-1", "agent": {"id": "l2-agent"}}
+        result = {"attempt": 1, "agent": {"id": "l2-agent"}}
         with mock.patch.object(S, "list_tasks", return_value=[queued]), \
              mock.patch.object(server.dispatch, "wip_hold", return_value=None), \
              mock.patch.object(server.dispatch, "run", return_value=result) as run:
@@ -85,7 +85,7 @@ class TestDirectDispatch(unittest.TestCase):
         self.assertIsNone(waiting.get("dispatching"))
         fault.assert_called_once()
 
-    def test_successful_launch_binds_the_generation_given_to_the_l2(self):
+    def test_successful_launch_binds_the_attempt_given_to_the_l2(self):
         task = T.new("direct", "Concrete launch identity", "Dispatch it.", actor="burak")
         fake = {"stdout": "started", "stderr": "", "returncode": 0,
                 "agent": {"id": "agent-1", "sessionId": "session-1"}}
@@ -98,9 +98,10 @@ class TestDirectDispatch(unittest.TestCase):
         running = S.load_task("direct", task["slug"])
         self.assertEqual((running["state"], running["agent_id"], running["session_id"]),
                          ("running", "agent-1", "session-1"))
-        token = running["l2_token"]
-        self.assertTrue(token)
-        self.assertEqual(launch.call_args.kwargs["extra_env"]["ALTITUDE_L2_TOKEN"], token)
+        self.assertEqual(running["attempt"], 1)
+        env = launch.call_args.kwargs["extra_env"]
+        self.assertEqual((env["ALTITUDE_ATTEMPT"], env["ALTITUDE_SESSION_KEY"]),
+                         ("1", S.session_key("direct", task["slug"], 1)))
         self.assertEqual(running["l2_engine"], "codex")
         self.assertIn("default policy", running["routing"])
 

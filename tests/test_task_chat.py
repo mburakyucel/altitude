@@ -1,4 +1,4 @@
-"""The task page is a durable, two-sided conversation with the exact current L2."""
+"""Burak's messages queue on the task and reach the exact current L2 at its next checkpoint."""
 import contextlib
 import io
 import json
@@ -15,8 +15,50 @@ os.environ["ALTITUDE_HOME"] = str(_TMP / "home")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, dispatch, engines, server, state as S, tasks as T  # noqa: E402
 
+CLI = Path(__file__).resolve().parent.parent / "bin" / "alt"
 
-class TestTaskConversation(unittest.TestCase):
+
+@contextlib.contextmanager
+def env(**values):
+    old = {name: os.environ.get(name) for name in values}
+    for name, value in values.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    try:
+        yield
+    finally:
+        for name, value in old.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def cli(argv):
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        runpy.run_path(str(CLI))["main"](argv)
+    return json.loads(output.getvalue())
+
+
+def launched(worker="agent-new", session="session-new"):
+    """Mocks around one resume so it launches nothing real and returns `worker`."""
+    return contextlib.ExitStack.__enter__(_launch_stack(worker, session))
+
+
+def _launch_stack(worker, session):
+    stack = contextlib.ExitStack()
+    stack.enter_context(mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40))
+    stack.enter_context(mock.patch.object(dispatch, "_validate_task_worktree"))
+    stack.enter_context(mock.patch.object(dispatch, "wip_hold", return_value=None))
+    stack.enter_context(mock.patch.object(engines, "claude_agents", return_value=[]))
+    stack.enter_context(mock.patch.object(engines, "usage_hold", return_value=None))
+    return stack
+
+
+class ChatCase(unittest.TestCase):
     _number = 0
 
     @classmethod
@@ -24,7 +66,7 @@ class TestTaskConversation(unittest.TestCase):
         config.ensure_root()
 
     def setUp(self):
-        type(self)._number += 1
+        ChatCase._number += 1
         self.project = f"task-chat-{self._number}"
         self.repo = _TMP / self.project / "repo"
         self.repo.mkdir(parents=True)
@@ -35,214 +77,177 @@ class TestTaskConversation(unittest.TestCase):
         self.slug = task["slug"]
         self.worktree = self.repo / ".claude" / "worktrees" / self.slug
         self.worktree.mkdir(parents=True)
-        task.update({
-            "state": "running",
-            "dispatch_id": f"{self.slug}-1",
-            "session_id": "session-old",
-            "agent_id": "agent-old",
-            "l2_token": "token-old",
-            "worktree": str(self.worktree),
-            "branch": f"worktree-{self.slug}",
-        })
+        task.update({"state": "running", "attempt": 1, "session_id": "session-old", "agent_id": "agent-old",
+                     "worktree": str(self.worktree), "branch": f"worktree-{self.slug}"})
         S.save_task(self.project, task)
 
-    def test_burak_message_is_durable_and_fenced_to_the_snapshot_it_resumes(self):
-        resumed = {"stdout": "", "stderr": "", "agent": {"id": "agent-new"}}
-        with mock.patch.object(dispatch, "_resume_session_locked", return_value=resumed) as resume:
-            result = dispatch.message_l2(self.project, self.slug, "Prefer the smaller diff.")
+    def block(self, reason="Need one decision."):
+        task = S.load_task(self.project, self.slug)
+        task.update({"state": "blocked", "blocked_reason": reason})
+        S.save_task(self.project, task)
+
+    def resume(self, seen, worker="agent-new", session="session-new"):
+        def fake(name, session_id, prompt, *, cwd, **kw):
+            seen.update(name=name, session_id=session_id, prompt=prompt, cwd=str(cwd), env=kw.get("extra_env") or {})
+            return {"returncode": 0, "stdout": "", "stderr": "",
+                    "agent": {"id": worker, "sessionId": session, "state": "working"}}
+        with _launch_stack(worker, session) as stack:
+            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", side_effect=fake))
+            return dispatch.resume(self.project, self.slug)
+
+
+class TestTaskConversation(ChatCase):
+    def test_burak_message_is_durable_and_waits_in_the_inbox(self):
+        row = T.message(self.project, self.slug, "burak", "Prefer the smaller diff.")
 
         history = T.task_messages(self.project, self.slug)
-        self.assertEqual([(item["role"], item["text"]) for item in history],
-                         [("burak", "Prefer the smaller diff.")])
-        self.assertEqual(result["message"]["id"], history[0]["id"])
-        self.assertEqual(resume.call_args.args[:3],
-                         (self.project, self.slug, "Prefer the smaller diff."))
-        self.assertEqual(resume.call_args.kwargs, {
-            "expected_dispatch_id": f"{self.slug}-1",
-            "expected_session_id": "session-old",
-            "expected_agent_id": "agent-old",
-            "expected_state": "running",
-        })
-
-    def test_live_view_steering_rejects_a_stale_displayed_generation(self):
-        with mock.patch.object(dispatch, "_resume_session_locked") as resume:
-            with self.assertRaisesRegex(T.TransitionError, "session changed"):
-                dispatch.message_l2(self.project, self.slug, "stale", expected_dispatch_id=f"{self.slug}-1",
-                                    expected_session_id="session-replaced", expected_engine="claude")
-        resume.assert_not_called()
-        self.assertEqual(T.task_messages(self.project, self.slug), [])
+        self.assertEqual([(m["role"], m["text"], m["by"]) for m in history], [("burak", "Prefer the smaller diff.", "burak")])
+        self.assertEqual([m["id"] for m in T.pending(self.project, self.slug)], [row["id"]])
+        self.assertEqual(S.read_events(self.project, self.slug)[-1]["kind"], "task-message")
 
     def test_l2_reply_and_task_api_show_both_sides_without_qa_log(self):
-        T.append_task_message(self.project, self.slug, "burak", "Can we keep this small?",
-                              expected_dispatch_id=f"{self.slug}-1", actor="burak")
-        T.append_task_message(self.project, self.slug, "l2", "Yes. I will keep one focused PR.",
-                              expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2")
+        T.message(self.project, self.slug, "burak", "Can we keep this small?")
+        T.message(self.project, self.slug, "l2", "Yes. I will keep one focused PR.", by="l2", expected_attempt=1)
         (S.task_dir(self.project, self.slug) / "qa.md").write_text("legacy log dump\n")
 
         with mock.patch.object(server.monitor, "sessions", return_value=[]):
             view = server.task_view(self.project, self.slug)
 
-        self.assertEqual([message["role"] for message in view["messages"]], ["burak", "l2"])
-        self.assertEqual([message["text"] for message in view["messages"]],
+        self.assertEqual([m["role"] for m in view["messages"]], ["burak", "l2"])
+        self.assertEqual([m["text"] for m in view["messages"]],
                          ["Can we keep this small?", "Yes. I will keep one focused PR."])
         self.assertNotIn("qa", view["files"])
+        self.assertEqual([m["role"] for m in T.pending(self.project, self.slug)], ["burak"],
+                         "a reply is never queued for the worker itself")
 
-    def test_terminal_or_replaced_dispatch_cannot_append(self):
+    def test_an_earlier_attempt_cannot_reply_and_a_finished_task_takes_no_message(self):
         task = S.load_task(self.project, self.slug)
-        task["dispatch_id"] = f"{self.slug}-2"
+        task["attempt"] = 2
         S.save_task(self.project, task)
-        with self.assertRaisesRegex(T.TransitionError, "dispatch changed"):
-            T.append_task_message(self.project, self.slug, "l2", "stale reply",
-                                  expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2")
-        self.assertEqual(T.task_messages(self.project, self.slug), [])
+        with self.assertRaisesRegex(T.TransitionError, "attempt 1 is no longer current"):
+            T.message(self.project, self.slug, "l2", "stale reply", by="l2", expected_attempt=1)
 
+        task["state"] = "done"
+        S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "in done state"):
+            T.message(self.project, self.slug, "burak", "late steering")
+        self.assertEqual(T.task_messages(self.project, self.slug), [])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+
+    def test_a_message_to_a_blocked_task_resumes_its_session_with_the_message(self):
+        self.block()
+        T.message(self.project, self.slug, "burak", "Use the existing API.")
+        seen = {}
+
+        result = self.resume(seen)
+
+        self.assertEqual(result["agent"]["id"], "agent-new")
+        self.assertTrue(seen["prompt"].startswith("Message from Burak ("), seen["prompt"])
+        self.assertTrue(seen["prompt"].endswith("\nUse the existing API."), seen["prompt"])
+        self.assertEqual((seen["name"], seen["session_id"], seen["cwd"]),
+                         (f"{self.project}/{self.slug}-1", "session-old", str(self.worktree)))
+        self.assertEqual((seen["env"]["ALTITUDE_ATTEMPT"], seen["env"]["ALTITUDE_SESSION_KEY"]),
+                         ("1", f"{self.project}--{self.slug}-1"))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["agent_id"], task["session_id"], task["attempt"]),
+                         ("running", "agent-new", "session-new", 1))
+        self.assertIsNone(task["blocked_reason"])
+        self.assertEqual(T.pending(self.project, self.slug), [], "delivered messages leave the inbox")
+        self.assertEqual([m["text"] for m in T.task_messages(self.project, self.slug)], ["Use the existing API."])
+
+    def test_resume_without_a_message_continues_from_the_progress_file(self):
+        self.block()
+        seen = {}
+        self.resume(seen)
+        self.assertEqual(seen["prompt"], "Continue from your progress file.")
+
+    def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
+        with env(ALTITUDE_ACTOR="l2", ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=self.slug, ALTITUDE_ATTEMPT="1"):
+            payload = cli(["task", "reply", "I can implement this directly."])
+        self.assertEqual((payload["role"], payload["by"]), ("l2", "l2"))
+        self.assertEqual(T.task_messages(self.project, self.slug)[0]["text"], "I can implement this directly.")
+
+        with env(ALTITUDE_ACTOR="burak", ALTITUDE_PROJECT=None, ALTITUDE_TASK=None, ALTITUDE_ATTEMPT=None):
+            with self.assertRaisesRegex(SystemExit, "only the current L2"):
+                cli(["--project", self.project, "task", "reply", "forged"])
+        self.assertEqual(len(T.task_messages(self.project, self.slug)), 1)
+
+    def test_cli_message_queues_for_a_running_l2_and_resumes_a_blocked_one(self):
+        with env(ALTITUDE_ACTOR="burak"), mock.patch.object(dispatch, "resume") as resume:
+            payload = cli(["--project", self.project, "task", "message", self.slug, "Prefer one PR."])
+            resume.assert_not_called()
+            self.block()
+            cli(["--project", self.project, "task", "message", self.slug, "Go ahead."])
+        self.assertEqual((payload["role"], payload["by"]), ("burak", "burak"))
+        resume.assert_called_once_with(self.project, self.slug)
+        self.assertEqual([m["text"] for m in T.pending(self.project, self.slug)], ["Prefer one PR.", "Go ahead."])
+
+    def test_task_conversation_corruption_is_not_silently_dropped(self):
+        (S.task_dir(self.project, self.slug) / "conversation.jsonl").write_text("{not json\n")
+        with self.assertRaisesRegex(ValueError, "corrupt task conversation"):
+            T.task_messages(self.project, self.slug)
+        (S.task_dir(self.project, self.slug) / "inbox.jsonl").write_text('{"id": "x"}\n')
+        with self.assertRaisesRegex(ValueError, "corrupt task inbox"):
+            T.pending(self.project, self.slug)
+
+
+class TestStop(ChatCase):
+    def test_stop_blocks_the_task_before_the_worker_goes_away(self):
+        with mock.patch.object(engines, "stop_l2_worker", return_value="stopped") as stop:
+            task = dispatch.stop(self.project, self.slug)
+
+        stop.assert_called_once_with("claude", "agent-old", job_root=dispatch.l2_job_root(self.project, self.slug))
+        self.assertEqual((task["state"], task["blocked_reason"]), ("blocked", "stopped by burak"))
+        events = S.read_events(self.project, self.slug)
+        self.assertEqual([e["kind"] for e in events[-2:]], ["state", "stopped"])
+        self.assertEqual(events[-1]["agent_id"], "agent-old")
+
+    def test_stop_of_a_finished_task_is_refused(self):
         task = S.load_task(self.project, self.slug)
         task["state"] = "done"
         S.save_task(self.project, task)
-        with mock.patch.object(dispatch, "_resume_session_locked") as resume:
-            with self.assertRaisesRegex(T.TransitionError, "running or blocked"):
-                dispatch.message_l2(self.project, self.slug, "late steering")
-        resume.assert_not_called()
-        self.assertEqual(T.task_messages(self.project, self.slug), [])
-
-    def test_blocked_message_uses_the_blocked_resume_path(self):
-        task = S.load_task(self.project, self.slug)
-        task["state"] = "blocked"
-        task["blocked_reason"] = "Need one decision."
-        S.save_task(self.project, task)
-        resumed = {"stdout": "", "stderr": "", "deferred": True}
-        with mock.patch.object(dispatch, "_resume_blocked_locked", return_value=resumed) as resume:
-            result = dispatch.message_l2(self.project, self.slug, "Use the existing API.")
-
-        self.assertTrue(result["deferred"])
-        self.assertEqual(resume.call_args.args[:3],
-                         (self.project, self.slug, "Use the existing API."))
-        self.assertEqual(T.task_messages(self.project, self.slug)[0]["role"], "burak")
-
-    def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
-        cli = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        old = {name: os.environ.get(name) for name in (
-            "ALTITUDE_ACTOR", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_DISPATCH_ID",
-            "ALTITUDE_L2_TOKEN")}
-        os.environ.update({
-            "ALTITUDE_ACTOR": "l2",
-            "ALTITUDE_PROJECT": self.project,
-            "ALTITUDE_TASK": self.slug,
-            "ALTITUDE_DISPATCH_ID": f"{self.slug}-1",
-            "ALTITUDE_L2_TOKEN": "token-old",
-        })
-        try:
-            namespace = runpy.run_path(str(cli))
-            output = io.StringIO()
-            with contextlib.redirect_stdout(output):
-                namespace["main"](["task", "reply", "I can implement this directly."])
-            payload = json.loads(output.getvalue())
-        finally:
-            for name, value in old.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
-
-        self.assertEqual(payload["role"], "l2")
-        self.assertEqual(T.task_messages(self.project, self.slug)[0]["text"],
-                         "I can implement this directly.")
-
-        os.environ["ALTITUDE_ACTOR"] = "burak"
-        try:
-            namespace = runpy.run_path(str(cli))
-            with self.assertRaisesRegex(SystemExit, "only the current L2"):
-                namespace["main"](["--project", self.project, "task", "reply", "forged"])
-        finally:
-            if old["ALTITUDE_ACTOR"] is None:
-                os.environ.pop("ALTITUDE_ACTOR", None)
-            else:
-                os.environ["ALTITUDE_ACTOR"] = old["ALTITUDE_ACTOR"]
-
-    def test_task_conversation_corruption_is_not_silently_dropped(self):
-        path = S.task_dir(self.project, self.slug) / "conversation.jsonl"
-        path.write_text("{not json\n")
-        with self.assertRaisesRegex(ValueError, "corrupt task conversation"):
-            T.task_messages(self.project, self.slug)
-
-    def test_replaced_l2_token_cannot_reply_under_the_same_dispatch_id(self):
-        task = S.load_task(self.project, self.slug)
-        task.update({"session_id": "session-new", "agent_id": "agent-new", "l2_token": "token-new"})
-        S.save_task(self.project, task)
-
-        with self.assertRaisesRegex(T.TransitionError, "ownership capability changed"):
-            T.append_task_message(
-                self.project, self.slug, "l2", "reply from replaced worker",
-                expected_dispatch_id=f"{self.slug}-1", expected_l2_token="token-old", actor="l2",
-            )
-        self.assertEqual(T.task_messages(self.project, self.slug), [])
+        with mock.patch.object(engines, "stop_l2_worker") as stop:
+            with self.assertRaisesRegex(T.TransitionError, "nothing to stop"):
+                dispatch.stop(self.project, self.slug)
+        stop.assert_not_called()
 
 
-class TestResumeGenerationFence(unittest.TestCase):
+class TestResumeBinding(ChatCase):
     def test_task_change_during_resume_stops_the_replacement_worker(self):
-        project = "task-chat-resume-race"
-        repo = _TMP / project / "repo"
-        worktree = repo / ".claude" / "worktrees" / "resume-race"
-        worktree.mkdir(parents=True, exist_ok=True)
-        projects = config.load_projects()
-        projects[project] = {"name": project, "path": str(repo)}
-        config.save_projects(projects)
-        S.save_task(project, {
-            "slug": "resume-race", "title": "race", "state": "running",
-            "dispatch_id": "resume-race-1", "session_id": "session-old", "agent_id": "agent-old",
-            "worktree": str(worktree), "created": S.now(),
-        })
+        self.block()
 
         def launch(*_args, **_kwargs):
-            T.reject(project, "resume-race", "cancelled while resuming")
-            return {"stdout": "", "stderr": "", "returncode": 0}
+            T.reject(self.project, self.slug, "cancelled while resuming")
+            return {"returncode": 0, "stdout": "", "stderr": "",
+                    "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
 
-        rows = [{"id": "agent-new", "sessionId": "session-new",
-                 "name": f"{project}/resume-race-1", "state": "working", "startedAt": 2}]
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"), \
-             mock.patch.object(engines, "claude_resume_bg", side_effect=launch), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_rm", return_value="removed"), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop:
-            with self.assertRaisesRegex(T.TransitionError, "generation changed during resume"):
-                dispatch.resume_session(project, "resume-race", "continue")
+        with _launch_stack("agent-new", "session-new") as stack:
+            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", side_effect=launch))
+            stack.enter_context(mock.patch.object(engines, "claude_rm", return_value="removed"))
+            stop = stack.enter_context(mock.patch.object(engines, "claude_stop", return_value="stopped"))
+            with self.assertRaises(T.TransitionError):
+                dispatch.resume(self.project, self.slug)
 
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
-        self.assertEqual(S.load_task(project, "resume-race")["state"], "rejected")
+        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-new"])
+        self.assertEqual(S.load_task(self.project, self.slug)["state"], "rejected")
 
-    def test_resume_persistence_failure_stops_the_unowned_replacement_and_holds_recovery(self):
-        project = "task-chat-resume-persist"
-        repo = _TMP / project / "repo"
-        worktree = repo / ".claude" / "worktrees" / "resume-persist"
-        worktree.mkdir(parents=True, exist_ok=True)
-        projects = config.load_projects()
-        projects[project] = {"name": project, "path": str(repo)}
-        config.save_projects(projects)
-        S.save_task(project, {
-            "slug": "resume-persist", "title": "persist", "state": "running",
-            "dispatch_id": "resume-persist-1", "session_id": "session-old", "agent_id": "agent-old",
-            "l2_token": "token-old", "worktree": str(worktree), "created": S.now(),
-        })
-        rows = [{"id": "agent-new", "sessionId": "session-new",
-                 "name": f"{project}/resume-persist-1", "state": "working", "startedAt": 2}]
-        result = {"stdout": "", "stderr": "", "returncode": 0}
+    def test_bind_failure_stops_the_unowned_replacement_and_records_the_fault(self):
+        self.block()
+        launched = {"returncode": 0, "stdout": "", "stderr": "",
+                    "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
+        with _launch_stack("agent-new", "session-new") as stack:
+            stack.enter_context(mock.patch.object(engines, "claude_resume_bg", return_value=launched))
+            stop = stack.enter_context(mock.patch.object(engines, "claude_stop", return_value="stopped"))
+            stack.enter_context(mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")))
+            fault = stack.enter_context(mock.patch("altitude.incidents.system_fault"))
+            with self.assertRaisesRegex(RuntimeError, "state disk unavailable"):
+                dispatch.resume(self.project, self.slug)
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
-             mock.patch.object(dispatch, "_validate_task_worktree"), \
-             mock.patch.object(engines, "claude_resume_bg", return_value=result), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_stop", return_value="stopped") as stop, \
-             mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")), \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(RuntimeError, "could not bind replacement worker"):
-                dispatch.resume_session(project, "resume-persist", "continue")
-
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-old", "agent-new"])
-        current = S.load_task(project, "resume-persist")
-        self.assertEqual((current["agent_id"], current["session_id"], current["l2_token"]),
-                         ("agent-old", "session-old", "token-old"))
-        self.assertEqual(S.read_events(project, "resume-persist")[-1]["kind"], "resume-failed")
+        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-new"])
+        current = S.load_task(self.project, self.slug)
+        self.assertEqual((current["state"], current["agent_id"], current["session_id"]),
+                         ("blocked", "agent-old", "session-old"))
+        self.assertEqual(S.read_events(self.project, self.slug)[-1]["kind"], "resume-failed")
         fault.assert_called_once()
 
 

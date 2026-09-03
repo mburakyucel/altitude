@@ -26,10 +26,8 @@ def sessions() -> list[dict]:
                         "at": inf.get("last_turn"), "turns": inf.get("turns"), "rotate_next": inf.get("rotate_next")})
         for t in S.list_tasks(name):
             if t["state"] in ("running", "blocked", "reported"):
-                dispatch_id = t.get("dispatch_id")
-                counts_p = config.MONITOR_DIR / f"counts-{name}--{dispatch_id}.json" if dispatch_id else None
-                counts = S.read_json(counts_p, {}) if counts_p else {}
-                counts = counts or {}
+                counts_p = S.counts_path(name, t)
+                counts = (S.read_json(counts_p, {}) if counts_p else {}) or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 l1_dir = S.task_dir(name, t["slug"]) / "l1"
                 l1_runs = len(list(l1_dir.glob("*.json"))) if l1_dir.is_dir() else 0
@@ -42,7 +40,7 @@ def sessions() -> list[dict]:
                 else:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
-                            "dispatch_id": t.get("dispatch_id"), "state": t["state"], "agent": live.get("agent"),
+                            "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
                             "l1_runs": l1_runs, "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
                             "context_state": engines.context_state(cp, engine)})

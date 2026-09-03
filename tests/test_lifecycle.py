@@ -36,8 +36,7 @@ class TestLifecycle(unittest.TestCase):
         self.assertNotIn("envelope", t)
         self.assertEqual(T.decisions("demo"), [])
         T.brief("demo", t["slug"], "# Brief\n…")
-        T.dispatch("demo", t["slug"], dispatch_id=f"{t['slug']}-1", session_id="sid", agent_id="aid",
-                   worktree="/wt", branch="b", l2_token="generation-1")
+        T.dispatch("demo", t["slug"], attempt=1, session_id="sid", agent_id="aid", worktree="/wt", branch="b")
         self.assertEqual(S.load_task("demo", t["slug"])["attempt"], 1)
 
         T.block("demo", t["slug"], "Which rollback signal should I use?")
