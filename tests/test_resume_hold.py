@@ -13,7 +13,7 @@ from unittest import mock
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-resume-hold-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, github_intake, recovery, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, recovery, state as S, tasks as T  # noqa: E402
 from altitude import monitor  # noqa: E402
 
 
@@ -126,21 +126,6 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
         self.assertEqual([call["slug"] for call in self.resumed], [blocked["slug"]])
         self.assertEqual(self.stopped, [], "the mocked public resume seam owns worker replacement in this test")
-
-    def test_legacy_issue_context_is_appended_once_across_exact_resume_retries(self):
-        blocked = self._task("Address https://github.com/acme/widget/issues/121", "blocked",
-                             "altitude/free.py", "2026-01-02T00:00:00+00:00")
-        snapshot = {"number": 121, "title": "Live view", "body": "Acceptance", "state": "open",
-                    "url": "https://github.com/acme/widget/issues/121", "content_sha256": "a" * 64}
-        with mock.patch.object(github_intake, "ensure_snapshot", return_value=snapshot):
-            first, digest = dispatch._issue_resume_prompt(self.project, blocked, "Continue now.")
-            blocked["github_issue_context_delivered"] = digest
-            second, repeated = dispatch._issue_resume_prompt(self.project, blocked, "Continue again.")
-
-        self.assertIn(github_intake.marker(snapshot), first)
-        self.assertNotIn(github_intake.marker(snapshot), second)
-        self.assertEqual(digest, "a" * 64)
-        self.assertIsNone(repeated)
 
     def test_only_blocked_task_with_pending_resume_holds_its_files(self):
         pending = self._task("pending lease", "blocked", "altitude/pending.py", "2026-01-01T00:00:00+00:00")

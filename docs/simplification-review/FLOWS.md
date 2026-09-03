@@ -44,7 +44,6 @@ L3 action, Claude scoped command, or Project page `action: "new"`
   -> server.dispatch_waiting (periodic or scheduled)
        -> dispatch.wip_hold + recovery.dispatch_hold
        -> dispatch.run(project, slug)
-            -> github_intake.ensure_snapshot when the request explicitly references an issue
             -> git_policy.fetch_and_require_exact_base (which fetches origin)
             -> dispatch._task_worktree / _validate_task_worktree
             -> route.pick_engine("l2") and persist routing
