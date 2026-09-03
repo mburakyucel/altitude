@@ -53,7 +53,7 @@ approved`, `implemented`, and `merged`.
 | `Makefile` | Test, web build, restart, and service-install entry points. | Mostly untouched. | Which developer/operator entry points are required? | unreviewed |
 | `.github/workflows/remote-tests.yml` | Remote candidate tests and identity gates. | Integration adds exact web test/typecheck/build. | Which candidate identity and runtime/web checks must remote CI enforce? | unreviewed |
 | `systemd/altitude.service` | User service definition and hardening. | Manifest/deployment logic inspects it. | Which process, dependency, containment, restart, and install properties are required? | unreviewed |
-| `hooks/guard.py` (1,003) | Claude-side shell/tool guard and incident telemetry. | Codex-only candidate would make much of it unused. | Does Claude remain an engine, and which hook checks or telemetry remain necessary alongside backend authority? | unreviewed |
+| `hooks/guard.py` (45) | Deny-list nudge for Bash in Altitude-owned sessions: service lifecycle, firewall, reserved ports, Altitude home, altd, protected-branch moves and hook bypasses. The installed Git hooks remain the mechanical guard. | Replaced the 1,003-line shell lexer (phase 1a). | — | implemented |
 | `hooks/edit_count.py`, `statusline-monitor.sh` | Edit telemetry and statusline observation. | Candidate proposal mentions trimming. | Which user-facing signal, if any, still uses these outputs? | unreviewed |
 | Git hooks (`pre-commit`, `pre-push`, `pre-merge-commit`, `reference-transaction`) | Invoke protected-ref/provenance policy. | Retained by candidate proposal. | Which protected-path/ref and provenance checks must run at each Git boundary? | unreviewed |
 
