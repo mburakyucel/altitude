@@ -149,6 +149,12 @@ cache-creation tokens. Synthetic all-zero limit records are ignored. For Codex, 
 `turn.completed.usage.input_tokens` drives an approximate percentage against the configured context
 window; reported `cached_input_tokens` is retained separately.
 
+Every quota and session figure carries the time it was observed, and age is reported rather than
+hidden. A quota snapshot older than thirty minutes — the age at which the router stops routing on
+it — is stale: its figures are still shown and labelled, not replaced by "unknown", which is
+reserved for having no reading at all. A session snapshot older than five minutes while its worker
+is live is stale in the same way; an idle or finished worker is simply as old as it says.
+
 A provider session id records which provider conversation Altitude asks to resume. That documented
 resume behavior does not prove a cache hit or imply any undocumented prompt-cache guarantee.
 Altitude reports cache-token fields only when the provider emits them and otherwise makes no claim

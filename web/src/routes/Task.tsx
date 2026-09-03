@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router
 import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
 import type { TaskMessage, TaskView } from "../data/api";
+import { asOf, engineName, modelName, older, SESSION_STALE_MS } from "../data/observed";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
 // fields (attempt, session_id, worktree, spend, live, ...) arrives typed
@@ -111,6 +112,30 @@ function TaskLayout({ project, task }: TaskContext) {
   const model = str(task["engine_model"]) || str(task["model"]);
   const base = `/projects/${project}/tasks/${slug}`;
 
+  // Two groups, never one run-on line: where the task stands, then what its worker is doing. The
+  // worker figures come from the monitor's live row, so they carry its observation time and the
+  // same staleness rule the Monitor page uses.
+  const spend = rec(task["spend"]);
+  const live = rec(task["live"]);
+  const context = num(live["context_percent"]);
+  const contextState = str(live["context_state"]);
+  const observed = asOf(live["at"]);
+  const staleWorker = state === "running" && older(live["at"], SESSION_STALE_MS);
+  const turns = num(spend["turns"]);
+  const subagents = num(spend["subagent_launches_reported"]);
+  const worker = [
+    engineName(engine),
+    model ? modelName(model) : "",
+    sessionId ? `session ${sessionId.slice(0, 8)}` : "",
+    context != null
+      ? `context ${Math.round(context)}%${contextState ? ` (${contextState})` : ""}${observed ? ` ${observed}` : ""}`
+      : "",
+    turns != null ? `turns ${turns}` : "",
+    subagents != null ? `subagents ${subagents}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <Link className="text-meta text-muted" to={`/projects/${project}`}>
@@ -123,10 +148,14 @@ function TaskLayout({ project, task }: TaskContext) {
           <h1 className="text-page-title font-semibold">{task.title || slug}</h1>
         </div>
         <p className="text-meta text-muted">
-          {slug} · {engine} · attempt {attempt || "—"} · session {sessionId ? sessionId.slice(0, 8) : "—"} ·
-          worktree {worktree || "—"}
+          <span className="label">Task</span> {slug} · attempt {attempt || "—"} · worktree{" "}
+          {worktree || "—"}
           {branch ? ` · branch ${branch}` : ""}
-          {model ? ` · model ${model}` : ""}
+        </p>
+        <p className="flex flex-wrap items-center gap-2 border-t border-border pt-2 text-meta text-muted">
+          <span className="label">Worker</span>
+          <span>{worker}</span>
+          {staleWorker ? <span className="pill">stale</span> : null}
         </p>
         {agentId && engine === "claude" ? <p className="text-meta text-muted">attach: claude attach {agentId}</p> : null}
         {agentId && engine === "codex" ? <p className="text-meta text-muted">Codex worker {agentId.slice(0, 8)} · message this L2 to steer/resume it</p> : null}
@@ -194,8 +223,7 @@ export function TaskConversation() {
         <section className="card space-y-1">
           <h2 className="label">Activity</h2>
           <p className="text-meta text-muted">
-            turns {num(spend["turns"]) ?? 0} · subagents {num(spend["subagent_launches_reported"]) ?? 0}
-            {" · "}edits {num(spend["edits_hook"]) ?? 0} · retries {num(spend["retries"]) ?? 0}
+            edits {num(spend["edits_hook"]) ?? 0} · retries {num(spend["retries"]) ?? 0}
           </p>
         </section>
       ) : null}
@@ -206,11 +234,7 @@ export function TaskConversation() {
           <p className="text-body text-ink-2">
             {str(liveState["status"]) || str(live["state"]) || "running"}
           </p>
-          <p className="text-meta text-muted">
-            edits {num(live["edits"]) ?? 0}
-            {num(live["context_percent"]) != null ? ` · ctx ${num(live["context_percent"])}%` : ""}
-            {str(live["context_state"]) ? ` · ${str(live["context_state"])}` : ""}
-          </p>
+          <p className="text-meta text-muted">edits {num(live["edits"]) ?? 0}</p>
         </section>
       ) : null}
 

@@ -13,9 +13,13 @@ from . import config, state as S
 QUOTA_CODEX = "quota-codex.json"
 WEEK_MINUTES = 7 * 24 * 60
 SHORT_MINUTES = 5 * 60
+# A quota snapshot older than this is stale: the router refuses to route on it and the pages label it.
+FRESH_SECONDS = 1800
 
 
 def quota_codex() -> dict:
+    """The persisted Codex seat reading. ``known`` requires a snapshot no older than 30 minutes; an
+    older one keeps its figures and is marked ``stale`` so a page can show an old number as old."""
     p = config.MONITOR_DIR / QUOTA_CODEX
     if not p.exists():
         return {"known": False}
@@ -25,11 +29,12 @@ def quota_codex() -> dict:
         observed = datetime.fromisoformat(str(data.get("read_at")))
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=timezone.utc)
-        fresh = (datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds() <= 1800
+        fresh = (datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds() <= FRESH_SECONDS
     except (TypeError, ValueError):
         pass
     return {**data, "known": bool(data.get("known")) and fresh,
-            **({"why": "Codex quota snapshot is stale or undated"} if data.get("known") and not fresh else {})}
+            **({"stale": True, "why": "Codex quota snapshot is stale or undated"}
+               if data.get("known") and not fresh else {})}
 
 
 def _number(value) -> float | None:

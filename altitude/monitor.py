@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from . import engines, config, state as S
+from . import engines, config, route, state as S
 
 
 def sessions() -> list[dict]:
@@ -12,7 +12,7 @@ def sessions() -> list[dict]:
     out = []
     for p in sorted(config.MONITOR_DIR.glob("statusline-*.json")):
         d = S.read_json(p, {}) or {}
-        out.append({"kind": "statusline", "session_id": p.stem.split("-", 1)[1], "at": d.get("at"),
+        out.append({"kind": "statusline", "session_id": p.stem.split("-", 1)[1], "at": d.get("_at"),
                     "context_percent": ((d.get("context_window") or {}).get("used_percentage")),
                     "five_hour": ((d.get("rate_limits") or {}).get("five_hour") or {}).get("used_percentage"),
                     "seven_day": ((d.get("rate_limits") or {}).get("seven_day") or {}).get("used_percentage"),
@@ -39,7 +39,7 @@ def sessions() -> list[dict]:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
-                            "edits": counts.get("edits", 0),
+                            "at": live.get("at"), "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
                             "context_state": engines.context_state(cp, engine)})
     return out
@@ -76,7 +76,13 @@ def transcript_context_percent(session_id: str | None, cwd: Path | None) -> floa
 
 
 def quota() -> dict:
-    """Latest 5h/7d numbers from any statusline snapshot younger than 30 minutes."""
+    """Latest 5h/7d numbers, reset times, and the epoch second the snapshot was written.
+
+    ``known`` is the routing contract and stays exactly as strict: true only while the newest
+    statusline snapshot is younger than route.FRESH_SECONDS. An older snapshot is not nothing, so it
+    still returns its figures marked ``stale`` and the reader decides; no snapshot at all is the
+    only unknown.
+    """
     best = None
     for p in config.MONITOR_DIR.glob("statusline-*.json"):
         d = S.read_json(p, {}) or {}
@@ -86,10 +92,32 @@ def quota() -> dict:
         ts = d.get("_at", 0)
         if best is None or ts > best[0]:
             best = (ts, rl)
-    if not best or time.time() - best[0] > 1800:
+    if not best:
         return {"known": False}
-    rl = best[1]
+    at, rl = best
     five, seven = rl.get("five_hour") or {}, rl.get("seven_day") or {}
-    return {"known": True, "five_hour": five.get("used_percentage"),
+    fresh = time.time() - at <= route.FRESH_SECONDS
+    return {"known": fresh, "five_hour": five.get("used_percentage"),
             "seven_day": seven.get("used_percentage"), "five_hour_resets": five.get("resets_at"),
-            "seven_day_resets": seven.get("resets_at"), "at": best[0]}
+            "seven_day_resets": seven.get("resets_at"), "at": at,
+            **({} if fresh else {"stale": True})}
+
+
+def routing() -> list[dict]:
+    """Which engine each role would get for a turn started now, with the router's own reason.
+
+    Display only: reading this never routes anything. One row per project L3 (its pin, or Auto with
+    the engine that ran the last turn) and one for a fresh L2. ``engine`` is None when the router
+    would find nothing available, and ``why`` is pick_engine's text verbatim.
+    """
+    rows = []
+    for name in config.load_projects():
+        info = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
+        pin = config.project(name).get("l3_engine")
+        pin = pin if pin in config.ENGINES else None
+        current = info.get("engine_last")
+        rows.append({"role": "l3", "project": name, "pin": pin, "current": current,
+                     **route.pick_engine("l3", forced=pin, current=current)})
+    rows.append({"role": "l2", "project": None, "pin": None, "current": None,
+                 **route.pick_engine("l2")})
+    return rows

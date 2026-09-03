@@ -93,6 +93,16 @@ function stub(task: unknown) {
   return fetchMock;
 }
 
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+const observed = {
+  ...running,
+  engine_model: "opus",
+  live: { ...running.live, context_state: "ok", at: ago(2) },
+};
+
+const stale = { ...observed, live: { ...observed.live, at: ago(20) } };
+
 const route = "/projects/altitude/tasks/fix-timer";
 
 describe("Task", () => {
@@ -227,6 +237,29 @@ describe("Task", () => {
 
     expect(await screen.findByText(/No session yet/)).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
+  });
+
+  it("separates the task's own state from its worker's, in product names", async () => {
+    stub(observed);
+    renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    expect(screen.getByText("Task")).toBeInTheDocument();
+    expect(screen.getByText("Worker")).toBeInTheDocument();
+    expect(screen.getByText(/fix-timer · attempt 1 · worktree/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Claude · Opus 5 · session 01234567 · context 34% \(ok\) as of 2m ago/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("stale")).not.toBeInTheDocument();
+  });
+
+  it("labels a live worker's figures stale once its snapshot ages out", async () => {
+    stub(stale);
+    renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    expect(screen.getByText(/context 34% \(ok\) as of 20m ago/)).toBeInTheDocument();
+    expect(screen.getByText("stale")).toBeInTheDocument();
   });
 
   it("messages the L2 while the task is running", async () => {
