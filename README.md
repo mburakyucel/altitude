@@ -8,11 +8,11 @@ Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work. The preserved UI draft is in
 [`design/wireframes/README.md`](design/wireframes/README.md).
 
-The later comprehensive simplification is paused for a module-by-module re-evaluation. Its exact
-current/candidate boundary, saved local branches, low-level flows, and continuation rules are in the
-[`2026-09-02 simplification review checkpoint`](docs/simplification-review/README.md). No
-`simplify/*` implementation branch is the accepted target architecture.
-No next simplification module has been selected; Burak must choose it before implementation.
+The comprehensive simplification is being redone module by module from `main`. Burak's paradigm
+decisions, the working rules, and the phase order are in
+[`docs/simplification-review/DECISIONS.md`](docs/simplification-review/DECISIONS.md); the
+[review checkpoint](docs/simplification-review/README.md) records the facts they were based on. The
+five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source for new work.
 
 ## Current operating model
 

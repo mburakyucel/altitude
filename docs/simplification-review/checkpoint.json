@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "created_date": "2026-09-02",
   "authoritative_runtime": {
     "branch": "main",
@@ -61,12 +61,39 @@
     "module_by_module_review_required": true
   },
   "review_control": {
-    "next_module": null,
-    "decision_ledger": [],
+    "decisions_document": "DECISIONS.md",
+    "decisions_recorded": "2026-09-02",
+    "next_module": "hooks/guard.py (phase 1a)",
+    "decision_ledger": [
+      {
+        "id": 1,
+        "decision": "L3 creates the task and it starts immediately; L2 sizes the work and proposes first only when large"
+      },
+      {
+        "id": 2,
+        "decision": "messages queue and are read at the worker's next checkpoint; no kill-and-resume; explicit Stop"
+      },
+      {
+        "id": 3,
+        "decision": "merge by default; hold only for major UX, cost-accruing infrastructure, identity, security"
+      },
+      {
+        "id": 4,
+        "decision": "faults are project-scoped and two-tier (code retries/quota parking, then one L3 wake); no global fuse; restart banner when idle"
+      },
+      {
+        "id": 5,
+        "decision": "helpers are engine-native; Altitude stops tracking L1s and reviewers"
+      },
+      {
+        "id": 6,
+        "decision": "one execution contract for both engines; the alt CLI is the only door"
+      }
+    ],
     "user_directives": [
-      "review one module at a time with Burak",
-      "do not treat any saved simplification target as approved",
-      "do not implement or merge a module until its decision and exact scope are recorded"
+      "work module by module from origin/main; never from a simplify/* branch",
+      "every module PR is net-negative in production lines or a bug fix under fifty lines",
+      "ask Burak only for a decision not recorded in DECISIONS.md"
     ]
   },
   "publication": {
@@ -74,9 +101,16 @@
     "visibility": "private",
     "documentation_pr": 143,
     "documentation_merged": true,
-    "draft_code_prs": [139, 142, 138, 140, 141],
+    "draft_code_prs": [
+      139,
+      142,
+      138,
+      140,
+      141
+    ],
     "all_listed_candidate_refs_pushed": true,
-    "published_date": "2026-09-02"
+    "published_date": "2026-09-02",
+    "draft_code_prs_state": "closed 2026-09-02 after review; branches remain on origin"
   },
   "evidence": {
     "durable_per_commit_test_logs_present": false,
