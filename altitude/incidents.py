@@ -48,8 +48,8 @@ def _fault_lock():
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> bool:
-    """Block the task a fault belongs to; True when that task is a repair task (source `recovery`).
+def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> tuple[bool, bool]:
+    """Block the task a fault belongs to. Returns (newly blocked by this fault, is a repair task).
 
     The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
     card. A task that had already blocked itself is tagged the same way; a finished or missing task stays as it
@@ -58,20 +58,23 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> boo
     try:
         task = S.load_task(project, slug)
     except (KeyError, OSError, ValueError):
-        return False
+        return False, False
     tag = {"waiting_on": "l3", "fault": kind}
+    touched = False
     if task.get("state") in ("queued", "running", "reported"):
         try:
             T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag)
+            touched = True
         except T.TransitionError:
             pass
     elif task.get("state") == "blocked":
         with S.project_lock(project):
             task = S.load_task(project, slug)
             if task.get("state") == "blocked":
+                touched = task.get("fault") != kind
                 task.update(tag)
                 S.save_task(project, task)
-    return task.get("source") == "recovery"
+    return touched, task.get("source") == "recovery"
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
@@ -84,7 +87,8 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
-    repair = bool(project and task) and _block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind)
+    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind)
+                       if project and task else (False, False))
     target = "altitude" if "altitude" in config.load_projects() else project
     with _fault_lock():
         faults = S.read_json(FAULTS, {}) or {}
@@ -97,7 +101,18 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         faults[kind] = rec
         S.write_json(FAULTS, faults)
         if recent or not target:
-            return None
+            if not (recent and touched and target and not repair):
+                return None
+            # 2026-09-03 08:10Z: a second task blocked by the day's main-unpushed fault sat waiting on L3, which
+            # was never told. One incident per kind per day still holds; a newly blocked task is one more line.
+            where = f"{project}/{task}"
+            T.fyi(target, task, f"SYSTEM FAULT [{kind}] again — {detail[:300]} — blocking {where}; incident "
+                  f"{rec['incident']} holds the evidence.", actor="altd")
+            l3.queue_message(target, f"System fault [{kind}] again, now blocking {where}: {detail[:600]}\n\n"
+                             f"Incident {rec['incident']} from earlier today already holds the evidence; amend it only if this "
+                             "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
+                             "the cause is gone. Answer in one or two plain sentences.", trigger="incident")
+            return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
                            evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",

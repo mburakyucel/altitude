@@ -97,7 +97,8 @@ with backoff; a usage-window stop starts a fresh attempt on the other engine fro
 event. A Claude usage-window stop is recorded once for the machine, because the subscription is
 machine-wide; Codex reports its limits per turn. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per fault kind per day), and leaves one message
-in the project's L3 queue. An L2 that meets an environment fault (a sandbox, host, or tool refusing
+in the project's L3 queue; a repeat of that kind blocking another task adds one line for L3, not a
+new incident. An L2 that meets an environment fault (a sandbox, host, or tool refusing
 what the brief requires) reports it with `alt task block --fault` and takes the same path, so the
 cause reaches L3 instead of sitting in the Inbox as a question for Burak. The server delivers that message as a turn when L3 is free and an engine
 is available; L3 records the learning on the incident and fixes the cause directly or creates one

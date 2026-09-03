@@ -44,6 +44,21 @@ class TestSystemFault(AltitudeCase):
         self.assertNotEqual(other["incident"], first["incident"])
         self.assertEqual(len(self.queued()), 2)
 
+    def test_a_repeat_that_blocks_another_task_still_reaches_l3(self):
+        first_task = T.new(PROJECT, "first victim", "request", actor="burak")
+        first = incidents.system_fault("test-kind", "main behind origin", project=PROJECT, task=first_task["slug"])
+        second_task = T.new(PROJECT, "second victim", "request", actor="burak")
+        again = incidents.system_fault("test-kind", "main behind origin", project=PROJECT, task=second_task["slug"])
+        self.assertEqual((again["incident"], again["repeat"]), (first["incident"], True))
+        self.assertEqual(S.load_task(PROJECT, second_task["slug"])["fault"], "test-kind")
+        rows = self.queued()
+        self.assertEqual([row["trigger"] for row in rows], ["incident", "incident"])
+        self.assertIn(second_task["slug"], rows[1]["text"]); self.assertIn(first["incident"], rows[1]["text"])
+        self.assertEqual(S.read_json(incidents.FAULTS)["test-kind"]["incident"], first["incident"])
+        # the same fault on the task that is already blocked by it adds nothing
+        self.assertIsNone(incidents.system_fault("test-kind", "main behind origin", project=PROJECT, task=second_task["slug"]))
+        self.assertEqual(len(self.queued()), 2)
+
     def test_l2_reports_an_environment_fault_through_its_block_door(self):
         # The first Codex task after the rebuild blocked on a read-only worktree gitdir with a plain block, so the
         # cause sat in the Inbox as a question for Burak and L3 never saw it (2026-09-03).
