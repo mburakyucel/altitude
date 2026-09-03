@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task page, Live session (draft wireframe)</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+<div class="board mobile">
+<header class="strip" aria-label="Annotation">
+  <div class="who"><span class="draft">Draft</span><span>Task page, Live session</span><small>iPhone 390×844</small></div>
+  <p class="intent">The same session on the phone, one column. <span class="c">1</span> Prompt blocks tinted, prose plain. <span class="c">2</span> Tool rows keep the verb and target; output folds beneath, timestamps drop out. <span class="c">3</span> Separators mark turns and boundaries.</p>
+</header>
+<div class="phone">
+<div class="sb" aria-hidden="true"><span>9:41</span><span class="di"></span>
+  <span class="sig"><span class="bars"><i style="height:4px"></i><i style="height:6px"></i><i style="height:9px"></i><i style="height:12px"></i></span><span class="bat"></span></span></div>
+<div class="mhead"><a class="crumb" href="MobileProject.html">‹ altitude</a><div class="row"><h1 style="font-size:20px">Design wireframes for the simplified product</h1><a class="btn ghost sm" href="#" aria-label="More">•••</a></div><p class="sub"><span class="state">running</span> Fable on Claude, 42 min. PR #176 green, held for you.</p></div>
+<div class="mbody"><nav class="tabs" aria-label="Task views"><a href="MobileTaskConversation.html">Conversation</a><a href="MobileTaskLive.html" aria-current="page">Live session</a></nav>
+<div class="toolbar" style="margin-bottom:10px"><span class="field">Search</span><span class="field select">All steps<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+<div class="live"><div class="hasc sep"><span class="c">3</span>Turn ended 09:31, context 9%</div><div class="hasc prompt"><span class="c">1</span><div class="lab"><span>Burak, via the task inbox</span><span class="ts">09:31</span></div><p>Not only desktop first. Both mobile and desktop need to land.</p></div><div class="prose"><p>Understood. Every board ships at both sizes; the mobile boards get the iPhone frame with safe areas. Rendering everything to check for clipping.</p><span class="ts">09:32</span></div><div class="hasc tool open"><span class="c">2</span><span class="verb">Bash</span><code>design/wireframes/shots.sh</code><span class="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>16 lines</span><span class="ts">09:38</span><pre>shots/Inbox.png (1440,900)
+shots/MobileInbox.png (390,960)
+shots/Projects.png (1440,900)
+… 13 more</pre></div><div class="tool"><span class="verb">Read</span><code>design/wireframes/shots/MobileChat.png</code><span class="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>image</span><span class="ts">09:39</span></div><div class="prose"><p>The composer clipped under the tab bar at 390 wide. Reserving 83px for the bar fixes it.</p><span class="ts">09:39</span></div><div class="tool"><span class="verb">Edit</span><code>design/wireframes/wireframes.css</code><span class="out"><span class="add">+3</span> <span class="del">−1</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>diff</span><span class="ts">09:39</span></div><div class="sep alt">Altitude: PR #176 opened 09:40, checks running</div><div class="prose"><p>PR #176 is open and green. Held for your review, as the brief says.</p><span class="ts">09:41</span></div><div class="sep">Turn ended 09:41, context 13%</div></div></div>
+<nav class="mtabs" aria-label="Primary"><a href="MobileInbox.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13l2.6-7.2A1 1 0 0 1 6.5 5h11a1 1 0 0 1 .9.8L21 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M3 13h5l1.4 2.5h5.2L16 13h5"/></svg>Inbox<span class="count">2</span></a><a href="MobileProjects.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>Projects</a><a href="MobileChat.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H9l-4.5 4v-4H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>Chat</a><a href="MobileMonitor.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h3.5l2.5-6.5 4 13 2.5-6.5H21"/></svg>Monitor</a></nav>
+<div class="home" aria-hidden="true"></div>
+</div>
+</div>
+</body>
+</html>

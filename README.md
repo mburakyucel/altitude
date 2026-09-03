@@ -6,6 +6,8 @@ L2 owner, and that L2 may work alone or delegate bounded slices to its engine's 
 
 Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work.
+The design draft for the simplified product's UI is in
+[`design/wireframes/README.md`](design/wireframes/README.md), held for Burak's review.
 
 The 2026-09 module-by-module simplification is complete. [`docs/SIMPLIFICATION.md`](docs/SIMPLIFICATION.md)
 records Burak's paradigm decisions, the working rules that still apply to every PR, and what each
