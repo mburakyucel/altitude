@@ -38,16 +38,14 @@ class TestEngineRawCapture(unittest.TestCase):
             return engines.claude_print("prompt", cwd=self.root, settings=self.root / "settings.json")
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
-        completed = SimpleNamespace(
-            stdout=json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n",
-            stderr="codex diagnostic\n",
-            returncode=0,
-        )
-        with mock.patch.object(engines.subprocess, "run", return_value=completed):
+        stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
+        process = SimpleNamespace(pid=1, returncode=0, communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
+        with mock.patch.object(engines.subprocess, "Popen", return_value=process):
             result = engines.codex_exec("prompt", cwd=self.root)
 
-        self.assertEqual(result["raw_stdout"], completed.stdout)
-        self.assertEqual(result["raw_stderr"], completed.stderr)
+        self.assertEqual(result["raw_stdout"], stdout)
+        self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
+        self.assertEqual(result["usage"], {"input_tokens": 3})
 
     def test_claude_print_returns_raw_stream_json_and_stderr(self):
         event = {"type": "result", "result": "done", "session_id": "sid", "is_error": False}

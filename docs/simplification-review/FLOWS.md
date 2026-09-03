@@ -22,7 +22,7 @@ POST /api/chat
        -> Codex path:
             -> l3._codex_turn -> engines.codex_exec(... resume=<thread>)
             -> validate thread identity, result, and empty containment unit
-            -> l3_actions.apply(structured, action_id=<turn identity>)
+            -> l3_actions.apply(structured, action_id=<turn identity>)   (deleted in phase 5c: a Codex L3 calls `alt` directly)
                  -> journal/claim exact action
                  -> _execute: no-op | task create/done/block/resume/FYI/merge hold
                               | issue draft/approval | incident create/amend

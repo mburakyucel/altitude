@@ -1,7 +1,7 @@
 # Engine and session lifecycle
 
-> **Scope:** This document describes executable `main` after the Codex L2 door of the module-by-module
-> simplification (phase 5b, 2026-09-03). See the
+> **Scope:** This document describes executable `main` after phase 5 of the module-by-module
+> simplification (one engine contract, 2026-09-03). See the
 > [2026-09-02 review checkpoint](simplification-review/README.md).
 
 ## Live L2 transcript
@@ -108,18 +108,14 @@ human conversation as a small explicit handoff; it does not replay tool logs or 
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
 automatically replayed on Codex because that could duplicate side effects.
 
-A Codex L3 turn still uses a contained turn and an inert-result broker until it moves to the door; its filesystem view is
-read-only with respect to durable inputs: the full Altitude runtime root (`ALTITUDE_HOME`) and the
-selected project checkout are readable roots, while only an inert disposable runtime directory is writable.
-The prompt normally directs it to compact state, but the sandbox does not narrow reads to that file. Its trusted
-broker applies at most the validated project-coordination action. Claude L3 retains its direct CLI
-contract. Provider selection changes neither L3's project-level responsibility nor L2's end-to-end
-task ownership.
+A Codex L3 turn runs `codex exec` in Codex's workspace-write sandbox from a disposable runtime directory under
+the project's Altitude folder: it writes only there and to the Altitude home, reads the project checkout, and
+reaches GitHub through `gh` like Claude L3. Both engines use the same `alt` commands under the same backend
+checks, from one persona. Provider selection changes neither L3's project-level responsibility nor L2's
+end-to-end task ownership.
 
 For Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and are unset
-before Codex starts; the child receives Altitude's clean environment plus the task identity. A model-requested GitHub issue cannot contain synthesized private context: the broker
-stores only the exact current chat message, with a title quoted from it, as a private draft. Publication requires a
-second exact, draft-specific approval message from Burak, and secret-shaped content remains a hard refusal.
+before Codex starts; the child receives Altitude's clean environment plus the actor identity.
 
 ## Polling, restart, and cleanup
 

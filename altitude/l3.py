@@ -1,11 +1,10 @@
 """The L3 coordinator: one serialized turn, with a resumable session per provider."""
 from __future__ import annotations
 import json
-import hashlib
 import threading
 from pathlib import Path
 
-from . import config, engines, l3_actions, route, state as S
+from . import config, engines, route, state as S
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -215,25 +214,22 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None) -> dict:
+    """One Codex L3 turn from a disposable runtime directory: the same persona and `alt` door as Claude, inside
+    Codex's own sandbox (writes only there and to the Altitude home; the checkout is readable)."""
     proj = config.project(project)
     sid = None if fresh else session.get("session_id")
     body = _header(project, trigger, fresh) + handoff + prompt
     if fresh:
-        body = ((config.PERSONAS / "l3_codex.md").read_text() + "\n\n"
+        body = ((config.PERSONAS / "l3.md").read_text() + "\n\n"
                 + f"[altitude] Engine: Codex — {choice['why']}.\n\n" + body)
     runtime = config.project_dir(project) / "l3-codex-runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     result = engines.codex_exec(
-        # L3 reads durable state and repository context. Its inert final actions
-        # are applied by the control plane only after the whole Codex service exits.
-        body, cwd=runtime, sandbox="workspace-write", schema=config.SCHEMAS / "l3_action.json", contain=True,
-        timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
+        body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
         effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
-        readable_roots=[config.ROOT, config.project_path(project)],
-        extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project,
-                   "ALTITUDE_HOME": str(config.ROOT)}, fault_context={"project": project})
-    reported_sid = result.get("reported_session_id", result.get("session_id"))
+        extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+    reported_sid = result.get("reported_session_id") or result.get("session_id")
     identity_error = None
     if not reported_sid:
         identity_error = "Codex L3 turn did not report a thread identity"
@@ -241,45 +237,17 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
         identity_error = f"Codex L3 resume returned a different thread than {sid}"
     usage = result.get("usage") or {}
     tokens = int(usage.get("input_tokens", 0) or 0)
-    structured = result.get("structured") if isinstance(result.get("structured"), dict) else None
-    human_text = str((structured or {}).get("message") or result.get("text") or "")
-    action_error = None
-    applied = []
-    if not identity_error and not result.get("error"):
-        if result.get("containment_empty") is not True:
-            action_error = "Codex L3 containment was not proven empty"
-        else:
-            try:
-                canonical = json.dumps(structured, sort_keys=True, separators=(",", ":"))
-                action_id = hashlib.sha256(
-                    f"{turn_started_at}\n{reported_sid}\n{canonical}".encode("utf-8")
-                ).hexdigest()
-                applied = l3_actions.apply(
-                    project, structured, action_id=action_id,
-                    github_issue_source=prompt if trigger == "chat" else None,
-                )
-                pending_issue = next((item for item in applied if item.get("pending_review")), None)
-                if pending_issue:
-                    approval = f"approve GitHub issue publication {pending_issue['id']}"
-                    human_text = (human_text.rstrip() + "\n\n" if human_text.strip() else "") + (
-                        "I saved the GitHub issue as a private draft. To publish it after review, reply exactly: "
-                        f"`{approval}`"
-                    )
-            except l3_actions.L3ActionError as exc:
-                action_error = str(exc)
-    out = {"text": human_text, "session_id": reported_sid or sid or "",
+    out = {"text": str(result.get("text") or ""), "session_id": reported_sid or sid or "",
            "usage": usage, "context_tokens": tokens, "cost": 0.0, "turns": 1, "structured": None,
-           "error": identity_error or result.get("error") or action_error, "tools": [], "skipped": False, "completed": False,
-           "actions": applied,
+           "error": identity_error or result.get("error"), "tools": [], "skipped": False, "completed": False,
            "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice}
-    if identity_error or action_error or (result.get("error") and not out["text"]):
+    pct = engines.context_percent(tokens, "codex") if tokens else 0.0
+    if identity_error or (result.get("error") and not out["text"]):
         if reported_sid and not identity_error:
-            pct = engines.context_percent(tokens, "codex") if tokens else 0.0
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
         chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger, engine="codex")
         return out
-    pct = engines.context_percent(tokens, "codex") if tokens else 0.0
     _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
