@@ -561,7 +561,8 @@ class Handler(BaseHTTPRequestHandler):
                 except (KeyError, transcript.TranscriptAccessError):
                     return self._json({"error": "transcript unavailable for this task generation"}, 404)
             if api == "monitor":
-                return self._json({"quota": monitor.quota(), "sessions": monitor.sessions(),
+                return self._json({"quota": monitor.quota(), "quota_codex": route.quota_codex(),
+                                   "routing": monitor.routing(), "sessions": monitor.sessions(),
                                    "agents": engines.claude_agents()})
             if api == "digest":
                 return self._json({"text": digest.text()})

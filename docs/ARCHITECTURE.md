@@ -126,7 +126,23 @@ from the web: the L3 turn creates it through `alt task new`. The composer's engi
 project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
 stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. A task has two views. The Conversation
+lands in the history.
+
+The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
+work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day
+windows from the statusline snapshot, and the Codex seat's windows named by the length the provider
+reports, a window the provider does not report shown as absent rather than zero — each with percent
+used, when it resets in relative and clock terms, the plan where the provider names it, and how old
+the reading is. A figure with no reading at all is unknown and carries the one line that fixes it; a
+reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One
+routing card answers which engine each project's L3 (its pin, or Auto) and a fresh L2 would get for
+a turn started now, in `pick_engine`'s own words, including the case where no engine is available.
+
+A task has two views. Its header keeps the task's own state (slug, attempt, worktree, branch) and
+its worker's (engine, model, session, context percent with its state and observation age, turns,
+reported subagent launches) in two labelled groups, so lifecycle and session facts are never read as
+one thing; a live worker whose snapshot ages out is labelled stale by the same rule the Monitor page
+uses. The Conversation
 tab is the human-readable Burak/L2 exchange; the Live session tab reads the worker's own session log
 (Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events as a
 Claude Code window: prompts, replies, and each tool call as one row with its output folded under it,

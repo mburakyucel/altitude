@@ -68,12 +68,53 @@ const pollInterval = () => (chatStreaming ? false : 20_000);
 
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
+/**
+ * monitor.quota(): the Claude seat's two windows. `known` is the routing contract — false once the
+ * newest statusline snapshot passes its freshness age. `stale` then says the figures are still
+ * here, only old; a quota with neither figure is genuinely unknown. Reset times are epoch seconds.
+ */
 export const QuotaSchema = z
   .object({
     known: z.boolean(),
     five_hour: z.number().nullish(),
     seven_day: z.number().nullish(),
+    five_hour_resets: z.number().nullish(),
+    seven_day_resets: z.number().nullish(),
+    stale: z.boolean().nullish(),
     at: z.number().nullish(),
+  })
+  .passthrough();
+
+/**
+ * route.quota_codex(): the Codex seat's account-wide windows. Each window names its own length in
+ * minutes; a window the provider does not report is absent, never zero. Resets are ISO strings.
+ */
+export const CodexQuotaSchema = z
+  .object({
+    known: z.boolean(),
+    primary_used: z.number().nullish(),
+    primary_window_minutes: z.number().nullish(),
+    primary_resets: z.string().nullish(),
+    secondary_used: z.number().nullish(),
+    secondary_window_minutes: z.number().nullish(),
+    secondary_resets: z.string().nullish(),
+    plan_type: z.string().nullish(),
+    read_at: z.string().nullish(),
+    stale: z.boolean().nullish(),
+    why: z.string().nullish(),
+  })
+  .passthrough();
+
+/** monitor.routing(): the engine each role would get for a turn started now. `engine` is null when
+ * the router would find none available; `why` is the router's own sentence. Display only. */
+export const RoutingRowSchema = z
+  .object({
+    role: z.string(),
+    project: z.string().nullish(),
+    pin: z.string().nullish(),
+    current: z.string().nullish(),
+    engine: z.string().nullish(),
+    why: z.string().nullish(),
   })
   .passthrough();
 
@@ -245,6 +286,8 @@ export const SessionSchema = z
 export const MonitorSchema = z
   .object({
     quota: QuotaSchema,
+    quota_codex: CodexQuotaSchema.nullish(),
+    routing: z.array(RoutingRowSchema).nullish(),
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
   })
@@ -275,6 +318,8 @@ export const ChatViewSchema = z
   .passthrough();
 
 export type Quota = z.infer<typeof QuotaSchema>;
+export type CodexQuota = z.infer<typeof CodexQuotaSchema>;
+export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Fyi = z.infer<typeof FyiSchema>;

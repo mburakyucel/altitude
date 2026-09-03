@@ -20,6 +20,8 @@ phase deleted.
   applicable checks and review unless an explicit merge hold says otherwise.
 - Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
+- Resource usage is shown, never acted on: the Monitor page reports both seats' windows, their
+  reset times and how old each reading is, and which engine each role would get right now and why.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
 - An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;
