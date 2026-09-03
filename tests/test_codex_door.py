@@ -44,11 +44,14 @@ class TestCodexAdapter(AltitudeCase):
         self.worktree = add_worktree(self.repo, "wt")
         self.job_root = self.tmp / "jobs"
 
-    def test_sandbox_roots_are_the_worktree_its_common_dir_and_altitude_home(self):
-        settings = engines.codex_sandbox(self.worktree, extra_roots=[engines._git_common_dir(self.worktree)])
+    def test_sandbox_roots_are_the_worktree_both_git_dirs_and_altitude_home(self):
+        # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
+        # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
+        settings = engines.codex_sandbox(self.worktree, extra_roots=engines._git_dirs(self.worktree))
         roots_setting = next(s for s in settings if s.startswith("sandbox_workspace_write.writable_roots="))
         roots = json.loads(roots_setting.split("=", 1)[1])
         self.assertEqual(roots, [str(self.worktree.resolve()), str((self.repo / ".git").resolve()),
+                                 str((self.repo / ".git" / "worktrees" / "wt").resolve()),
                                  str(config.ROOT.resolve())])
         self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
         self.assertIn('sandbox_mode="workspace-write"', settings)
@@ -64,7 +67,7 @@ class TestCodexAdapter(AltitudeCase):
 
         with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
              mock.patch.object(engines, "codex_sandbox", return_value=["s1", "s2"]), \
-             mock.patch.object(engines, "_git_common_dir", return_value=self.repo / ".git"), \
+             mock.patch.object(engines, "_git_dirs", return_value=[self.repo / ".git"]), \
              mock.patch.object(engines, "_codex_service_command",
                                side_effect=lambda unit, command, env: ["svc", unit, *command]), \
              mock.patch.object(engines, "_unit_active", return_value=False):

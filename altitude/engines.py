@@ -497,19 +497,23 @@ def _codex_usage(events: list[dict]) -> dict:
     return {}
 
 
-def _git_common_dir(cwd: Path) -> Path:
-    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=str(cwd),
-                       capture_output=True, text=True, timeout=30)
+def _git_dirs(cwd: Path) -> list[Path]:
+    """The Git directories a worker writes: the common directory (objects, refs) and, for a linked worktree, its
+    own metadata under `.git/worktrees/<name>` (HEAD, index, FETCH_HEAD). Codex marks that metadata read-only
+    unless it is a writable root of its own, which blocked task give-the-chat-section-its-own-scrollbar at
+    `git fetch` on 2026-09-03 (codex 0.153)."""
+    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"],
+                       cwd=str(cwd), capture_output=True, text=True, timeout=30)
     if p.returncode != 0:
         raise RuntimeError(f"not a Git worktree: {cwd}: {(p.stderr or '').strip()[:200]}")
-    return Path(p.stdout.strip())
+    return list(dict.fromkeys(Path(line.strip()) for line in p.stdout.splitlines() if line.strip()))
 
 
 def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     """Codex's own workspace-write sandbox is the turn's containment (`-c` overrides, verified with codex 0.152).
 
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
-    Git common directory so it can commit and push), and the Altitude home so `alt` can record what the turn
+    Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
     reports. Everything else is readable. Network stays on for `git push`, `gh`, and the repository's own tests.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` unchanged.
     """
@@ -581,7 +585,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
     if model:
         cmd += ["-m", model]
-    for setting in codex_sandbox(cwd, extra_roots=[_git_common_dir(cwd)]):
+    for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
         cmd += ["-c", setting]
     cmd += [resume, "-"] if resume else ["-"]
     text = prompt if resume else (

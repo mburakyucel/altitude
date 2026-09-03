@@ -73,8 +73,8 @@ check.
 
 ## Codex containment
 
-A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git common directory, and the
-Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
+A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
+directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
 carries the task identity. A Codex L3 turn runs the same way from a disposable runtime directory under the
 project's Altitude folder, reading the project checkout and reaching GitHub through `gh` like a Claude L3; both
 engines use the same `alt` commands under the same backend checks, from one persona.
