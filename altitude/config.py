@@ -22,7 +22,6 @@ REPO = Path(__file__).resolve().parent.parent          # this checkout: personas
 PERSONAS = REPO / "personas"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"
-WEB = REPO / "web"
 WEB_DIST = REPO / "web" / "dist"
 HOOKS = REPO / "hooks"
 
@@ -43,12 +42,10 @@ TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 # sessions is **300k**: auto-compact there (explicit `autoCompactWindow` on every launch — never a percent override on
 # top of the user's setting, which had them compacting at ~90k) and rotate the L3 there. Codex compacts at its own limit.
 CONTEXT_WINDOW = 1_000_000        # Claude, tokens; used to turn usage into a percentage
-CONTEXT_WARN = 0.25               # Claude: warn line (monitor colour, "rotate next" for L3) — 250k
-CONTEXT_ACT = 0.30                # Claude: act line — L3 rotates to a fresh session; sessions auto-compact here — 300k
-AUTOCOMPACT_WINDOW = int(CONTEXT_WINDOW * CONTEXT_ACT)   # 300_000, passed as Claude Code's `autoCompactWindow`
-CONTEXT_WINDOW_CODEX = 256_000
-CONTEXT_WARN_CODEX = 0.80
-CONTEXT_ACT_CODEX = 1.00          # native auto-compact at the limit; Altitude only watches
+AUTOCOMPACT_WINDOW = 300_000      # passed as Claude Code's `autoCompactWindow` on every launch
+# Per engine: (warn fraction, act fraction, window). Warn colours the monitor and says "rotate next" for L3;
+# act rotates a Claude L3 to a fresh session. Codex compacts natively at its limit; Altitude only watches.
+CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 256_000)}
 # Default Claude models. Codex uses the Codex CLI's configured model unless the task overrides it.
 MODELS = {"l3": "fable", "l2": "opus"}
 ENGINES = ("claude", "codex")
@@ -58,10 +55,8 @@ PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
 CODEX_EFFORT = {"l3": None}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
-CONTEXT_LINES = {"claude": (CONTEXT_WARN, CONTEXT_ACT, CONTEXT_WINDOW), "codex": (CONTEXT_WARN_CODEX, CONTEXT_ACT_CODEX, CONTEXT_WINDOW_CODEX)}
 WIP_PER_PROJECT = 3
 WIP_PER_MACHINE = 10
-SERVICE_PORTS = (8890, 8080, 8443)  # altd, pocketbook — never bound by an L2
 L3_TURN_TIMEOUT = 900             # seconds
 L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30

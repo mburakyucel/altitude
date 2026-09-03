@@ -631,8 +631,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error")}})
                 self._stream_close()
                 return
-            if api == "install-statusline":
-                return self._json(install_statusline())
             if api == "restart":
                 status = restart_status()
                 if not status:

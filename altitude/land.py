@@ -28,11 +28,7 @@ from . import config, dispatch, git_policy, state as S
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
-UNDECLARED = "(undeclared — all changes staged)"
 EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
-#: `_ensure_pr(pr=...)` default: no lookup has happened yet. `None` means the caller already looked and the
-#: branch has no PR, so the create path must not look a second time.
-NOT_PREFETCHED = object()
 
 
 class LandError(RuntimeError):
@@ -225,14 +221,11 @@ def _pr_files(root: Path, base: str) -> list[str]:
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
-               pr_body_file: str | None, task_ref: str, pr: dict | None | object = NOT_PREFETCHED) -> dict:
+               pr_body_file: str | None, task_ref: str, pr: dict | None) -> dict:
     """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it. `pr` is the
-    caller's already-fetched view of the branch's PR, so the happy path costs one `gh pr view`, not two —
-    and a prefetched `None` ("looked, there is no PR") is distinct from `NOT_PREFETCHED` ("nobody looked"),
-    so the create path reads the PR back exactly once instead of viewing it before and after creating it."""
+    caller's already-fetched view of the branch's PR (`None` = looked, there is none), so the happy path costs
+    one `gh pr view` and the create path reads the PR back exactly once."""
     title = pr_title or message.splitlines()[0]
-    if pr is NOT_PREFETCHED:
-        pr = _pr_view(root, branch)
     if pr is not None:
         _note(f"PR #{pr.get('number')} exists — reusing it")
         if pr_title or pr_body_file:
@@ -555,10 +548,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         raise LandError(f"on {branch!r} (base {base!r}) — alt land runs from a task worktree branch, "
                         f"never the base branch itself")
     project, slug, task = _resolve(branch, project)
-    hold_merge = task.get("hold_merge") if task is not None else None
-    if merge and task is None:
-        raise LandError(f"cannot verify a merge hold for branch {branch!r}: no task record resolved; "
-                        "pass `--project` or run from the dispatch environment")
+    if task is None or not project or not slug:
+        raise LandError(
+            f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
+            "pass `--project` or run from the dispatch environment"
+        )
+    hold_merge = task.get("hold_merge")
     if hold_merge:  # an explicit merge hold is the exception to merge-by-default
         if merge:
             raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
@@ -566,11 +561,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
               "the PR will be opened but not merged")
-    if task is None or not project or not slug:
-        raise LandError(
-            f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
-            "pass `--project` or run from the dispatch environment"
-        )
     # This is deliberately before fetch, staging, or any GitHub call.  Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
@@ -597,30 +587,23 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if not lease:
             raise LandError("--paths was given but names no paths")
         lease_src = "--paths"
-    elif task is not None:
+    else:
         lease = dispatch.task_paths(project, task)
         if not lease:
             raise EmptyLeaseError(f"alt land: task {project}/{slug} {EMPTY_LEASE_MESSAGE}")
         lease_src = f"task {project}/{slug}"
-    else:
-        lease, lease_src = [], None
     groups = _changes(root)
     changed = sorted({p for _, grp in groups for p in grp})
-    if lease:
-        outside = sorted({p for _, grp in groups for p in grp if not _inside(p, lease)})
-        if outside:
-            raise LandError(f"changes outside the lease ({', '.join(lease)}, from {lease_src}) — "
-                            f"staging nothing: {', '.join(outside)}")
-    elif changed:
-        _note(f"no task resolved for branch {branch!r} and no --paths given — "
-              f"staging all {len(changed)} changed path(s)")
-    lease_repr: list[str] | str = lease if lease else UNDECLARED
+    outside = sorted({p for _, grp in groups for p in grp if not _inside(p, lease)})
+    if outside:
+        raise LandError(f"changes outside the lease ({', '.join(lease)}, from {lease_src}) — "
+                        f"staging nothing: {', '.join(outside)}")
     commit, staged = None, []
     if not groups:
         _note("working tree clean — nothing to commit")
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
-                "commit": None, "head": None, "lease": lease_repr, "staged": changed, "hold": hold_merge,
+                "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
                 "replaced": [], "local_tests": None, "dry_run": True}
     pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
@@ -637,7 +620,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         # never reported as a pass.
         return {"pr": pr.get("number"), "url": pr.get("url"), "checks": "merged",
                 "merged": True, "main_run": None, "branch": branch, "commit": None, "head": None,
-                "lease": lease_repr, "staged": [], "hold": hold_merge, "replaced": [], "local_tests": None}
+                "lease": lease, "staged": [], "hold": hold_merge, "replaced": [], "local_tests": None}
     if pr is not None and pr.get("state") == "CLOSED":
         raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
                         f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
@@ -651,8 +634,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         finally:
             Path(spec).unlink(missing_ok=True)
         if _git(root, "diff", "--cached", "--quiet").returncode != 0:
-            trailer = [f"Altitude-Task: {project}/{slug}"] if project and slug else []
-            _need(_git(root, "commit", "-m", message.rstrip("\n") + "\n\n" + "\n".join(trailer)), "git commit")
+            body = message.rstrip("\n") + f"\n\nAltitude-Task: {task_ref}"
+            _need(_git(root, "commit", "-m", body), "git commit")
             commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
             staged = changed
             _note(f"committed {commit[:7]} ({len(staged)} path(s))")
@@ -679,5 +662,5 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
-            "branch": branch, "commit": commit, "head": pushed_head, "lease": lease_repr, "staged": staged,
+            "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
             "hold": hold_merge, "replaced": replaced, "local_tests": local_tests}

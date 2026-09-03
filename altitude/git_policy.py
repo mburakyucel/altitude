@@ -39,23 +39,8 @@ class RepositoryState:
     determinate: bool
     error: str | None
 
-    @property
-    def shas(self) -> tuple[str, ...]:
-        """Compatibility shorthand for the local-only commit list."""
-        return self.local_only_shas
-
-    @property
-    def oldest(self) -> str | None:
-        """Compatibility shorthand for the oldest local-only commit."""
-        return self.oldest_local_sha
-
     def as_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        # Keep the explicit names for Python callers and concise aliases for
-        # status/API consumers that present the oldest SHA and complete list.
-        data["shas"] = list(self.local_only_shas)
-        data["oldest"] = self.oldest_local_sha
-        return data
+        return asdict(self)
 
 
 def _run(repo: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -85,10 +70,8 @@ def _git_dir(repo: Path) -> Path:
 def inspect_repository(
     repo: str | Path,
     base: str = DEFAULT_BASE,
-    *,
-    head: str = "HEAD",
 ) -> RepositoryState:
-    """Inspect ``head`` against the locally cached ``origin/<base>`` without fetching.
+    """Inspect ``HEAD`` against the locally cached ``origin/<base>`` without fetching.
 
     An indeterminate result is returned rather than raised so status surfaces can
     report the fault.  Mutating paths should reject it through one of the strict
@@ -117,8 +100,8 @@ def inspect_repository(
         dirty = bool(status.stdout)
 
         head_sha = _output(
-            _run(root, "rev-parse", "--verify", f"{head}^{{commit}}"),
-            f"cannot resolve {head}",
+            _run(root, "rev-parse", "--verify", "HEAD^{commit}"),
+            "cannot resolve HEAD",
         )
         origin_ref = f"refs/remotes/origin/{base}"
         resolved_origin = _run(root, "rev-parse", "--verify", f"{origin_ref}^{{commit}}")
@@ -128,10 +111,10 @@ def inspect_repository(
 
         counts = _output(
             _run(root, "rev-list", "--left-right", "--count", f"{origin_sha}...{head_sha}"),
-            f"cannot compare {head} with origin/{base}",
+            f"cannot compare HEAD with origin/{base}",
         ).split()
         if len(counts) != 2:
-            raise GitPolicyError(f"cannot compare {head} with origin/{base}: unexpected rev-list output")
+            raise GitPolicyError(f"cannot compare HEAD with origin/{base}: unexpected rev-list output")
         behind, ahead = int(counts[0]), int(counts[1])
         if ahead:
             rows = _output(
@@ -244,19 +227,18 @@ def commits_missing_task_trailer(
     base: str,
     task_ref: str,
     *,
-    head: str = "HEAD",
     origin_sha: str | None = None,
 ) -> list[str]:
     """Return commits after the remote base that lack this task's exact trailer."""
     root = Path(repo).resolve()
     base_sha = origin_sha or capture_origin_sha(root, base)
     head_sha = _output(
-        _run(root, "rev-parse", "--verify", f"{head}^{{commit}}"),
-        f"cannot resolve {head}",
+        _run(root, "rev-parse", "--verify", "HEAD^{commit}"),
+        "cannot resolve HEAD",
     )
     rows = _output(
         _run(root, "rev-list", "--reverse", f"{base_sha}..{head_sha}"),
-        f"cannot list commits in {base_sha}..{head}",
+        f"cannot list commits in {base_sha}..HEAD",
     )
     expected = task_ref.strip()
     return [sha for sha in rows.splitlines() if _trailer_values(root, sha) != (expected,)]

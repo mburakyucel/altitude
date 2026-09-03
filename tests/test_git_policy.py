@@ -89,10 +89,7 @@ class TestGitPolicy(unittest.TestCase):
         self.assertEqual((state.ahead, state.behind), (2, 0))
         self.assertEqual(state.local_only_shas, (first, second))
         self.assertEqual(state.oldest_local_sha, first)
-        self.assertEqual(state.shas, state.local_only_shas)
-        self.assertEqual(state.oldest, first)
-        self.assertEqual(state.as_dict()["shas"], [first, second])
-        self.assertEqual(state.as_dict()["oldest"], first)
+        self.assertEqual(state.as_dict()["local_only_shas"], (first, second))
 
     def test_missing_origin_is_indeterminate_and_capture_refuses(self):
         self.git("update-ref", "-d", "refs/remotes/origin/main")
@@ -133,7 +130,7 @@ class TestGitPolicy(unittest.TestCase):
         with self.assertRaisesRegex(git_policy.GitPolicyError, "diverged"):
             git_policy.service_preflight(self.repo)
 
-    def test_commit_trailers_are_exact_and_head_may_be_another_branch(self):
+    def test_commit_trailers_are_exact(self):
         base_sha = git_policy.capture_origin_sha(self.repo)
         self.git("checkout", "-q", "-b", "task")
         good = self.commit_file(
@@ -146,10 +143,8 @@ class TestGitPolicy(unittest.TestCase):
             "duplicate.txt", "duplicate\n",
             "ambiguous change\n\nAltitude-Task: demo/fix\nAltitude-Task: demo/other",
         )
-        self.git("checkout", "-q", "main")
-
         missing = git_policy.commits_missing_task_trailer(
-            self.repo, "main", "demo/fix", head="task", origin_sha=base_sha,
+            self.repo, "main", "demo/fix", origin_sha=base_sha,
         )
         self.assertEqual(missing, [bad, duplicate])
         self.assertNotIn(good, missing)
