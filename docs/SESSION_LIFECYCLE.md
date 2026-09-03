@@ -58,7 +58,8 @@ conversation keeps them.
    replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault.
 
 **Stop** (task page, `alt task stop`) blocks the task first and then stops its worker, so the poll never reads
-the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. A failed
+the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. An L2 that blocks with
+`--fault` takes the system-fault path (incident, one L3 message) instead of asking Burak. A failed
 resume blocks the task with an incident and leaves the provider conversation to L3. A cross-provider
 continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
 window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
