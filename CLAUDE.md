@@ -39,5 +39,7 @@ project's L3, whether altd detected it or an L2 reported it with `alt task block
 the cause or creates the one repair task; Burak is not the one to repair the machine. There is no global hold: other tasks keep running. After a restart L3 receives the list of active tasks and resumes the ones blocked by a fault the
 restart fixed.
 
-Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle
-action requires separate explicit authorization and post-change health verification.
+Altitude restarts itself at the next quiet point after a merged change to its own code (no worker
+running, no report waiting, no L3 turn in flight; new dispatches hold until then). Do not start, stop,
+mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
+separate explicit authorization and post-change health verification.

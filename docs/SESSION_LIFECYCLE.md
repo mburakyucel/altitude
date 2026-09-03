@@ -109,7 +109,10 @@ neither L3's project-level responsibility nor L2's end-to-end task ownership.
 ## Polling and cleanup
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
-PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. After an
+PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change to
+Altitude's own code restarts the service at the next quiet point: new dispatches hold, and once no worker
+is running, no report is waiting and no L3 turn is in flight, altd runs the guarded restart script itself.
+After an
 `altd` restart, Claude is rediscovered through its job registry and Codex through its private task
 record and the state of its transient unit. A missing or failed worker without a valid completion is
 a system fault, not “still running.” Rejection and post-merge cleanup use the same provider adapter.

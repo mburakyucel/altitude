@@ -141,6 +141,8 @@ export const RestartSchema = z
     head: z.string().nullish(),
     files: z.array(z.string()).nullish(),
     waiting_for: z.array(z.string()),
+    requested_at: z.string().nullish(),
+    failed: z.string().nullish(),
   })
   .passthrough();
 
