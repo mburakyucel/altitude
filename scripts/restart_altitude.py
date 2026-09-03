@@ -91,6 +91,11 @@ def worker_is_live(project: str, task: dict, claude_rows: list[dict] | None) -> 
         row = next((item for item in (claude_rows or []) if item.get("id") == worker_id), None)
         if row is None:
             return False
+        # A Claude job stays registered, idle, after its task blocks; it lives under the claude daemon, not
+        # altd's cgroup, survives the restart and is re-attached on resume. Only a job mid-turn holds the
+        # restart (2026-09-03 08:32Z: a task checkpointed for the restart refused the restart it waited for).
+        if row.get("status") == "idle":
+            return False
     return row.get("state") not in TERMINAL_WORKER_STATES and row.get("status") != "exited"
 
 

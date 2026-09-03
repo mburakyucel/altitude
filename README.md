@@ -62,7 +62,9 @@ that has not happened ten minutes after it was requested is a system fault for L
 
 To restart sooner by hand, press Restart on the web app's restart-pending banner (shown
 once nothing is running) or run `make restart` from the deployed primary checkout. The
-command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work.
+command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work; a
+blocked task whose Claude job sits idle does not hold it, since that job survives the restart and is
+re-attached on resume.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
 web page to answer from a new process. The prior bundle is restored if verification fails. There is
