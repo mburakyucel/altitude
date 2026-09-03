@@ -26,23 +26,6 @@ SYSTEMD_RUN_BIN = shutil.which("systemd-run") or "systemd-run"
 SYSTEMCTL_BIN = shutil.which("systemctl") or "systemctl"
 ENV_BIN = shutil.which("env") or "/usr/bin/env"
 
-_CODEX_SECRET_ENV = re.compile(
-    r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY|SESSION_KEY|CREDENTIAL)(?:$|_)",
-    re.I,
-)
-_CODEX_CONTROL_ENV = ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR")
-_CODEX_SENSITIVE_ENV = {
-    "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GIT_ASKPASS",
-    "GIT_SSH_COMMAND",
-}
-_CODEX_SAFE_ENV = {
-    "HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "COLORTERM", "TZ",
-    "CODEX_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NO_COLOR",
-    "ALTITUDE_HOME", "ALTITUDE_PROJECT", "ALTITUDE_TASK", "ALTITUDE_ACTOR", "ALTITUDE_SESSION_KEY",
-    "ALTITUDE_ATTEMPT",
-}
-
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
 # from both ends.
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
@@ -217,29 +200,22 @@ def clean_env() -> dict:
 
 
 def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
-    """Build the host environment for Codex without passing control capabilities or ambient credentials.
+    """Altitude's clean environment plus the task identity, the same a Claude worker gets.
 
-    A contained launch retains the user bus only in the outer ``systemd-run`` client. System services do not
-    necessarily inherit the interactive session's bus variables, so the trusted launcher synthesizes their canonical
-    per-user values when absent. The command executed inside the transient service gets both variables explicitly
-    unset by :func:`_codex_service_command` before Codex starts.
+    The user bus belongs to the outer ``systemd-run`` client only: a system service does not necessarily inherit the
+    interactive session's bus variables, so the launcher synthesizes their canonical per-user values, and the
+    command inside the transient unit starts without them.
     """
-    source = clean_env()
-    source.update(extra_env or {})
-    env = {key: value for key, value in source.items()
-           if key in _CODEX_SAFE_ENV or key.startswith("LC_")}
-    if retain_user_bus:
-        runtime_dir = source.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-        env["XDG_RUNTIME_DIR"] = runtime_dir
-        env["DBUS_SESSION_BUS_ADDRESS"] = (source.get("DBUS_SESSION_BUS_ADDRESS")
-                                           or f"unix:path={runtime_dir}/bus")
+    env = clean_env()
+    env.update(extra_env or {})
     env["TMPDIR"] = "/tmp"
-    for key in list(env):
-        if key in _CODEX_SENSITIVE_ENV or _CODEX_SECRET_ENV.search(key):
-            env.pop(key, None)
-    if not retain_user_bus:
-        for key in _CODEX_CONTROL_ENV:
-            env.pop(key, None)
+    runtime_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if retain_user_bus:
+        env["XDG_RUNTIME_DIR"] = runtime_dir
+        env["DBUS_SESSION_BUS_ADDRESS"] = env.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={runtime_dir}/bus"
+    else:
+        env.pop("XDG_RUNTIME_DIR", None)
+        env.pop("DBUS_SESSION_BUS_ADDRESS", None)
     return env
 
 
@@ -444,17 +420,6 @@ def claude_agents() -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def find_agent(name: str | None = None, agent_id: str | None = None, session_id: str | None = None) -> dict | None:
-    for a in claude_agents():
-        if agent_id and a.get("id") == agent_id:
-            return a
-        if session_id and a.get("sessionId") == session_id:
-            return a
-        if name and a.get("name") == name:
-            return a
-    return None
-
-
 def _new_claude_agent(name: str, before: set[str]) -> dict | None:
     """Resolve only the concrete worker created after this launch, never an old same-name job."""
     rows = [row for row in claude_agents()
@@ -616,22 +581,6 @@ def _stop_codex_unit(unit: str, timeout: float = 5.0) -> None:
         raise CodexContainmentError(f"Codex containment unit {unit} did not empty: {detail[:500]}")
 
 
-def codex_containment_empty(worker_id: str, *, job_root: Path) -> bool:
-    """True only when a durable background worker's exact systemd service is proven inactive and empty."""
-    try:
-        record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
-    except (OSError, ValueError):
-        logger.exception("Could not read Codex containment record for worker %s", worker_id)
-        return False
-    if not isinstance(record, dict) or not record.get("unit"):
-        return False
-    try:
-        return _codex_unit_empty(str(record["unit"]))
-    except CodexContainmentError:
-        logger.exception("Could not prove Codex containment empty for worker %s", worker_id)
-        return False
-
-
 def codex_probe_roots(cwd: Path, extra_config: list[str] | None) -> list[str]:
     """Return every root a workspace-write override promises; malformed overrides are not promises.
 
@@ -741,45 +690,10 @@ done
     raise CodexSandboxPreflightError(roots, detail)
 
 
-def _pid_start(pid: int) -> str | None:
-    """Linux process start tick, used to avoid signaling a recycled pid."""
-    try:
-        fields = Path(f"/proc/{int(pid)}/stat").read_text().split()
-        return None if fields[2] == "Z" else fields[21]
-    except (OSError, ValueError, IndexError):
-        return None
-
-
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
     root = Path(job_root)
-    return {
-        "record": root / f"{worker_id}.json",
-        "stdout": root / f"{worker_id}.stdout.jsonl",
-        "stderr": root / f"{worker_id}.stderr.log",
-        "answer": root / f"{worker_id}.answer.md",
-    }
-
-
-def _terminate_spawned_codex(proc: subprocess.Popen, unit: str) -> None:
-    """Fail-closed cgroup cleanup before a Codex worker has a durable owner."""
-    containment_error = None
-    try:
-        _stop_codex_unit(unit)
-    except CodexContainmentError as exc:
-        containment_error = exc
-    # The systemd-run wrapper is not the security boundary, but reaping it avoids a local zombie after the unit is
-    # empty and is useful when systemd-run itself failed before creating the service.
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=2)
-    else:
-        proc.wait(timeout=1)
-    if containment_error is not None:
-        raise containment_error
+    return {"record": root / f"{worker_id}.json", "stdout": root / f"{worker_id}.stdout.jsonl",
+            "stderr": root / f"{worker_id}.stderr.log"}
 
 
 def _codex_events(path: Path) -> list[dict]:
@@ -812,16 +726,37 @@ def _codex_usage(events: list[dict]) -> dict:
     return {}
 
 
-def _codex_action(path: Path) -> dict | None:
-    try:
-        value = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None
+def _git_common_dir(cwd: Path) -> Path:
+    p = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=str(cwd),
+                       capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        raise RuntimeError(f"not a Git worktree: {cwd}: {(p.stderr or '').strip()[:200]}")
+    return Path(p.stdout.strip())
+
+
+def codex_sandbox(cwd: Path) -> list[str]:
+    """Codex's own workspace-write sandbox is the worker's containment (`-c` overrides, verified with codex 0.152).
+
+    Writable roots must exist because Codex bind-mounts them: the task worktree, its Git common directory so the
+    worker can commit and push, and the Altitude home so `alt` can record what the worker reports. Network stays
+    on for `git push`, `gh`, and the repository's own tests. The sandboxed shell inherits the launch environment,
+    so the task identity variables reach `alt` unchanged.
+    """
+    roots = [Path(cwd).resolve(), _git_common_dir(cwd), config.ROOT.resolve()]
+    return ['sandbox_mode="workspace-write"',
+            "sandbox_workspace_write.writable_roots=" + json.dumps([str(root) for root in roots]),
+            "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
+
+
+def _unit_active(unit: str) -> bool:
+    if not unit:
+        return False
+    p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30)
+    return (p.stdout or "").strip() in ("active", "activating", "deactivating")
 
 
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
-    """Return one Codex process as the same normalized row shape used for Claude workers."""
+    """One Codex worker in the row shape Claude workers use. It is alive while its transient unit runs."""
     if not worker_id:
         return None
     paths = _codex_paths(job_root, worker_id)
@@ -829,21 +764,12 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     if not isinstance(record, dict):
         return None
     events = _codex_events(paths["stdout"])
-    session_id = _codex_thread(events) or record.get("session_id")
-    pid = record.get("pid")
-    unit = str(record.get("unit") or "")
-    containment_error = ""
-    try:
-        empty = bool(unit) and _codex_unit_empty(unit)
-    except CodexContainmentError as exc:
-        # Unknown containment state must never look completed: the trusted broker independently checks the same
-        # durable unit before any action, and dispatch keeps this row in-flight until state is provable.
-        empty = False
-        containment_error = str(exc)
-    alive = not empty
-    completed = next((event for event in reversed(events) if event.get("type") == "turn.completed"), None)
-    failed = next((event for event in reversed(events)
-                   if event.get("type") in ("turn.failed", "error")), None)
+    proc = _codex_processes.get(worker_id)
+    alive = proc.poll() is None if proc is not None else _unit_active(str(record.get("unit") or ""))
+    if proc is not None and not alive:
+        _codex_processes.pop(worker_id, None)
+    completed = any(event.get("type") == "turn.completed" for event in events)
+    failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
     if record.get("stopped"):
         state, status = "stopped", "exited"
     elif alive:
@@ -852,134 +778,95 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
         state, status = "done", "exited"
     else:
         state, status = "failed", "exited"
-    if empty and worker_id in _codex_processes:
-        proc = _codex_processes.pop(worker_id)
-        try:
-            proc.wait(timeout=0)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
     detail = ""
-    if containment_error:
-        detail = containment_error[:500]
-    elif failed:
+    if failed:
         detail = str(failed.get("message") or failed.get("error") or failed)[:500]
     elif not alive and not completed:
         try:
             detail = paths["stderr"].read_text(errors="replace")[-500:]
         except OSError:
             detail = "Codex worker exited without turn.completed"
-    return {
-        "id": worker_id, "sessionId": session_id, "name": record.get("name"), "pid": pid, "unit": unit,
-        "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
-        "startedAt": record.get("started_at"), "engine": "codex", "action": _codex_action(paths["answer"]),
-    }
+    return {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
+            "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
+            "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
+            "startedAt": record.get("started_at"), "engine": "codex"}
 
 
 def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
              persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
              start_timeout: float = 15.0) -> dict:
-    """Start one detached Codex L2 turn and wait boundedly for its stable thread identity."""
-    extra_config = [*codex_isolation_config(cwd)]
-    if not resume:
-        codex_sandbox_preflight(Path(cwd), extra_config)
+    """Start one detached Codex turn in the task worktree and wait boundedly for its thread identity.
 
+    `codex exec resume <thread> -` continues the same thread with the prompt on stdin (verified with codex 0.152).
+    A fresh turn gets the persona and the host patch note in front of the brief. The turn runs in a transient user
+    unit because altd's own `NoNewPrivileges` hardening would stop Codex's nested bwrap sandbox from starting.
+    """
     worker_id = uuid.uuid4().hex
     unit = _codex_unit(worker_id)
-    root = Path(job_root); root.mkdir(parents=True, exist_ok=True)
+    root = Path(job_root)
+    root.mkdir(parents=True, exist_ok=True)
     paths = _codex_paths(root, worker_id)
-    schema = config.SCHEMAS / "l2_action.json"
-    if resume:
-        cmd = [config.CODEX_BIN, "exec", "resume", "--json", "--strict-config", "-o", str(paths["answer"]),
-               "--output-schema", str(schema), "--skip-git-repo-check", "--ignore-user-config",
-               "--ignore-rules"]
-    else:
-        cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "-o", str(paths["answer"]),
-               "--output-schema", str(schema), "-C", str(cwd),
-               "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"]
+    cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), "--json", "--strict-config",
+           "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
     if model:
         cmd += ["-m", model]
-    for setting in extra_config:
+    for setting in codex_sandbox(cwd):
         cmd += ["-c", setting]
-    if resume:
-        cmd += [resume, "-"]
-        launch_prompt = prompt
-    else:
-        launch_prompt = (((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE
-                         + "\n\n" + prompt)
-        cmd += ["-"]
-    env = codex_env(extra_env, retain_user_bus=True)
-    child_env = codex_env(extra_env)
-    # Persist the unguessable unit before crossing the spawn boundary. If altd dies between systemd-run and the PID
-    # update, the record still has the exact cgroup identity needed to stop every descendant.
-    record = {"id": worker_id, "name": name, "pid": None, "pid_start": None, "unit": unit,
+    cmd += [resume, "-"] if resume else ["-"]
+    text = prompt if resume else (
+        ((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE + "\n\n" + prompt)
+    record = {"id": worker_id, "name": name, "pid": None, "unit": unit,
               "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
     S.write_json(paths["record"], record)
-    out = open(paths["stdout"], "ab", buffering=0)
-    err = open(paths["stderr"], "ab", buffering=0)
+    with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
+        proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
+                                stdin=subprocess.PIPE, stdout=out, stderr=err,
+                                env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
     try:
-        proc = subprocess.Popen(_codex_service_command(unit, cmd, child_env), cwd=str(cwd),
-                                stdin=subprocess.PIPE,
-                                stdout=out, stderr=err, env=env, start_new_session=True)
-        try:
-            proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-    finally:
-        out.close(); err.close()
-    pid_start = _pid_start(proc.pid)
-    if not pid_start:
-        _terminate_spawned_codex(proc, unit)
-        raise RuntimeError("Codex worker started without a stable process identity")
-    try:
-        record.update({"pid": proc.pid, "pid_start": pid_start})
-        S.write_json(paths["record"], record)
-        _codex_processes[worker_id] = proc
-        deadline = time.monotonic() + start_timeout
-        thread_id = None
-        while time.monotonic() < deadline:
-            events = _codex_events(paths["stdout"])
-            thread_id = _codex_thread(events)
-            if thread_id:
-                break
-            if proc.poll() is not None:
-                break
+        proc.stdin.write(text.encode("utf-8"))
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+    _codex_processes[worker_id] = proc
+    record["pid"] = proc.pid
+    S.write_json(paths["record"], record)
+    deadline = time.monotonic() + start_timeout
+    thread_id = None
+    while not thread_id and time.monotonic() < deadline and proc.poll() is None:
+        thread_id = _codex_thread(_codex_events(paths["stdout"]))
+        if not thread_id:
             time.sleep(0.05)
-        if not thread_id or (resume and thread_id != resume):
-            try:
-                codex_stop(worker_id, job_root=root)
-            except Exception:  # noqa: BLE001 — report the identity failure, not a secondary stop failure
-                pass
-            row = codex_worker(worker_id, job_root=root) or {}
-            detail = row.get("detail") or ("resumed a different Codex thread" if thread_id else "no thread.started event")
-            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
-        record["session_id"] = thread_id
-        S.write_json(paths["record"], record)
-        return {"stdout": "", "stderr": "", "returncode": 0,
-                "agent": codex_worker(worker_id, job_root=root)}
-    except BaseException:
-        _codex_processes.pop(worker_id, None)
-        _terminate_spawned_codex(proc, unit)
-        raise
+    thread_id = thread_id or _codex_thread(_codex_events(paths["stdout"]))
+    if not thread_id or (resume and thread_id != resume):
+        try:
+            codex_stop(worker_id, job_root=root)
+        except RuntimeError:
+            pass  # report the identity failure, not a secondary stop failure
+        row = codex_worker(worker_id, job_root=root) or {}
+        detail = row.get("detail") or ("resumed a different Codex thread" if thread_id else "no thread.started event")
+        return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
+    record["session_id"] = thread_id
+    S.write_json(paths["record"], record)
+    return {"stdout": "", "stderr": "", "returncode": 0, "agent": codex_worker(worker_id, job_root=root)}
 
 
 def codex_stop(worker_id: str, *, job_root: Path) -> str:
+    """Stop the worker's transient unit; `KillMode=control-group` takes every descendant with it."""
     paths = _codex_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
     if not isinstance(record, dict):
         return "Codex worker record already absent"
     unit = str(record.get("unit") or "")
-    if not unit:
-        raise CodexContainmentError(f"Codex worker {worker_id} has no durable containment unit")
-    _stop_codex_unit(unit)
-    if not _codex_unit_empty(unit):
-        raise CodexContainmentError(f"Codex worker {worker_id} containment unit is still populated")
+    subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
     proc = _codex_processes.pop(worker_id, None)
     if proc is not None:
         try:
-            proc.wait(timeout=1)
+            proc.wait(timeout=10)
         except (subprocess.TimeoutExpired, OSError):
-            pass
+            proc.kill()
+    if _unit_active(unit):
+        raise RuntimeError(f"Codex worker {worker_id} is still running after stop")
     record["stopped"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     S.write_json(paths["record"], record)
     return "Codex worker stopped"
@@ -1015,6 +902,54 @@ def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
     if engine == "claude":
         return claude_rm(worker_id)
     return codex_stop(worker_id, job_root=job_root)
+
+
+JOBS_DIR = config.HOME / ".claude" / "jobs"   # the Claude harness's background-job state, keyed by agent id
+
+
+def claude_job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
+    """What a Claude worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) and when — the limit
+    message lands here, and "resets 8pm" only means something relative to the moment it was written."""
+    if not agent_id:
+        return "", None
+    p = JOBS_DIR / str(agent_id) / "state.json"
+    try:
+        st = json.loads(p.read_text())
+        return (str(st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+    except (OSError, ValueError):
+        return "", None
+
+
+def window_hold(engine: str) -> str | None:
+    """Claude's exhausted window is a machine-wide hold file; Codex reports its limits per turn."""
+    return usage_hold() if engine == "claude" else None
+
+
+def worker(engine: str, task: dict, *, rows: list[dict] | None = None, job_root: Path | None = None) -> dict | None:
+    """The task's current worker row, if the provider still knows it."""
+    if engine == "codex":
+        return codex_worker(task.get("agent_id"), job_root=job_root)
+    rows = claude_agents() if rows is None else rows
+    return (next((a for a in rows if a.get("sessionId") == task.get("session_id")), None)
+            or next((a for a in rows if a.get("id") == task.get("agent_id")), None))
+
+
+def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
+    """The worker's last words and when it said them, for the capacity and usage-limit detectors."""
+    if not row:
+        return "", None
+    if engine == "codex":
+        return str(row.get("detail") or ""), datetime.now(timezone.utc)
+    return claude_job_detail(row.get("id"))
+
+
+def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> bool:
+    """Whether something still runs for this task: a Claude session in its worktree, or a Codex unit."""
+    if engine == "codex":
+        row = codex_worker(task.get("agent_id"), job_root=job_root)
+        return bool(row and row.get("state") == "working")
+    wt = task.get("worktree")
+    return any(a.get("cwd") == wt and a.get("state") not in ("failed", "done", "stopped") for a in claude_agents())
 
 
 def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: str = "read-only",

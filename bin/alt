@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
+L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "events"), ("task", "messages"), ("task", "list"),
+               ("task", "reply"), ("task", "block"), ("task", "done")}  # the door a worker may use
 
 
 def _project(args) -> str:
@@ -79,6 +81,8 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     config.ensure_root()
     c = args.cmd
+    if ACTOR == "l2" and (c, getattr(args, "tcmd", None)) not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
+        sys.exit(f"alt {c}: not available to an L2 worker; use status, messages, reply, block, done, or land")
     if c == "project":
         P = config.load_projects()
         if args.pcmd == "add":
@@ -105,7 +109,14 @@ def main(argv=None) -> None:
         elif tc == "reject":
             out(T.reject(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "block":
-            out(T.block(p, args.slug, args.reason, actor=ACTOR))
+            if ACTOR == "l2":
+                attempt = os.environ.get("ALTITUDE_ATTEMPT")
+                if args.slug != os.environ.get("ALTITUDE_TASK") or not attempt:
+                    sys.exit("alt task block: an L2 blocks only its own task (ALTITUDE_TASK, ALTITUDE_ATTEMPT)")
+                out(T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
+                            expected_attempt=int(attempt)))
+            else:
+                out(T.block(p, args.slug, args.reason, actor=ACTOR))
         elif tc == "resume":
             from altitude import dispatch
             out(dispatch.resume(p, args.slug))
@@ -228,4 +239,7 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except T.TransitionError as e:
+        sys.exit(f"alt: {e}")

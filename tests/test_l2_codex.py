@@ -32,21 +32,16 @@ class TestCodexPermissionProfile(unittest.TestCase):
         config = engines.codex_isolation_config(Path("/tmp/altitude-worker"), writable=True)
         self.assertFalse(any(item.startswith("projects.") for item in config))
 
-    def test_codex_environment_scrubs_ambient_credentials_and_control_channels(self):
-        inherited = {
-            "PATH": "/usr/bin", "HOME": "/tmp/home", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/private/bus",
-            "XDG_RUNTIME_DIR": "/private/runtime", "GITHUB_TOKEN": "not-a-real-token",
-            "ALTITUDE_L2_CAPABILITY": "not-a-real-capability", "SAFE_SETTING": "kept",
-        }
+    def test_codex_environment_carries_the_task_identity_and_keeps_the_bus_in_the_launcher(self):
+        inherited = {"PATH": "/usr/bin", "HOME": "/tmp/home", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/private/bus",
+                     "XDG_RUNTIME_DIR": "/private/runtime"}
         with mock.patch.object(engines, "clean_env", side_effect=lambda: dict(inherited)):
-            direct = engines.codex_env({"OPENAI_API_KEY": "not-a-real-key"})
+            child = engines.codex_env({"ALTITUDE_TASK": "t", "ALTITUDE_ATTEMPT": "2"})
             launcher = engines.codex_env(retain_user_bus=True)
-        self.assertNotIn("SAFE_SETTING", direct)
-        for key in ("DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "GITHUB_TOKEN",
-                    "ALTITUDE_L2_CAPABILITY", "OPENAI_API_KEY"):
-            self.assertNotIn(key, direct)
-        self.assertIn("DBUS_SESSION_BUS_ADDRESS", launcher)
-        self.assertNotIn("GITHUB_TOKEN", launcher)
+        self.assertEqual((child["ALTITUDE_TASK"], child["ALTITUDE_ATTEMPT"], child["TMPDIR"]), ("t", "2", "/tmp"))
+        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child)
+        self.assertNotIn("XDG_RUNTIME_DIR", child)
+        self.assertEqual(launcher["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/private/bus")
 
     def test_launcher_synthesizes_user_bus_for_a_system_service(self):
         inherited = {"PATH": "/usr/bin", "HOME": "/tmp/home"}

@@ -67,11 +67,34 @@ class TestTemporaryCapacity(unittest.TestCase):
         self.assertTrue(out[0].get("limited"))
         self.assertFalse(out[0].get("died", False))
         with mock.patch.object(incidents, "system_fault") as fault, \
+                mock.patch.object(engines, "note_usage_limit") as global_hold, \
+                mock.patch.object(engines, "remove_l2_worker", return_value="removed") as removed:
+            server.on_l2_finished("capacity", out[0])
+        switched = S.load_task("capacity", task["slug"])
+        self.assertEqual(switched["state"], "queued", "a fresh attempt on the other engine, from saved progress")
+        self.assertEqual((switched["l2_engine"], switched["engine_model"], switched["agent_id"], switched["session_id"]),
+                         ("claude", None, None, None))
+        self.assertNotIn("resume_after", switched)
+        removed.assert_called_once_with("codex", task["agent_id"], job_root=dispatch.l2_job_root("capacity", task["slug"]))
+        global_hold.assert_not_called()
+        fault.assert_not_called()
+
+    def test_pinned_engine_parks_until_its_window_reopens(self):
+        task = self._task("codex-quota-pinned")
+        task["engine"] = "codex"
+        S.save_task("capacity", task)
+        worker = {"id": task["agent_id"], "sessionId": task["session_id"], "state": "failed", "status": "exited",
+                  "detail": "You've hit your usage limit · resets 8pm (America/Los_Angeles)"}
+        with mock.patch.object(S, "list_tasks", return_value=[task]), \
+                mock.patch.object(engines, "codex_worker", return_value=worker):
+            out = dispatch.poll("capacity")
+        with mock.patch.object(incidents, "system_fault") as fault, \
                 mock.patch.object(engines, "note_usage_limit") as global_hold:
             server.on_l2_finished("capacity", out[0])
         held = S.load_task("capacity", task["slug"])
         self.assertEqual(held["state"], "blocked")
-        self.assertEqual((held["l2_engine"], held["engine_model"]), ("codex", "gpt-test-stable"))
+        self.assertEqual((held["l2_engine"], held["engine_model"], held["agent_id"]),
+                         ("codex", "gpt-test-stable", task["agent_id"]))
         self.assertEqual(held["resume_after"], out[0]["limited"])
         global_hold.assert_not_called()
         fault.assert_not_called()
@@ -125,7 +148,7 @@ class TestTemporaryCapacity(unittest.TestCase):
 
         with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
-                mock.patch.object(dispatch, "_l2_worker_live", return_value=False), \
+                mock.patch.object(engines, "worker_live", return_value=False), \
                 mock.patch.object(engines, "resume_l2", side_effect=resume), \
                 mock.patch.object(dispatch.route, "pick_engine", side_effect=AssertionError("must not reroute")):
             self.assertEqual(dispatch.resume_due("capacity"), [task["slug"]])

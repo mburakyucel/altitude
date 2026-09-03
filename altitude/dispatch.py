@@ -4,7 +4,6 @@ from contextlib import contextmanager
 import fcntl
 import json
 import subprocess
-from datetime import datetime, timezone
 import re
 from pathlib import Path
 
@@ -46,9 +45,6 @@ def project_never_list(repo: Path) -> str:
         if lines:
             return "; ".join(l[:160] for l in lines[:8])
     return "no changes outside the brief; no weakened guardrails; honor any recorded merge hold"
-
-
-JOBS_DIR = config.HOME / ".claude" / "jobs"   # the harness's background-job state, keyed by agent id
 
 
 def l2_engine(task: dict) -> str:
@@ -93,7 +89,7 @@ def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str
     derived = f"worktree-{slug}"
     if agent_id:
         try:
-            st = json.loads((JOBS_DIR / str(agent_id) / "state.json").read_text())
+            st = json.loads((engines.JOBS_DIR / str(agent_id) / "state.json").read_text())
             b = (st.get("worktreeBranch") or "").strip() if isinstance(st, dict) else ""
             if b:
                 return b
@@ -178,38 +174,26 @@ def build_brief(project: str, slug: str) -> str:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     engine = task.get("l2_engine") or task.get("engine") or "pending quota route"
-    if engine == "codex":
-        completion_contract = (
-            "For code delivery, return the schema-valid `publish` action after testing; Altitude's trusted control "
-            "plane commits, opens the PR, applies the persisted merge policy, and writes the verified report. For a "
-            "research/proposal task with no repository changes, return `complete_no_code` with the durable result."
-        )
-        conversation_contract = (
-            "Put a concise reply in the final action's `message`. His queued messages open your next turn in this "
-            "same thread. If a decision is genuinely required, return `block` with the exact question; his answer "
-            "resumes the thread."
-        )
-        publication_contract = (
-            "The Codex command sandbox can write only ordinary worktree files; Git metadata, Altitude state, and "
-            "network access remain outside it. Return inert publication intent through the final action "
-            "schema—never run Git publication or Altitude mutation commands yourself."
-        )
-    else:
-        completion_contract = (
-            f"Code delivery writes a concise schema-valid `report.json` (`{config.SCHEMAS / 'report.json'}`) in "
-            f"`{d}` so Altitude can verify it. A no-code task may use `alt task done` after sending its result; "
-            "Altitude finalizes it only after this worker exits."
-        )
-        conversation_contract = (
-            "They reach you after a tool call or when you are about to stop. Reply in plain language with "
-            "`alt task reply \"<message>\"`. Ask directly only when the repository and brief cannot resolve the "
-            "choice: checkpoint `progress.md`, reply with the question, then `alt task block \"$ALTITUDE_TASK\" "
-            "--reason \"<question>\"` and stop; the answer resumes this session."
-        )
-        publication_contract = (
-            "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
-            "`--merge` only when allowed. Read the live `hold_merge` value and never merge around it."
-        )
+    completion_contract = (
+        f"Code delivery writes a concise schema-valid `report.json` (`{config.SCHEMAS / 'report.json'}`) in "
+        f"`{d}` so Altitude can verify it. A no-code task may use `alt task done` after sending its result; "
+        "Altitude finalizes it only after this worker exits."
+    )
+    conversation_contract = (
+        "They reach you at your next checkpoint: after a tool call or when you are about to stop in a Claude "
+        "session, or when this turn ends and Altitude resumes your thread on Codex. Reply in plain language with "
+        "`alt task reply \"<message>\"`. Ask directly only when the repository and brief cannot resolve the "
+        "choice: checkpoint `progress.md`, reply with the question, then `alt task block \"$ALTITUDE_TASK\" "
+        "--reason \"<question>\"` and stop; the answer resumes this session."
+    )
+    publication_contract = (
+        "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
+        "`--merge` only when allowed. Read the live `hold_merge` value and never merge around it."
+    )
+    progress = d / "progress.md"
+    if task.get("attempt") and progress.exists():
+        request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
+                    "kept; its `progress.md` follows.\n\n" + progress.read_text().rstrip() + "\n")
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
@@ -275,7 +259,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         proj = config.project(project)
-        forced_engine = task.get("engine") or proj.get("l2_engine")
+        forced_engine = task.get("engine") or task.get("l2_engine") or proj.get("l2_engine")
         if model in config.MODEL_ALIASES and not forced_engine:
             forced_engine = "claude"
         choice = route.pick_engine("l2", forced=forced_engine)
@@ -293,9 +277,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         brief_md = build_brief(project, slug)
         T.brief(project, slug, brief_md, actor="altd")
         settings = session_settings(project, slug, S.session_key(project, slug, attempt))
-        persona = config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md")
         res = engines.start_l2(
-            engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=persona,
+            engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
             model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),
             job_root=l2_job_root(project, slug))
     except Exception as exc:
@@ -359,7 +342,7 @@ def resume(project: str, slug: str) -> dict:
     if not task.get("agent_id") or not task.get("session_id"):
         T.requeue(project, slug)
         return {"requeued": True}
-    window = engines.usage_hold() if l2_engine(task) == "claude" else None
+    window = engines.window_hold(l2_engine(task))
     hold = f"usage limit: subscription window exhausted, resets {window}" if window else wip_hold(project, task)
     if hold:
         with S.project_lock(project):
@@ -384,17 +367,16 @@ def resume(project: str, slug: str) -> dict:
         incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
     engine, job_root = l2_engine(task), l2_job_root(project, slug)
-    if _l2_worker_live(project, task):
+    if engines.worker_live(engine, task, job_root=job_root):
         engines.stop_l2_worker(engine, task["agent_id"], job_root=job_root)
-        if _l2_worker_live(project, task):
+        if engines.worker_live(engine, task, job_root=job_root):
             raise T.TransitionError(f"{slug}: worker {task['agent_id']} is still live after stop; try again")
     rows = T.pending(project, slug)
     prompt = T.render_inbox(rows) or "Continue from your progress file."
     try:
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
-            persona=config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md"),
-            model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
+            persona=config.PERSONAS / "l2.md", model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root)
         worker = res.get("agent") or {}
         if res.get("returncode") != 0:
@@ -438,7 +420,7 @@ def resume_due(project: str) -> list[str]:
         after = t.get("resume_after") or ""
         if after > now or (not after and not T.pending(project, t["slug"])):
             continue
-        if l2_engine(t) == "claude" and engines.usage_hold():
+        if engines.window_hold(l2_engine(t)):
             continue
         if wip_hold(project, t):
             continue  # a lease holds this one; a younger unrelated task may still go
@@ -606,19 +588,6 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
     return out
 
 
-def job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
-    """What the worker last said about itself (`~/.claude/jobs/<id>/state.json` detail) and when — the limit message
-    lands here, and "resets 8pm" only means something relative to the moment it was written."""
-    if not agent_id:
-        return "", None
-    p = JOBS_DIR / str(agent_id) / "state.json"
-    try:
-        st = json.loads(p.read_text())
-        return (str(st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
-    except (OSError, ValueError):
-        return "", None
-
-
 PER_TASK_HOLDS = ("file lease",)  # a lease holds one task; the queue behind it keeps moving
 
 
@@ -655,8 +624,6 @@ def poll(project: str) -> list[dict]:
     task_rows = S.list_tasks(project)
     needs_claude = any(t["state"] == "running" and l2_engine(t) == "claude" for t in task_rows)
     claude_rows = engines.claude_agents() if needs_claude else []
-    agents = {a.get("sessionId"): a for a in claude_rows}
-    by_id = {a.get("id"): a for a in claude_rows}
     finished = []
     for t in task_rows:
         has_report = (S.task_dir(project, t["slug"]) / "report.json").exists()
@@ -666,18 +633,13 @@ def poll(project: str) -> list[dict]:
         if t["state"] != "running":
             continue
         engine = l2_engine(t)
-        if engine == "claude":
-            a = agents.get(t.get("session_id")) or by_id.get(t.get("agent_id"))
-        else:
-            a = engines.codex_worker(t.get("agent_id"), job_root=l2_job_root(project, t["slug"]))
+        a = engines.worker(engine, t, rows=claude_rows, job_root=l2_job_root(project, t["slug"]))
         live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         prev = S.read_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
                  "pid": a.get("pid"), "usage": a.get("usage")} if a else None)
         idle_since = None
-        detail, at = ((job_detail(a.get("id")) if engine == "claude"
-                       else (str(a.get("detail") or ""), datetime.now(timezone.utc)))
-                      if a else ("", None))
+        detail, at = engines.worker_detail(engine, a)
         settled = a and (a.get("state") in ("blocked", "done", "failed", "stopped")
                          or a.get("status") in ("idle", "exited"))
         if settled and not has_report:
@@ -779,17 +741,6 @@ def _pr_merged_at(repo: Path, task: dict, branch_sha: str) -> bool:
     return False
 
 
-def _l2_worker_live(project: str, task: dict) -> bool:
-    engine, wt = l2_engine(task), task.get("worktree")
-    if engine == "claude":
-        return any(a.get("cwd") == wt and a.get("state") not in ("failed", "done", "stopped")
-                   for a in engines.claude_agents())
-    if engine == "codex" and task.get("agent_id"):
-        row = engines.codex_worker(task["agent_id"], job_root=l2_job_root(project, task.get("slug") or ""))
-        return bool(row and row.get("state") == "working")
-    return False
-
-
 def cleanup_after_done(project: str, task: dict) -> list[str]:
     """After archive, remove the task's worktree and branch once its work is on origin/main and nothing uses it.
 
@@ -820,7 +771,7 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
         status = git("status", "--porcelain", "--untracked-files=all", cwd=Path(wt))
         if status.returncode != 0 or status.stdout.strip():
             return keep("worktree has uncommitted changes")
-        if _l2_worker_live(project, task):
+        if engines.worker_live(l2_engine(task), task, job_root=l2_job_root(project, slug)):
             return keep("L2 worker is still running")
         if task.get("agent_id"):
             note = engines.remove_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))

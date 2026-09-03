@@ -96,7 +96,7 @@ server.tick
        -> retry the stored answer when WIP/recovery/provider gates permit
 ```
 
-### A5. Codex L2 completion and trusted action settlement
+### A5. Codex L2 completion and trusted action settlement (deleted in phase 5b: the Codex L2 uses the `alt` door)
 
 ```text
 Codex worker exits with bounded events, answer, and l2_action JSON

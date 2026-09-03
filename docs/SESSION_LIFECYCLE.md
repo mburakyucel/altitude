@@ -1,7 +1,7 @@
 # Engine and session lifecycle
 
-> **Scope:** This document describes executable `main` after phase 3 of the module-by-module
-> simplification (queued steering, 2026-09-03). See the
+> **Scope:** This document describes executable `main` after the Codex L2 door of the module-by-module
+> simplification (phase 5b, 2026-09-03). See the
 > [2026-09-02 review checkpoint](simplification-review/README.md).
 
 ## Live L2 transcript
@@ -67,14 +67,13 @@ than a guessed quota relationship.
 A message from Burak (task page, chat through L3, or `alt task message`) is appended to the task's durable
 conversation and to its inbox. Nothing is killed. A running Claude L2 receives the inbox at its next checkpoint:
 the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the
-session is about to stop. A running Codex L2 receives it when its current turn ends: the broker's next-turn hold
-leaves the task blocked with `resume_after`, and the tick resumes it with the inbox. A blocked task resumes at
-once with the message. Delivered messages leave the inbox; the conversation keeps them.
+session is about to stop. A running Codex L2 receives it when its current turn ends and the message resumes the
+thread with the inbox. A blocked task resumes at once with the message. Delivered messages leave the inbox; the conversation keeps them.
 
 `dispatch.resume` is the only way a session is launched again:
 
 1. a task blocked before any launch goes back to the queue;
-2. an exhausted Claude window or a file lease keeps the task blocked with `resume_after` set and a
+2. an exhausted window of a pinned engine or a file lease keeps the task blocked with `resume_after` set and a
    `waiting: …` reason; the tick retries when it is due;
 3. worktree and commit provenance are validated, and an idle worker that is still live is stopped first;
 4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
@@ -83,26 +82,23 @@ once with the message. Delivered messages leave the inbox; the conversation keep
 **Stop** (task page, `alt task stop`) blocks the task first and then stops its worker, so the poll never reads
 the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. A failed
 resume blocks the task with an incident and leaves the provider conversation to L3. A cross-provider
-continuation is a deliberate new attempt based on saved work, not a fake transcript resume.
+continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
+window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
+to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
 
-Claude resume uses `claude --bg --resume`. Its L2 contract is direct: the persona may invoke the
-scoped Altitude CLI, while the backend applies the identity, clean-Git, lease, provenance, and merge
-policy checks relevant to each command and effect boundary. Claude hooks add telemetry and inbox
-delivery; they are not the backend authority check.
+Claude resume uses `claude --bg --resume`; Codex resume uses `codex exec resume <thread-id> -` with the inbox on
+stdin from the same task worktree. Both engines have one contract: the persona may invoke the scoped Altitude
+CLI, and the backend applies the identity, clean-Git, lease, provenance, and merge-policy checks relevant to each
+command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
+check.
 
-Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
-is private task evidence; `thread.started.thread_id` is the session identity and
-`turn.completed.usage` is the latest reported usage. A Codex L2 receives no Altitude control
-capability. It runs with an explicit permission profile that denies the filesystem by default,
-allows the task worktree, and keeps the Git common directory and Altitude state outside its writable
-surface. Hosted tools and model-command network access are disabled. The inner sandbox hides host PIDs, and the
-complete turn, including descendant processes, is placed in a transient user cgroup. Altitude will not interpret the
-result until that containment unit is empty.
-
-A Codex L2's final response is a strict, inert action object. After worker exit, the trusted broker
-validates the object against the current task state, worker, and lease. The
-broker—not the model process—may then post the human-facing message, land a PR, complete a no-code
-task, block, or continue the same thread.
+A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git common directory, and the
+Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
+carries the task identity. The turn runs in a transient user unit because altd's `NoNewPrivileges` hardening would
+stop Codex's nested bwrap from starting; stopping the unit stops the whole process tree. Codex stdout JSONL is
+private task evidence: `thread.started.thread_id` is the session identity and `turn.completed.usage` the latest
+reported usage. A turn that ends without a report, a block, or a completion blocks the task as ended without a
+report, exactly like a Claude session that exits early.
 
 ## L3 sessions and provider changes
 
@@ -112,7 +108,7 @@ human conversation as a small explicit handoff; it does not replay tool logs or 
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
 automatically replayed on Codex because that could duplicate side effects.
 
-A Codex L3 turn uses the same containment and inert-result pattern, but its filesystem view is
+A Codex L3 turn still uses a contained turn and an inert-result broker until it moves to the door; its filesystem view is
 read-only with respect to durable inputs: the full Altitude runtime root (`ALTITUDE_HOME`) and the
 selected project checkout are readable roots, while only an inert disposable runtime directory is writable.
 The prompt normally directs it to compact state, but the sandbox does not narrow reads to that file. Its trusted
@@ -120,10 +116,8 @@ broker applies at most the validated project-coordination action. Claude L3 reta
 contract. Provider selection changes neither L3's project-level responsibility nor L2's end-to-end
 task ownership.
 
-For contained Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and
-are unset before Codex starts. The child receives an allowlisted environment; ambient tokens, API keys, SSH agents,
-and Git credential helpers are absent. The inner sandbox hides host PIDs; this baseline has no
-deterministic host-PID canary. A model-requested GitHub issue cannot contain synthesized private context: the broker
+For Codex turns, the user DBus and runtime directory exist only in the outer `systemd-run` launcher and are unset
+before Codex starts; the child receives Altitude's clean environment plus the task identity. A model-requested GitHub issue cannot contain synthesized private context: the broker
 stores only the exact current chat message, with a title quoted from it, as a private draft. Publication requires a
 second exact, draft-specific approval message from Burak, and secret-shaped content remains a hard refusal.
 
@@ -132,7 +126,7 @@ second exact, draft-specific approval message from Burak, and secret-shaped cont
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. After an
 `altd` restart, Claude is rediscovered through its job registry and Codex through its private task
-record plus validated PID start time and containment unit. A missing or failed worker without a
+record and the state of its transient unit. A missing or failed worker without a
 valid completion is a system fault, not “still running.” Rejection and post-merge cleanup use the
 same provider adapter.
 

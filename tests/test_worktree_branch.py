@@ -3,15 +3,15 @@ import json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 os.environ.setdefault("ALTITUDE_HOME", tempfile.mkdtemp(prefix="altitude-wb-"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import dispatch  # noqa: E402
+from altitude import dispatch, engines  # noqa: E402
 
 
 class TestWorktreeBranch(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="altitude-jobs-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.jobs, old = self.tmp / "jobs", dispatch.JOBS_DIR
-        dispatch.JOBS_DIR = self.jobs
+        self.jobs, old = self.tmp / "jobs", engines.JOBS_DIR
+        engines.JOBS_DIR = self.jobs
         self.addCleanup(setattr, dispatch, "JOBS_DIR", old)
 
     def write_state(self, agent_id: str, body) -> None:

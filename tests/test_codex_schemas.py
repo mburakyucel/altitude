@@ -25,10 +25,8 @@ class TestCodexSchemas(unittest.TestCase):
         for key, value in node.items():
             self.assert_strict_objects(value, f"{path}.{key}")
 
-    def test_action_schemas_are_recursively_strict(self):
-        for name in ("l2_action.json", "l3_action.json"):
-            with self.subTest(name=name):
-                self.assert_strict_objects(json.loads((ROOT / "schemas" / name).read_text()))
+    def test_action_schema_is_recursively_strict(self):
+        self.assert_strict_objects(json.loads((ROOT / "schemas" / "l3_action.json").read_text()))
 
 
 if __name__ == "__main__":
