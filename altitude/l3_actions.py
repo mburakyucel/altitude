@@ -7,7 +7,7 @@ import posixpath
 import re
 import subprocess
 
-from . import config, dispatch, engines, incidents, recovery, state as S, tasks as T
+from . import config, dispatch, engines, incidents, state as S, tasks as T
 
 
 class L3ActionError(RuntimeError):
@@ -16,8 +16,7 @@ class L3ActionError(RuntimeError):
 
 _ACTION_ID = re.compile(r"^[0-9a-f]{64}$")
 _VALID = {"new_task", "task_done", "task_block", "task_resume", "task_fyi", "task_hold_merge",
-          "github_issue", "github_issue_approve", "incident_new", "incident_amend", "recovery_hold",
-          "recovery_clear"}
+          "github_issue", "github_issue_approve", "incident_new", "incident_amend"}
 _PUBLICATION_SECRET = re.compile(
     r"(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|"
     r"xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{20,}|"
@@ -58,7 +57,7 @@ def _validate(structured: object) -> dict | None:
     kind = action["type"]
     if kind in ("task_done", "task_block", "task_resume", "task_fyi", "task_hold_merge"):
         _need(action.get("slug"), "slug")
-    if kind in ("task_block", "recovery_hold", "recovery_clear"):
+    if kind == "task_block":
         _need(action.get("reason"), "reason")
     if kind == "new_task":
         _need(action.get("title"), "title")
@@ -336,12 +335,6 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
         fields = {key: data[key] for key in ("what", "evidence", "cause", "status") if data.get(key) is not None}
         incidents.amend_incident(project, iid, reason=_need(action.get("reason"), "reason"), actor="l3", **fields)
         return {"type": kind, "id": iid}
-    if kind == "recovery_hold":
-        recovery.hold(_need(action.get("reason"), "reason"), actor="l3")
-        return {"type": kind}
-    if kind == "recovery_clear":
-        recovery.clear(_need(action.get("reason"), "reason"), actor="l3")
-        return {"type": kind}
     raise L3ActionError(f"unknown L3 action {kind!r}")
 
 

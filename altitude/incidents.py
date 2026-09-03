@@ -48,15 +48,35 @@ def _fault_lock():
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
-    """Record a fault as evidence and an FYI without creating repair work.
+def _block_faulting_task(project: str, slug: str, reason: str) -> bool:
+    """Block the task a fault belongs to; True when that task is a repair task (source `recovery`).
 
-    One incident per kind per 24 hours keeps a persistent fault from flooding the evidence store. Explicit
-    operational recovery remains L3's responsibility; this function never dispatches or creates a task.
+    A task that is already blocked, finished, or missing stays as it is; the incident still records the fault.
     """
-    from . import tasks as T
+    try:
+        task = S.load_task(project, slug)
+    except (KeyError, OSError, ValueError):
+        return False
+    if task.get("state") in ("queued", "running", "reported"):
+        try:
+            T.block(project, slug, reason, actor="altd", expected_state=task["state"])
+        except T.TransitionError:
+            pass
+    return task.get("source") == "recovery"
+
+
+def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
+    """Tier two of decision 4: block the faulting task, file one incident per kind per day, tell L3 once.
+
+    The incident and the L3 message go to the project that owns Altitude's code (`altitude` when it is
+    registered, else the faulting project). A fault raised by a repair task reaches the Inbox only, so a
+    repair cannot wake L3 in a loop. Returns None when this kind was already filed within the window.
+    """
+    from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
+    repair = bool(project and task) and _block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}")
+    target = "altitude" if "altitude" in config.load_projects() else project
     with _fault_lock():
         faults = S.read_json(FAULTS, {}) or {}
         rec = faults.get(kind) or {}
@@ -67,28 +87,24 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
                "detail": detail[:500], "project": project, "task": task}
         faults[kind] = rec
         S.write_json(FAULTS, faults)
-        from . import recovery
-        recovery.hold(detail or kind, kind=kind, incident=rec.get("incident"), actor="altd")
-        target = "altitude" if "altitude" in config.load_projects() else project
-        # The fuse and its one L3 wake are durable before incident rendering or FYI I/O. Those enrich the same
-        # episode afterward; their failure must never leave a silent hold that nobody is asked to inspect.
-        recovery.request_l3_attention(target, kind=kind, incident=rec.get("incident"))
-        if recent:
+        if recent or not target:
             return None
-        inc = None
-        if target:
-            inc = new_incident(target, title=f"system fault: {kind}", task=task,
-                               what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
-                               evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
-                               tags=["system-fault", kind], actor="altd")
-            rec["incident"] = inc["id"]
-            faults[kind] = rec
-            S.write_json(FAULTS, faults)
-            recovery.attach_incident(kind, inc["id"])
-            T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}. Evidence recorded; no recovery work was created automatically.", actor="altd")
-        if inc:
-            recovery.request_l3_attention(target, kind=kind, incident=inc["id"])
-        return {"kind": kind, "incident": inc["id"] if inc else None, "count": rec["count"]}
+        inc = new_incident(target, title=f"system fault: {kind}", task=task,
+                           what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
+                           evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
+                           tags=["system-fault", kind], actor="altd")
+        rec["incident"] = inc["id"]
+        faults[kind] = rec
+        S.write_json(FAULTS, faults)
+    where = f"{project}/{task}" if project and task else project or target
+    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}."
+          + (" Raised by a repair task, so L3 is not woken again." if repair else ""), actor="altd")
+    if not repair:
+        l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
+                         f"Its task is blocked and incident {inc['id']} holds the evidence. Read the evidence, record "
+                         "what you learned with `alt incident amend`, then fix the cause directly if that is trivial or "
+                         "create one ordinary task. Answer in two or three plain sentences.", trigger="incident")
+    return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
 
 
 def index() -> list[dict]:

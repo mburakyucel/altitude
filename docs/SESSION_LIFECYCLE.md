@@ -47,7 +47,7 @@ identities on purpose:
 
 ```text
 queued task
-  ├─ recovery/WIP/lease and Git provenance gates
+  ├─ WIP/lease and Git provenance gates
   ├─ weekly-first provider decision (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
@@ -76,7 +76,7 @@ worker identity; those values are not fields in the message row. Under the task'
 4. atomically binds the replacement worker (and Claude's replacement session id, when it changes).
 
 Altitude never starts the replacement before stopping the old writer. A failed stop starts nothing.
-A failed resume leaves the provider conversation and task evidence available for L3 recovery. A
+A failed resume blocks the task and leaves the provider conversation and task evidence to L3. A
 cross-provider continuation is a deliberate new attempt based on saved work, not a fake transcript
 resume.
 
@@ -95,10 +95,9 @@ complete turn, including descendant processes, is placed in a transient user cgr
 result until that containment unit is empty.
 
 A Codex L2's final response is a strict, inert action object. After worker exit, the trusted broker
-validates the object against the current dispatch, session, worker, lease, and recovery state. The
+validates the object against the current dispatch, session, worker, and lease state. The
 broker—not the model process—may then post the human-facing message, land a PR, complete a no-code
-task, block, continue the same thread, or launch optional helpers. A held action is durable and does
-not spend another model turn merely to wait for recovery.
+task, block, continue the same thread, or launch optional helpers.
 
 ## L3 sessions and provider changes
 

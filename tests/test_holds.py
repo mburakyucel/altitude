@@ -8,7 +8,7 @@ from pathlib import Path
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-holds-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, dispatch, engines, monitor, recovery  # noqa: E402
+from altitude import config, state as S, tasks as T, dispatch, engines, monitor  # noqa: E402
 
 
 class TestHolds(unittest.TestCase):
@@ -25,13 +25,11 @@ class TestHolds(unittest.TestCase):
         engines.claude_agents = cls._agents
 
     def setUp(self):
-        recovery.hold_path().unlink(missing_ok=True)
         self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
 
     def tearDown(self):
         monitor.quota = self._quota
-        recovery.hold_path().unlink(missing_ok=True)
 
     def test_unrelated_tasks_do_not_serialize(self):
         a = T.new("h", "fix server", "r", actor="l3", paths=["altitude/server.py"])

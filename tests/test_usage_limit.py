@@ -10,7 +10,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="altitude-limit-")
 os.environ["ALTITUDE_HOME"] = _TMP
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, engines, dispatch, monitor, recovery, tasks as T, digest  # noqa: E402
+from altitude import config, state as S, engines, dispatch, monitor, tasks as T, digest  # noqa: E402
 
 LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 
@@ -34,7 +34,6 @@ class TestDetect(unittest.TestCase):
 
 class TestHold(unittest.TestCase):
     def setUp(self):
-        recovery.hold_path().unlink(missing_ok=True)
         config.ensure_root()
         config.save_projects({"altitude": {"name": "altitude", "path": _TMP}})
         self._quota = monitor.quota
@@ -43,7 +42,6 @@ class TestHold(unittest.TestCase):
     def tearDown(self):
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")  # never leave a live hold behind for other tests
         monitor.quota = self._quota
-        recovery.hold_path().unlink(missing_ok=True)
 
     def test_hold_until_reset_then_clear(self):
         future = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="seconds")

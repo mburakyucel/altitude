@@ -25,9 +25,10 @@ five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source fo
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
-- A system fault records private evidence and activates the recovery fuse. L3 coordinates
-  operational recovery and may delegate one explicit recovery L2; incidents never create work or
-  sessions recursively.
+- A system fault blocks only its own task, records private incident evidence, and leaves one
+  message for the project's L3, which records the learning and fixes the cause directly or creates
+  one ordinary task. An incident raised by that repair task goes to the Inbox instead of waking L3
+  again.
 
 ## Repository and runtime
 
@@ -39,7 +40,7 @@ an inert action for trusted backend validation. `web/` is the React UI built int
 the Python server to serve.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
-tasks, archived tasks, L3 and L2 conversations, monitor snapshots, recovery state, and private
+tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private
 incident evidence. Runtime state is not source-controlled.
 
 Useful commands:

@@ -83,10 +83,6 @@ def main(argv=None) -> None:
     inew = ics.add_parser("new"); inew.add_argument("--title", required=True); inew.add_argument("--task"); inew.add_argument("--what", required=True); inew.add_argument("--evidence", required=True); inew.add_argument("--cause", required=True); inew.add_argument("--tag", action="append", default=[])
     iam = ics.add_parser("amend"); iam.add_argument("id"); iam.add_argument("--what"); iam.add_argument("--evidence"); iam.add_argument("--cause"); iam.add_argument("--status", choices=["open", "watch", "closed"]); iam.add_argument("--reason", required=True)
     ics.add_parser("list")
-    rc = sub.add_parser("recovery"); rcs = rc.add_subparsers(dest="recovery_cmd", required=True)
-    rcs.add_parser("status")
-    rh = rcs.add_parser("hold"); rh.add_argument("--reason", required=True)
-    rr = rcs.add_parser("clear"); rr.add_argument("--reason", required=True)
     sv = sub.add_parser("serve"); sv.add_argument("--host"); sv.add_argument("--port", type=int)
     sub.add_parser("install-statusline")
     sub.add_parser("install-git-guards")
@@ -256,18 +252,6 @@ def main(argv=None) -> None:
                 sys.exit(f"alt: {e}")
         else:
             out([r for r in incidents.index() if r["project"] == p])
-        return
-    if c == "recovery":
-        from altitude import recovery
-        if args.recovery_cmd == "hold":
-            out(recovery.hold(args.reason, actor=ACTOR))
-        elif args.recovery_cmd == "clear":
-            try:
-                out(recovery.clear(args.reason, actor=ACTOR))
-            except ValueError as e:
-                sys.exit(f"alt: {e}")
-        else:
-            out(recovery.status() or {"active": False})
         return
     if c == "serve":
         from altitude import server; server.main(host=args.host, port=args.port); return

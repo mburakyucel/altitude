@@ -47,7 +47,7 @@ os.environ["PATH"] = str(FAKE) + os.pathsep + os.environ.get("PATH", "/usr/bin:/
 os.environ["CODEX_BIN"] = str(FAKE / "codex")
 os.environ["CLAUDE_BIN"] = str(FAKE / "claude")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, l1, route, monitor, recovery  # noqa: E402
+from altitude import config, state as S, tasks as T, l1, route, monitor  # noqa: E402
 
 REPO = _TMP / "repo"
 
@@ -84,9 +84,6 @@ class TestL1Runs(unittest.TestCase):
         self._owner_env = {key: os.environ.get(key) for key in keys}
 
     def tearDown(self):
-        # A sandbox-denial case intentionally trips the production recovery fuse. Keep that
-        # evidence from leaking into unrelated resume tests in the same discovery process.
-        recovery.hold_path().unlink(missing_ok=True)
         for key, value in self._owner_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -152,7 +149,7 @@ class TestL1Runs(unittest.TestCase):
         slug, brief = self._task("l1-review")
         # This is a routing/launch test, not a Codex sandbox integration test. Record the
         # completed author generation directly so a host-level Codex preflight denial cannot
-        # trip the recovery fuse and make the independent Claude reviewer look broken.
+        # file a system fault and make the independent Claude reviewer look broken.
         l1.save("altitude", slug, {
             "n": 1, "name": "implementer-1", "role": "implementer", "engine": "codex",
             "why": "default policy", "model": None,
@@ -229,7 +226,7 @@ class TestL1Runs(unittest.TestCase):
         self.assertEqual(rec["branch"], f"worktree-{slug}")
         _wait_done("altitude", slug, rec["name"])
 
-    def test_stale_blocked_and_recovery_held_l2s_cannot_launch_l1(self):
+    def test_stale_and_blocked_l2s_cannot_launch_l1(self):
         slug, brief = self._task("l1-owner-fence")
         with self.assertRaisesRegex(T.TransitionError, "ownership changed"):
             l1.start("altitude", slug, brief, expected_dispatch_id=f"{slug}-1",
@@ -240,14 +237,6 @@ class TestL1Runs(unittest.TestCase):
             task["state"] = "blocked"
             S.save_task("altitude", task)
         with self.assertRaisesRegex(T.TransitionError, "current running L2"):
-            l1.start("altitude", slug, brief)
-
-        with S.project_lock("altitude"):
-            task = S.load_task("altitude", slug)
-            task["state"] = "running"
-            S.save_task("altitude", task)
-        recovery.hold("test recovery episode", kind="test", actor="l3")
-        with self.assertRaisesRegex(T.TransitionError, "recovery hold"):
             l1.start("altitude", slug, brief)
         self.assertEqual(l1.list_runs("altitude", slug), [])
 

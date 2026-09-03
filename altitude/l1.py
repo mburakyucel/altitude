@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, dispatch, engines, git_policy, incidents, recovery, route, state as S, tasks as T
+from . import config, dispatch, engines, git_policy, incidents, route, state as S, tasks as T
 
 RESULT_RE = re.compile(r"^RESULT:\s*(.+)$", re.M)
 PR_RE = re.compile(r"(?:pull/|#)(\d+)")
@@ -103,17 +103,10 @@ def _require_current_l2(task: dict, slug: str, dispatch_id: str | None, l2_token
 
 @contextmanager
 def _launch_permission(project: str, slug: str, dispatch_id: str, l2_token: str):
-    """Fence the final L1 Popen against both recovery and a concurrent L2 replacement."""
-    # Project state can already reach the recovery launch barrier while holding this lock
-    # (for example, quota-fault detection during dispatch). Keep that established lock order
-    # here as project -> launch; the reverse order can deadlock fault publication against L1.
+    """Fence the final L1 Popen against a concurrent L2 replacement."""
     with S.project_lock(project):
-        snapshot = S.load_task(project, slug)
-        _require_current_l2(snapshot, slug, dispatch_id, l2_token)
-        with recovery.launch_permission(project, snapshot):
-            current = S.load_task(project, slug)
-            _require_current_l2(current, slug, dispatch_id, l2_token)
-            yield
+        _require_current_l2(S.load_task(project, slug), slug, dispatch_id, l2_token)
+        yield
 
 
 def start(project: str, slug: str, brief: Path, *, role: str = "implementer", engine: str | None = None,
@@ -128,9 +121,6 @@ def start(project: str, slug: str, brief: Path, *, role: str = "implementer", en
     expected_dispatch_id = expected_dispatch_id or os.environ.get("ALTITUDE_DISPATCH_ID")
     expected_l2_token = expected_l2_token or os.environ.get("ALTITUDE_L2_TOKEN")
     _require_current_l2(task, slug, expected_dispatch_id, expected_l2_token)
-    held = recovery.dispatch_hold(project, task)
-    if held:
-        raise T.TransitionError(held)
     lock_path = runs_dir(project, slug) / ".lock"
     with open(lock_path, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -252,10 +242,6 @@ def _spawn(project: str, slug: str, brief: Path, task: dict, *, role: str, engin
         with _launch_permission(project, slug, expected_dispatch_id, expected_l2_token):
             child = subprocess.Popen([sys.executable, str(config.REPO / "bin" / "alt"), "l1", "_exec", slug, name], cwd=str(workdir),
                                      stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
-    except recovery.LaunchHeld as e:
-        rec.update({"done": S.now(), "result": {"error": str(e), "pr": None, "summary": None}})
-        save(project, slug, rec)
-        raise T.TransitionError(str(e)) from e
     except T.TransitionError as e:
         rec.update({"done": S.now(), "result": {"error": str(e), "pr": None, "summary": None}})
         save(project, slug, rec)
@@ -296,12 +282,12 @@ def exec_run(project: str, slug: str, name: str) -> dict:
                     codex_prompt, cwd=runtime, sandbox="workspace-write", readable_roots=[wt],
                     model=rec["model"], timeout=config.L1_TIMEOUT, schema=schema,
                     effort=config.CODEX_EFFORT.get(rec["role"]),
-                    fault_context={"project": project, "task": slug})
+                    fault_context={"project": project})
             else:
                 res = engines.codex_exec(prompt, cwd=wt, sandbox="workspace-write",
                                          model=rec["model"], timeout=config.L1_TIMEOUT, schema=schema,
                                          effort=config.CODEX_EFFORT.get(rec["role"]),
-                                         fault_context={"project": project, "task": slug})
+                                         fault_context={"project": project})
         else:
             res = engines.claude_print(prompt, cwd=wt, model=rec["model"], permission_mode="plan" if rec["role"] == "reviewer" else "auto",
                                        max_turns=config.L1_MAX_TURNS, timeout=config.L1_TIMEOUT, schema=schema,
@@ -348,7 +334,7 @@ def exec_run(project: str, slug: str, name: str) -> dict:
     if denial:
         if res.get("fault_recorded") != "codex-sandbox":
             try:
-                incidents.system_fault(kind="codex-sandbox", detail=denial, project=project, task=slug)
+                incidents.system_fault(kind="codex-sandbox", detail=f"helper of {slug}: {denial}", project=project)
             except Exception as e:  # noqa: BLE001 — a fault raised about a broken run must not break the record too
                 err = f"{err or ''}\nsystem_fault failed: {type(e).__name__}: {e}".strip()
         summary = "engine fault: codex-sandbox"

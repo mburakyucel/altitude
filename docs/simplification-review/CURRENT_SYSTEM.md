@@ -30,7 +30,7 @@ Burak
   |
   +-- operator commands ------> `bin/alt` / restart script / trusted backend
 
-fault evidence -> incident index -> recovery hold/fuse -> one L3 recovery-attention turn
+fault evidence -> blocked task + incident index -> one queued L3 message
 ```
 
 The system has one persistent Python server (`altitude.server`) plus provider, Git/GitHub, and
@@ -76,14 +76,14 @@ The current logical/physical identity split is:
 | HTTP scheduling and APIs | [`server.py`](../../altitude/server.py) | Deduplicated background jobs, periodic tick, L3/L2 callbacks, recovery wakeup, JSON and stream endpoints, static SPA serving. |
 | L3 conversation | [`l3.py`](../../altitude/l3.py), [`l3_actions.py`](../../altitude/l3_actions.py) | Selects Claude/Codex from quota evidence and keeps provider-specific resumable sessions. Claude runs with a direct scoped-CLI contract; contained Codex returns one structured coordination action for the trusted broker. |
 | Task lifecycle/conversation | [`tasks.py`](../../altitude/tasks.py), [`state.py`](../../altitude/state.py) | Creates, transitions, blocks, resumes, reports, completes, and archives. Command paths use different check subsets; Burak messages reject stale displayed identities only when the client supplies them. |
-| Dispatch and steering | [`dispatch.py`](../../altitude/dispatch.py) | Creates/validates task worktrees, renders briefs, selects provider, starts workers, replaces a running worker on steering, polls liveness, applies WIP/lease/recovery holds, and cleans up. |
+| Dispatch and steering | [`dispatch.py`](../../altitude/dispatch.py) | Creates/validates task worktrees, renders briefs, selects provider, starts workers, replaces a running worker on steering, polls liveness, applies WIP/lease holds, and cleans up. |
 | Provider execution | [`engines.py`](../../altitude/engines.py), [`route.py`](../../altitude/route.py), [`quota_codex.py`](../../altitude/quota_codex.py) | Claude CLI and Codex CLI adapters, quota-based routing, Codex sandbox/cgroup containment, worker records, stop/resume, and synchronous contained turns. |
 | Codex L2 action broker | [`actions.py`](../../altitude/actions.py), [`schemas/l2_action.json`](../../schemas/l2_action.json) | Posts the common message and validates one `publish`, `complete_no_code`, `block`, `request_helpers`, or `continue` action after contained worker exit. Publication synthesizes the report. |
 | Optional helpers | [`l1.py`](../../altitude/l1.py), helper/reviewer personas and schemas | Starts implementer/reviewer children, tracks PID/job metadata, captures implementer patch/summary or reviewer findings, waits, and projects compact results. |
 | Git policy | [`git_policy.py`](../../altitude/git_policy.py), [`hooks/`](../../hooks) | Fetch/base checks, required task trailers, installed hooks, protected-ref enforcement, and service checkout preflight. |
 | Publication | [`land.py`](../../altitude/land.py), [`verify.py`](../../altitude/verify.py) | Validates task authority/scope, commits, pushes, creates/reads PRs, checks exact head/base and CI or local tests, optionally merges, and verifies reports. |
 | GitHub issue intake | [`github_intake.py`](../../altitude/github_intake.py) | Inlines the one explicitly referenced issue into the request when the task is created; a failed fetch refuses the task. |
-| Recovery/incidents | [`incidents.py`](../../altitude/incidents.py), [`recovery.py`](../../altitude/recovery.py) | Deduplicates system faults, persists incident evidence and a global hold, fences launches, requests one L3 recovery-attention turn, and permits one claimed repair task. |
+| Faults/incidents | [`incidents.py`](../../altitude/incidents.py) | Blocks the faulting task, deduplicates faults into incident evidence, and queues one L3 message per incident (phase 2). |
 | Transcript/status | [`transcript.py`](../../altitude/transcript.py), [`status.py`](../../altitude/status.py), [`monitor.py`](../../altitude/monitor.py) | Generation-fenced live transcript with redaction (portable bundles removed in phase 1b), task rollups, provider/session/context/quota monitoring. |
 | Operator interface | [`bin/alt`](../../bin/alt), [`scripts/restart_altitude.py`](../../scripts/restart_altitude.py), `Makefile` | CLI commands, guarded restart/build/health workflow, tests, service install, and operational inspection. |
 | Web UI | [`web/src`](../../web/src) | Projects, Inbox, project detail, L3 chat, task conversation, monitor, and opt-in live transcript. |
@@ -126,11 +126,9 @@ current when the server acquires the task lock instead of reliably rejecting a s
 
 ### Current self-healing behavior
 
-`incidents.system_fault` activates recovery state. `server.tick` drains fault evidence, polls work,
-resumes pending actions, and wakes the selected L3 project when recovery attention is due. L3 is
-sandboxed/brokered for Codex and does not have arbitrary host authority. The recovery mechanism can
-hold routine launches and allow one claimed recovery task; it does not provide a universal
-transactional rollback or automatic service restart.
+`incidents.system_fault` blocks the faulting task, files one incident per kind per day, and leaves one
+message in the project's L3 queue; `server.tick` drains hook faults, polls work, and delivers queued L3
+messages when L3 is free. There is no global hold, repair slot, or automatic service restart.
 
 ## Known documentation boundary
 

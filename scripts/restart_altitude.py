@@ -21,7 +21,7 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import config, dispatch, engines, git_policy, recovery, state as S  # noqa: E402
+from altitude import config, dispatch, engines, git_policy, state as S  # noqa: E402
 
 
 SERVICE = "altitude.service"
@@ -245,14 +245,10 @@ def main() -> int:
         print("Building the web app in a staging directory...")
         staging = build_bundle()
         require_deployed_checkout()
-        # The same cross-process lock surrounds every final worker launch. A
-        # queued launch cannot slip between this idle proof and the restart,
-        # and the restarted timer waits here until health verification ends.
-        with recovery._launch_lock():  # noqa: SLF001 -- trusted operator boundary uses the canonical launch lock
-            print("Checking that Altitude is idle...")
-            require_idle()
-            print("Restarting Altitude and waiting for API/UI health...")
-            publish_and_restart(staging)
+        print("Checking that Altitude is idle...")
+        require_idle()
+        print("Restarting Altitude and waiting for API/UI health...")
+        publish_and_restart(staging)
         staging = None
     except RestartError as exc:
         print(f"Altitude restart failed: {exc}", file=sys.stderr)
