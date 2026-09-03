@@ -201,6 +201,40 @@
   }
 }
 
+/* Unlayered safe-area padding overrides the shell utilities only on Chat. */
+main:has(> .chat-route) {
+  display: flex;
+  height: 100vh;
+  padding: calc(1rem + env(safe-area-inset-top, 0px)) calc(1rem + env(safe-area-inset-right, 0px))
+    calc(6rem + env(safe-area-inset-bottom, 0px)) calc(1rem + env(safe-area-inset-left, 0px));
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  main:has(> .chat-route) {
+    height: 100dvh;
+  }
+}
+
+@media (min-width: 48rem) {
+  main:has(> .chat-route) {
+    padding: calc(2rem + env(safe-area-inset-top, 0px)) calc(2rem + env(safe-area-inset-right, 0px))
+      calc(2rem + env(safe-area-inset-bottom, 0px)) calc(2rem + env(safe-area-inset-left, 0px));
+  }
+}
+
+/* iOS Safari zooms focused controls below 16px, including in landscape when the width reaches md. */
+.chat-composer {
+  font-size: 16px;
+}
+
+@media (min-width: 48rem) and (hover: hover) and (pointer: fine) {
+  .chat-composer {
+    font-size: var(--text-body);
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

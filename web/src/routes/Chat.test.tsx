@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -72,6 +72,29 @@ describe("Chat", () => {
     expect(screen.getByText("L3 · chat · 4m · ctx 12%")).toBeInTheDocument();
   });
 
+  it("keeps only the transcript in the bounded scroll region", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) return jsonResponse(chatView);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+    renderApp({ route });
+
+    const transcript = await screen.findByRole("region", { name: "Transcript" });
+    const chatRoute = transcript.closest(".chat-route");
+
+    expect(chatRoute).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+    expect(chatRoute?.parentElement).toBe(screen.getByRole("main"));
+    expect(transcript).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(transcript).not.toContainElement(screen.getByLabelText("Message L3"));
+    expect(transcript).not.toContainElement(screen.getByRole("navigation", { name: "Projects" }));
+    expect(screen.getByLabelText("Message L3")).toHaveClass("chat-composer");
+  });
+
   it("streams the reply into the transcript across chunk boundaries", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -138,6 +161,67 @@ describe("Chat", () => {
     await waitFor(() => expect(pins()).toHaveLength(2));
     expect(pins()[1]).toEqual({ project: "altitude", engine: null });
     await waitFor(() => expect(select.value).toBe("auto"));
+  });
+
+  it("follows streamed text inside the transcript until the reader scrolls away", async () => {
+    const encoder = new TextEncoder();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streamController = controller;
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    const transcript = await screen.findByRole("region", { name: "Transcript" });
+    let scrollTop = 0;
+    const scrollWrites: number[] = [];
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 300 },
+      scrollHeight: { configurable: true, value: 900 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+          scrollWrites.push(value);
+        },
+      },
+    });
+
+    await user.type(screen.getByLabelText("Message L3"), "status?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("you · sending");
+    await waitFor(() => expect(scrollWrites).toContain(900));
+
+    scrollWrites.length = 0;
+    await act(async () => {
+      streamController?.enqueue(encoder.encode('{"t":"first"}\n'));
+    });
+    await screen.findByText("first");
+    await waitFor(() => expect(scrollWrites).toContain(900));
+
+    scrollTop = 100;
+    fireEvent.scroll(transcript);
+    scrollWrites.length = 0;
+    await act(async () => {
+      streamController?.enqueue(encoder.encode('{"t":" second"}\n{"done":{"error":null}}'));
+      streamController?.close();
+    });
+    await screen.findByText("first second");
+    expect(scrollWrites).toHaveLength(0);
   });
 
   it("toasts 'L3 is busy' on 409 and does not retry", async () => {
