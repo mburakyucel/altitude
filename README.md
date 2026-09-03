@@ -22,6 +22,8 @@ phase deleted.
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
+- An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;
+  Burak sees only what L3 escalates or what the L2 flags for him.
 - A system fault blocks only its own task, records private incident evidence, and leaves one
   message for the project's L3, which records the learning and fixes the cause directly or creates
   one ordinary task. An incident raised by that repair task goes to the Inbox instead of waking L3

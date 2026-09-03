@@ -26,7 +26,7 @@ class TransitionError(Exception):
     pass
 
 
-TASK_MESSAGE_ROLES = ("burak", "l2")
+TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
@@ -57,8 +57,8 @@ def _rows(path: Path, what: str) -> list[dict]:
 
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
             expected_attempt: int | None = None) -> dict:
-    """Append one message to the task conversation. Burak's messages also wait in the task's inbox until the worker
-    reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
+    """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
+    the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
@@ -75,7 +75,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         row = {"id": uuid.uuid4().hex, "at": S.now(), "role": role, "text": text, "by": by or role}
         d = S.task_dir(project, slug)
         _append_jsonl(d / "conversation.jsonl", row)
-        if role == "burak":
+        if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
             _append_jsonl(d / "inbox.jsonl", row)
         S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
         return row
@@ -123,6 +123,12 @@ def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them."""
     return "\n\n".join(f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}):\n{row['text']}"
                        for row in rows)
+
+
+def _clear_block(task: dict) -> None:
+    task["blocked_reason"] = None
+    for key in ("resume_after", "waiting_on", "fault", "escalated"):
+        task.pop(key, None)
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
@@ -197,7 +203,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
 def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        task["blocked_reason"] = None
+        _clear_block(task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
         S.regen_state_md(project)
@@ -241,7 +247,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
                 raise TransitionError(f"{slug}: latest block did not come from {expected_block_from}")
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
-        task["blocked_reason"] = None
+        _clear_block(task)
         if verified.get("prs"):
             task["prs"] = sorted(set(task.get("prs", []) + list(verified["prs"])))
         return _move(project, task, "reported", actor, verdict=verified.get("verdict"))
@@ -267,8 +273,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
         task = S.load_task(project, slug)
         if agent_id:
             task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
-        task["blocked_reason"] = None
-        task.pop("resume_after", None)
+        _clear_block(task)
         return _move(project, task, "running", actor, **ev)
 
 
@@ -282,9 +287,8 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         task = S.load_task(project, slug)
         if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
-        task.update({"blocked_reason": None, "agent_id": None, "session_id": None, "l2_engine": engine,
-                     "engine_model": None, "routing": None})
-        task.pop("resume_after", None)
+        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None, "routing": None})
+        _clear_block(task)
         return _move(project, task, "queued", actor, **ev)
 
 
@@ -394,15 +398,42 @@ def inbox(project: str, limit: int = 50) -> list[dict]:
 
 
 def decisions(project: str) -> list[dict]:
-    """Tasks blocked on user input. Ordinary task steering happens directly with the L2."""
+    """Tasks blocked on Burak: an L2's block flagged for him, L3's escalation, or a block from before L3 saw
+    blocks first. A block waiting on L3, or on a timed hold, is Altitude's wait, not a decision."""
     out = []
     for t in S.list_tasks(project):
-        if t["state"] == "blocked" and not t.get("resume_after"):  # a hold is Altitude's wait, not a decision
+        if t["state"] == "blocked" and not t.get("resume_after") and t.get("waiting_on", "burak") == "burak":
+            who = "L3 asks" if t.get("escalated") else "Stopped mid-task"
             out.append({"project": project, "slug": t["slug"], "title": t["title"],
-                        "question": f"Stopped mid-task: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
+                        "question": f"{who}: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
                         "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",
                         "detail": t.get("blocked_reason")})
     return out
+
+
+def block_question(slug: str, reason: str) -> str:
+    """The message L3 receives when an L2 blocks: answer from the record, or hand Burak one plain dilemma."""
+    return (f"Task `{slug}` blocked and asks: {reason[:800]}\n\n"
+            f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
+            f"decision settles it, answer with `alt task message {slug} \"<answer>\"`; that resumes the task. When the "
+            "call is Burak's (taste, priorities, spend, a paradigm decision, anything the brief marked as his), or the "
+            f"L2 is insisting on a point you already answered, run `alt task escalate {slug} --question \"<one plain "
+            "dilemma with your recommendation>\"`. Reply in one or two plain sentences.")
+
+
+def escalate(project: str, slug: str, question: str, actor: str = "l3") -> dict:
+    """L3 hands a blocked task's question to Burak as one plain dilemma; the L2's own words stay in the events."""
+    question = (question or "").strip()
+    if not question:
+        raise TransitionError("escalation needs the question")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "blocked":
+            raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
+        task.update({"waiting_on": "burak", "escalated": True, "blocked_reason": question})
+        S.save_task(project, task)
+    S.append_event(project, slug, "escalated", by=actor, question=question)
+    return task
 
 
 def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") -> dict:

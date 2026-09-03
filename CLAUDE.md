@@ -11,9 +11,10 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 
 - L3 is Burak's project-level point of contact. It uses judgment to answer, coordinate, or create
   one task owned by one L2.
-- L2 owns a task end-to-end and talks directly with Burak about task-specific questions. It may
-  implement directly or delegate bounded slices to its engine's own subagents; Altitude does not
-  track them, and delegation never transfers ownership.
+- L2 owns a task end-to-end. Its block goes to L3 first; it flags a block for Burak only when the
+  brief says so or the call is plainly his. Burak can still steer it directly in the task
+  conversation. It may implement directly or delegate bounded slices to its engine's own subagents;
+  Altitude does not track them, and delegation never transfers ownership.
 
 ## Boundaries
 
@@ -35,8 +36,8 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 
 A system fault blocks only its own task, files an incident, and leaves one message for the
 project's L3, whether altd detected it or an L2 reported it with `alt task block --fault`. L3 fixes
-the cause or creates the one repair task; Burak is not the one to repair the machine. There is no global hold: other tasks keep running. Resume a task blocked by a fault
-once its cause is fixed.
+the cause or creates the one repair task; Burak is not the one to repair the machine. There is no global hold: other tasks keep running. After a restart L3 receives the list of active tasks and resumes the ones blocked by a fault the
+restart fixed.
 
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle
 action requires separate explicit authorization and post-change health verification.

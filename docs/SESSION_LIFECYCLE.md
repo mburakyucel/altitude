@@ -46,7 +46,9 @@ conversation and to its inbox. Nothing is killed. A running Claude L2 receives t
 the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the
 session is about to stop. A running Codex L2 receives it when its current turn ends and the message resumes the
 thread with the inbox. A blocked task resumes at once with the message. Delivered messages leave the inbox; the
-conversation keeps them.
+conversation keeps them. An L2's block goes to L3 first: L3's `alt task message` resumes it, or
+`alt task escalate` turns it into an Inbox card for Burak; `--for-burak` on the block skips L3. On start,
+altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
 `dispatch.resume` is the only way a session is launched again:
 

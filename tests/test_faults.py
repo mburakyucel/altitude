@@ -62,8 +62,35 @@ class TestSystemFault(AltitudeCase):
         blocked = S.load_task(PROJECT, slug)
         self.assertEqual(blocked["state"], "blocked")
         self.assertIn(f"system fault [worker:{slug}]: gitdir is read-only", blocked["blocked_reason"])
+        self.assertEqual((blocked["waiting_on"], blocked["fault"]), ("l3", f"worker:{slug}"))
+        self.assertEqual(T.decisions(PROJECT), [], "a fault is L3's, not a card for Burak")
         self.assertEqual([row["trigger"] for row in self.queued()], ["incident"])
         self.assertIn(slug, self.queued()[0]["text"])
+
+    def test_a_fault_tags_a_task_that_had_already_blocked_itself(self):
+        task = T.new(PROJECT, "already blocked", "request", actor="burak")
+        task.update({"state": "blocked", "blocked_reason": "gitdir is read-only"}); S.save_task(PROJECT, task)
+        incidents.system_fault("worker:" + task["slug"], "gitdir is read-only", project=PROJECT, task=task["slug"])
+        tagged = S.load_task(PROJECT, task["slug"])
+        self.assertEqual((tagged["state"], tagged["waiting_on"], tagged["fault"]), ("blocked", "l3", "worker:" + task["slug"]))
+
+    def test_restart_notice_hands_the_active_tasks_to_l3(self):
+        from altitude import server
+        faulty = T.new(PROJECT, "faulty", "request", actor="burak")
+        incidents.system_fault("worker:" + faulty["slug"], "gitdir is read-only", project=PROJECT, task=faulty["slug"])
+        running = T.new(PROJECT, "running fine", "request", actor="burak")
+        running.update({"state": "running"}); S.save_task(PROJECT, running)
+        done = T.new(PROJECT, "finished", "request", actor="burak")
+        done.update({"state": "done"}); S.save_task(PROJECT, done)
+        with mock.patch.object(server, "log"):
+            server.restart_notice()
+        notice = [row for row in self.queued() if row["trigger"] == "restart"]
+        self.assertEqual(len(notice), 1)
+        text = notice[0]["text"]
+        self.assertIn(f"{faulty['slug']}: blocked (fault worker:{faulty['slug']})", text)
+        self.assertIn(f"{running['slug']}: running (running)", text)
+        self.assertNotIn(done["slug"], text)
+        self.assertIn("alt task resume", text)
 
     def test_repair_task_fault_reaches_the_inbox_without_waking_l3(self):
         task = T.new(PROJECT, "repair probe", "request", actor="burak", source="recovery")
