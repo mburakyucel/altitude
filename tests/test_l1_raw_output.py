@@ -107,9 +107,8 @@ class TestL1RawOutput(unittest.TestCase):
         self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
         self.assertEqual(faults, [{
             "kind": "codex-sandbox",
-            "detail": "bwrap: setting up uid map: Permission denied",
+            "detail": "helper of task: bwrap: setting up uid map: Permission denied",
             "project": "project",
-            "task": "task",
         }])
 
     def test_landed_pr_ignores_bwrap_line_in_raw_stream(self):

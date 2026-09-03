@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, recovery, state as S, tasks as T, transcript, verify
+from . import actions, config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -324,8 +324,6 @@ def dispatch_waiting(project: str) -> None:
             continue
         hold = dispatch.wip_hold(project, t)
         if hold and dispatch.per_task_hold(hold):
-            if hold.startswith("recovery hold"):
-                S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             continue
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
@@ -336,13 +334,11 @@ def dispatch_waiting(project: str) -> None:
         except dispatch.DispatchFailure as e:
             log(f"[{project}/{t['slug']}] {e}")
         except T.TransitionError as e:
-            log(f"[{project}/{t['slug']}] dispatch held before launch: {e}")
+            log(f"[{project}/{t['slug']}] dispatch refused: {e}")
         except Exception as e:  # noqa: BLE001
             log(f"[{project}/{t['slug']}] dispatch failed: {e}")
             dispatch.record_dispatch_failure(project, t["slug"], e)
-    hp = config.project_dir(project) / "hold.json"
-    if hp.exists() and not recovery.status():
-        hp.unlink()
+    (config.project_dir(project) / "hold.json").unlink(missing_ok=True)
 
 
 def drain_hook_faults() -> None:
@@ -356,75 +352,6 @@ def drain_hook_faults() -> None:
         incidents.system_fault("hook", ln[:400])
 
 
-def run_recovery_turn(project: str) -> None:
-    """Consume one durable recovery wake without turning a failed wake into another system fault."""
-    attention = None
-    try:
-        attention = recovery.claim_l3_attention(project)
-        if not attention:
-            return
-        episode, revision, claim = attention["episode"], attention["revision"], attention["claim"]
-        faults = ", ".join(
-            f"{row['kind']}" + (f" ({row['incident']})" if row.get("incident") else "")
-            for row in attention.get("faults") or []
-        ) or "system health fault"
-        prompt = (
-            f"Altitude recovery needs your attention for the active recovery episode. Fault evidence: {faults}. "
-            "Inspect the current recovery status and actual task/session state. Do not create routine work or a chain of "
-            "healing tasks. If code is genuinely needed, delegate the episode's single recovery L2. Never restart or "
-            "unmask Altitude without Burak's separate explicit authorization. Keep the fuse active until health is "
-            "verified. After stability returns, triage the incident evidence: report a narrow corrective follow-up as "
-            "an FYI, and preserve broad architecture, policy, or system work as a proposal or GitHub issue for Burak."
-        )
-        result = l3.turn(
-            project,
-            prompt,
-            trigger="system-recovery",
-            precheck=lambda: recovery.l3_attention_is_current(project, episode, revision, claim),
-        )
-        if result.get("skipped"):
-            return
-        error = result.get("error") or ("usage/capacity limited" if result.get("limited") else None)
-        if error or result.get("completed") is not True:
-            recovery.fail_l3_attention(project, episode, revision, claim,
-                                       str(error or "L3 turn did not record completion"))
-            log(f"[recovery:{project}] L3 turn remains pending after failure")
-            return
-        if recovery.complete_l3_attention(project, episode, revision, claim):
-            log(f"[recovery:{project}] L3 handled recovery episode {episode}")
-    except Exception as e:  # noqa: BLE001 — retry this same wake; never recursively file a workflow fault
-        if attention:
-            try:
-                recovery.fail_l3_attention(project, attention["episode"], attention["revision"],
-                                           attention["claim"], str(e))
-            except Exception as state_error:  # noqa: BLE001 — journal is the final non-recursive fallback
-                log(f"[recovery:{project}] could not preserve failed L3 wake: {state_error}")
-        log(f"[recovery:{project}] L3 turn failed and remains pending: {e}")
-
-
-def wake_recovery_l3(project: str) -> None:
-    try:
-        due = recovery.l3_attention_due(project)
-    except Exception as e:  # noqa: BLE001 — never recursively fault the fault-notification path
-        log(f"[recovery:{project}] cannot read the pending L3 wake: {e}")
-        return
-    if due:
-        spawn(f"recovery:{project}", run_recovery_turn, project)
-
-
-def resume_pending_actions(project: str) -> None:
-    """Retry trusted Codex actions held by the recovery fuse without spending another model turn."""
-    for task in actions.pending(project):
-        if task.get("state") not in ("running", "blocked") or recovery.dispatch_hold(project, task):
-            continue
-        worker = engines.codex_worker(task.get("agent_id"), job_root=dispatch.l2_job_root(project, task["slug"]))
-        action = (task.get("pending_action") or {}).get("action")
-        if not action:
-            continue
-        item = {"task": task, "agent": worker, "action": action}
-        spawn(f"pending-action:{project}:{task['slug']}", on_l2_finished, project, item)
-
-
 def tick() -> None:
     try:
         quota_codex.refresh_if_due()
@@ -433,8 +360,8 @@ def tick() -> None:
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
-            wake_recovery_l3(project)
-            resume_pending_actions(project)
+            if l3.queue_path(project).exists():
+                spawn(f"l3-queue:{project}", l3.deliver_queued, project)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)

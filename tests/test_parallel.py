@@ -4,7 +4,7 @@ from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-par-")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from altitude import config, state as S, tasks as T, dispatch, engines, monitor, recovery  # noqa: E402
+from altitude import config, state as S, tasks as T, dispatch, engines, monitor  # noqa: E402
 
 
 class TestLeases(unittest.TestCase):
@@ -15,13 +15,11 @@ class TestLeases(unittest.TestCase):
         engines.claude_agents = lambda: []  # no live sessions
 
     def setUp(self):
-        recovery.hold_path().unlink(missing_ok=True)
         self._quota = monitor.quota
         monitor.quota = lambda: {"known": True}
 
     def tearDown(self):
         monitor.quota = self._quota
-        recovery.hold_path().unlink(missing_ok=True)
 
     def test_overlap_semantics(self):
         self.assertEqual(dispatch.paths_overlap(["web/"], ["web/src/app.tsx"]), ["web/src/app.tsx"])

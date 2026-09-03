@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config, dispatch, engines, land, l1, recovery, state as S, tasks as T
+from . import config, dispatch, engines, land, l1, state as S, tasks as T
 
 ACTION_FIELDS = ("dispatch_id", "session_id", "agent_id")
 MAX_HELPERS = 4
@@ -105,43 +105,20 @@ def _require_contained_exit(project: str, task: dict) -> None:
         raise ActionError(f"{task['slug']}: Codex worker containment is not empty")
 
 
-def _defer_for_recovery(project: str, task: dict, reason: str) -> dict:
-    live = S.load_task(project, task["slug"])
-    if live.get("state") == "running":
-        try:
-            T.block(project, task["slug"], f"pending trusted action: {reason}",
-                    expected_state="running", expected_dispatch_id=task.get("dispatch_id"),
-                    expected_session_id=task.get("session_id"), expected_agent_id=task.get("agent_id"),
-                    expected_pending_identity=_identity(task))
-        except T.TransitionError as exc:
-            raise ActionError(str(exc)) from exc
-    return {"kind": "pending", "reason": reason}
-
-
 def _resume_same(project: str, task: dict, prompt: str) -> dict:
-    try:
-        if task.get("state") == "blocked":
-            result = dispatch.resume_blocked(
-                project, task["slug"], prompt, prefix="Altitude control plane: ",
-                expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-                expected_agent_id=task.get("agent_id"), expected_state="blocked",
-            )
-        else:
-            result = dispatch.resume_session(
-                project, task["slug"], prompt,
-                expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-                expected_agent_id=task.get("agent_id"), expected_state=task.get("state"),
-            )
-    except T.TransitionError:
-        # A recovery hold can race after the settled worker was stopped. Dispatch then durably stores this exact
-        # prompt as a blocked pending resume; that durable payload, rather than the old action, owns the retry.
-        live = S.load_task(project, task["slug"])
-        if (live.get("state") == "blocked" and live.get("resume_exact_prompt") is True
-                and live.get("resume_answer") == prompt):
-            _clear(project, task["slug"], _identity(task))
-            return {"kind": "pending", "reason": live.get("blocked_reason")}
-        raise
-    # Clear only after a replacement worker is durably bound, or after dispatch durably recorded a deferred prompt.
+    if task.get("state") == "blocked":
+        result = dispatch.resume_blocked(
+            project, task["slug"], prompt, prefix="Altitude control plane: ",
+            expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
+            expected_agent_id=task.get("agent_id"), expected_state="blocked",
+        )
+    else:
+        result = dispatch.resume_session(
+            project, task["slug"], prompt,
+            expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
+            expected_agent_id=task.get("agent_id"), expected_state=task.get("state"),
+        )
+    # Clear only after a replacement worker is durably bound.
     _clear(project, task["slug"], _identity(task))
     return {"kind": "pending" if result.get("deferred") else "resumed",
             "agent": result.get("agent"), "reason": result.get("waiting")}
@@ -256,9 +233,6 @@ def process_l2(project: str, item: dict) -> dict:
     action = _validate_shape(item.get("action") or (item.get("agent") or {}).get("action"))
     _require_contained_exit(project, task)
     record = _claim(project, task, action)
-    hold = recovery.dispatch_hold(project, S.load_task(project, task["slug"]))
-    if hold:
-        return _defer_for_recovery(project, task, hold)
     try:
         live = S.load_task(project, task["slug"])
         if live.get("state") == "blocked":
@@ -304,7 +278,3 @@ def process_l2(project: str, item: dict) -> dict:
                                 f"Trusted {kind} action was refused without changing providers: {exc}")
         except T.TransitionError as resume_exc:
             raise ActionError(f"{kind} action and same-thread correction were fenced: {resume_exc}") from resume_exc
-
-
-def pending(project: str) -> list[dict]:
-    return [task for task in S.list_tasks(project) if task.get("pending_action")]

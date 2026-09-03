@@ -14,9 +14,9 @@ def short_reason(reason: str, limit: int = 200) -> str:
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 TRANSITIONS = {
-    "queued": {"running", "rejected"},
+    "queued": {"running", "blocked", "rejected"},               # blocked: a dispatch-time fault
     "running": {"reported", "blocked", "rejected", "done"},
-    "blocked": {"running", "rejected", "reported"},
+    "blocked": {"running", "queued", "rejected", "reported"},   # queued: resumed before any launch
     "reported": {"done", "running", "blocked", "rejected"},      # running: verifier says not done → resume
     "done": set(),
     "rejected": set(),
@@ -165,22 +165,9 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         while S.task_dir(project, slug).exists():
             n += 1
             slug = f"{base}-{n}"
-        recovery_claimed = False
-        if source == "recovery":
-            from . import recovery
-            try:
-                recovery.claim_repair(project, slug, actor=actor)
-            except ValueError as exc:
-                raise TransitionError(str(exc)) from exc
-            recovery_claimed = True
         d = S.tasks_dir(project) / slug
-        try:
-            d.mkdir(parents=True)
-            S.atomic_write(d / "request.md", request.rstrip() + "\n")
-        except Exception:
-            if recovery_claimed:
-                recovery.release_failed_claim(project, slug)
-            raise
+        d.mkdir(parents=True)
+        S.atomic_write(d / "request.md", request.rstrip() + "\n")
         task = {"slug": slug, "title": title, "state": "queued", "created": S.now(),
                 "attempt": 0, "dispatch_id": None, "session_id": None, "agent_id": None,
                 "worktree": None,
@@ -189,14 +176,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "engine_model": None, "routing": None, "l2_token": None,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
-        try:
-            S.save_task(project, task)
-        except Exception:
-            if recovery_claimed:
-                recovery.release_failed_claim(project, slug)
-            raise
-        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True,
-                       recovery_delegated=source == "recovery")
+        S.save_task(project, task)
+        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True)
         S.regen_state_md(project)
         return task
 
@@ -302,6 +283,16 @@ def resume(project: str, slug: str, actor: str = "altd", *,
                 raise TransitionError(f"{slug}: pending action changed before resume")
         task["blocked_reason"] = None
         return _move(project, task, "running", actor, **ev)
+
+
+def requeue(project: str, slug: str, actor: str = "altd", **ev) -> dict:
+    """A task blocked before any launch goes back to the queue; dispatch retries it from scratch."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("agent_id"):
+            raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
+        task["blocked_reason"] = None
+        return _move(project, task, "queued", actor, **ev)
 
 
 def _require_no_code_change(task: dict) -> None:

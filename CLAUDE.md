@@ -33,11 +33,11 @@ them in `DECISIONS.md`; ask Burak only for a decision that is not recorded there
 - Never publish credentials, tokens, private incident evidence, or security-sensitive operational
   details.
 
-## Recovery and service state
+## Faults and service state
 
-A recovery hold blocks ordinary fresh and resumed launches. Only one explicitly claimed recovery
-task can run while it is active. Clearing the hold requires a recorded reason after the system is
-stable.
+A system fault blocks only its own task, files an incident, and leaves one message for the
+project's L3. There is no global hold: other tasks keep running. Resume a task blocked by a fault
+once its cause is fixed.
 
 The controlled architecture-cutover restart is complete. Do not start, stop, mask, unmask, or
 restart the service as part of ordinary work. Any lifecycle action requires separate explicit

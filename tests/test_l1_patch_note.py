@@ -10,15 +10,12 @@ from altitude import config, engines, incidents, l1, route, state as S
 
 
 class TestL1PatchNote(unittest.TestCase):
-    def test_final_l1_launch_boundary_rechecks_the_l2_generation(self):
-        old = {"state": "running", "source": "chat", "dispatch_id": "task-1",
-               "session_id": "session-1", "agent_id": "agent-1", "l2_token": "token-old"}
-        replacement = {**old, "session_id": "session-2", "agent_id": "agent-2",
-                       "l2_token": "token-new"}
+    def test_final_l1_launch_boundary_checks_the_l2_generation(self):
+        replacement = {"state": "running", "source": "chat", "dispatch_id": "task-1",
+                       "session_id": "session-2", "agent_id": "agent-2", "l2_token": "token-new"}
         crossed = mock.Mock()
-        with mock.patch.object(S, "load_task", side_effect=[old, replacement]), \
-             mock.patch.object(S, "project_lock", return_value=nullcontext()), \
-             mock.patch.object(l1.recovery, "launch_permission", return_value=nullcontext()):
+        with mock.patch.object(S, "load_task", return_value=replacement), \
+             mock.patch.object(S, "project_lock", return_value=nullcontext()):
             with self.assertRaisesRegex(l1.T.TransitionError, "ownership changed"):
                 with l1._launch_permission("project", "task", "task-1", "token-old"):
                     crossed()
@@ -132,9 +129,8 @@ class TestL1PatchNote(unittest.TestCase):
         self.assertIsNone(rec["result"]["pr"])
         self.assertEqual(faults, [{
             "kind": "codex-sandbox",
-            "detail": "bwrap: setting up uid map: Permission denied",
+            "detail": "helper of task: bwrap: setting up uid map: Permission denied",
             "project": "project",
-            "task": "task",
         }])
 
     def test_preflight_failure_closes_the_run(self):
@@ -169,9 +165,8 @@ class TestL1PatchNote(unittest.TestCase):
         self.assertEqual(rec["result"]["summary"], "engine fault: codex-sandbox")
         self.assertEqual(faults, [{
             "kind": "codex-sandbox",
-            "detail": "Codex sandbox preflight failed for /repo: namespace unavailable",
+            "detail": "helper of task: Codex sandbox preflight failed for /repo: namespace unavailable",
             "project": "project",
-            "task": "task",
         }])
 
     # Some sandbox denials carry no raw bwrap line: error None, returncode 0, and the denial only in the

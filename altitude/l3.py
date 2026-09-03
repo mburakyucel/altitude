@@ -55,6 +55,33 @@ def busy(project: str) -> bool:
     return lock(project).locked()
 
 
+def queue_path(project: str) -> Path:
+    return config.project_dir(project) / "l3-queue.jsonl"
+
+
+def queue_message(project: str, text: str, *, trigger: str) -> None:
+    """Leave one message for the project's L3; the server delivers it as a turn once L3 is free."""
+    path = queue_path(project)
+    with S.project_lock(project), open(path, "a") as stream:
+        stream.write(json.dumps({"at": S.now(), "trigger": trigger, "text": text}, sort_keys=True) + "\n")
+
+
+def deliver_queued(project: str) -> dict | None:
+    """Run the oldest queued message as one L3 turn. Nothing runs while L3 is busy or no engine is available."""
+    path = queue_path(project)
+    if not path.exists() or busy(project) or not _select(project).get("engine"):
+        return None
+    with S.project_lock(project):
+        rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        if rows[1:]:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows[1:]))
+        else:
+            path.unlink()
+    if not rows:
+        return None
+    return turn(project, rows[0]["text"], trigger=rows[0].get("trigger") or "queued")
+
+
 def _header(project: str, trigger: str, fresh: bool) -> str:
     directory = config.project_dir(project)
     lines = [f"[altitude] project={project} trigger={trigger} state_file={directory / 'STATE.md'} "
@@ -102,13 +129,9 @@ def _select(project: str) -> dict:
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", on_text=None, on_start=None,
-         model: str | None = None, precheck=None) -> dict:
+         model: str | None = None) -> dict:
     """Run one L3 turn. Weekly quota selects a provider; each provider resumes only its own transcript."""
     with lock(project):
-        if precheck is not None and not precheck():
-            return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
-                    "turns": 0, "structured": None, "error": None, "tools": [], "skipped": True,
-                    "completed": False, "_turn_started_at": None}
         choice = _select(project)
         if not choice.get("engine"):
             return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,

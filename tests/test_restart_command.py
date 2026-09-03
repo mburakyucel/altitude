@@ -29,7 +29,7 @@ class TestRestartCommand(unittest.TestCase):
         self.assertIn("`make restart`", (ROOT / "README.md").read_text())
         helper = SCRIPT.read_text()
         self.assertIn("fetch_and_require_exact_base", helper)
-        self.assertIn("with recovery._launch_lock()", helper)
+        self.assertIn("require_idle()", helper)
         self.assertIn('unit_environment().get("ALTITUDE_HOME"', helper)
 
     def test_generated_web_bundle_is_runtime_state_not_tracked_source(self):

@@ -12,7 +12,6 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -390,11 +389,10 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     return out
 
 
-def _guarded_spawn(cmd: list[str], *, cwd: Path, env: dict, guard=None) -> subprocess.CompletedProcess:
-    """Serialize only the irreversible Popen boundary; do not hold the guard while the CLI waits."""
-    with guard if guard is not None else nullcontext():
-        proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, env=env)
+def _run_cli(cmd: list[str], *, cwd: Path, env: dict) -> subprocess.CompletedProcess:
+    """Run one CLI command with a bounded wait; a timeout kills it and keeps its output."""
+    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env)
     try:
         stdout, stderr = proc.communicate(timeout=120)
     except subprocess.TimeoutExpired as exc:
@@ -411,7 +409,7 @@ def _guarded_spawn(cmd: list[str], *, cwd: Path, env: dict, guard=None) -> subpr
 
 def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None, persona: Path | None = None,
               permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
-              settings: Path | None = None, extra_env: dict | None = None, spawn_guard=None) -> dict:
+              settings: Path | None = None, extra_env: dict | None = None) -> dict:
     """Start a background session (verified shape). Returns what `claude --bg` printed + the agent row."""
     before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--permission-mode", permission_mode]
@@ -426,7 +424,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
     cmd += ["--settings", str(settings or claude_settings())]
     env = clean_env()
     env.update(extra_env or {})
-    p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
+    p = _run_cli(cmd + [prompt], cwd=cwd, env=env)
     row = _new_claude_agent(name, before)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": row}
 
@@ -470,7 +468,7 @@ def _new_claude_agent(name: str, before: set[str]) -> dict | None:
 def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path | None = None,
                      permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
                      settings: Path | None = None,
-                     extra_env: dict | None = None, spawn_guard=None) -> dict:
+                     extra_env: dict | None = None) -> dict:
     before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
     cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--resume", session_id, "--permission-mode", permission_mode]
     if persona:
@@ -482,7 +480,7 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
     cmd += ["--settings", str(settings or claude_settings())]
     env = clean_env()
     env.update(extra_env or {})
-    p = _guarded_spawn(cmd + [prompt], cwd=cwd, env=env, guard=spawn_guard)
+    p = _run_cli(cmd + [prompt], cwd=cwd, env=env)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode,
             "agent": _new_claude_agent(name, before)}
 
@@ -879,7 +877,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
 
 def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
              persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
-             spawn_guard=None, start_timeout: float = 15.0) -> dict:
+             start_timeout: float = 15.0) -> dict:
     """Start one detached Codex L2 turn and wait boundedly for its stable thread identity."""
     extra_config = [*codex_isolation_config(cwd)]
     if not resume:
@@ -912,7 +910,7 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
     env = codex_env(extra_env, retain_user_bus=True)
     child_env = codex_env(extra_env)
     # Persist the unguessable unit before crossing the spawn boundary. If altd dies between systemd-run and the PID
-    # update, recovery still has the exact cgroup identity needed to stop every descendant.
+    # update, the record still has the exact cgroup identity needed to stop every descendant.
     record = {"id": worker_id, "name": name, "pid": None, "pid_start": None, "unit": unit,
               "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
@@ -920,14 +918,13 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
     out = open(paths["stdout"], "ab", buffering=0)
     err = open(paths["stderr"], "ab", buffering=0)
     try:
-        with spawn_guard if spawn_guard is not None else nullcontext():
-            proc = subprocess.Popen(_codex_service_command(unit, cmd, child_env), cwd=str(cwd),
-                                    stdin=subprocess.PIPE,
-                                    stdout=out, stderr=err, env=env, start_new_session=True)
-            try:
-                proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
+        proc = subprocess.Popen(_codex_service_command(unit, cmd, child_env), cwd=str(cwd),
+                                stdin=subprocess.PIPE,
+                                stdout=out, stderr=err, env=env, start_new_session=True)
+        try:
+            proc.stdin.write(launch_prompt.encode("utf-8")); proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
     finally:
         out.close(); err.close()
     pid_start = _pid_start(proc.pid)
@@ -989,24 +986,24 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
 
 
 def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
-             model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+             model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
     if engine == "claude":
         return claude_bg(name, prompt, cwd=cwd, persona=persona, permission_mode="auto", model=model,
-                         settings=settings, extra_env=extra_env, spawn_guard=spawn_guard)
+                         settings=settings, extra_env=extra_env)
     if engine == "codex":
         return codex_bg(name, prompt, cwd=cwd, persona=persona, model=model, extra_env=extra_env,
-                        job_root=job_root, spawn_guard=spawn_guard)
+                        job_root=job_root)
     raise ValueError(f"unknown L2 engine {engine!r}")
 
 
 def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
-              model: str | None, settings: Path, extra_env: dict, job_root: Path, spawn_guard=None) -> dict:
+              model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
     if engine == "claude":
         return claude_resume_bg(name, session_id, prompt, cwd=cwd, persona=persona, settings=settings,
-                                model=model, extra_env=extra_env, spawn_guard=spawn_guard)
+                                model=model, extra_env=extra_env)
     if engine == "codex":
         return codex_bg(name, prompt, cwd=cwd, resume=session_id, model=model, extra_env=extra_env,
-                        job_root=job_root, spawn_guard=spawn_guard)
+                        job_root=job_root)
     raise ValueError(f"unknown L2 engine {engine!r}")
 
 

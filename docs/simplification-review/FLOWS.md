@@ -26,7 +26,6 @@ POST /api/chat
                  -> journal/claim exact action
                  -> _execute: no-op | task create/done/block/resume/FYI/merge hold
                               | issue draft/approval | incident create/amend
-                              | recovery hold/clear
                  -> finish journal entry
             -> persist provider session/context/usage in l3.json
             -> append assistant record to chat.jsonl
@@ -70,7 +69,7 @@ POST /api/l2/message
             -> validate exact task/worker snapshot
             -> publication_settlement lock around fetch/base/worktree provenance checks
             -> release publication_settlement lock
-            -> reread identity; recovery hold and issue-context checks
+            -> reread identity
             -> engines.stop_l2_worker(current agent_id)
             -> prove prior worker no longer live
             -> engines.resume_l2(selected provider, existing session_id, prompt)
@@ -188,28 +187,25 @@ server tick after archived completion
        -> dispatch.pull_after_done
 ```
 
-### A9. Fault and recovery flow
+### A9. Fault flow
 
 ```text
 faulting boundary
   -> incidents.system_fault(kind, detail, project/task)
-       -> deduplicated fault/index evidence
-       -> recovery.hold + recovery.request_l3_attention
+       -> T.block(task) when it is queued, running, or reported
+       -> deduplicated fault/index evidence (one incident per kind per day)
+       -> T.fyi to the Inbox
+       -> l3.queue_message unless the task is a repair task (source recovery)
 
 server.tick
   -> drain_hook_faults
-  -> wake_recovery_l3
-       -> recovery.claim_l3_attention
-       -> l3.turn(trigger="system-recovery")
+  -> l3.deliver_queued when the queue is non-empty, L3 is free, and an engine is available
+       -> l3.turn(trigger="incident")
             -> Claude: direct scoped `alt` commands
             -> Codex: one bounded action through l3_actions.apply
-       -> complete or back off the attention claim
-
-recovery code task, when selected
-  -> recovery.claim_repair permits one task to bypass the global dispatch hold
 ```
 
-Clearing the recovery fuse and restarting/unmasking the service are separate operations.
+A task blocked before any launch is queued again by `alt task resume`.
 
 ### A10. Restart flow
 
@@ -218,7 +214,7 @@ make restart
   -> scripts/restart_altitude.py
        -> verify installed checkout and exact Git provenance
        -> stage web bundle: pnpm install, TypeScript build, Vite build, bundle validation
-       -> reverify checkout and acquire the recovery launch lock
+       -> reverify checkout
        -> refuse dispatch-in-progress, running/reported task, live blocked worker, or busy L3
        -> swap staged bundle and restart the user service
        -> verify new process, API, and SPA; restore prior bundle on failure

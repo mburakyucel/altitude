@@ -20,7 +20,7 @@ Burak
                                                      └─ may use an independent reviewer
 
 L2 worktree/branch ─► checks/review ─► PR ─► merge ─► archive task
-system fault ─► private incident evidence ─► recovery fuse ─► L3 operational recovery
+system fault ─► blocked task + private incident ─► one queued L3 message
 ```
 
 ## Responsibilities
@@ -60,7 +60,7 @@ reported -> done | running | blocked | rejected
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
 
-Queued tasks wait for WIP, lease, engine availability, and recovery gates. One provider's quota does
+Queued tasks wait for WIP, lease, and engine availability gates. One provider's quota does
 not globally freeze the other. Blocked is a persisted wait/intervention state: examples include an
 L2 question, a timed operational hold, a worker/action failure, verifier fault, or report gap.
 Deferral is not an active state: durable
@@ -101,16 +101,18 @@ L1 implementers receive narrower write subleases; the
 trusted wrapper verifies that their parent commit did not move and captures their changes as a
 patch for the owning L2 to evaluate.
 
-## Recovery
+## Faults
 
-System faults are deduplicated into private incident evidence and activate a global recovery fuse.
-The launch permit is checked for both fresh and resumed work, including the final launch boundary.
-Ordinary work stays held while recovery is active. L3 may claim one recovery task; a second repair
-is refused. Incident records are evidence only and never create tasks, personas, or follow-up work.
-Separately, the active fuse carries one durable, deduplicated L3 attention request. The
-server runs at most one recovery turn for it at a time, retains failed turns with bounded backoff, and
-audits successful handling. After stability returns, L3 triages the evidence: narrow corrective follow-up
-is an FYI, while broad architecture, policy, or system work is preserved for Burak as a proposal or issue.
+A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
+with backoff and a usage-window stop parks the task until the window reopens, each as one task event.
+Tier two is L3: whatever remains blocks only its own task, files private incident evidence (one
+incident per fault kind per day), and leaves one message in the project's L3 queue. The server
+delivers that message as a turn when L3 is free and an engine is available; L3 records the learning
+on the incident and fixes the cause directly or creates one ordinary task. An incident raised by that
+repair task (`--source recovery`) goes to the Inbox instead of waking L3 again. There is no global
+fuse, hold, clear command, or repair slot. A task blocked before any launch goes back to the queue
+when it is resumed. Incident records are evidence only and never create tasks, personas, or
+follow-up work.
 
 The service lifecycle is separate from source changes. The architecture-cutover restart was
 explicitly authorized, completed from verified main, and smoke-tested without replaying archived
