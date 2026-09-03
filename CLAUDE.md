@@ -3,14 +3,13 @@
 Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
 description; Git history is the archive.
 
-The comprehensive simplification is paused for a module-by-module review. Before using any
-`simplify/*` branch or changing architecture, read
-`docs/simplification-review/README.md`. No accumulated candidate or WIP branch is an approved
-destination architecture, and no module may be adopted merely because it was previously described
-as reviewed.
+The comprehensive simplification is being redone module by module from `main`. Read
+`docs/simplification-review/DECISIONS.md` first: it records Burak's six paradigm decisions
+(2026-09-02), the working rules for every module PR, and the phase order. The five `simplify/*`
+draft PRs are closed; no `simplify/*` branch is a source for new work.
 
-No next simplification module has been selected. Ask Burak which module to review next. Do not
-implement or merge it until Burak's decision and the exact scope are recorded in the checkpoint.
+Phase 1 deletions need no further decision. Later phases start only under the decision that gates
+them in `DECISIONS.md`; ask Burak only for a decision that is not recorded there.
 
 ## Roles
 

@@ -9,10 +9,10 @@ explicit authorization.
 
 ## Comprehensive simplification review
 
-The comprehensive simplification is paused for a module-by-module review. No unmerged implementation
-is the accepted target architecture. The exact current/candidate boundary, saved branches, low-level
-flows, and review queue are recorded in the
-[2026-09-02 simplification review checkpoint](simplification-review/README.md).
+The comprehensive simplification is being redone module by module from `main` under the decisions
+and phase order in [DECISIONS.md](simplification-review/DECISIONS.md). The five draft PRs from the
+earlier attempt are closed. The [review checkpoint](simplification-review/README.md) records the
+facts the decisions were based on.
 
 ## Current product work
 

@@ -6,10 +6,10 @@ work touches the module; it does not mean that work should be accepted. Every mo
 
 ## How to continue
 
-No next module has been selected. Ask Burak to select it. The grouping below is informational, not
-an approved order. For the selected module, establish current behavior,
-callers, durable records, external effects, tests, and user requirements before discussing a target.
-Do not implement or merge until Burak's decision and exact scope are recorded.
+The module order and the decisions that gate each phase are in [DECISIONS.md](DECISIONS.md). The
+grouping below is a fact inventory. For the module in hand, establish current behavior, callers,
+durable records, external effects, tests, and user requirements before writing the target.
+Do not start a phase whose gating decision is not recorded there.
 If evidence shows that a cross-module boundary is unavoidable, stop and ask Burak to approve that
 exact boundary before continuing.
 

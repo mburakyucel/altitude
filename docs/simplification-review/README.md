@@ -3,6 +3,10 @@
 This directory is the handoff for a new, module-by-module review of Altitude. It records facts and
 open questions; it does **not** approve the comprehensive proposal or any unmerged implementation.
 
+**Update, later on 2026-09-02:** Burak recorded the paradigm decisions, working rules, and phase
+order in [DECISIONS.md](DECISIONS.md), and the five draft PRs were closed after review. Start there;
+the rest of this directory is the factual basis those decisions were made on.
+
 ## Start here
 
 The authoritative runtime source at this checkpoint is:
@@ -110,9 +114,10 @@ git -C /home/burakyucel/Projects/altitude worktree add \
 
 Do not start by rebasing, squashing, deleting branches, or replaying the integration range.
 
-**No next module has been selected and no simplification target is approved. Ask Burak which module
-to review next. Do not implement or merge a module until its decision and exact scope are recorded.**
-The grouping in [Module review inventory](MODULE_REVIEW.md) is informational, not an approved sequence.
+**Decisions and the module order are recorded in [DECISIONS.md](DECISIONS.md).** The five draft PRs
+listed in [Candidate work](CANDIDATE_WORK.md) were closed on 2026-09-02 after review; their branches
+remain on origin as history. The grouping in [Module review inventory](MODULE_REVIEW.md) is a fact
+inventory; the phase order in DECISIONS.md is the working sequence.
 
 ## Review rule
 

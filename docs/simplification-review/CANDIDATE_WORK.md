@@ -6,6 +6,9 @@ local-only.
 
 ## Publication and review surfaces
 
+All five draft PRs below were **closed on 2026-09-02** after review; see [DECISIONS.md](DECISIONS.md)
+and each PR's closing comment. Their branches remain on origin as history only.
+
 | PR | Scope | State |
 | --- | --- | --- |
 | [#139](https://github.com/mburakyucel/altitude/pull/139) | Accumulated `simplify/integration` candidate against `main` | draft; do not merge wholesale |
