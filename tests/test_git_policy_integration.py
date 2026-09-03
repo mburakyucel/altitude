@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, git, make_repo
-from altitude import config, dispatch, git_policy, server
+from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
+from altitude import config, dispatch, engines, git_policy, server, state as S
 from altitude import tasks as T
 
 
@@ -132,6 +132,116 @@ class TestInstallGitGuardsCommand(AltitudeCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["hooks_path"], configured)
         self.assertTrue(Path(configured).is_absolute())
+
+
+class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
+    """I-20260903-075410: an L2 merges its PR while its task is still running, so the deployment checkout stays one
+    commit behind origin/main until that report lands. The gate fast-forwards that checkout instead of refusing."""
+
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+        make_repo(self.repo)
+        self.register("altitude", path=self.repo, self_deploy=True)
+        self.quiet_engines()
+        self.clone = self.tmp / "clone"
+        git("clone", "-q", "-b", "main", str(self.tmp / "origin.git"), str(self.clone), cwd=self.tmp)
+        self.pending = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        self.launched = {"stdout": "started", "stderr": "", "returncode": 0,
+                         "agent": {"id": "agent-1", "sessionId": "session-1"}}
+
+    def merged_on_origin(self, path: str, body: str = "merged\n") -> str:
+        """Another task's PR lands on origin/main while this checkout stays where it is."""
+        target = self.clone / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        git("add", "-A", cwd=self.clone)
+        git("commit", "-qm", f"merge {path}", cwd=self.clone)
+        git("push", "-q", "origin", "main", cwd=self.clone)
+        return git("rev-parse", "HEAD", cwd=self.clone).strip()
+
+    def head(self) -> str:
+        return git("rev-parse", "HEAD", cwd=self.repo).strip()
+
+    def dispatch_refuses(self, pattern: str) -> None:
+        task = T.new("altitude", "Dispatch refused", "Dispatch it.", actor="burak")
+        head = self.head()
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "start_l2") as launch, \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            with self.assertRaisesRegex(T.TransitionError, pattern):
+                dispatch.run("altitude", task["slug"])
+        self.assertEqual(self.head(), head)                       # a checkout it may not move is left alone
+        launch.assert_not_called()
+        fault.assert_called_once()
+
+    def test_a_checkout_behind_origin_is_fast_forwarded_and_dispatches(self):
+        task = T.new("altitude", "Dispatch behind main", "Dispatch it.", actor="burak")
+        merged = self.merged_on_origin("web/src/app.tsx")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            dispatch.run("altitude", task["slug"])
+
+        self.assertEqual(self.head(), merged)
+        self.assertEqual(S.load_task("altitude", task["slug"])["state"], "running")
+        fault.assert_not_called()
+        self.assertFalse(self.pending.exists())                   # nothing under DEPLOY_DIRS moved
+
+    def test_code_pulled_at_dispatch_marks_a_restart_pending(self):
+        task = T.new("altitude", "Dispatch behind code", "Dispatch it.", actor="burak")
+        merged = self.merged_on_origin("altitude/x.py", "# new\n")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            dispatch.run("altitude", task["slug"])
+
+        self.assertEqual(self.head(), merged)
+        pend = S.read_json(self.pending, {})
+        self.assertEqual((pend.get("files"), pend.get("head")), (["altitude/x.py"], merged))
+        fault.assert_not_called()                                 # flagged for an authorized restart, never restarted
+
+    def test_a_resumed_task_fast_forwards_the_same_way(self):
+        task = T.new("altitude", "Resume behind main", "Resume it.", actor="burak")
+        slug = task["slug"]
+        worktree = add_worktree(self.repo, slug)
+        task.update({"state": "blocked", "attempt": 1, "agent_id": "agent-0", "session_id": "session-0",
+                     "worktree": str(worktree), "branch": f"worktree-{slug}", "blocked_reason": "waiting"})
+        S.save_task("altitude", task)
+        merged = self.merged_on_origin("templates/t.md")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "worker_live", return_value=False), \
+             mock.patch.object(dispatch.engines, "resume_l2", return_value=self.launched), \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            dispatch.resume("altitude", slug)
+
+        self.assertEqual(self.head(), merged)
+        self.assertEqual(S.load_task("altitude", slug)["state"], "running")
+        fault.assert_not_called()
+
+    def test_a_dirty_checkout_behind_origin_still_refuses(self):
+        self.merged_on_origin("web/src/app.tsx")
+        (self.repo / "README.md").write_text("uncommitted\n")
+        self.dispatch_refuses("uncommitted changes")
+
+    def test_a_checkout_ahead_of_origin_still_refuses(self):
+        (self.repo / "direct.txt").write_text("developed in the deployment checkout\n")
+        git("add", "direct.txt", cwd=self.repo)
+        git("commit", "-qm", "direct main commit", cwd=self.repo)
+        self.dispatch_refuses("ahead of origin/main")
+
+    def test_a_diverged_checkout_still_refuses(self):
+        self.merged_on_origin("web/src/app.tsx")
+        (self.repo / "direct.txt").write_text("developed in the deployment checkout\n")
+        git("add", "direct.txt", cwd=self.repo)
+        git("commit", "-qm", "direct main commit", cwd=self.repo)
+        self.dispatch_refuses("diverged from origin/main")
+
+    def test_a_checkout_off_main_still_refuses(self):
+        self.merged_on_origin("web/src/app.tsx")
+        git("checkout", "-q", "-b", "side", cwd=self.repo)
+        self.dispatch_refuses("checkout is on side, expected main")
 
 
 if __name__ == "__main__":

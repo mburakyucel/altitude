@@ -73,6 +73,13 @@ branches cannot be updated outside the guarded landing path. The trusted landing
 lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 
+A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
+resume fast-forward it themselves before the provenance gate reads it, so a PR another task merged
+while it was still running no longer refuses every launch in the window until that task's report
+lands. The move is the same guarded fast-forward that runs after a task lands, and it happens only
+when the checkout is clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main
+checkout still refuses, unchanged and untouched.
+
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
 project lock. Claude Code runs as a background job with Altitude's hooks for inbox delivery and
@@ -98,7 +105,10 @@ ordinary task. An incident raised by that repair task (`--source recovery`) goes
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
 
-A merged Altitude change marks a restart pending. The web app shows a banner on every page and, once
+A merged Altitude change marks a restart pending when the fast-forward brings in files under
+`altitude/`, `bin/`, or `systemd/` — the code the running service loaded at start — whether that
+fast-forward runs after a task lands or at the next dispatch. Everything else, hooks, personas and
+templates included, is read per use and deploys with the pull itself. The web app shows a banner on every page and, once
 no L2 is running and no L3 is busy, a Restart button that runs the guarded restart script as a
 transient user unit outside altd's own cgroup. Ordinary source changes never start, stop, mask,
 unmask, or restart the service; a lifecycle action needs separate authorization and post-change
