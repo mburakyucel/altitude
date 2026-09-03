@@ -1,0 +1,153 @@
+/* viewer.css — chrome for the wireframe canvas. Deliberately plain and self-contained: system fonts
+ * only, no imports, nothing fetched, so index.html opens the same from file:// and from a server.
+ * The boards bring their own styling; everything here stays outside them. */
+
+:root {
+  --ui-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --canvas: #eceef2;
+  --grid: #dcdfe6;
+  --panel: #ffffff;
+  --ink: #1c1f26;
+  --muted: #6b7280;
+  --line: #d7dae1;
+  --accent: #2f6df6;
+  --accent-tint: #e8effe;
+  --warn: #b42318;
+  --warn-tint: #fef3f2;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .10);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overscroll-behavior: none; }
+body {
+  font-family: var(--ui-font);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--canvas);
+  -webkit-text-size-adjust: 100%;
+}
+button { font: inherit; color: inherit; }
+
+#stage { position: fixed; inset: 0; display: flex; }
+
+/* ---- the board list ---------------------------------------------------- */
+
+#rail {
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+body.no-rail #rail { display: none; }
+
+.rail-head { padding: 16px 16px 10px; border-bottom: 1px solid var(--line); }
+.rail-head h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.rail-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+
+#rail-list { padding: 8px 8px 24px; }
+.rail-route { margin: 2px 0 6px; }
+.rail-route > button {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 8px; border: 0; border-radius: 7px; background: none;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.rail-route > button:hover { background: #f3f4f7; }
+.rail-kids { display: flex; gap: 6px; padding: 0 8px 2px; }
+.rail-kids button {
+  flex: 1 1 0; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fbfbfc; font-size: 12px; color: var(--muted); cursor: pointer;
+}
+.rail-kids button:hover { border-color: #b9bec9; color: var(--ink); }
+.rail-kids button.on { background: var(--accent-tint); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.rail-kids button.gone { border-color: #f0c2bd; background: var(--warn-tint); color: var(--warn); }
+.rail-route.on > button { background: var(--accent-tint); color: var(--accent); }
+
+/* ---- the canvas -------------------------------------------------------- */
+
+#viewport {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: hidden;
+  touch-action: none;             /* the pointer handlers own every gesture */
+  cursor: grab;
+  outline: none;
+  background-color: var(--canvas);
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 48px 48px, 48px 48px;
+}
+#viewport.dragging { cursor: grabbing; }
+
+#world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+
+.group { position: absolute; }
+.group > h2 {
+  position: absolute; left: 0; top: 8px; margin: 0;
+  font-size: 40px; font-weight: 600; letter-spacing: -.02em; color: #3a4150;
+}
+
+.board { position: absolute; }
+.board > .cap {
+  position: absolute; left: 2px; bottom: 100%; margin-bottom: 10px;
+  font-size: 19px; color: #6d7484; white-space: nowrap;
+}
+.board > .cap b { font-weight: 600; color: #3a4150; }
+.board > .hit {                    /* iframes swallow pointer events; this layer takes them */
+  position: absolute; inset: 0; z-index: 2;
+  border: 1px solid rgba(16, 24, 40, .16);
+  border-radius: 2px;
+}
+.board.on > .hit { border: 2px solid var(--accent); box-shadow: 0 0 0 6px rgba(47, 109, 246, .18); }
+.board > iframe {
+  display: block; width: 100%; height: 100%;
+  border: 0; background: #fff; box-shadow: var(--shadow);
+  pointer-events: none;            /* clicks and drags belong to the canvas, not to the board */
+}
+.board > .gone {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 24px; text-align: center;
+  background: var(--warn-tint); border: 3px dashed #e6a49c; border-radius: 4px;
+  color: var(--warn);
+}
+.board > .gone b { font-size: 34px; font-weight: 600; }
+.board > .gone code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 28px; }
+.board > .gone small { font-size: 20px; color: #8a5750; max-width: 30ch; line-height: 1.4; }
+
+/* ---- controls ---------------------------------------------------------- */
+
+#hud {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: rgba(255, 255, 255, .94); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  z-index: 5;
+}
+#hud button {
+  min-width: 34px; height: 32px; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 7px; background: none;
+  font-size: 13px; line-height: 1; cursor: pointer;
+}
+#hud button:hover { background: #f1f2f6; }
+#hud button:active { background: #e6e8ee; }
+#hud .sep { width: 1px; height: 20px; background: var(--line); }
+#zoom { min-width: 52px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+#here {
+  position: absolute; left: 16px; bottom: 22px; margin: 0;
+  font-size: 12px; color: var(--muted);
+  background: rgba(255, 255, 255, .82); padding: 4px 8px; border-radius: 6px;
+  pointer-events: none; z-index: 4;
+}
+
+@media (max-width: 760px) {
+  #rail { position: absolute; z-index: 6; top: 0; bottom: 0; left: 0; width: 232px; box-shadow: var(--shadow); }
+  #hud { bottom: max(14px, env(safe-area-inset-bottom)); gap: 4px; padding: 5px; }
+  #hud button { padding: 0 8px; font-size: 12px; }
+  #here { display: none; }
+}

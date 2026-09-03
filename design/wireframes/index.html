@@ -1,0 +1,53 @@
+<!doctype html>
+<!--
+  Wireframe viewer — every board in this folder on one zoomable canvas.
+
+  Open it: double-click this file, or `google-chrome design/wireframes/index.html`. It runs straight
+  from a file:// URL, needs no build step, no install, and no network. Serving it over HTTP works the
+  same way; `./serve.sh` does that for a phone on the same network.
+
+  Keys:  ← →  previous / next board      ↑ ↓  previous / next route
+         0    fit all boards             1    100%
+         R    fit the current route      +/-  zoom
+  Mouse: scroll or drag to pan, ctrl/⌘+scroll (or trackpad pinch) to zoom, click a board to fit it.
+  Touch: one finger pans, two fingers pinch to zoom, tap a board to fit it.
+
+  Each board is its own live HTML file in an iframe at native size, scaled with a CSS transform, so
+  the canvas always shows the current files and stays crisp at any zoom. The boards it lays out come
+  from boards.js — a new board is one entry there. See VIEWER.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Altitude wireframes — all boards</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<div id="stage">
+  <aside id="rail" aria-label="Boards">
+    <div class="rail-head">
+      <h1>Wireframes</h1>
+      <p id="rail-sub">…</p>
+    </div>
+    <nav id="rail-list" aria-label="Jump to a board"></nav>
+  </aside>
+  <div id="viewport" tabindex="0" aria-label="Wireframe canvas">
+    <div id="world"></div>
+  </div>
+  <div id="hud" role="toolbar" aria-label="Zoom">
+    <button type="button" id="btn-rail" title="Show or hide the board list (L)" aria-label="Toggle the board list">☰</button>
+    <button type="button" id="btn-all" title="Fit every board (0)">Fit all</button>
+    <button type="button" id="btn-route" title="Fit the current route (R)">Fit route</button>
+    <button type="button" id="btn-100" title="Actual size (1)">100%</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button type="button" id="btn-out" title="Zoom out (-)" aria-label="Zoom out">−</button>
+    <output id="zoom" title="Zoom level">100%</output>
+    <button type="button" id="btn-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+  </div>
+  <p id="here" aria-live="polite"></p>
+</div>
+<script src="boards.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>
