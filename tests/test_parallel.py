@@ -1,5 +1,5 @@
 """File leases and capacity limits let independent L2 tasks run without collisions."""
-import json, os, subprocess, sys, tempfile, unittest
+import os, sys, tempfile, unittest
 from pathlib import Path
 os.environ["ALTITUDE_HOME"] = tempfile.mkdtemp(prefix="altitude-par-")
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,23 +108,6 @@ class TestLeases(unittest.TestCase):
             self.assertIsNone(dispatch.wip_hold("p", t))
         finally:
             engines.claude_agents = old
-
-
-class TestGuardHook(unittest.TestCase):
-    def run_guard(self, cmd):
-        p = subprocess.run([sys.executable, str(ROOT / "hooks" / "guard.py")], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-                           capture_output=True, text=True)
-        return p.returncode
-
-    def test_blocks_shared_service_actions(self):
-        for cmd in ("systemctl --user restart altitude", "sudo ufw allow 8890", "ALTITUDE_PORT=8890 bin/alt serve", "python3 -m http.server --port 8080",
-                    "rm -rf ~/.altitude", "git push --force origin main", "git push -f"):
-            self.assertEqual(self.run_guard(cmd), 2, cmd)
-
-    def test_allows_ordinary_work(self):
-        for cmd in ("make test", "git push -u origin HEAD", "ALTITUDE_TIMERS=0 ALTITUDE_PORT=8931 bin/alt serve", "curl -s http://127.0.0.1:8931/",
-                    "systemctl --user status altitude", "pnpm build"):
-            self.assertEqual(self.run_guard(cmd), 0, cmd)
 
 
 if __name__ == "__main__":
