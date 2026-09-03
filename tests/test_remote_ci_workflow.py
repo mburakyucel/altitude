@@ -1,11 +1,10 @@
 """Static guardrails for the small, base-owned remote test workflow."""
 
 import unittest
-from pathlib import Path
 
+from tests.support import REPO
 
-ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "remote-tests.yml"
+WORKFLOW = REPO / ".github" / "workflows" / "remote-tests.yml"
 
 
 class RemoteCIWorkflowTests(unittest.TestCase):

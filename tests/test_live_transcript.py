@@ -1,25 +1,14 @@
 """Live transcript: every turn of the thread, parsing, continuity, fencing, and access policy."""
 import json
-import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-transcript-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP / "home")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, state as S, tasks as T, transcript  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import dispatch, state as S, tasks as T, transcript
 
 
-class TestLiveTranscript(unittest.TestCase):
+class TestLiveTranscript(AltitudeCase):
     def setUp(self):
-        self.project = f"transcript-{self._testMethodName}"
-        repo = _TMP / self.project / "repo"
-        repo.mkdir(parents=True, exist_ok=True)
-        projects = config.load_projects()
-        projects[self.project] = {"path": str(repo)}
-        config.save_projects(projects)
+        super().setUp()
         task = T.new(self.project, "Observed work", "Do it")
         self.slug = task["slug"]
         task.update({"state": "running", "attempt": 1, "l2_engine": "codex", "session_id": "thread-1", "agent_id": "w2"})

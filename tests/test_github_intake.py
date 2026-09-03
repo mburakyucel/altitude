@@ -1,28 +1,20 @@
 """A task that names a GitHub issue gets the issue inlined into its request at creation, from the project's repo only."""
 import json
-import os
 import subprocess
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-_ROOT = Path(tempfile.mkdtemp(prefix="altitude-github-intake-"))
-os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, github_intake, state as S, tasks as T  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import github_intake, state as S, tasks as T
 
 ISSUE = {"number": 121, "title": "Add a live session view", "body": "## Acceptance criteria\n\n- live", "state": "OPEN"}
 REMOTE = subprocess.CompletedProcess([], 0, "git@github.com:acme/widget.git\n", "")
 
 
-class TestGitHubIntake(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        (_ROOT / "repo").mkdir()
-        config.save_projects({"p": {"name": "p", "path": str(_ROOT / "repo")}})
+class TestGitHubIntake(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.register("p", path=self.repo)
 
     def test_reference_parsing(self):
         url = "https://github.com/acme/widget/issues/121"

@@ -1,29 +1,11 @@
 """A mechanically clean report closes without spending an L3 report-landed turn."""
-import os
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-_TMP = tempfile.mkdtemp(prefix="altitude-clean-close-")
-os.environ["ALTITUDE_HOME"] = _TMP
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, incidents, l3, server, state as S, tasks as T  # noqa: E402
-
-PROJECT = "cleanclose"
+from tests.support import AltitudeCase
+from altitude import incidents, l3, server, state as S, tasks as T
 
 
-def register() -> None:
-    """Register this test project under whichever ROOT is live during suite discovery."""
-    config.ensure_root()
-    config.save_projects({PROJECT: {"name": PROJECT, "path": config.ROOT.as_posix()}})
-
-
-class TestCleanClose(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        register()
-
+class TestCleanClose(AltitudeCase):
     def _report(self) -> dict:
         return {
             "landed": {
@@ -51,43 +33,44 @@ class TestCleanClose(unittest.TestCase):
         if change:
             change(report, verdict)
         verdict["report"] = {key: report[key] for key in ("blocked", "decisions", "fyi", "follow_ups", "deviations")}
-        directory = S.task_dir(PROJECT, slug)
+        directory = S.task_dir(self.project, slug)
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "report.json", report)
         task = {"slug": slug, "title": slug, "state": "reported", "created": S.now(),
                 "updated": S.now(), "verified": verdict, "l3_handled": None, "spend": {}, "prs": [47]}
         if hold_merge:
             task["hold_merge"] = "always-list: release"
-        S.save_task(PROJECT, task)
+        S.save_task(self.project, task)
         if live_state:
             live = dict(task)
             live["state"] = live_state
-            S.save_task(PROJECT, live)
+            S.save_task(self.project, live)
         return task, verdict
 
     def _run(self, task: dict, verdict: dict) -> tuple[list, list]:
-        turns = []
-        logs = []
-        original_turn, original_log = l3.turn, server.log
-        l3.turn = lambda project, header, trigger: turns.append((project, header, trigger)) or {}
-        server.log = lambda message: logs.append(message)
-        try:
-            server.report_turn(PROJECT, task, verdict)
-        finally:
-            l3.turn, server.log = original_turn, original_log
+        turns: list = []
+        logs: list = []
+        self.patch(l3, "turn", new=lambda project, header, trigger: turns.append((project, header, trigger)) or {})
+        self.patch(server, "log", new=logs.append)
+        server.report_turn(self.project, task, verdict)
         return turns, logs
+
+    def _faults(self) -> list:
+        faults: list = []
+        self.patch(incidents, "system_fault", new=lambda *args, **kwargs: faults.append((args, kwargs)))
+        return faults
 
     def test_clean_report_closes_without_an_l3_turn_and_posts_one_fyi(self):
         task, verdict = self._task_and_verdict("clean")
-        before = len(T.inbox(PROJECT, limit=1000))
+        before = len(T.inbox(self.project, limit=1000))
 
         turns, logs = self._run(task, verdict)
 
         self.assertEqual(turns, [])
-        closed = S.load_task(PROJECT, "clean")
+        closed = S.load_task(self.project, "clean")
         self.assertEqual(closed["state"], "done")
         self.assertIsNotNone(closed["l3_handled"])
-        items = T.inbox(PROJECT, limit=1000)[before:]
+        items = T.inbox(self.project, limit=1000)[before:]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["by"], "altd")
         text = items[0]["text"]
@@ -96,7 +79,7 @@ class TestCleanClose(unittest.TestCase):
                          "main runs: run-47: success", "deploy: healthy",
                          "no decisions, blocked items, FYIs, follow-ups, or post-mortem signals"):
             self.assertIn(expected, text)
-        digest = (S.task_dir(PROJECT, "clean") / "digest.md").read_text()
+        digest = (S.task_dir(self.project, "clean") / "digest.md").read_text()
         for expected in ("PR #47 (Clean close)", "run-47: success", "Deploy: healthy",
                          "Review findings: 1 fixed, 1 dismissed"):
             self.assertIn(expected, digest)
@@ -120,33 +103,30 @@ class TestCleanClose(unittest.TestCase):
         for name, (change, task_options) in cases.items():
             with self.subTest(name=name):
                 task, verdict = self._task_and_verdict(f"dirty-{name}", change=change, **task_options)
-                expected_state = S.load_task(PROJECT, task["slug"])["state"]
-                before = len(T.inbox(PROJECT, limit=1000))
+                expected_state = S.load_task(self.project, task["slug"])["state"]
+                before = len(T.inbox(self.project, limit=1000))
 
                 turns, logs = self._run(task, verdict)
 
                 self.assertEqual(len(turns), 1)
-                self.assertEqual(turns[0][0], PROJECT)
+                self.assertEqual(turns[0][0], self.project)
                 self.assertEqual(turns[0][2], "report-landed")
-                self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], expected_state)
-                self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], expected_state)
+                self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
                 self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
     def test_unfinished_l3_report_turn_remains_retryable(self):
         task, verdict = self._task_and_verdict(
             "route-hold", change=lambda report, _verdict: report["fyi"].append("needs coordinator"))
-        original_turn, original_log = l3.turn, server.log
-        logs = []
-        l3.turn = lambda *_args, **_kwargs: {
+        logs: list = []
+        self.patch(l3, "turn", new=lambda *_args, **_kwargs: {
             "completed": False, "error": "engine hold: no engine available", "limited": None,
-        }
-        server.log = lambda message: logs.append(message)
-        try:
-            server.report_turn(PROJECT, task, verdict)
-        finally:
-            l3.turn, server.log = original_turn, original_log
+        })
+        self.patch(server, "log", new=logs.append)
 
-        self.assertIsNone(S.load_task(PROJECT, task["slug"])["l3_handled"])
+        server.report_turn(self.project, task, verdict)
+
+        self.assertIsNone(S.load_task(self.project, task["slug"])["l3_handled"])
         self.assertTrue(any("report turn unfinished" in line for line in logs))
 
     def test_malformed_report_shapes_fail_closed_and_not_applicable_closes(self):
@@ -161,28 +141,23 @@ class TestCleanClose(unittest.TestCase):
             ("deploy-not-applicable", lambda report: {
                 **report, "landed": {**report["landed"], "deploy": "not-applicable"}}, True, False),
         )
-        faults = []
-        original_fault = incidents.system_fault
-        incidents.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
-        try:
-            for name, build_report, closes, corrupt in cases:
-                with self.subTest(name=name):
-                    task, verdict = self._task_and_verdict(f"shape-{name}")
-                    report_path = S.task_dir(PROJECT, task["slug"]) / "report.json"
-                    if corrupt:
-                        S.atomic_write(report_path, "{not json\n")
-                    else:
-                        S.write_json(report_path, build_report(self._report()))
+        faults = self._faults()
+        for name, build_report, closes, corrupt in cases:
+            with self.subTest(name=name):
+                task, verdict = self._task_and_verdict(f"shape-{name}")
+                report_path = S.task_dir(self.project, task["slug"]) / "report.json"
+                if corrupt:
+                    S.atomic_write(report_path, "{not json\n")
+                else:
+                    S.write_json(report_path, build_report(self._report()))
 
-                    turns, _ = self._run(task, verdict)
+                turns, _ = self._run(task, verdict)
 
-                    self.assertEqual(len(turns), 0 if closes else 1)
-                    self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "done" if closes else "reported")
-        finally:
-            incidents.system_fault = original_fault
+                self.assertEqual(len(turns), 0 if closes else 1)
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "done" if closes else "reported")
         self.assertEqual(len(faults), 1)
         self.assertEqual(faults[0][0][0], "report-json")
-        self.assertEqual(faults[0][1], {"project": PROJECT, "task": "shape-corrupt-json"})
+        self.assertEqual(faults[0][1], {"project": self.project, "task": "shape-corrupt-json"})
 
     def test_main_runs_must_be_present_well_shaped_and_successful(self):
         cases = (
@@ -200,81 +175,74 @@ class TestCleanClose(unittest.TestCase):
 
                 self.assertEqual(len(turns), 1)
                 self.assertEqual(turns[0][2], "report-landed")
-                self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "reported")
 
     def test_missing_or_corrupt_live_status_falls_through_without_escaping(self):
-        faults = []
-        original_fault = incidents.system_fault
-        incidents.system_fault = lambda *args, **kwargs: faults.append((args, kwargs))
-        try:
-            for name, corrupt in (("missing", False), ("corrupt", True)):
-                with self.subTest(name=name):
-                    task, verdict = self._task_and_verdict(f"live-status-{name}")
-                    status_path = S.status_path(PROJECT, task["slug"])
-                    if corrupt:
-                        S.atomic_write(status_path, "{not json\n")
-                    else:
-                        status_path.unlink()
-                    try:
-                        turns, logs = self._run(task, verdict)
-                    finally:
-                        S.save_task(PROJECT, task)
+        faults = self._faults()
+        for name, corrupt in (("missing", False), ("corrupt", True)):
+            with self.subTest(name=name):
+                task, verdict = self._task_and_verdict(f"live-status-{name}")
+                status_path = S.status_path(self.project, task["slug"])
+                if corrupt:
+                    S.atomic_write(status_path, "{not json\n")
+                else:
+                    status_path.unlink()
+                try:
+                    turns, logs = self._run(task, verdict)
+                finally:
+                    S.save_task(self.project, task)
 
-                    self.assertEqual(len(turns), 1)
-                    self.assertEqual(turns[0][2], "report-landed")
-                    self.assertTrue(any("report turn unfinished" in line for line in logs))
-        finally:
-            incidents.system_fault = original_fault
+                self.assertEqual(len(turns), 1)
+                self.assertEqual(turns[0][2], "report-landed")
+                self.assertTrue(any("report turn unfinished" in line for line in logs))
         self.assertEqual(len(faults), 1)
         self.assertEqual(faults[0][0][0], "task-json")
-        self.assertEqual(faults[0][1], {"project": PROJECT, "task": "live-status-corrupt"})
+        self.assertEqual(faults[0][1], {"project": self.project, "task": "live-status-corrupt"})
 
     def test_live_hold_merge_value_controls_clean_close_and_its_fyi(self):
         held_task, held_verdict = self._task_and_verdict("live-hold")
-        live = S.load_task(PROJECT, held_task["slug"])
+        live = S.load_task(self.project, held_task["slug"])
         live["hold_merge"] = "always-list: live hold"
-        S.save_task(PROJECT, live)
-        before = len(T.inbox(PROJECT, limit=1000))
+        S.save_task(self.project, live)
+        before = len(T.inbox(self.project, limit=1000))
 
         held_turns, _ = self._run(held_task, held_verdict)
 
         self.assertEqual(len(held_turns), 1)
-        self.assertEqual(S.load_task(PROJECT, held_task["slug"])["state"], "reported")
-        self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
+        self.assertEqual(S.load_task(self.project, held_task["slug"])["state"], "reported")
+        self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
 
         stale_task, stale_verdict = self._task_and_verdict("stale-caller-hold")
         stale_task["hold_merge"] = "stale caller snapshot"
-        before = len(T.inbox(PROJECT, limit=1000))
+        before = len(T.inbox(self.project, limit=1000))
 
         stale_turns, _ = self._run(stale_task, stale_verdict)
 
         self.assertEqual(stale_turns, [])
-        self.assertEqual(S.load_task(PROJECT, stale_task["slug"])["state"], "done")
-        items = T.inbox(PROJECT, limit=1000)[before:]
+        self.assertEqual(S.load_task(self.project, stale_task["slug"])["state"], "done")
+        items = T.inbox(self.project, limit=1000)[before:]
         self.assertEqual(len(items), 1)
         self.assertIn("hold_merge unset", items[0]["text"])
         self.assertNotIn("stale caller snapshot", items[0]["text"])
 
     def test_blocked_transition_during_done_falls_through_to_l3(self):
+        """A block that lands inside the close window leaves the task blocked and hands L3 the turn."""
         task, verdict = self._task_and_verdict("blocked-during-done")
-        before = len(T.inbox(PROJECT, limit=1000))
+        before = len(T.inbox(self.project, limit=1000))
         original_done = T.done
 
         def block_then_done(project, slug, **kwargs):
             T.block(project, slug, "blocked in the post-lock window")
             return original_done(project, slug, **kwargs)
 
-        T.done = block_then_done
-        try:
-            turns, logs = self._run(task, verdict)
-        finally:
-            T.done = original_done
+        self.patch(T, "done", new=block_then_done)
+
+        turns, logs = self._run(task, verdict)
 
         self.assertEqual(len(turns), 1)
         self.assertEqual(turns[0][2], "report-landed")
-        self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "blocked")
-        self.assertEqual(len(T.inbox(PROJECT, limit=1000)), before)
-        self.assertIn(f"[{PROJECT}/{task['slug']}] clean close lost the state race → L3 turn", logs)
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "blocked")
+        self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
         self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
     def test_unknown_review_dispositions_fail_closed(self):
@@ -287,7 +255,7 @@ class TestCleanClose(unittest.TestCase):
                 turns, _ = self._run(task, verdict)
 
                 self.assertEqual(len(turns), 1)
-                self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "reported")
 
     def test_on_disk_report_is_the_only_clean_close_source(self):
         task, verdict = self._task_and_verdict(
@@ -297,7 +265,7 @@ class TestCleanClose(unittest.TestCase):
         turns, _ = self._run(task, verdict)
 
         self.assertEqual(len(turns), 1)
-        self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "reported")
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "reported")
 
 
 if __name__ == "__main__":

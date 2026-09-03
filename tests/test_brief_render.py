@@ -1,19 +1,11 @@
 """The dispatch brief template renders completely with build_brief's keyword set."""
-import os
 import re
 import string
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-brief-render-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, tasks  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, dispatch, tasks
 
-PROJECT = "brief-render-template-test"
-REPO = _TMP / "repo"
 EXPECTED_FIELDS = {
     "branch",
     "completion_contract",
@@ -35,28 +27,22 @@ EXPECTED_FIELDS = {
 UNFORMATTED_FIELD = r"\{[A-Za-z_][A-Za-z0-9_]*\}"
 
 
-class TestBriefRender(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root()
-        REPO.mkdir(exist_ok=True)
-        projects = config.load_projects()
-        projects[PROJECT] = {"name": PROJECT, "path": str(REPO)}
-        config.save_projects(projects)
-
+class TestBriefRender(AltitudeCase):
+    def setUp(self):
+        super().setUp()
         default_task = tasks.new(
-            PROJECT,
+            self.project,
             "Brief render default policy fixture",
             "Render a dispatch brief from a safe request.",
         )
         held_task = tasks.new(
-            PROJECT,
+            self.project,
             "Brief render held policy fixture",
             "Render a held dispatch brief from a safe request.",
             hold_merge="requires a maintainer release",
         )
-        cls.default_rendered = dispatch.build_brief(PROJECT, default_task["slug"])
-        cls.held_rendered = dispatch.build_brief(PROJECT, held_task["slug"])
+        self.default_rendered = dispatch.build_brief(self.project, default_task["slug"])
+        self.held_rendered = dispatch.build_brief(self.project, held_task["slug"])
 
     def assert_no_unformatted_field(self, rendered):
         self.assertIsNone(re.search(UNFORMATTED_FIELD, rendered))

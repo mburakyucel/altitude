@@ -1,37 +1,20 @@
 """No-code tasks close directly; code changes cannot bypass the PR/report gate."""
-import os
-import subprocess
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-_ROOT = Path(tempfile.mkdtemp(prefix="altitude-l2-complete-"))
-os.environ["ALTITUDE_HOME"] = str(_ROOT / "state")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, server, state as S, tasks as T  # noqa: E402
+from tests.support import AltitudeCase, add_worktree, git, make_repo
+from altitude import engines, server, state as S, tasks as T
 
 
-class TestDirectL2Completion(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root(); cls.repo = _ROOT / "repo"; cls.repo.mkdir()
-        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=cls.repo, check=True)
-        (cls.repo / "README.md").write_text("base\n")
-        subprocess.run(["git", "add", "README.md"], cwd=cls.repo, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"],
-                       cwd=cls.repo, check=True)
-        remote = _ROOT / "origin.git"; subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
-        subprocess.run(["git", "remote", "add", "origin", str(remote)], cwd=cls.repo, check=True)
-        subprocess.run(["git", "push", "-q", "-u", "origin", "main"], cwd=cls.repo, check=True)
-        config.save_projects({"p": {"name": "p", "path": str(cls.repo)}})
+class TestDirectL2Completion(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        self.register("p", path=self.repo)
 
     def task(self, title):
         task = T.new("p", title, "Produce a proposal.")
-        worktree = self.repo / ".claude" / "worktrees" / task["slug"]
-        subprocess.run(["git", "worktree", "add", "-q", "-b", f"worktree-{task['slug']}", str(worktree),
-                        "origin/main"], cwd=self.repo, check=True)
+        worktree = add_worktree(self.repo, task["slug"])
         task.update({"state": "running", "attempt": 1, "session_id": "session", "agent_id": "worker",
                      "worktree": str(worktree), "branch": f"worktree-{task['slug']}"})
         S.save_task("p", task)
@@ -49,9 +32,7 @@ class TestDirectL2Completion(unittest.TestCase):
     def test_changed_branch_cannot_bypass_code_verification(self):
         task, worktree = self.task("Code task")
         (worktree / "README.md").write_text("changed\n")
-        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "change"],
-                       cwd=worktree, check=True)
+        git("commit", "-qam", "change", cwd=worktree)
         with self.assertRaisesRegex(T.TransitionError, "use alt land"):
             T.done("p", task["slug"], actor="l2", digest="done", expected_attempt=1)
         self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
@@ -62,12 +43,13 @@ class TestDirectL2Completion(unittest.TestCase):
         snapshot = S.load_task("p", task["slug"])
         with self.assertRaisesRegex(RuntimeError, "still live"):
             server.on_l2_finished("p", {"task": snapshot,
-                                         "agent": {"id": "worker", "state": "working", "status": "busy"}})
+                                        "agent": {"id": "worker", "state": "working", "status": "busy"}})
         self.assertEqual(S.load_task("p", task["slug"])["state"], "running")
 
     def test_rejection_stays_active_if_codex_worker_cannot_be_stopped(self):
         task, _ = self.task("Unsafe rejection")
-        task["l2_engine"] = "codex"; S.save_task("p", task)
+        task["l2_engine"] = "codex"
+        S.save_task("p", task)
         with mock.patch.object(engines, "remove_l2_worker", side_effect=RuntimeError("still alive")):
             with self.assertRaisesRegex(T.TransitionError, "may still be live"):
                 T.reject("p", task["slug"], "cancel")

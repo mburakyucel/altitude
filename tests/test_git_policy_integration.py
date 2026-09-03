@@ -2,61 +2,39 @@
 import contextlib
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, git_policy, server  # noqa: E402
-from altitude import tasks as T  # noqa: E402
+from tests.support import ALT, AltitudeCase, git, make_repo
+from altitude import config, dispatch, git_policy, server
+from altitude import tasks as T
 
 
-class TestDispatchWorktreePolicy(unittest.TestCase):
+class TestDispatchWorktreePolicy(AltitudeCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="altitude-dispatch-worktree-policy-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.remote = self.tmp / "origin.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
-        self.repo = self.tmp / "repo"
-        subprocess.run(["git", "init", "-q", "-b", "main", str(self.repo)], check=True)
-        for key, value in (("user.email", "test@example.invalid"), ("user.name", "Test User")):
-            subprocess.run(["git", "-C", str(self.repo), "config", key, value], check=True)
-        (self.repo / ".gitignore").write_text(".claude/\n")
-        (self.repo / "README.md").write_text("initial\n")
-        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "commit", "-q", "-m", "initial"], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "remote", "add", "origin", str(self.remote)], check=True)
-        subprocess.run(["git", "-C", str(self.repo), "push", "-q", "-u", "origin", "main"], check=True)
+        super().setUp()
+        make_repo(self.repo)
         self.origin_sha = git_policy.capture_origin_sha(self.repo)
-
-    def git(self, *args, cwd=None, check=True):
-        result = subprocess.run(
-            ["git", "-C", str(cwd or self.repo), *args], capture_output=True, text=True
-        )
-        if check:
-            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-        return result
 
     def test_new_worktree_uses_captured_origin_and_valid_existing_history_is_reused(self):
         worktree = dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha)
-        self.assertEqual(self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip(), self.origin_sha)
-        self.assertEqual(self.git("branch", "--show-current", cwd=worktree).stdout.strip(), "worktree-safe-task")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=worktree).strip(), self.origin_sha)
+        self.assertEqual(git("branch", "--show-current", cwd=worktree).strip(), "worktree-safe-task")
         (worktree / "safe.txt").write_text("safe\n")
-        self.git("add", "safe.txt", cwd=worktree)
-        self.git("commit", "-q", "-m", "safe", "-m", "Altitude-Task: demo/safe-task", cwd=worktree)
+        git("add", "safe.txt", cwd=worktree)
+        git("commit", "-q", "-m", "safe", "-m", "Altitude-Task: demo/safe-task", cwd=worktree)
 
         self.assertEqual(dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha), worktree)
 
     def test_existing_branch_with_direct_commit_is_refused(self):
         staging = self.repo / ".claude" / "worktrees" / "bad-task"
-        self.git("worktree", "add", "-q", "-b", "worktree-bad-task", str(staging), self.origin_sha)
+        git("worktree", "add", "-q", "-b", "worktree-bad-task", str(staging), self.origin_sha, cwd=self.repo)
         (staging / "bad.txt").write_text("bad\n")
-        self.git("add", "bad.txt", cwd=staging)
-        self.git("commit", "-q", "-m", "direct commit", cwd=staging)
+        git("add", "bad.txt", cwd=staging)
+        git("commit", "-q", "-m", "direct commit", cwd=staging)
 
         with self.assertRaisesRegex(T.TransitionError, "without exact.*provenance"):
             dispatch._task_worktree(self.repo, "demo", "bad-task", self.origin_sha)
@@ -64,14 +42,14 @@ class TestDispatchWorktreePolicy(unittest.TestCase):
 
     def test_orphan_task_branch_is_not_reattached_after_validation_races(self):
         staging = self.tmp / "orphan-staging"
-        self.git("worktree", "add", "-q", "-b", "worktree-orphan-task", str(staging), self.origin_sha)
-        self.git("worktree", "remove", str(staging))
+        git("worktree", "add", "-q", "-b", "worktree-orphan-task", str(staging), self.origin_sha, cwd=self.repo)
+        git("worktree", "remove", str(staging), cwd=self.repo)
 
         with self.assertRaisesRegex(T.TransitionError, "exists without its registered worktree"):
             dispatch._task_worktree(self.repo, "demo", "orphan-task", self.origin_sha)
 
 
-class TestDispatchBoundaryOrdering(unittest.TestCase):
+class TestDispatchBoundaryOrdering(AltitudeCase):
     def test_unsafe_main_refuses_before_task_or_agent_mutation(self):
         task = {
             "slug": "blocked", "state": "queued", "dispatching": None,
@@ -99,21 +77,11 @@ class TestDispatchBoundaryOrdering(unittest.TestCase):
         launch.assert_not_called()
 
 
-class TestServiceGitPreflight(unittest.TestCase):
+class TestServiceGitPreflight(AltitudeCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="altitude-service-git-policy-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        for name, value in {
-            "ROOT": self.tmp / "home",
-            "MONITOR_DIR": self.tmp / "home" / "monitor",
-            "PROJECTS_FILE": self.tmp / "home" / "projects.json",
-            "REPO": self.tmp / "repo",
-        }.items():
-            old = getattr(config, name)
-            setattr(config, name, value)
-            self.addCleanup(setattr, config, name, old)
-        config.ensure_root()
-        config.REPO.mkdir()
+        super().setUp()
+        self.private_ledgers()
+        self.patch(config, "REPO", new=self.repo)
         self.pending = config.MONITOR_DIR / dispatch.RESTART_PENDING
         self.pending.write_text("{}\n")
 
@@ -152,27 +120,15 @@ class TestServiceGitPreflight(unittest.TestCase):
         httpd.assert_called_once()
 
 
-class TestInstallGitGuardsCommand(unittest.TestCase):
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="altitude-install-git-guards-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.repo = self.tmp / "repo"
-        subprocess.run(["git", "init", str(self.repo)], check=True, capture_output=True, text=True)
-
+class TestInstallGitGuardsCommand(AltitudeCase):
     def test_cli_installs_guards_in_the_current_repository(self):
-        alt = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        env = os.environ.copy()
-        env["ALTITUDE_HOME"] = str(self.tmp / "home")
-
-        proc = subprocess.run([str(alt), "install-git-guards"], cwd=self.repo,
-                              capture_output=True, text=True, env=env, timeout=30)
+        git("init", "-q", cwd=self.repo)
+        proc = subprocess.run([sys.executable, str(ALT), "install-git-guards"], cwd=self.repo,
+                              capture_output=True, text=True, timeout=30)
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
-        configured = subprocess.run(
-            ["git", "config", "--local", "--get", "core.hooksPath"], cwd=self.repo,
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
+        configured = git("config", "--local", "--get", "core.hooksPath", cwd=self.repo).strip()
         self.assertTrue(result["ok"])
         self.assertEqual(result["hooks_path"], configured)
         self.assertTrue(Path(configured).is_absolute())

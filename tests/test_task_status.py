@@ -1,110 +1,41 @@
 """`alt task status` compacts task, hook, lease, PR, and main-run state without a network."""
 import json
-import os
 import shutil
-import stat
-import subprocess
-import sys
-import tempfile
-import time
 import unittest
-from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, monitor, state as S, status as task_status  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, dispatch, state as S, status as task_status
+
+PRS = {
+    "17": {"number": 17, "state": "MERGED", "mergedAt": "2026-08-28T10:00:00Z",
+           "mergeCommit": {"oid": "merge-old"}, "headRefName": "worktree-old",
+           "headRefOid": "head-old", "statusCheckRollup": [
+               {"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+               {"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
+               {"context": "deploy", "state": "PENDING"}]},
+    "18": {"number": 18, "state": "MERGED", "mergedAt": "2026-08-29T10:00:00Z",
+           "mergeCommit": {"oid": "merge-new"}, "headRefName": "worktree-new",
+           "headRefOid": "head-new", "statusCheckRollup": []},
+}
+RUNS = [{"databaseId": 9, "headSha": "merge-new", "conclusion": "success", "status": "completed", "workflowName": "CI"},
+        {"databaseId": 6, "headSha": "merge-old", "conclusion": "success", "status": "completed", "workflowName": "CI"}]
+UNRELATED_RUNS = [{"databaseId": 2, "headSha": "other-sha", "conclusion": "success",
+                   "status": "completed", "workflowName": "CI"}]
 
 
-GH = """#!/usr/bin/env python3
-import json, os, sys
-args = sys.argv[1:]
-with open(os.environ["FAKE_GH_LOG"], "a") as f:
-    f.write(json.dumps(args) + "\\n")
-if os.environ.get("FAKE_GH_FAIL"):
-    print("fake gh failure", file=sys.stderr)
-    sys.exit(2)
-if args[:2] == ["pr", "view"] and os.environ.get("FAKE_GH_FAIL_PR") == args[2]:
-    print("fake gh PR failure", file=sys.stderr)
-    sys.exit(2)
-if args[:2] == ["pr", "view"]:
-    number = int(args[2])
-    prs = {
-        17: {"number": 17, "state": "MERGED", "mergedAt": "2026-08-28T10:00:00Z",
-             "mergeCommit": {"oid": "merge-old"}, "headRefName": "worktree-old",
-             "headRefOid": "head-old", "statusCheckRollup": [
-                 {"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
-                 {"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"},
-                 {"context": "deploy", "state": "PENDING"}]},
-        18: {"number": 18, "state": "MERGED", "mergedAt": "2026-08-29T10:00:00Z",
-             "mergeCommit": {"oid": "merge-new"}, "headRefName": "worktree-new",
-             "headRefOid": "head-new", "statusCheckRollup": []}}
-    print(json.dumps(prs[number]))
-elif args[:2] == ["pr", "list"]:
-    number = os.environ.get("FAKE_GH_BRANCH_PR")
-    print(json.dumps([{"number": int(number)}] if number else []))
-elif args[:2] == ["run", "list"]:
-    if os.environ.get("FAKE_GH_NO_RUN_MATCH"):
-        print(json.dumps([{"databaseId": 2, "headSha": "other-sha", "conclusion": "success",
-                           "status": "completed", "workflowName": "CI"}]))
-    else:
-        print(json.dumps([
-            {"databaseId": 9, "headSha": "merge-new", "conclusion": "success",
-             "status": "completed", "workflowName": "CI"},
-            {"databaseId": 6, "headSha": "merge-old", "conclusion": "success",
-             "status": "completed", "workflowName": "CI"}]))
-else:
-    print("unhandled fake gh call", file=sys.stderr)
-    sys.exit(64)
-"""
-
-CLAUDE = """#!/usr/bin/env python3
-print("[]")
-"""
-
-
-class TestTaskStatus(unittest.TestCase):
+class TestTaskStatus(AltitudeCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="alt-task-status-"))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.root = self.tmp / "home"
-        replacements = {
-            "ROOT": self.root,
-            "MONITOR_DIR": self.root / "monitor",
-            "PROJECTS_FILE": self.root / "projects.json",
-            "INCIDENT_INDEX": self.root / "incidents.jsonl",
-            "DIGEST_FILE": self.root / "DIGEST.md",
-        }
-        for name, value in replacements.items():
-            old = getattr(config, name)
-            setattr(config, name, value)
-            self.addCleanup(setattr, config, name, old)
-        config.ensure_root()
-        quota = mock.patch.object(monitor, "quota", return_value={"known": True})
-        quota.start()
-        self.addCleanup(quota.stop)
+        super().setUp()
+        self.private_ledgers()
+        self.quiet_engines()
+        self.ghdir = self.fake_gh()
+        (self.ghdir / "prs.json").write_text(json.dumps(PRS))
+        (self.ghdir / "runs.json").write_text(json.dumps(RUNS))
 
-        self.repo = self.tmp / "repo"
-        self.repo.mkdir()
         (self.repo / ".github" / "workflows").mkdir(parents=True)
-        config.save_projects({"demo": {"path": str(self.repo), "wip": 5}})
-
-        self.bin_dir = self.tmp / "bin"
-        self.bin_dir.mkdir()
-        gh = self.bin_dir / "gh"
-        gh.write_text(GH)
-        gh.chmod(gh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        claude = self.bin_dir / "claude"
-        claude.write_text(CLAUDE)
-        claude.chmod(claude.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        old_claude = config.CLAUDE_BIN
-        config.CLAUDE_BIN = str(claude)
-        self.addCleanup(setattr, config, "CLAUDE_BIN", old_claude)
-        self.gh_log = self.tmp / "gh.jsonl"
-        self._setenv("PATH", f"{self.bin_dir}:{os.environ.get('PATH', '')}")
-        self._setenv("FAKE_GH_LOG", str(self.gh_log))
-        self._setenv("ALTITUDE_HOME", str(self.root))
-        self._setenv("ALTITUDE_PROJECT", "demo")
-        self._setenv("CLAUDE_BIN", str(claude))
+        self.register("demo", path=self.repo, wip=5)
+        self.setenv("ALTITUDE_PROJECT", "demo")
 
         task = {
             "slug": "task-one", "state": "running", "title": "One status",
@@ -123,16 +54,9 @@ class TestTaskStatus(unittest.TestCase):
             "slug": "other-task", "state": "running", "paths": ["altitude/server.py"]})
         S.write_json(config.MONITOR_DIR / "counts-demo--task-one-1.json", {
             "edits": 7, "files": ["altitude/status.py"]})
-        S.write_json(config.MONITOR_DIR / "statusline-test.json", {
-            "_at": time.time(), "rate_limits": {"five_hour": {"used_percentage": 10}}})
-
-    def _setenv(self, key, value):
-        old = os.environ.get(key)
-        os.environ[key] = value
-        self.addCleanup(lambda: os.environ.update({key: old}) if old is not None else os.environ.pop(key, None))
 
     def calls(self):
-        return [json.loads(line) for line in self.gh_log.read_text().splitlines()] if self.gh_log.exists() else []
+        return self.gh_log()
 
     def test_happy_path_is_complete_and_compact(self):
         result = task_status.status("demo", "task-one")
@@ -310,7 +234,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(result["errors"], [])
 
     def test_missing_main_run_names_the_merge_sha(self):
-        self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
+        (self.ghdir / "runs.json").write_text(json.dumps(UNRELATED_RUNS))
         result = task_status.status("demo", "task-one")
         self.assertIsNone(result["main_run"])
         self.assertEqual(result["gate"], "github-actions")
@@ -318,7 +242,7 @@ class TestTaskStatus(unittest.TestCase):
 
     def test_repo_without_workflows_uses_local_suite_without_main_run_error(self):
         shutil.rmtree(self.repo / ".github")
-        self._setenv("FAKE_GH_NO_RUN_MATCH", "1")
+        (self.ghdir / "runs.json").write_text(json.dumps(UNRELATED_RUNS))
 
         result = task_status.status("demo", "task-one")
 
@@ -328,7 +252,7 @@ class TestTaskStatus(unittest.TestCase):
         self.assertFalse(any(call[:2] == ["run", "list"] for call in self.calls()))
 
     def test_one_pr_fault_keeps_other_summaries_and_checks_main(self):
-        self._setenv("FAKE_GH_FAIL_PR", "18")
+        (self.ghdir / "fail_prs.json").write_text(json.dumps(["18"]))
         result = task_status.status("demo", "task-one")
         self.assertEqual([pr["number"] for pr in result["prs"]], [17])
         self.assertTrue(any("fake gh PR failure" in error for error in result["errors"]))
@@ -354,7 +278,7 @@ class TestTaskStatus(unittest.TestCase):
         task["prs"] = []
         S.write_json(task_path, task)
         S.write_json(S.task_dir("demo", "task-one") / "report.json", {"landed": {}})
-        self._setenv("FAKE_GH_BRANCH_PR", "17")
+        (self.ghdir / "pr_list.json").write_text(json.dumps([{"number": 17}]))
 
         result = task_status.status("demo", "task-one")
 
@@ -362,26 +286,21 @@ class TestTaskStatus(unittest.TestCase):
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["pr", "list"]]), 1)
 
     def test_broken_gh_degrades_without_raising(self):
-        self._setenv("FAKE_GH_FAIL", "1")
+        (self.ghdir / "fail.txt").write_text("gh is broken\n")
         result = task_status.status("demo", "task-one")
         self.assertEqual(result["prs"], [])
         self.assertIsNone(result["main_run"])
         self.assertTrue(result["errors"])
 
     def test_cli_prints_json(self):
-        alt = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        proc = subprocess.run([str(alt), "task", "status", "task-one"], capture_output=True,
-                              text=True, env=os.environ.copy(), timeout=30)
+        proc = self.alt("task", "status", "task-one")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
         self.assertEqual(result["slug"], "task-one")
         self.assertEqual(result["main_run"]["head_sha"], "merge-new")
 
     def test_cli_defaults_slug_from_altitude_task(self):
-        self._setenv("ALTITUDE_TASK", "task-one")
-        alt = Path(__file__).resolve().parent.parent / "bin" / "alt"
-        proc = subprocess.run([str(alt), "task", "status"], capture_output=True,
-                              text=True, env=os.environ.copy(), timeout=30)
+        proc = self.alt("task", "status", env={"ALTITUDE_TASK": "task-one"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["slug"], "task-one")
 

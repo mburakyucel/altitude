@@ -1,27 +1,13 @@
 """L3 preserves one resumable conversation per provider and never replays a partial turn."""
-import os
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-l3-sessions-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, engines, l3  # noqa: E402
+from tests.support import AltitudeCase
+from altitude import config, engines, l3
 
 
-class TestL3Sessions(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        config.ensure_root(); (_TMP / "repo").mkdir()
-        config.save_projects({"k": {"name": "k", "path": str(_TMP / "repo")}})
-
-    def setUp(self):
-        for path in (l3.info_path("k"), config.project_dir("k") / "chat.jsonl"):
-            path.unlink(missing_ok=True)
-
+class TestL3Sessions(AltitudeCase):
     @staticmethod
     def choice(engine):
         return {"engine": engine, "why": f"test chose {engine}", "quota": {}}
@@ -37,14 +23,14 @@ class TestL3Sessions(unittest.TestCase):
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
-            first = l3.turn("k", "first")
-            second = l3.turn("k", "second")
+            first = l3.turn(self.project, "first")
+            second = l3.turn(self.project, "second")
 
         self.assertEqual((first["session_id"], second["session_id"]), ("cx-1", "cx-1"))
         self.assertIsNone(calls[0][1]); self.assertEqual(calls[1][1], "cx-1")
         self.assertIn("Engine: Codex", calls[0][0])
         self.assertNotIn("# You are the L3", calls[1][0], "persona is not replayed into a resumed transcript")
-        self.assertEqual(l3.info("k")["sessions"]["codex"]["usage"]["cached_input_tokens"], 900)
+        self.assertEqual(l3.info(self.project)["sessions"]["codex"]["usage"]["cached_input_tokens"], 900)
 
     def test_codex_l3_runs_the_shared_persona_from_a_scratch_directory(self):
         seen = {}
@@ -56,9 +42,9 @@ class TestL3Sessions(unittest.TestCase):
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
-            out = l3.turn("k", "coordinate this")
+            out = l3.turn(self.project, "coordinate this")
 
-        self.assertEqual(Path(seen["cwd"]), config.project_dir("k") / "l3-codex-runtime")
+        self.assertEqual(Path(seen["cwd"]), config.project_dir(self.project) / "l3-codex-runtime")
         self.assertTrue(seen["prompt"].startswith((config.PERSONAS / "l3.md").read_text()), "one persona per role")
         self.assertEqual(seen["extra_env"]["ALTITUDE_ACTOR"], "l3")
         self.assertNotIn("schema", seen)
@@ -82,10 +68,10 @@ class TestL3Sessions(unittest.TestCase):
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "claude_print", side_effect=fake_claude), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
-            l3.turn("k", "one"); l3.turn("k", "two"); l3.turn("k", "three")
+            l3.turn(self.project, "one"); l3.turn(self.project, "two"); l3.turn(self.project, "three")
 
         self.assertEqual(claude_resumes, [None, "cl-1"])
-        sessions = l3.info("k")["sessions"]
+        sessions = l3.info(self.project)["sessions"]
         self.assertEqual(sessions["claude"]["session_id"], "cl-1")
         self.assertEqual(sessions["codex"]["session_id"], "cx-1")
 
@@ -105,22 +91,22 @@ class TestL3Sessions(unittest.TestCase):
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex), \
              mock.patch.object(engines, "claude_print", side_effect=fake_claude):
-            l3.turn("k", "one"); l3.turn("k", "two")
+            l3.turn(self.project, "one"); l3.turn(self.project, "two")
 
-        sessions = l3.info("k")["sessions"]
+        sessions = l3.info(self.project)["sessions"]
         self.assertEqual(sessions["codex"]["session_id"], "cx-1")
         self.assertEqual(sessions["claude"]["session_id"], "cl-1")
 
     def test_codex_resume_rejects_a_different_thread(self):
-        l3.save_info("k", {"sessions": {"codex": {"session_id": "cx-1"}}, "engine_last": "codex"})
+        l3.save_info(self.project, {"sessions": {"codex": {"session_id": "cx-1"}}, "engine_last": "codex"})
         result = {"text": "wrong thread answer", "session_id": "cx-2", "reported_session_id": "cx-2",
                   "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
              mock.patch.object(engines, "codex_exec", return_value=result):
-            out = l3.turn("k", "continue")
+            out = l3.turn(self.project, "continue")
         self.assertFalse(out["completed"])
         self.assertIn("different thread", out["error"])
-        self.assertEqual(l3.info("k")["sessions"]["codex"]["session_id"], "cx-1")
+        self.assertEqual(l3.info(self.project)["sessions"]["codex"]["session_id"], "cx-1")
 
     def test_partial_limited_claude_turn_is_not_replayed_on_codex(self):
         result = {"text": "I already changed state", "session_id": "cl-1", "usage": {},
@@ -129,7 +115,7 @@ class TestL3Sessions(unittest.TestCase):
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
              mock.patch.object(engines, "claude_print", return_value=result), \
              mock.patch.object(engines, "codex_exec") as codex:
-            out = l3.turn("k", "do one thing")
+            out = l3.turn(self.project, "do one thing")
         codex.assert_not_called()
         self.assertEqual(out["engine"], "claude")
 

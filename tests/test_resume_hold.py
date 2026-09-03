@@ -2,42 +2,24 @@
 import contextlib
 import io
 import json
-import os
 import runpy
-import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-_TMP = Path(tempfile.mkdtemp(prefix="altitude-resume-hold-"))
-os.environ["ALTITUDE_HOME"] = str(_TMP)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, dispatch, engines, monitor, state as S, tasks as T  # noqa: E402
+from tests.support import ALT, AltitudeCase
+from altitude import dispatch, engines, state as S, tasks as T
 
 
-class TestResumeHold(unittest.TestCase):
-    _number = 0
-
+class TestResumeHold(AltitudeCase):
     def setUp(self):
-        type(self)._number += 1
-        self.project = f"resume-hold-{self._number}"
-        self.repo = _TMP / self.project / "repo"
-        self.repo.mkdir(parents=True)
-        config.save_projects({self.project: {"name": self.project, "path": str(self.repo), "wip": 20}})
+        super().setUp()
+        self.register(self.project, wip=20)
         self.launched = []
-        patches = [
-            mock.patch.object(engines, "usage_hold", return_value=None),
-            mock.patch.object(monitor, "quota", return_value={"known": True}),
-            mock.patch.object(engines, "claude_agents", return_value=[]),
-            mock.patch.object(engines, "claude_stop", return_value="stopped"),
-            mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40),
-            mock.patch.object(dispatch, "_validate_task_worktree"),
-            mock.patch.object(engines, "resume_l2", side_effect=self._resume_l2),
-        ]
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
+        self.quiet_engines()
+        self.patch(engines, "claude_stop", return_value="stopped")
+        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch, "_validate_task_worktree")
+        self.patch(engines, "resume_l2", side_effect=self._resume_l2)
 
     def _resume_l2(self, engine, name, session_id, prompt, **_kw):
         slug = name.split("/", 1)[1].rsplit("-", 1)[0]
@@ -133,7 +115,7 @@ class TestResumeHold(unittest.TestCase):
 
         self.assertIn(f"`{pending['slug']}` is blocked with a pending resume", hold or "")
 
-    def test_overlapping_pending_resumes_come_back_oldest_first_without_deadlock(self):
+    def test_overlapping_pending_resumes_come_back_oldest_first(self):
         oldest = self._task("oldest resume", "blocked", "altitude/shared.py", "2026-01-01T00:00:00+00:00")
         youngest = self._task("youngest resume", "blocked", "altitude/shared.py", "2026-01-02T00:00:00+00:00")
         for task in (oldest, youngest):
@@ -145,7 +127,7 @@ class TestResumeHold(unittest.TestCase):
         self.assertEqual(dispatch.resume_due(self.project), [oldest["slug"]])
 
     def test_cli_resume_reports_a_hold_or_the_new_worker(self):
-        main = runpy.run_path(str(Path(__file__).resolve().parent.parent / "bin" / "alt"))["main"]
+        main = runpy.run_path(str(ALT))["main"]
         blocked = self._task("cli resume", "blocked", "altitude/cli.py", "2026-01-01T00:00:00+00:00")
 
         def invoke():
