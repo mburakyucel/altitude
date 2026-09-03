@@ -108,10 +108,13 @@ Incident records are evidence only and never create tasks, personas, or follow-u
 A merged Altitude change marks a restart pending when the fast-forward brings in files under
 `altitude/`, `bin/`, or `systemd/` — the code the running service loaded at start — whether that
 fast-forward runs after a task lands or at the next dispatch. Everything else, hooks, personas and
-templates included, is read per use and deploys with the pull itself. The web app shows a banner on every page and, once
-no L2 is running and no L3 is busy, a Restart button that runs the guarded restart script as a
-transient user unit outside altd's own cgroup. Ordinary source changes never start, stop, mask,
-unmask, or restart the service; a lifecycle action needs separate authorization and post-change
+templates included, is read per use and deploys with the pull itself. The web app shows a banner on every page. New
+dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, altd
+runs the guarded restart script itself as a transient user unit outside its own cgroup, which verifies
+health afterwards; the banner's Restart button runs the same script sooner by hand. A restart that has
+not happened ten minutes after it was requested is a system fault for L3, and the hold lifts. Ordinary
+source changes never start, stop, mask, unmask, or restart the service; a lifecycle action by hand
+needs separate authorization and post-change
 health verification.
 
 ## Interfaces and storage

@@ -1,5 +1,7 @@
-"""A merged Altitude change marks a restart pending; the page offers the restart only when nothing is running."""
+"""A merged Altitude change marks a restart pending; Altitude restarts itself at the quiet point (Burak, 2026-09-03),
+and the page offers the restart by hand only when nothing is running."""
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -38,6 +40,42 @@ class TestRestartPending(AltitudeCase):
         with mock.patch.object(server.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="", stderr="no bus")):
             with self.assertRaisesRegex(RuntimeError, "no bus"):
                 server.restart_service()
+
+    def test_the_quiet_point_restarts_the_service_by_itself(self):
+        S.write_json(self.flag, {"since": "2026-09-03T08:00:00+00:00", "head": "abc", "files": ["altitude/server.py"]})
+        with mock.patch.object(server, "restart_service", return_value={"ok": True, "unit": "altitude-restart-x"}) as restart:
+            server.auto_restart()
+            server.auto_restart()  # the unit is still building and swapping the bundle: no second request
+        self.assertEqual(restart.call_count, 1)
+        pend = S.read_json(self.flag)
+        self.assertEqual(pend["unit"], "altitude-restart-x"); self.assertIn("requested_at", pend)
+
+    def test_a_pending_restart_waits_for_work_and_holds_new_dispatches(self):
+        S.write_json(self.flag, {"since": "2026-09-03T08:00:00+00:00", "head": "abc", "files": ["bin/alt"]})
+        busy = T.new(self.project, "keeps altd busy", "request", actor="burak")
+        busy["state"] = "running"; S.save_task(self.project, busy)
+        T.new(self.project, "waits its turn", "request", actor="burak")
+        with mock.patch.object(server, "restart_service") as restart, mock.patch.object(server.dispatch, "run") as run:
+            server.auto_restart(); server.dispatch_waiting(self.project)
+        restart.assert_not_called(); run.assert_not_called()
+        busy["state"] = "done"; S.save_task(self.project, busy)
+        with mock.patch.object(server, "restart_service", return_value={"ok": True, "unit": "u"}) as restart:
+            server.auto_restart()
+        restart.assert_called_once()
+
+    def test_a_restart_that_never_happened_is_a_fault_and_lifts_the_hold(self):
+        old = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+        S.write_json(self.flag, {"since": "2026-09-03T08:00:00+00:00", "head": "abc", "files": ["bin/alt"],
+                                 "requested_at": old, "unit": "altitude-restart-old"})
+        T.new(self.project, "waits its turn", "request", actor="burak")
+        with mock.patch.object(server.incidents, "system_fault") as fault, mock.patch.object(server, "restart_service") as restart:
+            server.auto_restart()
+        restart.assert_not_called(); fault.assert_called_once()
+        self.assertIn("altitude-restart-old", fault.call_args.args[1])
+        self.assertTrue(S.read_json(self.flag)["failed"])
+        with mock.patch.object(server.dispatch, "run", return_value={"attempt": 1, "agent": None}) as run:
+            server.dispatch_waiting(self.project)
+        run.assert_called_once()
 
 
 if __name__ == "__main__":

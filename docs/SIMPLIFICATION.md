@@ -66,4 +66,5 @@ reported in the PR. Ask him only for a decision not recorded here.
 
 Operator subcommands with no caller (`alt task paths|brief|list`, `fyi`, `decisions`, `digest`,
 `monitor`, `dispatch`, `verify`, `poll`, `chat`, `l3-reset`, `incident list`) are kept until Burak
-decides. Auto-restart when idle stays a possible follow-up to decision 4.
+decides. Auto-restart at the quiet point is in (Burak, 2026-09-03): a merged change to the service
+code holds new dispatches and restarts altd once nothing runs; a restart that does not happen is a fault.

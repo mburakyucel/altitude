@@ -55,9 +55,12 @@ bin/alt --project <name> task status <slug>
 ## Service lifecycle
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-A lifecycle change requires separate explicit authorization and post-change health checks.
+Altitude restarts itself: a merged change to its own code marks a restart pending, new dispatches
+hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, `altd` runs the
+guarded restart script below as a transient user unit, which verifies health afterwards. A restart
+that has not happened ten minutes after it was requested is a system fault for L3 and the hold lifts.
 
-For an operator-authorized restart, press Restart on the web app's restart-pending banner (shown
+To restart sooner by hand, press Restart on the web app's restart-pending banner (shown
 once nothing is running) or run `make restart` from the deployed primary checkout. The
 command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the

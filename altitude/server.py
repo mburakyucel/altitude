@@ -320,6 +320,9 @@ def resume_stranded_reports(project: str) -> None:
 
 
 def dispatch_waiting(project: str) -> None:
+    pending = restart_status()
+    if pending and not pending.get("failed"):
+        return  # a restart is pending: no new worker until the service runs main (auto_restart)
     for t in S.list_tasks(project):
         if t["state"] != "queued":
             continue
@@ -381,6 +384,10 @@ def tick() -> None:
         except Exception as e:  # noqa: BLE001
             log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
             incidents.system_fault("tick", f"{project}: {e}", project=project)
+    try:
+        auto_restart()
+    except Exception as e:  # noqa: BLE001
+        log(f"auto-restart: {e}\n{traceback.format_exc()}")
     morning_digest()
 
 
@@ -694,6 +701,44 @@ def restart_status() -> dict | None:
                if t.get("dispatching") or t.get("state") in ("running", "reported")]
     waiting += [f"{p} L3" for p in projects if l3.busy(p)]
     return {**pending, "waiting_for": waiting}
+
+
+RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the old process is gone well within this
+
+
+def auto_restart() -> None:
+    """Altitude restarts itself at the quiet point once it runs code older than main (Burak, 2026-09-03: a
+    merged fault fix is not a fix until the service runs it). Quiet means no task dispatching, running or
+    reported and no L3 turn in flight; `dispatch_waiting` holds new dispatches while a restart is pending,
+    so the quiet point comes. The restart unit re-checks all of that itself before touching the service."""
+    status = restart_status()
+    if not status or status["waiting_for"] or status.get("failed"):
+        return
+    flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+    pend = S.read_json(flag, {}) or {}
+    requested = pend.get("requested_at")
+    if requested:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(requested)).total_seconds()
+        if age < RESTART_GRACE_SECONDS:
+            return  # the restart unit is still building and swapping the bundle
+        pend["failed"] = S.now()
+        S.write_json(flag, pend)
+        detail = (f"restart unit {pend.get('unit')} did not restart the service within "
+                  f"{RESTART_GRACE_SECONDS // 60} minutes; see journalctl --user -u {pend.get('unit')}")
+        log(f"auto-restart: {detail}; new dispatches resume")
+        incidents.system_fault("restart", detail)
+        return
+    try:
+        res = restart_service()
+    except RuntimeError as e:
+        pend["failed"] = S.now()
+        S.write_json(flag, pend)
+        log(f"auto-restart could not start: {e}; new dispatches resume")
+        incidents.system_fault("restart", f"auto-restart could not start: {e}")
+        return
+    pend.update({"requested_at": S.now(), "unit": res["unit"]})
+    S.write_json(flag, pend)
+    log(f"quiet point: restarting for {len(pend.get('files', []))} changed file(s) via unit {res['unit']}")
 
 
 def restart_service() -> dict:

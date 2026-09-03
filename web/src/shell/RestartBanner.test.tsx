@@ -42,7 +42,7 @@ describe("RestartBanner", () => {
   it("names what the restart waits for instead of offering the button", async () => {
     mockFetch({ ...pending, waiting_for: ["altitude/fix-thing", "altitude L3"] });
     renderApp({ route: "/projects" });
-    await screen.findByText(/Restart waits for altitude\/fix-thing, altitude L3/);
+    await screen.findByText(/waiting for altitude\/fix-thing, altitude L3/);
     expect(screen.queryByRole("button", { name: "Restart Altitude" })).toBeNull();
   });
 

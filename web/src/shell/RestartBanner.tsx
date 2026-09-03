@@ -1,7 +1,8 @@
 import { useRestart } from "../data/api";
 import type { Restart } from "../data/api";
 
-/** Shown on every page while altd runs code older than main; the button appears once nothing is running. */
+/** Shown on every page while altd runs code older than main. Altitude restarts itself at the quiet point;
+ * the button restarts sooner by hand once nothing is running, and is the way back after a failed restart. */
 export function RestartBanner({ restart }: { restart: Restart | null | undefined }) {
   const act = useRestart();
   if (!restart) return null;
@@ -17,7 +18,11 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
         {since ? ` since ${since}Z` : ""}.
       </span>
       {restart.waiting_for.length > 0 ? (
-        <span className="text-muted">Restart waits for {restart.waiting_for.join(", ")}.</span>
+        <span className="text-muted">
+          Altitude restarts itself once nothing is running; waiting for {restart.waiting_for.join(", ")}.
+        </span>
+      ) : restart.requested_at && !restart.failed ? (
+        <span className="text-muted">Restarting…</span>
       ) : (
         <button
           type="button"
@@ -28,6 +33,7 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
           {act.isPending || act.isSuccess ? "Restarting…" : "Restart Altitude"}
         </button>
       )}
+      {restart.failed ? <span className="text-muted">The automatic restart did not complete; L3 has the fault.</span> : null}
     </div>
   );
 }
