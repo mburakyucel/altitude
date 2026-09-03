@@ -84,7 +84,7 @@ The current logical/physical identity split is:
 | Publication | [`land.py`](../../altitude/land.py), [`verify.py`](../../altitude/verify.py) | Validates task authority/scope, commits, pushes, creates/reads PRs, checks exact head/base and CI or local tests, optionally merges, and verifies reports. |
 | GitHub issue intake | [`github_intake.py`](../../altitude/github_intake.py) | Detects explicitly referenced issues, fetches and validates a bounded immutable snapshot, and injects it into a brief/resume. |
 | Recovery/incidents | [`incidents.py`](../../altitude/incidents.py), [`recovery.py`](../../altitude/recovery.py) | Deduplicates system faults, persists incident evidence and a global hold, fences launches, requests one L3 recovery-attention turn, and permits one claimed repair task. |
-| Transcript/status | [`transcript.py`](../../altitude/transcript.py), [`status.py`](../../altitude/status.py), [`monitor.py`](../../altitude/monitor.py) | Generation-fenced live transcript, redaction and portable bundles, task rollups, provider/session/context/quota monitoring. |
+| Transcript/status | [`transcript.py`](../../altitude/transcript.py), [`status.py`](../../altitude/status.py), [`monitor.py`](../../altitude/monitor.py) | Generation-fenced live transcript with redaction (portable bundles removed in phase 1b), task rollups, provider/session/context/quota monitoring. |
 | Operator interface | [`bin/alt`](../../bin/alt), [`scripts/restart_altitude.py`](../../scripts/restart_altitude.py), `Makefile` | CLI commands, guarded restart/build/health workflow, tests, service install, and operational inspection. |
 | Web UI | [`web/src`](../../web/src) | Projects, Inbox, project detail, L3 chat, task conversation, monitor, and opt-in live transcript. |
 

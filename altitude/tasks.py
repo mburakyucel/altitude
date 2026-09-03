@@ -221,9 +221,6 @@ def dispatch(project: str, slug: str, *, dispatch_id: str, session_id: str | Non
     with S.project_lock(project):
         task = S.load_task(project, slug)
         previous_dispatch_id = task.get("dispatch_id")
-        if previous_dispatch_id and previous_dispatch_id != dispatch_id:
-            from . import transcript
-            transcript.sync(project, slug)
         task.update({"dispatch_id": dispatch_id, "session_id": session_id, "agent_id": agent_id,
                      "l2_token": l2_token, "worktree": worktree, "branch": branch, "blocked_reason": None,
                      "l2_engine": l2_engine, "engine_model": engine_model, "routing": routing,
@@ -385,9 +382,6 @@ def finalize_completion(project: str, slug: str, *, expected_dispatch_id: str,
 def _archive(project: str, slug: str) -> None:
     src = S.tasks_dir(project) / slug
     if src.is_dir():
-        # Capture the final state/outcome after digest/report creation and before the task moves.
-        from . import transcript
-        transcript.sync(project, slug)
         dst = S.archive_dir(project) / slug
         dst.parent.mkdir(parents=True, exist_ok=True)
         src.rename(dst)

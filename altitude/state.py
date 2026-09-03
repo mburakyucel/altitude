@@ -137,15 +137,6 @@ def append_event(project: str, slug: str, kind: str, **data) -> dict:
         f.write(json.dumps(ev, sort_keys=True) + "\n")
         f.flush()
         os.fsync(f.fileno())
-    # Provider stores are ephemeral. Snapshot after every durable boundary so failures,
-    # cancellation, malformed actions, and worker replacement retain evidence to this point.
-    try:
-        from . import transcript
-        transcript.sync(project, slug)
-    except (KeyError, OSError, ValueError):
-        # The lifecycle event is primary and must remain writable during early task creation or
-        # while a provider has an incomplete record. A later boundary retries the full snapshot.
-        pass
     return ev
 
 

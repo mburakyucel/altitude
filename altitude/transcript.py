@@ -6,10 +6,7 @@ records are still redacted: local visibility is not permission to disclose crede
 from __future__ import annotations
 
 import json
-import hashlib
 import re
-import shutil
-import tarfile
 from pathlib import Path
 
 from . import config, dispatch, state as S
@@ -20,7 +17,6 @@ _SECRET_VALUE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}|\b(?:sk|gh[o
 BOUNDARIES = {"dispatched", "resumed", "resume-cancelled", "resume-failed", "resume-held",
               "replaced", "compacted", "engine-changed", "recovery"}
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
-SCHEMA_VERSION = "altitude.transcript/v1"
 
 
 class TranscriptAccessError(ValueError):
@@ -181,147 +177,3 @@ def view(project: str, slug: str, *, dispatch_id: str, engine: str, session_id: 
             "session_id": session_id, "cursor": len(rows), "events": rows[start:],
             "redaction": "credential-shaped keys and values are redacted; hidden model reasoning is never exposed"}
 
-
-def _digest(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _event_id(attempt: str, source: str, ordinal: int, value: dict) -> str:
-    seed = json.dumps([attempt, source, ordinal, value], sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(seed.encode()).hexdigest()[:24]
-
-
-def _attempt_dir(project: str, slug: str, dispatch_id: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", dispatch_id).strip("-.") or "undispatched"
-    return S.task_dir(project, slug) / "transcripts" / safe
-
-
-def sync(project: str, slug: str) -> Path | None:
-    """Materialize the current attempt without depending on its provider store afterward.
-
-    Rewriting from append-only sources makes this idempotent, crash-tolerant, and able to pick up
-    a provider's partially written final record on the next lifecycle event.
-    """
-    task = S.load_task(project, slug)
-    dispatch_id = str(task.get("dispatch_id") or "")
-    if not dispatch_id:
-        return None
-    root = _attempt_dir(project, slug, dispatch_id)
-    root.mkdir(parents=True, exist_ok=True)
-    prior_manifest = S.read_json(root / "manifest.json", {}) or {}
-    platform = S.read_events(project, slug)
-    canonical: list[dict] = []
-    native_files: list[dict] = []
-    prior_events = [record for record, error in _read_jsonl(root / "events.jsonl")
-                    if record is not None and not error]
-
-    def add(source: str, ordinal: int, event_type: str, at, payload: dict, **links) -> None:
-        safe = _redact(payload)
-        canonical.append({"id": _event_id(dispatch_id, source, ordinal, safe), "seq": len(canonical),
-                          "at": at, "source": source, "type": event_type,
-                          "attempt_id": dispatch_id, **links, "payload": safe})
-
-    for index, event in enumerate(platform):
-        add("altitude", index, str(event.get("kind") or "event"), event.get("at"), event,
-            task_slug=slug, message_id=event.get("message_id"), helper=event.get("helper"))
-    conversation = S.task_dir(project, slug) / "conversation.jsonl"
-    for index, pair in enumerate(_read_jsonl(conversation)):
-        record, error = pair
-        if record is not None:
-            add("conversation", index, "message", record.get("at"), record,
-                task_slug=slug, message_id=record.get("id"))
-        elif error:
-            add("conversation", index, "record-error", None, {"error": error}, task_slug=slug)
-    for file_index, (engine, session_id, path) in enumerate(_engine_paths(project, slug, task, platform)):
-        records = []
-        for record_index, (record, error) in enumerate(_read_jsonl(path)):
-            value = _redact(record) if record is not None else {"error": error}
-            records.append(value)
-            add(engine, record_index + file_index * 1_000_000,
-                str(value.get("type") or value.get("kind") or "record-error"),
-                value.get("timestamp") or value.get("at"), value,
-                task_slug=slug, session_id=session_id, worker_id=path.name.split(".stdout", 1)[0])
-        native_key = hashlib.sha256(f"{engine}\0{session_id}\0{path.name}".encode()).hexdigest()[:12]
-        native_name = f"native-{engine}-{native_key}.jsonl"
-        native_data = "".join(json.dumps(v, sort_keys=True) + "\n" for v in records).encode()
-        S.atomic_write(root / native_name, native_data.decode())
-        native_files.append({"path": native_name, "engine": engine, "session_id": session_id,
-                             "records": len(records), "sha256": _digest(native_data)})
-    # A provider store may disappear before a late terminal/archive event. Never replace an
-    # already captured native snapshot with absence.
-    known_native = {entry["path"] for entry in native_files}
-    for entry in prior_manifest.get("native") or []:
-        path = root / str(entry.get("path") or "")
-        if (entry.get("path") not in known_native and path.is_file()
-                and _digest(path.read_bytes()) == entry.get("sha256")):
-            native_files.append(entry)
-    # If a replaced provider worker's source vanished, retain its last canonical records too.
-    current_ids = {event["id"] for event in canonical}
-    for event in prior_events:
-        if event.get("source") not in ("altitude", "conversation") and event.get("id") not in current_ids:
-            canonical.append(event)
-    for seq, event in enumerate(canonical):
-        event["seq"] = seq
-    event_data = "".join(json.dumps(e, sort_keys=True) + "\n" for e in canonical).encode()
-    S.atomic_write(root / "events.jsonl", event_data.decode())
-    outcome_files = {}
-    for name in ("report.json", "digest.md"):
-        path = S.task_dir(project, slug) / name
-        if path.is_file():
-            data = path.read_bytes()
-            shutil.copyfile(path, root / name)
-            outcome_files[name] = _digest(data)
-    manifest = {
-        "schema_version": SCHEMA_VERSION, "project": project, "task_slug": slug,
-        "task_created": task.get("created"), "level": "l2", "role": "task-owner",
-        "attempt_id": dispatch_id, "attempt_number": task.get("attempt"),
-        "engine": task.get("l2_engine"), "model": task.get("engine_model") or task.get("model"),
-        "session_id": task.get("session_id"), "worker_id": task.get("agent_id"),
-        "state": task.get("state"), "updated": task.get("updated"),
-        "previous_attempt": task.get("previous_dispatch_id"),
-        "canonical": {"path": "events.jsonl", "events": len(canonical), "sha256": _digest(event_data)},
-        "native": native_files, "outcome": outcome_files,
-        "privacy": {"classification": "private", "redaction": "credential-shaped keys and values removed",
-                    "future_context": "not automatically injected"},
-    }
-    S.write_json(root / "manifest.json", manifest)
-    return root
-
-
-def validate_bundle(root: Path) -> dict:
-    root = Path(root)
-    manifest = S.read_json(root / "manifest.json")
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != SCHEMA_VERSION:
-        raise TranscriptAccessError("unsupported or missing transcript manifest")
-    checked = []
-    entries = [manifest.get("canonical") or {}, *(manifest.get("native") or [])]
-    entries += [{"path": path, "sha256": digest} for path, digest in (manifest.get("outcome") or {}).items()]
-    for entry in entries:
-        rel = str(entry.get("path") or "")
-        path = (root / rel).resolve()
-        if not rel or root.resolve() not in path.parents or not path.is_file():
-            raise TranscriptAccessError(f"bundle file unavailable: {rel}")
-        if _digest(path.read_bytes()) != entry.get("sha256"):
-            raise TranscriptAccessError(f"checksum mismatch: {rel}")
-        checked.append(rel)
-    previous = -1
-    for record, error in _read_jsonl(root / "events.jsonl"):
-        if error or record is None or record.get("seq") != previous + 1 or not record.get("id"):
-            raise TranscriptAccessError("canonical event ordering is invalid")
-        previous += 1
-    return {"valid": True, "schema_version": SCHEMA_VERSION, "files": checked, "events": previous + 1}
-
-
-def export(project: str, slug: str, destination: Path, dispatch_id: str | None = None) -> Path:
-    _require_task_access(project, slug)
-    task = S.load_task(project, slug)
-    wanted = dispatch_id or str(task.get("dispatch_id") or "")
-    if wanted == task.get("dispatch_id"):
-        sync(project, slug)
-    root = _attempt_dir(project, slug, wanted)
-    validate_bundle(root)
-    destination = Path(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(destination, "w:gz") as archive:
-        archive.add(root, arcname=f"{slug}-{root.name}")
-    return destination
