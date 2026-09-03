@@ -225,12 +225,11 @@ def build_brief(project: str, slug: str) -> str:
 
 
 def session_settings(project: str, slug: str, session_key: str) -> Path:
-    """Per-attempt settings: repository guardrails, edit telemetry, and the inbox hook that hands Burak's queued
-    messages to the worker after a tool call or when it is about to stop."""
+    """Per-attempt settings: edit telemetry and the inbox hook that hands Burak's queued messages to the
+    worker after a tool call or when it is about to stop."""
     hooks = config.HOOKS
     inbox = [{"type": "command", "command": f"python3 {hooks / 'inbox.py'}", "timeout": 10}]
     settings = {"hooks": {
-        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": f"python3 {hooks / 'guard.py'}", "timeout": 10}]}],
         "PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": f"python3 {hooks / 'edit_count.py'}", "timeout": 10}]},
                         {"hooks": inbox}],
         "Stop": [{"hooks": inbox}],

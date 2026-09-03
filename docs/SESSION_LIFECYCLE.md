@@ -87,8 +87,8 @@ continuation is a deliberate new attempt based on saved work, not a fake transcr
 
 Claude resume uses `claude --bg --resume`. Its L2 contract is direct: the persona may invoke the
 scoped Altitude CLI, while the backend applies the identity, clean-Git, lease, provenance, and merge
-policy checks relevant to each command and effect boundary. Claude hooks add command guardrails,
-telemetry, and inbox delivery; they are not the backend authority check.
+policy checks relevant to each command and effect boundary. Claude hooks add telemetry and inbox
+delivery; they are not the backend authority check.
 
 Codex uses `codex exec resume <thread-id> <prompt>` from the same task worktree. Codex stdout JSONL
 is private task evidence; `thread.started.thread_id` is the session identity and

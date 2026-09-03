@@ -34,7 +34,7 @@ five `simplify/*` draft PRs are closed and no `simplify/*` branch is a source fo
 
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI, `personas/` contains the
 L2 and L3 roles for each engine, and `schemas/` defines broker actions and code-delivery reports.
-`hooks/` supplies Claude-side command guardrails, message delivery, and telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
+`hooks/` supplies Claude-side message delivery and telemetry. Codex uses explicit permission profiles and whole-process-tree containment, then returns
 an inert action for trusted backend validation. `web/` is the React UI built into `web/dist/` for
 the Python server to serve.
 

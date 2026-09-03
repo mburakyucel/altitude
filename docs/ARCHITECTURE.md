@@ -127,6 +127,6 @@ That mismatch is retained here as current behavior pending the module-by-module 
 
 Runtime files live under `ALTITUDE_HOME`. Source-controlled personas, schemas, templates, and hooks
 describe current executable behavior. Documentation under `docs/simplification-review/` separately
-catalogues unmerged candidates and must not be read as runtime behavior. Hooks supply Claude-side command guardrails
+catalogues unmerged candidates and must not be read as runtime behavior. Hooks supply Claude-side message delivery
 and telemetry; permission profiles, process containment, and backend validation form the Codex
 execution boundary. Superseded designs remain in Git history, not in the active tree.
