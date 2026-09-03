@@ -29,7 +29,6 @@ const running = {
   spend: { turns: 12, subagent_launches_reported: 2, edits_hook: 7, retries: 0 },
   live: {
     state: "running",
-    l1_runs: 2,
     edits: 7,
     context_percent: 34,
     agent: { status: "working" },
@@ -81,13 +80,13 @@ function stub(task: unknown) {
 const route = "/projects/altitude/tasks/fix-timer";
 
 describe("Task", () => {
-  it("renders the task detail and optional L1 activity", async () => {
+  it("renders the task detail and live state", async () => {
     stub(running);
     renderApp({ route });
 
     await screen.findByText("Fix the timer");
     expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getAllByText(/L1 runs 2/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/subagents 2/)).toBeInTheDocument();
     expect(screen.getByText(/attempt 1/)).toBeInTheDocument();
     expect(screen.getByText(/session 01234567 /)).toBeInTheDocument();
     expect(screen.getByText(/attach: claude attach a-9/)).toBeInTheDocument();

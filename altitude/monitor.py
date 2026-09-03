@@ -29,8 +29,6 @@ def sessions() -> list[dict]:
                 counts_p = S.counts_path(name, t)
                 counts = (S.read_json(counts_p, {}) if counts_p else {}) or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
-                l1_dir = S.task_dir(name, t["slug"]) / "l1"
-                l1_runs = len(list(l1_dir.glob("*.json"))) if l1_dir.is_dir() else 0
                 engine = t.get("l2_engine") or "claude"
                 if engine == "codex":
                     row = engines.codex_worker(t.get("agent_id"), job_root=S.task_dir(name, t["slug"]) / "l2-engine")
@@ -41,7 +39,7 @@ def sessions() -> list[dict]:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
-                            "l1_runs": l1_runs, "edits": counts.get("edits", 0),
+                            "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
                             "context_state": engines.context_state(cp, engine)})
     return out

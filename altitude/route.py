@@ -1,4 +1,4 @@
-"""Small, auditable engine selection shared by L2, L3, and optional helpers.
+"""Small, auditable engine selection shared by L2 and L3.
 
 Routing is weekly-first because the weekly allowance is the scarce resource. A
 short window is only an availability signal: it can rule an engine out, but it
@@ -73,16 +73,8 @@ def _unavailable(weekly: float | None, short: float | None) -> str | None:
     return None
 
 
-def _default(role: str) -> str:
-    return config.PRIMARY_DEFAULT_ENGINE if role in ("l2", "l3") else config.L1_DEFAULT_ENGINE
-
-
-def pick_engine(role: str, *, forced: str | None = None, other_than: str | None = None) -> dict:
-    """Return ``{engine, why}``; ``engine`` is None when nothing is available.
-
-    ``other_than`` never overrides quota: independent review is useful, but not
-    worth draining the scarcer weekly seat.
-    """
+def pick_engine(role: str, *, forced: str | None = None) -> dict:
+    """Return ``{engine, why}``; ``engine`` is None when nothing is available."""
     if forced and forced not in config.ENGINES:
         raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
     usage = _usage()
@@ -103,7 +95,7 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
 
     weekly = {engine: usage[engine][0] for engine in available}
     comparable = [engine for engine in available if weekly[engine] is not None]
-    default = _default(role)
+    default = config.PRIMARY_DEFAULT_ENGINE
     if len(comparable) == 2:
         engine = min(comparable, key=lambda item: (weekly[item], item != default))
         why = (f"more weekly headroom: claude 7d {weekly['claude']:.1f}% used vs "
@@ -116,6 +108,4 @@ def pick_engine(role: str, *, forced: str | None = None, other_than: str | None 
     else:
         engine = default if default in available else available[0]
         why = f"weekly quotas unknown or incomparable → default policy {engine}"
-    if other_than and engine == other_than:
-        why += "; reviewer stayed on quota-selected engine instead of forcing provider diversity"
     return {"engine": engine, "why": why}

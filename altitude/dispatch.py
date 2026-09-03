@@ -191,7 +191,7 @@ def build_brief(project: str, slug: str) -> str:
         )
         publication_contract = (
             "The Codex command sandbox can write only ordinary worktree files; Git metadata, Altitude state, and "
-            "network access remain outside it. Return inert publication/helper intent through the final action "
+            "network access remain outside it. Return inert publication intent through the final action "
             "schema—never run Git publication or Altitude mutation commands yourself."
         )
     else:

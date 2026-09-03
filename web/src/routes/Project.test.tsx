@@ -25,7 +25,6 @@ const project = {
       live: {
         agent: { status: "active", state: "tool" },
         context_percent: 44,
-        l1_runs: 1,
         edits: 7,
       },
     },
@@ -78,7 +77,7 @@ function cardFor(title: HTMLElement): HTMLElement {
 }
 
 describe("Project", () => {
-  it("renders the L3 card, the task list and optional L1 activity", async () => {
+  it("renders the L3 card and the task list", async () => {
     mockFetch();
     renderApp({ route: "/projects/altitude" });
 
@@ -86,7 +85,6 @@ describe("Project", () => {
     expect(screen.getByText("Tasks (2)")).toBeInTheDocument();
     expect(screen.getByText(/session abcdef12 · 12 turns · context 33% · last 7m/)).toBeInTheDocument();
     expect(screen.getByText(/approval: ask · WIP 2/)).toBeInTheDocument();
-    expect(screen.getByText(/L1 runs 1/)).toBeInTheDocument();
     expect(screen.getByText(/L2 active\/tool · ctx 44%/)).toBeInTheDocument();
     expect(screen.getByText("Needs you (1)")).toBeInTheDocument();
     expect(screen.getByText("L2 picked it up")).toBeInTheDocument();

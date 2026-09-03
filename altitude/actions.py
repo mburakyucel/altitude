@@ -2,18 +2,14 @@
 
 The model can edit ordinary files in its isolated worktree and return inert JSON. It cannot write Altitude state,
 Git metadata, or the network. Only this control-plane module, after the worker's whole cgroup is empty, may turn
-that JSON into state changes, helper launches, or PR publication. Codex works in turns: between them the task is
+that JSON into state changes or PR publication. Codex works in turns: between them the task is
 held for a moment and the next prompt waits in the task inbox, which the next tick's resume folds in.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from . import config, dispatch, engines, land, l1, state as S, tasks as T
-
-MAX_HELPERS = 4
-MAX_HELPER_RESULT_BYTES = engines.RAW_CAPTURE_CAP
+from . import config, dispatch, engines, land, state as S, tasks as T
 
 
 class ActionError(RuntimeError):
@@ -24,7 +20,7 @@ def _validate_shape(action: object) -> dict:
     if not isinstance(action, dict):
         raise ActionError("Codex L2 ended without a schema-valid action")
     kind = action.get("action")
-    if kind not in ("publish", "complete_no_code", "block", "request_helpers", "continue"):
+    if kind not in ("publish", "complete_no_code", "block", "continue"):
         raise ActionError(f"unknown Codex L2 action {kind!r}")
     if kind == "publish" and not str(action.get("commit_message") or "").strip():
         raise ActionError("publish requires a commit message")
@@ -34,18 +30,6 @@ def _validate_shape(action: object) -> dict:
         raise ActionError("block requires an exact reason")
     if kind == "continue" and not str(action.get("continue_reason") or "").strip():
         raise ActionError("continue requires a reason")
-    helpers = action.get("helpers") or []
-    if kind == "request_helpers":
-        if not isinstance(helpers, list) or not helpers or len(helpers) > MAX_HELPERS:
-            raise ActionError(f"request_helpers requires 1-{MAX_HELPERS} helpers")
-        for helper in helpers:
-            if (not isinstance(helper, dict) or helper.get("role") not in ("implementer", "reviewer")
-                    or not str(helper.get("brief") or "").strip()):
-                raise ActionError("each helper requires a role and bounded brief")
-            if helper.get("engine") not in (None, "claude", "codex"):
-                raise ActionError(f"invalid helper engine {helper.get('engine')!r}")
-            if not isinstance(helper.get("paths"), list):
-                raise ActionError("helper paths must be an array")
     return action
 
 
@@ -119,48 +103,6 @@ def _publish(project: str, task: dict, action: dict) -> dict:
     return {"kind": "report", "land": result, "report": report}
 
 
-def _helpers(project: str, task: dict, action: dict) -> dict:
-    records = []
-    task_dir = S.task_dir(project, task["slug"])
-    for index, helper in enumerate(action.get("helpers") or [], 1):
-        brief = task_dir / f"helper-request-{task.get('attempt', 0)}-{index}.md"
-        S.atomic_write(brief, str(helper["brief"]).rstrip() + "\n")
-        name = f"helper-{task.get('attempt', 0)}-{index}"
-        existing = l1.load(project, task["slug"], name)
-        records.append(existing or l1.start(
-            project, task["slug"], brief, role=helper["role"], engine=helper.get("engine"),
-            model=helper.get("model"), paths=helper.get("paths") or None, name=name,
-            expected_attempt=task.get("attempt"),
-        ))
-    waits = [l1.wait(project, task["slug"], record["name"], timeout=config.L1_TIMEOUT) for record in records]
-    results = [wait.get("run") or {"name": record["name"], "error": "helper wait timed out"}
-               for wait, record in zip(waits, records)]
-    compact = []
-    total = 0
-    artifact_root = (task_dir / "l1").resolve()
-    for result in results:
-        item = {key: result.get(key) for key in ("name", "role", "engine", "findings", "summary", "error")}
-        patch_path = result.get("patch")
-        if patch_path:
-            path = Path(str(patch_path)).resolve()
-            if not path.is_relative_to(artifact_root) or path.suffix != ".patch":
-                raise T.TransitionError(f"helper {result.get('name')} returned an invalid patch artifact")
-            data = path.read_bytes()
-            total += len(data)
-            if total > MAX_HELPER_RESULT_BYTES:
-                raise T.TransitionError("helper patch artifacts exceed the bounded L2 handoff size")
-            item["patch"] = data.decode("utf-8", errors="replace")
-        else:
-            item["patch"] = None
-        compact.append(item)
-    prompt = ("Altitude finished the optional helpers you requested. No patch was auto-applied. Inspect these "
-              "bounded inline patches/findings, integrate only what you judge useful, test the combined work, and return "
-              f"your next schema-valid action:\n{json.dumps(compact, sort_keys=True)}")
-    if len(prompt.encode("utf-8")) > MAX_HELPER_RESULT_BYTES:
-        raise T.TransitionError("helper results exceed the bounded L2 handoff size")
-    return next_turn(project, task, prompt)
-
-
 def process_l2(project: str, item: dict) -> dict:
     """Consume one settled Codex action; returns a small instruction to the server workflow."""
     task = item["task"]
@@ -188,8 +130,6 @@ def process_l2(project: str, item: dict) -> dict:
         if kind == "block":
             blocked = T.block(project, task["slug"], str(action["blocked_reason"]), actor="l2", expected_state="running")
             return {"kind": "blocked", "task": blocked}
-        if kind == "request_helpers":
-            return _helpers(project, task, action)
         return next_turn(project, task, "Continue for this exact reason from your previous action: "
                          + str(action["continue_reason"]))
     except (land.LandError, T.TransitionError, OSError, ValueError) as exc:

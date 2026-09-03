@@ -24,7 +24,7 @@ Burak
   |                                                               |
   |                                   +---------------------------+------------------+
   |                                   |                           |                  |
-  |                              optional L1s              outcome/action      PR landing
+  |                              subagents                 outcome/action      PR landing
   |                                   |                           |                  |
   |                                   +-------- findings/patch --->+-----------> checks/merge
   |
@@ -34,7 +34,7 @@ fault evidence -> blocked task + incident index -> one queued L3 message
 ```
 
 The system has one persistent Python server (`altitude.server`) plus provider, Git/GitHub, and
-short-lived helper-wrapper child processes. The React app is a client of the Python JSON/streaming
+short-lived child processes. The React app is a client of the Python JSON/streaming
 endpoints; it does not own durable state transitions.
 
 ## Runtime ownership and storage
@@ -53,7 +53,7 @@ reported -> done | running | blocked | rejected
 ```
 
 Task message/command paths apply different identity subsets: Burak's message may carry a displayed
-dispatch/session/engine; L2 reply, completion, landing, and helper paths use specific dispatch,
+dispatch/session/engine; L2 reply, completion, and landing use specific dispatch,
 capability, Git, or lease fences, while other commands apply different subsets. The module also
 stores FYIs and decisions, applies merge holds, and performs archival. It is not the only writer of
 a TaskRecord: `tasks.py`, `dispatch.py`, `actions.py`, `l3_actions.py`, `server.py`, and `bin/alt`
@@ -78,8 +78,7 @@ The current logical/physical identity split is:
 | Task lifecycle/conversation | [`tasks.py`](../../altitude/tasks.py), [`state.py`](../../altitude/state.py) | Creates, transitions, blocks, resumes, reports, completes, and archives. Command paths use different check subsets; Burak messages reject stale displayed identities only when the client supplies them. |
 | Dispatch and steering | [`dispatch.py`](../../altitude/dispatch.py) | Creates/validates task worktrees, renders briefs, selects provider, starts workers, replaces a running worker on steering, polls liveness, applies WIP/lease holds, and cleans up. |
 | Provider execution | [`engines.py`](../../altitude/engines.py), [`route.py`](../../altitude/route.py), [`quota_codex.py`](../../altitude/quota_codex.py) | Claude CLI and Codex CLI adapters, quota-based routing, Codex sandbox/cgroup containment, worker records, stop/resume, and synchronous contained turns. |
-| Codex L2 action broker | [`actions.py`](../../altitude/actions.py), [`schemas/l2_action.json`](../../schemas/l2_action.json) | Posts the common message and validates one `publish`, `complete_no_code`, `block`, `request_helpers`, or `continue` action after contained worker exit. Publication synthesizes the report. |
-| Optional helpers | [`l1.py`](../../altitude/l1.py), helper/reviewer personas and schemas | Starts implementer/reviewer children, tracks PID/job metadata, captures implementer patch/summary or reviewer findings, waits, and projects compact results. |
+| Codex L2 action broker | [`actions.py`](../../altitude/actions.py), [`schemas/l2_action.json`](../../schemas/l2_action.json) | Posts the common message and validates one `publish`, `complete_no_code`, `block`, or `continue` action after contained worker exit. Publication synthesizes the report. |
 | Git policy | [`git_policy.py`](../../altitude/git_policy.py), [`hooks/`](../../hooks) | Fetch/base checks, required task trailers, installed hooks, protected-ref enforcement, and service checkout preflight. |
 | Publication | [`land.py`](../../altitude/land.py), [`verify.py`](../../altitude/verify.py) | Validates task authority/scope, commits, pushes, creates/reads PRs, checks exact head/base and CI or local tests, optionally merges, and verifies reports. |
 | GitHub issue intake | [`github_intake.py`](../../altitude/github_intake.py) | Inlines the one explicitly referenced issue into the request when the task is created; a failed fetch refuses the task. |

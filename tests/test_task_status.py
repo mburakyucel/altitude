@@ -1,4 +1,4 @@
-"""`alt task status` compacts task, hook, lease, L1, PR, and main-run state without a network."""
+"""`alt task status` compacts task, hook, lease, PR, and main-run state without a network."""
 import json
 import os
 import shutil
@@ -111,16 +111,12 @@ class TestTaskStatus(unittest.TestCase):
             "attempt": 1, "session_id": "sid-1", "agent_id": "aid-1",
             "source": "chat", "hold_merge": None, "blocked_reason": None,
             "updated": "2026-08-29T00:00:00+00:00", "worktree": "/tmp/worktree", "branch": "worktree-task-one",
-            "paths": ["altitude/status.py", "bin/alt"], "prs": [17],
+            "paths": ["altitude/status.py", "bin/alt"], "prs": [17, 18],
         }
         task_dir = S.tasks_dir("demo") / "task-one"
         task_dir.mkdir(parents=True)
         S.write_json(task_dir / "status.json", task)
         S.write_json(task_dir / "report.json", {"landed": {}})
-        S.write_json(task_dir / "l1" / "implementer-1.json", {
-            "name": "implementer-1", "n": 1, "role": "implementer", "engine": "codex",
-            "pid": os.getpid(), "done": None, "result": {"pr": 18},
-        })
         other_dir = S.tasks_dir("demo") / "other-task"
         other_dir.mkdir(parents=True)
         S.write_json(other_dir / "status.json", {
@@ -144,13 +140,12 @@ class TestTaskStatus(unittest.TestCase):
         expected_fields = {
             "project", "slug", "state", "title", "attempt", "session_id",
             "agent_id", "source", "hold_merge", "blocked_reason", "updated", "worktree", "branch",
-            "counts", "l1_runs", "lease", "other_leases", "hold",
+            "counts", "lease", "other_leases", "hold",
             "wip_hold", "gate", "repository", "report_json", "prs", "main_run", "errors",
         }
         self.assertTrue(expected_fields.issubset(result))
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["counts"], {"edits": 7})
-        self.assertEqual(result["l1_runs"]["in_flight"], 1)
         self.assertEqual(result["lease"], ["altitude/status.py", "bin/alt"])
         self.assertEqual(result["other_leases"], [{
             "slug": "other-task", "paths": ["altitude/server.py"],
@@ -345,10 +340,6 @@ class TestTaskStatus(unittest.TestCase):
         task = S.read_json(task_path)
         task["prs"] = []
         S.write_json(task_path, task)
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
-        run = S.read_json(run_path)
-        run["result"] = None
-        S.write_json(run_path, run)
         S.write_json(S.task_dir("demo", "task-one") / "report.json",
                      {"landed": {"prs": [{"number": 17}]}})
 
@@ -362,10 +353,6 @@ class TestTaskStatus(unittest.TestCase):
         task = S.read_json(task_path)
         task["prs"] = []
         S.write_json(task_path, task)
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
-        run = S.read_json(run_path)
-        run["result"] = None
-        S.write_json(run_path, run)
         S.write_json(S.task_dir("demo", "task-one") / "report.json", {"landed": {}})
         self._setenv("FAKE_GH_BRANCH_PR", "17")
 
@@ -373,23 +360,6 @@ class TestTaskStatus(unittest.TestCase):
 
         self.assertEqual([pr["number"] for pr in result["prs"]], [17])
         self.assertEqual(len([call for call in self.calls() if call[:2] == ["pr", "list"]]), 1)
-
-    def test_stale_l1_is_reported_without_writing(self):
-        run_path = S.task_dir("demo", "task-one") / "l1" / "implementer-1.json"
-        run = S.read_json(run_path)
-        run["pid"] = 999_999_999
-        S.write_json(run_path, run)
-        before = {str(path.relative_to(self.root)): path.read_bytes()
-                  for path in self.root.rglob("*") if path.is_file()}
-
-        result = task_status.status("demo", "task-one")
-
-        after = {str(path.relative_to(self.root)): path.read_bytes()
-                 for path in self.root.rglob("*") if path.is_file()}
-        self.assertEqual(after, before)
-        self.assertTrue(result["l1_runs"]["runs"][0]["stale"])
-        self.assertIsNone(result["l1_runs"]["runs"][0]["done"])
-        self.assertEqual(result["l1_runs"]["in_flight"], 0)
 
     def test_broken_gh_degrades_without_raising(self):
         self._setenv("FAKE_GH_FAIL", "1")

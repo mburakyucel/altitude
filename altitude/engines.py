@@ -44,7 +44,7 @@ _CODEX_SAFE_ENV = {
 }
 
 # Claude's stream-json can be much larger than its final answer. Keep raw capture bounded while preserving evidence
-# from both ends; L1 applies the same default cap to the artifacts it exposes.
+# from both ends.
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
 CODEX_PATCH_NOTE = (
     "[altitude] Host patch constraint: Do not call the custom `apply_patch` tool, because its filesystem verifier "
@@ -1023,7 +1023,7 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
                fault_context: dict[str, str] | None = None, resume: str | None = None,
                on_start=None, contain: bool | None = None,
                readable_roots: list[Path] | None = None) -> dict:
-    """Codex headless (optional L1 implementers/reviewers) — verified: needs stdin closed, -o for
+    """Codex headless (L3 turns) — verified: needs stdin closed, -o for
     the answer. `extra_config` are `-c key=value` overrides (sandbox network, writable roots). Token usage comes from
     the `turn.completed` events on stdout. Workspace-write turns are contained by default; ``contain=True`` also
     places a read-only coordinator turn in a transient cgroup before it may return trusted actions."""
@@ -1139,7 +1139,7 @@ def codex_exec(prompt: str, *, cwd: Path, schema: Path | None = None, sandbox: s
         text = messages[-1]
     if containment_error:
         # Never expose an actionable answer while a descendant could still be running. Raw streams remain local
-        # diagnostic evidence, while L1/L3 see a deterministic engine failure.
+        # diagnostic evidence, while L3 sees a deterministic engine failure.
         text, structured = "", None
     return {"text": text.strip(), "structured": structured,
             "returncode": 1 if containment_error else p.returncode, "usage": usage,

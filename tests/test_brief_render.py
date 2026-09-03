@@ -92,10 +92,10 @@ class TestBriefRender(unittest.TestCase):
                 self.assertIn("never merge around it", rendered)
                 self.assertIn("full local test suite on the exact merge candidate", rendered)
 
-    def test_direct_execution_and_optional_review_survive_rendering(self):
+    def test_direct_execution_and_delegation_survive_rendering(self):
         rendered = self.default_rendered
-        self.assertIn("implement directly", rendered)
-        self.assertIn("zero, one, or several L1s", rendered)
+        self.assertIn("Implement directly", rendered)
+        self.assertIn("your engine's own subagents", rendered)
         self.assertIn("Direct implementation is normal", rendered)
         self.assertIn("Review is optional", rendered)
         self.assertIn("alt task reply", rendered)
