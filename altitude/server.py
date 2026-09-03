@@ -596,12 +596,6 @@ class Handler(BaseHTTPRequestHandler):
                     dispatch.stop(project, slug)
                 elif action == "dispatch":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
-                elif action == "verify":
-                    return self._json(verify.verify(project, slug))
-                elif action == "new":
-                    t = T.new(project, o["title"], o.get("request") or o["title"], actor="burak")
-                    spawn(f"dispatch:{project}", dispatch_waiting, project)
-                    return self._json({"ok": True, "slug": t["slug"]})
                 else:
                     return self._json({"error": f"unknown task action {action}"}, 400)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})

@@ -55,6 +55,21 @@ const held = {
   resume_after: "2026-08-30T02:00",
 };
 
+const noSession = { ...queued, session_id: "" };
+
+const transcript = {
+  project: "altitude",
+  slug: "fix-timer",
+  engine: "claude",
+  session_id: "0123456789abcdef",
+  cursor: 2,
+  events: [
+    { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "state" },
+    { seq: 1, source: "claude", kind: "message", type: "assistant", at: null, text: "Reading the timer code" },
+  ],
+  redaction: "credential-shaped keys and values are redacted",
+};
+
 const stuck = {
   ...running,
   state: "blocked",
@@ -68,6 +83,7 @@ function stub(task: unknown) {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true, state: "queued" });
+    if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/task/")) return jsonResponse(task);
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
@@ -187,6 +203,30 @@ describe("Task", () => {
     const line = screen.getByText("Blocked: the test suite will not run");
     expect(line).toHaveClass("text-danger");
     expect(document.body.textContent).not.toContain("operational hold");
+  });
+
+  it("opens the live session as the task's second tab", async () => {
+    const fetchMock = stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    await user.click(screen.getByRole("link", { name: "Live session" }));
+
+    expect(await screen.findByText("Reading the timer code")).toBeInTheDocument();
+    expect(screen.getByText("Fix the timer")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"));
+    expect(String(call?.[0])).toContain(
+      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
+    );
+  });
+
+  it("says so when the task has no session yet", async () => {
+    const fetchMock = stub(noSession);
+    renderApp({ route: `${route}/live` });
+
+    expect(await screen.findByText(/No session yet/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
   });
 
   it("messages the L2 while the task is running", async () => {

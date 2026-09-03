@@ -38,7 +38,7 @@ approved`, `implemented`, and `merged`.
 | `altitude/github_intake.py` (81) | Finds the one issue a new task names and inlines it into `request.md` at creation, from the project's own repository only. | Phase 1d rewrite. | Settled: fetch once at creation; a failed fetch refuses the task; no snapshot file, no resume hydration. | implemented |
 | `altitude/incidents.py` | Global fault index and per-project incident creation/amendment. | Phase 2: `system_fault` blocks the faulting task, files one incident per kind per day, and queues one L3 message; a repair task's fault reaches the Inbox only. | — | settled (phases 1e, 2) |
 | `altitude/recovery.py` | Global hold/fuse, attention/backoff, repair claim, launch permission, clearance. | Deleted in phase 2 (decision 4). | — | deleted (phase 2) |
-| `altitude/transcript.py` (175) | Live provider/event projection with redaction. | Bundle sync/validate/export and the per-event snapshot removed (phase 1b). Session fencing by engine and session id (phase 3). | — | implemented |
+| `altitude/transcript.py` (175) | Live provider/event projection with redaction. | Bundle sync/validate/export and the per-event snapshot removed (phase 1b). Session fencing by engine and session id (phase 3). Sources come from the task record and the Codex job root, every turn of the thread (phase 7). | — | implemented |
 | `altitude/status.py` | Aggregates task, report, PR, spend, and error facts for UI/CLI. | Untouched in integration; helper WIP changes it. | Which status facts and freshness/authority guarantees do users and callers require? | unreviewed |
 | `altitude/monitor.py` (99) | Projects L3/L2 sessions, context, and quota. | Untouched in integration; older B3 touches it. | Which session, context, and quota observations are useful and sufficiently reliable? | unreviewed |
 | `altitude/digest.py` (47) | Queue/FYI/WIP text. | Phase 1e: speech output dropped. | Text digest only; audio was decided out in DECISIONS.md phase 1e. | implemented |
@@ -77,17 +77,17 @@ approved`, `implemented`, and `merged`.
 
 | Module | Current responsibility | Saved candidate status | Neutral review question | Review state |
 | --- | --- | --- | --- | --- |
-| `web/src/data/api.ts` (524) | Fetch/stream client, Zod schemas, query keys, mutations. | Candidate adds dormant typed contracts; outcome WIP edits it. | Which command/read/stream operations and validation/error semantics are required? | unreviewed |
+| `web/src/data/api.ts` (524) | Fetch/stream client, Zod schemas, query keys, mutations. | Candidate adds dormant typed contracts; outcome WIP edits it. | Which command/read/stream operations and validation/error semantics are required? | trimmed (phase 7): the direct-intake fields left `TaskActionInput` |
 | `web/src/data/useOptimisticMutation.ts` (60) | Optimistic cache update/rollback helper. | Candidate proposal mentions consolidation. | Which optimistic behaviors and rollback guarantees are required? | unreviewed |
 | `web/src/data/Toast.tsx` (163) | Toast queue/rendering. | Untouched. | Which notifications and queue/accessibility behavior are required? | unreviewed |
 | `web/src/routes/Chat.tsx` (241) | Streaming L3 project conversation. | Core surface retained in proposal. | Which L3 conversation, streaming, state, and authority facts must this surface expose? | unreviewed |
-| `web/src/routes/Task.tsx` (285) | Task state, direct L2 chat, files/events/actions/live link. | Candidate proposal describes major changes. | Which task facts, L2 steering, decisions, and operational controls must this surface expose? | unreviewed |
-| `web/src/routes/LiveSession.tsx` (44) | Opt-in provider/event transcript. | Concept retained in proposal. | Which exact transcript data, identity binding, diagnostics, and navigation are required? | unreviewed |
-| `web/src/routes/Project.tsx` (392) | Project summary, direct task creation/dispatch/actions, state/events. | Proposal removes some bypassing controls. | Which project overview, creation, coordination, and operational actions are required here? | unreviewed |
+| `web/src/routes/Task.tsx` (285) | Task header with Conversation and Live session tabs; direct L2 chat, files/events/actions. | Candidate proposal describes major changes. | Which task facts, L2 steering, decisions, and operational controls must this surface expose? | restructured (phase 7): one header, two tabs |
+| `web/src/routes/LiveSession.tsx` (44) | Provider/event transcript. | Concept retained in proposal. | Which exact transcript data, identity binding, diagnostics, and navigation are required? | first-class task tab (phase 7); its duplicate L2 composer removed |
+| `web/src/routes/Project.tsx` (392) | Project summary, dispatch/actions, state/events. | Proposal removes some bypassing controls. | Which project overview, coordination, and operational actions are required here? | trimmed (phase 7): direct task creation removed, Chat is the only intake |
 | `web/src/routes/Projects.tsx` (211) | Project list/registration. | Mostly retained. | Which project discovery, registration, and summary behavior is required? | unreviewed |
 | `web/src/routes/Inbox.tsx` (151) | Decisions and FYIs. | Concept retained in proposal. | Which attention items, state changes, and links are required? | unreviewed |
 | `web/src/routes/Monitor.tsx` (151) | Session/quota/context monitoring. | Candidate proposal describes simplification. | Which observations are actionable, reliable, and useful to show? | unreviewed |
-| `web/src/routes.tsx`, `main.tsx`, `shell/*`, `styles.css` | Routing, app/query bootstrap, navigation/theme/layout. | Mostly untouched. | Which routes, shared state, navigation, and layout behavior are required after product surfaces are reviewed? | unreviewed |
+| `web/src/routes.tsx`, `main.tsx`, `shell/*`, `styles.css` | Routing, app/query bootstrap, navigation/theme/layout. | Mostly untouched. | Which routes, shared state, navigation, and layout behavior are required after product surfaces are reviewed? | task views nested under the task route (phase 7); rest unreviewed |
 
 Review every route together with its adjacent tests. Tests are evidence for current invariants, not
 proof that every invariant is still wanted. For removed behavior, record the product decision and

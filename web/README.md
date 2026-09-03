@@ -9,5 +9,6 @@ zod own the API boundary; react-router owns navigation; vitest and Testing Libra
 - Test: `pnpm test`. Typecheck and production build: `pnpm build`.
 
 The four primary navigation destinations are Inbox, Projects, Chat, and Monitor. Project and Task
-are detail routes. Shared API, mutation, toast, and test helpers live under `src/data/` and
+are detail routes; a task has Conversation and Live session tabs, and tasks are created only through
+Chat. Shared API, mutation, toast, and test helpers live under `src/data/` and
 `src/test/`.

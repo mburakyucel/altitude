@@ -1,22 +1,22 @@
 # Engine and session lifecycle
 
-> **Scope:** This document describes executable `main` after phase 5 of the module-by-module
-> simplification (one engine contract, 2026-09-03). See the
+> **Scope:** This document describes executable `main` after phase 7 of the module-by-module
+> simplification (Chat-only intake and the Live session tab, 2026-09-03). See the
 > [2026-09-02 review checkpoint](simplification-review/README.md).
 
 ## Live L2 transcript
 
-The task page stays a concise Burak/L2 conversation. Its opt-in **Live session** route projects the engine's local
-JSONL and Altitude's task events into one engine-neutral timeline; it does not run a summarizer and never claims
-hidden reasoning. Tool output is bounded in the default timeline and complete observable records can be expanded
-in raw mode. Raw mode remains local and redacts credential-shaped keys and values before data crosses the HTTP
-boundary. The browser supplies no paths: the server derives transcript files only from the registered task and its
-recorded engine, worker, and session identities.
+The task page's Conversation tab stays a concise Burak/L2 conversation. Its Live session tab projects the engine's
+local JSONL and Altitude's task events into one engine-neutral timeline; it does not run a summarizer and never
+claims hidden reasoning. Tool output is bounded in the default timeline and complete observable records can be
+expanded in raw mode. Raw mode remains local and redacts credential-shaped keys and values before data crosses the
+HTTP boundary. The browser supplies no paths: the server derives transcript files only from the registered task's
+engine and session id.
 
 ## Transcript retention
 
-The live view reads the provider's own session store (Claude's project JSONL, or the Codex worker's stdout JSONL
-kept in the task directory) together with Altitude's task events. Altitude does not copy or checksum provider
+The live view reads the provider's own session store (Claude's project JSONL, or the stdout JSONL of every turn of
+the Codex thread, kept in the task directory) together with Altitude's task events. Altitude does not copy or checksum provider
 transcripts. The durable human record is the task conversation; provider stores follow the provider's own
 retention, and archival moves the whole task directory, so Codex worker records travel with it.
 

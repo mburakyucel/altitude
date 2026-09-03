@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
 import type { TaskMessage, TaskView } from "../data/api";
@@ -85,20 +85,19 @@ function ConversationMessage({ message }: { message: TaskMessage }) {
   );
 }
 
-function TaskDetail({ project, task }: { project: string; task: TaskView }) {
-  const [reason, setReason] = useState("");
-  const [message, setMessage] = useState("");
-  const queryClient = useQueryClient();
-  const act = useTaskAction(project);
-  const sendL2 = useL2Message(project);
+interface TaskContext {
+  project: string;
+  task: TaskView;
+}
 
+/** The task views (Conversation, Live session) read the task their layout already loaded. */
+export function useTaskContext(): TaskContext {
+  return useOutletContext<TaskContext>();
+}
+
+function TaskLayout({ project, task }: TaskContext) {
   const slug = task.slug;
   const state = task.state ?? "";
-  const spend = rec(task["spend"]);
-  const live = rec(task["live"]);
-  const files = Object.entries(task.files ?? {});
-  const messages = task.messages ?? [];
-  const events = task.events ?? [];
   const attempt = typeof task["attempt"] === "number" ? String(task["attempt"]) : "";
   const sessionId = str(task["session_id"]);
   const agentId = str(task["agent_id"]);
@@ -110,27 +109,10 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
   // it gets the sentence and the neutral colour, never the danger line.
   const held = state === "blocked" && Boolean(task.resume_after);
   const model = str(task["engine_model"]) || str(task["model"]);
-  const hasActivity = Object.keys(spend).length > 0;
-  const liveState = rec(live["agent"]);
-
-  const refreshTask = () => {
-    void queryClient.invalidateQueries({ queryKey: ["task", project, slug] });
-  };
-  const run = (spec: ActionSpec) => {
-    const text = reason.trim();
-    act.mutate(
-      {
-        project,
-        slug,
-        action: spec.action,
-        ...(spec.reason && text ? { reason: text } : {}),
-      },
-      { onSuccess: refreshTask },
-    );
-  };
+  const base = `/projects/${project}/tasks/${slug}`;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
       <Link className="text-meta text-muted" to={`/projects/${project}`}>
         ‹ {project}
       </Link>
@@ -158,10 +140,56 @@ function TaskDetail({ project, task }: { project: string; task: TaskView }) {
         ) : null}
       </header>
 
-      {sessionId ? (
-        <Link className="btn w-fit" to={`/projects/${project}/tasks/${slug}/live`}>Live session</Link>
-      ) : null}
+      <nav className="flex gap-2 border-b border-border" aria-label="Task views">
+        <NavLink className="tab" to={base} end>
+          Conversation
+        </NavLink>
+        <NavLink className="tab" to={`${base}/live`}>
+          Live session
+        </NavLink>
+      </nav>
 
+      <Outlet context={{ project, task } satisfies TaskContext} />
+    </div>
+  );
+}
+
+export function TaskConversation() {
+  const { project, task } = useTaskContext();
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+  const queryClient = useQueryClient();
+  const act = useTaskAction(project);
+  const sendL2 = useL2Message(project);
+
+  const slug = task.slug;
+  const state = task.state ?? "";
+  const spend = rec(task["spend"]);
+  const live = rec(task["live"]);
+  const files = Object.entries(task.files ?? {});
+  const messages = task.messages ?? [];
+  const events = task.events ?? [];
+  const hasActivity = Object.keys(spend).length > 0;
+  const liveState = rec(live["agent"]);
+
+  const refreshTask = () => {
+    void queryClient.invalidateQueries({ queryKey: ["task", project, slug] });
+  };
+  const run = (spec: ActionSpec) => {
+    const text = reason.trim();
+    act.mutate(
+      {
+        project,
+        slug,
+        action: spec.action,
+        ...(spec.reason && text ? { reason: text } : {}),
+      },
+      { onSuccess: refreshTask },
+    );
+  };
+
+  return (
+    <div className="space-y-6">
       {hasActivity ? (
         <section className="card space-y-1">
           <h2 className="label">Activity</h2>
@@ -282,5 +310,5 @@ export default function Task() {
   const task = useTask(project, slug);
   if (task.isPending) return <p className="text-muted">Loading…</p>;
   if (task.isError) return <p className="text-danger">{task.error.message}</p>;
-  return <TaskDetail project={project} task={task.data} />;
+  return <TaskLayout project={project} task={task.data} />;
 }

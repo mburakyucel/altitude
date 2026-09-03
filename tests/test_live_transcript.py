@@ -1,16 +1,15 @@
-"""Live transcript parsing, continuity, fencing, and access policy."""
+"""Live transcript: every turn of the thread, parsing, continuity, fencing, and access policy."""
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 _TMP = Path(tempfile.mkdtemp(prefix="altitude-transcript-"))
 os.environ["ALTITUDE_HOME"] = str(_TMP / "home")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T, transcript  # noqa: E402
+from altitude import config, dispatch, state as S, tasks as T, transcript  # noqa: E402
 
 
 class TestLiveTranscript(unittest.TestCase):
@@ -23,39 +22,47 @@ class TestLiveTranscript(unittest.TestCase):
         config.save_projects(projects)
         task = T.new(self.project, "Observed work", "Do it")
         self.slug = task["slug"]
-        task.update({"state": "running", "attempt": 1, "l2_engine": "codex",
-                     "session_id": "thread-1", "agent_id": "worker-2"})
+        task.update({"state": "running", "attempt": 1, "l2_engine": "codex", "session_id": "thread-1", "agent_id": "w2"})
         S.save_task(self.project, task)
-        S.append_event(self.project, self.slug, "state", frm="blocked", to="running", by="altd", engine="codex",
-                       agent_id="worker-2", session_id="thread-1", previous_worker="worker-1")
-        self.old = _TMP / self.project / "old.jsonl"
-        self.new = _TMP / self.project / "new.jsonl"
+        S.append_event(self.project, self.slug, "state", frm="queued", to="running", by="altd")
+        self.root = dispatch.l2_job_root(self.project, self.slug)
+        self.root.mkdir(parents=True, exist_ok=True)
+        # Two turns of thread-1 (the second learns its thread id from its own events) and one of another thread.
+        self.old = self._turn("w1", "2026-09-03T10:00:00+00:00", "thread-1")
+        self.new = self._turn("w2", "2026-09-03T10:05:00+00:00", None)
+        self._turn("w0", "2026-09-03T09:00:00+00:00", "thread-0").write_text(
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "other thread"}}) + "\n")
+
+    def _turn(self, worker_id, started_at, session_id):
+        S.write_json(self.root / f"{worker_id}.json", {"id": worker_id, "started_at": started_at, "session_id": session_id})
+        path = self.root / f"{worker_id}.stdout.jsonl"
+        path.write_text("")
+        return path
 
     def _view(self, **kwargs):
-        args = {"engine": "codex", "session_id": "thread-1"}
-        args.update(kwargs)
-        paths = [("codex", "thread-1", self.old), ("codex", "thread-1", self.new)]
-        with mock.patch.object(transcript, "_engine_paths", return_value=paths):
-            return transcript.view(self.project, self.slug, **args)
+        return transcript.view(self.project, self.slug, **{"engine": "codex", "session_id": "thread-1", **kwargs})
 
-    def test_incremental_cursor_and_continuation_are_deterministic(self):
+    def test_every_turn_of_the_thread_in_order_with_a_deterministic_cursor(self):
         self.old.write_text(json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": "make test"}}) + "\n")
-        self.new.write_text(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n")
+        self.new.write_text("".join(json.dumps(e) + "\n" for e in (
+            {"type": "thread.started", "thread_id": "thread-1"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "done"}},
+            {"type": "item.completed", "item": {"type": "file_change", "changes": [{"path": "a.py", "kind": "update"}]}})))
         first = self._view()
-        self.assertEqual([e["source"] for e in first["events"]], ["platform", "platform", "codex", "codex"])
+        self.assertEqual([e["source"] for e in first["events"]], ["platform", "platform", "codex", "codex", "codex", "codex"])
         self.assertEqual(first["events"][1]["kind"], "boundary")
-        self.assertEqual(first["events"][2]["kind"], "command")
+        self.assertEqual([(e["kind"], e["text"]) for e in first["events"][2:]],
+                         [("command", "make test"), ("engine", ""), ("message", "done"), ("file", "update a.py")])
+        self.assertNotIn("other thread", json.dumps(first))
         later = self._view(cursor=first["cursor"])
         self.assertEqual(later["events"], [])
 
     def test_partial_and_corrupt_records_are_visible_without_crashing(self):
         self.old.write_bytes(b'{bad}\n{"type":"turn.started"')
-        self.new.write_text("")
         errors = [e["text"] for e in self._view()["events"] if e["kind"] == "error"]
         self.assertEqual(errors, ["corrupt record 1", "partial record; waiting for completion"])
 
     def test_session_fence_rejects_stale_or_incomplete_identity(self):
-        self.old.write_text(""); self.new.write_text("")
         for changed in ({"engine": "claude"}, {"session_id": "old"}, {"session_id": ""}):
             with self.assertRaisesRegex(transcript.TranscriptAccessError, "generation changed"):
                 self._view(**changed)
@@ -67,7 +74,6 @@ class TestLiveTranscript(unittest.TestCase):
                 transcript.view(project, slug, engine="codex", session_id="x")
         self.old.write_text(json.dumps({"type": "item.completed", "authorization": "Bearer abcdefghijklmnop",
                                         "output": "token ghp_abcdefghijklmnop"}) + "\n")
-        self.new.write_text("")
         raw = self._view(raw=True)["events"][-1]["raw"]
         self.assertEqual(raw["authorization"], "[REDACTED]")
         self.assertNotIn("ghp_", raw["output"])

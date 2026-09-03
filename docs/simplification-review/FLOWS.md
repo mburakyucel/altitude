@@ -38,7 +38,7 @@ functions. Claude and Codex use different trust boundaries.
 ### A2. New task and fresh L2 dispatch
 
 ```text
-L3 action, Claude scoped command, or Project page `action: "new"`
+`alt task new` from the L3 turn (the Project page `action: "new"` form went in phase 7)
   -> tasks.new -> task status.json = queued; append event; regenerate STATE.md
   -> server.dispatch_waiting (periodic or scheduled)
        -> dispatch.wip_hold + recovery.dispatch_hold
