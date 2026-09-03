@@ -10,7 +10,8 @@ stays separate from ordinary source work and requires explicit authorization.
 
 The durable backlog is GitHub issues selected by Burak. The current priorities are:
 
-- design wireframes for the simplified product (#166);
+- design wireframes for the simplified product (#166): the draft is checked in under
+  `design/wireframes/` and awaits Burak's review;
 - expose a clear project overview of active work and items that need Burak;
 - make direct task conversation with the owning L2 simple and readable;
 - keep incident evidence and operational recovery visible without turning them into recursive

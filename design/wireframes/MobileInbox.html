@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox (draft wireframe)</title>
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+<div class="board mobile">
+<header class="strip" aria-label="Annotation">
+  <div class="who"><span class="draft">Draft</span><span>Inbox</span><small>iPhone 390×844</small></div>
+  <p class="intent">Only what needs you, one card at a time. Primary action: answer the top card. <span class="c">1</span> Question first; the filled button is L3’s recommendation. <span class="c">2</span> Reasoning one level down. Tabs clear the home indicator; fields are 16px.</p>
+</header>
+<div class="phone">
+<div class="sb" aria-hidden="true"><span>9:41</span><span class="di"></span>
+  <span class="sig"><span class="bars"><i style="height:4px"></i><i style="height:6px"></i><i style="height:9px"></i><i style="height:12px"></i></span><span class="bat"></span></span></div>
+<div class="mhead"><div class="row"><h1>Inbox</h1><span class="when">09:41</span></div><p class="sub">Two things wait on you. Two tasks run on their own.</p></div>
+<div class="mbody"><div class="sh"><h2>Needs you</h2><span>2</span></div>
+<div class="stack">
+  <article class="hasc card decision"><span class="c">1</span>
+  <div class="kind"><b>L3 asks</b><span class="task">Fast-forward a self-deploy checkout at dispatch</span><span class="age">25 min</span></div>
+  <h3 class="q">When Altitude’s own checkout is behind origin/main at dispatch, should it fast-forward itself or keep failing closed?</h3>
+  <p class="why">L3 recommends fast-forwarding: the checkout is Altitude’s, the move is a pure fast-forward, and this race has blocked three dispatches this week.</p>
+  <div class="options"><a class="btn primary" href="#">Fast-forward it</a><a class="btn" href="#">Keep failing closed</a><span class="field">Add a note for the L2 (optional)</span></div>
+  <div class="foot"><a class="hasc l disclosure" href="#"><span class="c">2</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>Why L3 recommends this</a><a href="MobileTaskConversation.html">Open task</a></div>
+</article>
+  <article class="card decision review">
+  <div class="kind"><b>Ready for your review</b><span class="task">Design wireframes for the simplified product</span><span class="age">8 min</span></div>
+  <h3 class="q">PR #176 is green and held: 16 boards, desktop and iPhone, drawn from the current product.</h3>
+  <p class="why">Held because the boards are a design draft and taste is your call. The L2 reports nothing else needs a decision.</p>
+  <div class="options"><a class="btn primary" href="#">Open PR #176</a><a class="btn" href="MobileTaskConversation.html">Ask the L2</a><span class="field">Add a note for the L2 (optional)</span></div>
+  <div class="foot"><a class="disclosure" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>What the L2 assumed</a><a href="MobileTaskConversation.html">Open task</a></div>
+</article>
+</div></div>
+<nav class="mtabs" aria-label="Primary"><a href="MobileInbox.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13l2.6-7.2A1 1 0 0 1 6.5 5h11a1 1 0 0 1 .9.8L21 13v5.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M3 13h5l1.4 2.5h5.2L16 13h5"/></svg>Inbox<span class="count">2</span></a><a href="MobileProjects.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>Projects</a><a href="MobileChat.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H9l-4.5 4v-4H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>Chat</a><a href="MobileMonitor.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h3.5l2.5-6.5 4 13 2.5-6.5H21"/></svg>Monitor</a></nav>
+<div class="home" aria-hidden="true"></div>
+</div>
+</div>
+</body>
+</html>
