@@ -126,7 +126,13 @@ from the web: the L3 turn creates it through `alt task new`. The composer's engi
 project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
 stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history.
+lands in the history. A message sent while L3 is busy is queued, never refused: the composer stays
+open, the Send button reads Queue, and the message shows in the transcript as queued until its turn
+starts, with a control that takes it back off the queue while it waits. The queue is a file in the
+project directory, so a reload, another device and a restart all see the same pending messages. Each
+turn drains it at its own boundary rather than at the next tick: consecutive chat messages fold into
+one turn in arrival order, each on its own line, while server-triggered messages keep their own turn,
+and nothing runs while a turn holds the project's L3 lock.
 
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
 work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day

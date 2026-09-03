@@ -224,14 +224,19 @@ describe("Chat", () => {
     expect(scrollWrites).toHaveLength(0);
   });
 
-  it("toasts 'L3 is busy' on 409 and does not retry", async () => {
+  it("queues a message sent while L3 is busy and shows it waiting", async () => {
+    // The server takes the message instead of refusing it; the queue comes back with the chat view.
+    let queued: unknown[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/overview")) return jsonResponse(overview);
       if (url.includes("/api/chat") && init?.method === "POST") {
-        return jsonResponse({ error: "L3 is busy; try again in a moment" }, 409);
+        const row = { id: "q1", at: new Date().toISOString(), trigger: "chat", role: "burak",
+          text: "status?", position: 1 };
+        queued = [row];
+        return jsonResponse({ queued: row });
       }
-      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      if (url.includes("/api/chat")) return jsonResponse({ ...chatView, busy: true, queued });
       return jsonResponse({ error: "not found" }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -239,16 +244,56 @@ describe("Chat", () => {
     const { user } = renderApp({ route });
     await screen.findByText("how is it going?");
 
-    await user.type(screen.getByLabelText("Message L3"), "status?");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    const composer = screen.getByLabelText("Message L3");
+    expect(composer).not.toBeDisabled();
+    await user.type(composer, "status?");
+    await user.click(await screen.findByRole("button", { name: "Queue" }));
 
-    await screen.findByText("L3 is busy");
-    // one attempt, no automatic retry, and the text is handed back to the composer
-    await waitFor(() => {
-      expect(postsToChat(fetchMock)).toHaveLength(1);
-    });
-    expect(screen.getByLabelText("Message L3")).toHaveValue("status?");
+    await screen.findByText("you · queued · 0m");
+    expect(screen.getByText("status?")).toBeInTheDocument();
     expect(postsToChat(fetchMock)).toHaveLength(1);
+    expect(JSON.parse(String(postsToChat(fetchMock)[0]?.[1]?.body))).toEqual({
+      project: "altitude",
+      text: "status?",
+    });
+    expect(composer).toHaveValue("");
+  });
+
+  it("numbers several queued messages and takes one back off the queue", async () => {
+    const rows = [
+      { id: "q1", at: new Date().toISOString(), trigger: "chat", role: "burak", text: "first" },
+      { id: "q2", at: new Date().toISOString(), trigger: "chat", role: "burak", text: "second" },
+    ];
+    let queued = rows;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat/remove")) {
+        const id = (JSON.parse(String(init?.body)) as { id: string }).id;
+        queued = queued.filter((q) => q.id !== id);
+        return jsonResponse({ ok: true, queued });
+      }
+      if (url.includes("/api/chat")) return jsonResponse({ ...chatView, busy: true, queued });
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderApp({ route });
+    await screen.findByText("you · queued 1 · 0m");
+    expect(screen.getByText("you · queued 2 · 0m")).toBeInTheDocument();
+    expect(screen.getByText(/^busy · 2 queued ·/)).toBeInTheDocument();
+
+    const first = screen.getByText("first").closest("article") as HTMLElement;
+    fireEvent.click(within(first).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(screen.queryByText("first")).toBeNull());
+    expect(
+      fetchMock.mock.calls
+        .filter(([u]) => String(u).includes("/api/chat/remove"))
+        .map(([, init]) => JSON.parse(String((init as RequestInit | undefined)?.body)) as unknown),
+    ).toEqual([{ project: "altitude", id: "q1" }]);
+    // the one left is no longer numbered: there is nothing to order it against
+    await screen.findByText("you · queued · 0m");
   });
 
   // Matching is by turn identity, so repeating an earlier question keeps the new user bubble and reply.

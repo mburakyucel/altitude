@@ -15,7 +15,7 @@ phase deleted.
 
 - L3 answers directly or creates one queued task, owned end-to-end by one L2, when concrete execution is warranted.
 - Burak discusses roadmap and project direction with L3, and task-specific choices directly with
-  the task's L2.
+  the task's L2. Messages sent while L3 is busy queue and run at the next turn boundary, in order.
 - Every code change uses an isolated worktree and branch, then a PR. The L2 may merge after the
   applicable checks and review unless an explicit merge hold says otherwise.
 - Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and

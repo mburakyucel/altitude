@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ApiError, streamChat, useChat, useL3Engine, useOverview } from "../data/api";
+import { streamChat, useChat, useChatDequeue, useL3Engine, useOverview } from "../data/api";
 import type { L3Engine } from "../data/api";
-import type { ChatMessage } from "../data/api";
-import { useToast } from "../data/Toast";
+import type { ChatMessage, ChatView, QueuedMessage } from "../data/api";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
 function age(iso: string | null | undefined): string {
@@ -32,14 +31,27 @@ function metaLine(role: string, parts: Array<string | null>): string {
   return [label, ...parts.filter((p): p is string => Boolean(p))].join(" · ");
 }
 
-function Bubble({ role, meta, text }: { role: string; meta: string; text: string }) {
+function Bubble({
+  role,
+  meta,
+  text,
+  action,
+}: {
+  role: string;
+  meta: string;
+  text: string;
+  action?: ReactNode;
+}) {
   const mine = role === "user";
   return (
     <article
       className={`card max-w-[85%] space-y-1 ${mine ? "ml-auto" : "mr-auto"}`}
       data-role={role}
     >
-      <p className="text-meta text-muted">{meta}</p>
+      <p className="flex items-center gap-2 text-meta text-muted">
+        <span>{meta}</span>
+        {action}
+      </p>
       <p className="whitespace-pre-wrap text-body text-ink-2">{text}</p>
     </article>
   );
@@ -66,6 +78,36 @@ interface LocalTurn {
   assistant: string;
   /** Signature of the transcript this turn was sent against (see `signature`). */
   base: string;
+  /** L3 looked busy when this was sent, so it is on its way to the queue, not to a stream. */
+  queueing: boolean;
+}
+
+/** A message waiting for the next turn boundary, with the control that takes it back off the queue. */
+function QueuedBubble({
+  m,
+  position,
+  onRemove,
+}: {
+  m: QueuedMessage;
+  position: number | null;
+  onRemove: () => void;
+}) {
+  return (
+    <Bubble
+      role="user"
+      meta={metaLine("user", [
+        position != null ? `queued ${position}` : "queued",
+        m.trigger && m.trigger !== "chat" ? m.trigger : null,
+        age(m.at) || null,
+      ])}
+      text={m.text}
+      action={
+        <button type="button" className="btn btn-ghost ml-auto" onClick={onRemove}>
+          Remove
+        </button>
+      }
+    />
+  );
 }
 
 /**
@@ -90,7 +132,6 @@ export default function Chat() {
   const chat = useChat(project);
   // The shell already holds ["overview"]; this reads the same cache entry, no extra request.
   const overview = useOverview();
-  const toast = useToast();
   const queryClient = useQueryClient();
 
   const [draft, setDraft] = useState("");
@@ -104,6 +145,8 @@ export default function Chat() {
 
   const history = chat.data?.history ?? [];
   const busy = chat.data?.busy ?? false;
+  const queued = chat.data?.queued ?? [];
+  const dequeue = useChatDequeue(project);
   const sig = signature(history);
   // Each local turn is keyed by its own id and holds the transcript it was sent against; it is
   // dropped in the same render as the refetched history that moved past it — never earlier, so a
@@ -126,30 +169,37 @@ export default function Chat() {
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || streaming || busy) return;
+    if (!text || streaming) return;
     const id = (nextId.current += 1);
     following.current = true;
-    setLocals((prev) => [...prev, { id, user: text, assistant: "", base: sig }]);
+    // A busy L3 queues this message, but the page's view of busy is up to one poll old: the server's
+    // answer, streamed or queued, decides which of the two this turn turns out to be.
+    setLocals((prev) => [...prev, { id, user: text, assistant: "", base: sig, queueing: busy }]);
     setDraft("");
     setStreaming(true);
     try {
-      const done = await streamChat(project, text, (chunk) => {
-        patch(id, (l) => ({ ...l, assistant: l.assistant + chunk }));
+      const sent = await streamChat(project, text, (chunk) => {
+        patch(id, (l) => ({ ...l, assistant: l.assistant + chunk, queueing: false }));
       });
-      if (done.error) {
-        patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${done.error ?? ""}` }));
+      if (sent.queued) {
+        // It waits for the next turn boundary; the server's queue owns it from here.
+        const row = sent.queued;
+        setLocals((prev) => prev.filter((l) => l.id !== id));
+        queryClient.setQueryData<ChatView>(["chat", project], (cached) =>
+          cached ? { ...cached, queued: [...(cached.queued ?? []), row] } : cached,
+        );
+      } else {
+        // It streamed after all, whatever the page believed when it was sent.
+        patch(id, (l) => ({
+          ...l,
+          queueing: false,
+          assistant: sent.error ? `${l.assistant}\n[error] ${sent.error}` : l.assistant,
+        }));
       }
       await queryClient.invalidateQueries({ queryKey: ["chat", project] });
     } catch (err) {
-      // 409 is "L3 is busy": toast it and never retry. The text goes back in the composer.
-      if (err instanceof ApiError && err.status === 409) {
-        toast.show({ message: "L3 is busy", severity: "limit" });
-        setLocals((prev) => prev.filter((l) => l.id !== id));
-        setDraft(text);
-      } else {
-        const message = err instanceof Error ? err.message : String(err);
-        patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${message}` }));
-      }
+      const message = err instanceof Error ? err.message : String(err);
+      patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${message}` }));
     } finally {
       setStreaming(false);
     }
@@ -161,7 +211,6 @@ export default function Chat() {
   const l3: Record<string, unknown> = chat.data.l3 ?? {};
   const ctx = num(l3["context_percent"]);
   const session = str(l3["session_id"]);
-  const disabled = streaming || busy;
   // One link per managed project, straight to that project's chat.
   const switchable = (overview.data?.projects ?? []).filter((p) => p.managed);
 
@@ -175,6 +224,7 @@ export default function Chat() {
         <span className="ml-auto text-meta text-muted">
           {[
             busy ? "busy" : null,
+            queued.length > 0 ? `${queued.length} queued` : null,
             session ? `session ${session.slice(0, 8)}` : null,
             ctx != null ? `ctx ${ctx}%` : null,
             num(l3["turns"]) != null ? `turns ${num(l3["turns"])}` : null,
@@ -207,7 +257,7 @@ export default function Chat() {
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
         }}
       >
-        {history.length === 0 && pending.length === 0 ? (
+        {history.length === 0 && pending.length === 0 && queued.length === 0 ? (
           <p className="text-muted">No messages yet.</p>
         ) : null}
         {history.map((m, i) => (
@@ -215,9 +265,27 @@ export default function Chat() {
         ))}
         {pending.map((l) => (
           <div key={l.id} className="flex flex-col gap-3">
-            <Bubble role="user" meta={metaLine("user", ["sending"])} text={l.user} />
-            <Bubble role="assistant" meta={metaLine("assistant", ["streaming"])} text={l.assistant} />
+            <Bubble
+              role="user"
+              meta={metaLine("user", [l.queueing ? "queueing" : "sending"])}
+              text={l.user}
+            />
+            {l.queueing && !l.assistant ? null : (
+              <Bubble
+                role="assistant"
+                meta={metaLine("assistant", ["streaming"])}
+                text={l.assistant}
+              />
+            )}
           </div>
+        ))}
+        {queued.map((m, i) => (
+          <QueuedBubble
+            key={m.id}
+            m={m}
+            position={queued.length > 1 ? i + 1 : null}
+            onRemove={() => dequeue.mutate(m.id)}
+          />
         ))}
       </section>
 
@@ -234,7 +302,7 @@ export default function Chat() {
           placeholder="Talk to L3 about roadmap, architecture, or what to build"
           rows={3}
           value={draft}
-          disabled={disabled}
+          disabled={streaming}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -247,9 +315,9 @@ export default function Chat() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={disabled || draft.trim().length === 0}
+            disabled={streaming || draft.trim().length === 0}
           >
-            {streaming ? "Sending…" : busy ? "Busy" : "Send"}
+            {streaming ? "Sending…" : busy ? "Queue" : "Send"}
           </button>
           <select
             className="field"

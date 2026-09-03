@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import threading
+import uuid
 from pathlib import Path
 
 from . import config, engines, route, state as S
@@ -58,27 +59,66 @@ def queue_path(project: str) -> Path:
     return config.project_dir(project) / "l3-queue.jsonl"
 
 
-def queue_message(project: str, text: str, *, trigger: str) -> None:
-    """Leave one message for the project's L3; the server delivers it as a turn once L3 is free."""
+def _queue_rows(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _write_queue(path: Path, rows: list[dict]) -> None:
+    if rows:
+        S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+    else:
+        path.unlink(missing_ok=True)
+
+
+def queued(project: str) -> list[dict]:
+    """The messages waiting for L3, oldest first. A queued message is dropped or run, never edited."""
+    return _queue_rows(queue_path(project))
+
+
+def queue_message(project: str, text: str, *, trigger: str, role: str = "server") -> dict:
+    """Leave one message for the project's L3; the server delivers it as a turn once L3 is free. The
+    returned row carries the id that drops it again and its position in the queue."""
     path = queue_path(project)
-    with S.project_lock(project), open(path, "a") as stream:
-        stream.write(json.dumps({"at": S.now(), "trigger": trigger, "text": text}, sort_keys=True) + "\n")
+    row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": role, "text": text}
+    with S.project_lock(project):
+        waiting = len(_queue_rows(path))
+        with open(path, "a") as stream:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+    return {**row, "position": waiting + 1}
+
+
+def drop_queued(project: str, message_id: str) -> bool:
+    """Drop one message that has not started. False once its turn has taken it off the queue."""
+    path = queue_path(project)
+    with S.project_lock(project):
+        rows = _queue_rows(path)
+        rest = [row for row in rows if row.get("id") != message_id]
+        if len(rest) == len(rows):
+            return False
+        _write_queue(path, rest)
+        return True
 
 
 def deliver_queued(project: str) -> dict | None:
-    """Run the oldest queued message as one L3 turn. Nothing runs while L3 is busy or no engine is available."""
+    """Run the oldest queued message as one L3 turn, folding the chat messages that follow it into that
+    same turn so Burak's consecutive messages are read together, each on its own line and in arrival
+    order. Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
     if not path.exists() or busy(project) or not _select(project).get("engine"):
         return None
     with S.project_lock(project):
-        rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-        if rows[1:]:
-            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows[1:]))
-        else:
-            path.unlink()
+        rows = _queue_rows(path)
+        take = 1
+        if rows and rows[0].get("trigger") == "chat":
+            while take < len(rows) and rows[take].get("trigger") == "chat":
+                take += 1
+        _write_queue(path, rows[take:])
     if not rows:
         return None
-    return turn(project, rows[0]["text"], trigger=rows[0].get("trigger") or "queued")
+    return turn(project, "\n\n".join(row["text"] for row in rows[:take]),
+                trigger=rows[0].get("trigger") or "queued")
 
 
 def _header(project: str, trigger: str, fresh: bool) -> str:

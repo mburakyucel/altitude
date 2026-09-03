@@ -100,7 +100,11 @@ L3 stores separate Claude and Codex session records. The Chat composer's engine 
 project's L3 to Claude or Codex, for chat and server-triggered turns alike, until it is set back to
 Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never
 falls back. A turn started from Chat finishes and is recorded even when the page that started it
-leaves mid-stream. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
+leaves mid-stream. L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
+sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
+injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
+arrival order; a message queued but not started is not a turn in flight, so it neither holds the
+quiet-point restart nor is lost by one. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
 human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
 provider transcript. A Claude limit after text or tool activity never causes the same turn to be
 automatically replayed on Codex because that could duplicate side effects. Provider selection changes

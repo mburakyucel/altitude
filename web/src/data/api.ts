@@ -307,10 +307,25 @@ export const ChatMessageSchema = z
   })
   .passthrough();
 
+/** One message waiting for the next turn boundary; `id` is what removes it again. */
+export const QueuedMessageSchema = z
+  .object({
+    id: z.string(),
+    at: z.string().nullish(),
+    trigger: z.string().nullish(),
+    role: z.string().nullish(),
+    text: z.string(),
+    /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
+    position: z.number().nullish(),
+  })
+  .passthrough();
+
 export const ChatViewSchema = z
   .object({
     history: z.array(ChatMessageSchema),
     busy: z.boolean(),
+    /** Messages queued while L3 was busy, oldest first; they run in order at the next turn boundary. */
+    queued: z.array(QueuedMessageSchema).nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
     /** The project's L3 engine pin; null or absent means the weekly quota decides. */
     engine: z.enum(["claude", "codex"]).nullish(),
@@ -336,6 +351,7 @@ export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
@@ -508,6 +524,17 @@ export function useL3Reset(project: string) {
   });
 }
 
+/** Drop a message that has not started yet — the only edit a queued message allows. */
+export function useChatDequeue(project: string) {
+  return useOptimisticMutation<string, unknown, ChatView>({
+    mutationFn: (id) => post("/api/chat/remove", { project, id }),
+    queryKey: ["chat", project],
+    update: (cached, id) =>
+      cached && { ...cached, queued: (cached.queued ?? []).filter((q) => q.id !== id) },
+    failureMessage: "Couldn't remove the queued message.",
+  });
+}
+
 export type L3Engine = "claude" | "codex";
 
 /**
@@ -543,16 +570,22 @@ export interface ChatDone {
   engine?: string | null;
 }
 
+/** A message sent while L3 was busy comes back queued instead of streamed. */
+export interface ChatSent extends ChatDone {
+  queued?: QueuedMessage;
+}
+
 /**
- * POST /api/chat and stream the NDJSON reply: {"t": "..."} lines feed onText, the final
- * {"done": {...}} is returned (the caller surfaces done.error). Polling is paused for the
- * duration. Non-2xx throws ApiError — 409 means "L3 is busy": toast it, do not retry.
+ * POST /api/chat and read the reply. A free L3 streams NDJSON: {"t": "..."} lines feed onText and the
+ * final {"done": {...}} comes back (the caller surfaces done.error). A busy L3 answers with a single
+ * {"queued": {...}} object instead — the same line reader takes both. Polling is paused for the
+ * duration. Non-2xx throws ApiError.
  */
 export async function streamChat(
   project: string,
   text: string,
   onText: (chunk: string) => void,
-): Promise<ChatDone> {
+): Promise<ChatSent> {
   setChatStreaming(true);
   try {
     const res = await fetch("/api/chat", {
@@ -566,17 +599,18 @@ export async function streamChat(
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    let done: ChatDone = {};
+    let done: ChatSent = {};
     const handleLine = (line: string) => {
       if (!line.trim()) return;
-      let parsed: { t?: unknown; done?: ChatDone };
+      let parsed: { t?: unknown; done?: ChatDone; queued?: unknown };
       try {
-        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone };
+        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown };
       } catch {
         return; // tolerate a torn line
       }
       if (typeof parsed.t === "string") onText(parsed.t);
-      if (parsed.done) done = parsed.done;
+      if (parsed.done) done = { ...done, ...parsed.done };
+      if (parsed.queued) done = { ...done, queued: QueuedMessageSchema.parse(parsed.queued) };
     };
 
     for (;;) {
