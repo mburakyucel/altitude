@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import re
 from pathlib import Path
 
-from . import config, engines, git_policy, github_intake, recovery, route, state as S, tasks as T
+from . import config, engines, git_policy, recovery, route, state as S, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -167,13 +167,11 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
             )
 
 
-def build_brief(project: str, slug: str, issue_snapshot: dict | None = None) -> str:
+def build_brief(project: str, slug: str) -> str:
     task = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     proj = config.project(project)
     request = (d / "request.md").read_text()
-    if issue_snapshot:
-        request = request.rstrip() + "\n\n" + github_intake.render(issue_snapshot) + "\n"
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
         merge_policy = f"**Held for Burak** — open the PR, make it ready for any required review, get its checks green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
@@ -250,10 +248,6 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         held = wip_hold(project, task)
         if held:
             raise T.TransitionError(held)
-    try:
-        issue_snapshot = github_intake.ensure_snapshot(project, slug, expected_state="queued")
-    except github_intake.IssueIntakeError as exc:
-        raise T.TransitionError(f"GitHub issue intake held before launch: {exc}") from exc
     repo = config.project_path(project)
     try:
         with publication_settlement(project):
@@ -294,7 +288,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
     l2_token = secrets.token_urlsafe(24)
     agent = {}
     try:
-        brief_md = build_brief(project, slug, issue_snapshot)
+        brief_md = build_brief(project, slug)
         T.brief(project, slug, brief_md, actor="altd")
         settings = session_settings(project, slug, f"{project}--{dispatch_id}")
         persona = config.PERSONAS / ("l2_codex.md" if engine == "codex" else "l2.md")
@@ -387,29 +381,6 @@ def _require_resume_snapshot(task: dict, slug: str, *, expected_dispatch_id: str
             raise T.TransitionError(f"{slug}: L2 {label} changed before resume ({expected!r} → {current!r})")
 
 
-def _issue_resume_prompt(project: str, task: dict, prompt: str) -> tuple[str, str | None]:
-    """Add missing legacy issue context once, before any current worker is stopped."""
-    try:
-        snapshot = github_intake.ensure_snapshot(
-            project, task["slug"], expected_state=task.get("state"),
-            expected_dispatch_id=task.get("dispatch_id"), expected_session_id=task.get("session_id"),
-            expected_agent_id=task.get("agent_id"),
-        )
-    except github_intake.IssueIntakeError as exc:
-        raise T.TransitionError(f"GitHub issue intake held before L2 resume: {exc}") from exc
-    if not snapshot:
-        return prompt, None
-    digest = snapshot["content_sha256"]
-    brief_path = S.task_dir(project, task["slug"]) / "brief.md"
-    brief_has_context = brief_path.exists() and github_intake.marker(snapshot) in brief_path.read_text()
-    already_delivered = task.get("github_issue_context_delivered") == digest
-    if brief_has_context or already_delivered:
-        return prompt, None
-    if github_intake.marker(snapshot) not in prompt:
-        prompt = github_intake.render(snapshot) + "\n\n" + prompt
-    return prompt, digest
-
-
 def _resume_session_locked(project: str, slug: str, text: str, session_id: str | None = None, *,
                            expected_dispatch_id: str | None = None,
                            expected_session_id: str | None = None,
@@ -467,7 +438,6 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
         S.append_event(project, slug, "resume-held", reason=held, previous=sid)
         raise T.TransitionError(held)
     task = current
-    text, delivered_issue_digest = _issue_resume_prompt(project, task, text)
     name = f"{project}/{task['dispatch_id']}"
     engine = l2_engine(task)
     job_root = l2_job_root(project, slug)
@@ -537,8 +507,6 @@ def _resume_session_locked(project: str, slug: str, text: str, session_id: str |
                 changed = exc
             else:
                 t["agent_id"], t["session_id"] = new["id"], new["sessionId"]
-                if delivered_issue_digest:
-                    t["github_issue_context_delivered"] = delivered_issue_digest
                 t.pop("completion_requested", None)
                 S.save_task(project, t)
     except Exception as exc:  # noqa: BLE001 — a launched worker without a durable owner must be stopped and held

@@ -81,7 +81,8 @@ class TestL3Sessions(unittest.TestCase):
                   "returncode": 0, "containment_empty": True}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", return_value=result):
+             mock.patch.object(engines, "codex_exec", return_value=result), \
+             mock.patch("altitude.github_intake.inline", return_value=None):
             out = l3.turn("k", "Implement GitHub issue #127 now")
 
         self.assertTrue(out["completed"])

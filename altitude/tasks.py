@@ -6,7 +6,7 @@ import re
 import subprocess
 import uuid
 
-from . import config, state as S
+from . import config, github_intake, state as S
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -153,6 +153,12 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
     if model in config.MODEL_ALIASES and engine is None:
         engine = "claude"  # a provider-specific model name is itself an explicit provider pin
     config.project(project)
+    try:
+        issue = github_intake.inline(project, title, request)
+    except github_intake.IssueIntakeError as exc:
+        raise TransitionError(f"GitHub issue intake failed: {exc}") from exc
+    if issue:
+        request = request.rstrip() + "\n\n" + issue
     with S.project_lock(project):
         base = S.slugify(title)
         slug, n = base, 1

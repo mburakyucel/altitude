@@ -7,7 +7,7 @@ import posixpath
 import re
 import subprocess
 
-from . import config, dispatch, engines, github_intake, incidents, recovery, state as S, tasks as T
+from . import config, dispatch, engines, incidents, recovery, state as S, tasks as T
 
 
 class L3ActionError(RuntimeError):
@@ -270,22 +270,6 @@ def _execute(project: str, action: dict, *, github_issue_source: str | None = No
     if kind == "new_task":
         title = _need(action.get("title"), "title")
         request = _new_task_request(action)
-        try:
-            reference = github_intake.task_reference(title, request)
-        except github_intake.IssueIntakeError as exc:
-            raise L3ActionError(str(exc)) from exc
-        if reference:
-            authorized = github_intake.source_authorizes(github_issue_source, reference)
-            if (not authorized and reference[0] is None
-                    and github_intake.source_has_absolute_issue(github_issue_source, reference[2])):
-                try:
-                    repository = github_intake.project_repo(project)
-                except github_intake.IssueIntakeError as exc:
-                    raise L3ActionError(str(exc)) from exc
-                authorized = github_intake.source_authorizes(
-                    github_issue_source, reference, repository=repository)
-            if not authorized:
-                raise L3ActionError("GitHub issue task intake was not authorized by the current user message")
         task = T.new(project, title, request,
                      actor="l3", source=action.get("source") or "chat", engine=action.get("engine"),
                      model=action.get("model"), paths=action.get("paths") or None,
