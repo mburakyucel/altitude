@@ -59,7 +59,8 @@ The controlled architecture-cutover restart was completed and smoke-verified on 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
 Any later lifecycle change requires separate explicit authorization and post-change health checks.
 
-For an operator-authorized restart, run `make restart` from the deployed primary checkout. The
+For an operator-authorized restart, press Restart on the web app's restart-pending banner (shown
+once nothing is running) or run `make restart` from the deployed primary checkout. The
 command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and

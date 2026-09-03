@@ -114,7 +114,10 @@ fuse, hold, clear command, or repair slot. A task blocked before any launch goes
 when it is resumed. Incident records are evidence only and never create tasks, personas, or
 follow-up work.
 
-The service lifecycle is separate from source changes. The architecture-cutover restart was
+A merged Altitude change marks a restart pending. The web app then shows a banner on every page; once
+no L2 is running and no L3 is busy it offers a Restart button, which runs the guarded restart script
+as a transient user unit outside altd's own cgroup. The service lifecycle is otherwise separate from
+source changes. The architecture-cutover restart was
 explicitly authorized, completed from verified main, and smoke-tested without replaying archived
 work. Ordinary source changes never start, stop, mask, unmask, or restart the service; any later
 lifecycle action requires separate authorization and post-change health verification.

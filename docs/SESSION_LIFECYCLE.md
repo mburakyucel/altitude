@@ -132,7 +132,8 @@ valid completion is a system fault, not “still running.” Rejection and post-
 same provider adapter.
 
 Merging Python changes and restarting the service are separate operations. A source merge can mark a
-restart pending, but it never stops the running service by itself.
+restart pending, but it never stops the running service by itself; the web app's banner offers the
+restart once nothing is running, and Burak presses it.
 
 After changing provider launch, runtime, or session-resume integration, validate Altitude with one
 tiny real task through the complete L3 → L2 → PR → required checks → merge path. Afterward, the

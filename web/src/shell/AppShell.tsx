@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router";
 import { ToastViewport } from "../data/Toast";
 import { useOverview } from "../data/api";
 import type { Quota } from "../data/api";
+import { RestartBanner } from "./RestartBanner";
 import { ThemeToggle } from "./theme";
 
 const NAV = [
@@ -58,6 +59,7 @@ export default function AppShell() {
             <ThemeToggle />
           </div>
         </div>
+        <RestartBanner restart={overview.data?.restart} />
         <Outlet />
       </main>
       <nav
