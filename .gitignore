@@ -8,4 +8,3 @@ web/node_modules/
 web/*.tsbuildinfo
 web/dist/
 web/.dist-*/
-design/wireframes/shots/
