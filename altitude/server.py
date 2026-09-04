@@ -771,9 +771,10 @@ class Handler(BaseHTTPRequestHandler):
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
-                return self._json({"history": l3.chat_history(parts[2], int(q.get("limit", ["60"])[0])), "busy": l3.busy(parts[2]),
-                                   "queued": l3.queued(parts[2]), "l3": l3.info(parts[2]),
-                                   "engine": config.project(parts[2]).get("l3_engine")})
+                project = parts[2]
+                lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]))
+                return self._json({**lifecycle, "l3": l3.info(project),
+                                   "engine": config.project(project).get("l3_engine")})
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
@@ -886,7 +887,8 @@ class Handler(BaseHTTPRequestHandler):
                 res = server_l3_turn(project, text, trigger="chat", on_text=send)
                 if gone:
                     return
-                self._stream_send({"done": {k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}})
+                self._stream_send({"done": {k: res.get(k) for k in (
+                    "session_id", "context_percent", "turns", "cost", "error", "engine", "turn_id")}})
                 self._stream_close()
                 return
             if api == "restart":

@@ -4,13 +4,17 @@ import json
 import threading
 import uuid
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config, engines, route, state as S, transcript
 
 _locks: dict[str, threading.Lock] = {}
+_active: dict[str, dict] = {}
+_lifecycle_guards: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
+_turn_local = threading.local()
 
 ALLOWED_TOOLS = ("Read,Grep,Glob,Bash(alt *),Bash(git log*),Bash(git diff --stat*),Bash(gh pr view*),"
                  "Bash(gh pr list*),Bash(gh issue *),Bash(gh run *)")
@@ -19,6 +23,11 @@ ALLOWED_TOOLS = ("Read,Grep,Glob,Bash(alt *),Bash(git log*),Bash(git diff --stat
 def lock(project: str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(project, threading.Lock())
+
+
+def _lifecycle_guard(project: str) -> threading.Lock:
+    with _locks_guard:
+        return _lifecycle_guards.setdefault(project, threading.Lock())
 
 
 def info_path(project: str) -> Path:
@@ -115,6 +124,57 @@ def busy(project: str) -> bool:
     return lock(project).locked()
 
 
+def active(project: str) -> dict | None:
+    """The minimal public identity of this process's running turn, never its private prompt."""
+    with _lifecycle_guard(project):
+        turn = _active.get(project)
+        return dict(turn) if turn else None
+
+
+def chat_state(project: str, limit: int = 60) -> dict:
+    """History, queue, and lifecycle fields from one turn-boundary snapshot."""
+    turn_lock = lock(project)
+    with _lifecycle_guard(project):
+        turn = _active.get(project)
+        with S.project_lock(project):
+            waiting = _queue_rows(queue_path(project))
+        return {"history": chat_history(project, limit), "queued": waiting,
+                "active": dict(turn) if turn else None, "busy": turn_lock.locked()}
+
+
+@contextmanager
+def _active_turn(project: str, trigger: str, claim=None):
+    turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger}
+    lifecycle_guard = _lifecycle_guard(project)
+    with lifecycle_guard:
+        claimed = claim is None or claim()
+        if claimed:
+            _active[project] = turn
+    if not claimed:
+        yield None
+        return
+    try:
+        yield turn
+    except Exception as exc:
+        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"])
+        raise
+    finally:
+        with lifecycle_guard:
+            if _active.get(project, {}).get("id") == turn["id"]:
+                _active.pop(project, None)
+
+
+@contextmanager
+def _turn_scope(project: str, trigger: str):
+    """Adopt a queue handoff owned by this thread, or acquire a direct turn normally."""
+    claimed = getattr(_turn_local, "claimed", None)
+    if claimed and claimed["project"] == project and claimed["trigger"] == trigger:
+        yield claimed["turn"]
+        return
+    with lock(project), _active_turn(project, trigger) as turn:
+        yield turn
+
+
 def queue_path(project: str) -> Path:
     return config.project_dir(project) / "l3-queue.jsonl"
 
@@ -168,19 +228,43 @@ def deliver_queued(project: str) -> dict | None:
     same turn so Burak's consecutive messages are read together, each on its own line and in arrival
     order. Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
-    if not path.exists() or busy(project) or not _select(project).get("engine"):
+    if not path.exists() or not _select(project).get("engine"):
         return None
-    with S.project_lock(project):
-        rows = _queue_rows(path)
-        take = 1
-        if rows and rows[0].get("trigger") == "chat":
-            while take < len(rows) and rows[take].get("trigger") == "chat":
-                take += 1
-        _write_queue(path, rows[take:])
-    if not rows:
+    turn_lock = lock(project)
+    if not turn_lock.acquire(blocking=False):
         return None
-    return turn(project, "\n\n".join(row["text"] for row in rows[:take]),
-                trigger=rows[0].get("trigger") or "queued")
+    try:
+        while True:
+            with S.project_lock(project):
+                rows = _queue_rows(path)
+            if not rows:
+                return None
+            take = 1
+            if rows[0].get("trigger") == "chat":
+                while take < len(rows) and rows[take].get("trigger") == "chat":
+                    take += 1
+            selected = rows[:take]
+            selected_ids = [row.get("id") for row in selected]
+
+            def claim() -> bool:
+                with S.project_lock(project):
+                    current = _queue_rows(path)
+                    if [row.get("id") for row in current[:take]] != selected_ids:
+                        return False
+                    _write_queue(path, current[take:])
+                    return True
+
+            trigger = selected[0].get("trigger") or "queued"
+            with _active_turn(project, trigger, claim=claim) as active_turn:
+                if active_turn is None:  # a removable row changed while this turn waited; retry the live queue
+                    continue
+                _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn}
+                try:
+                    return turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger)
+                finally:
+                    del _turn_local.claimed
+    finally:
+        turn_lock.release()
 
 
 def _header(project: str, trigger: str, fresh: bool) -> str:
@@ -223,12 +307,14 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
     a provider. Each provider resumes only its own transcript."""
     requested = engine
-    with lock(project):
+    with _turn_scope(project, trigger) as active_turn:
+        turn_id = active_turn["id"]
         choice = _select(project, requested)
         if not choice.get("engine"):
             return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                     "turns": 0, "structured": None, "error": f"engine hold: {choice['why']}", "tools": [],
-                    "skipped": False, "completed": False, "_turn_started_at": None, "routing": choice}
+                    "skipped": False, "completed": False, "_turn_started_at": None, "routing": choice,
+                    "turn_id": turn_id}
         engine = choice["engine"]
         proj = config.project(project)
         S.regen_state_md(project)
@@ -249,10 +335,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             sid = None
         history = chat_history(project, 60)
         handoff = _handoff(history, engine, session.get("last_turn"))
-        turn_started_at = S.now()
-        chat_log(project, "user", prompt, trigger=trigger, engine=engine, at=turn_started_at)
+        turn_started_at = active_turn["started_at"]
+        chat_log(project, "user", prompt, trigger=trigger, engine=engine, at=turn_started_at, turn_id=turn_id)
         if engine == "codex":
-            res = _codex_turn(project, prompt, trigger, turn_started_at, choice, inf, session, fresh,
+            res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
                               handoff, model=model, on_start=on_start)
         else:
             text = _header(project, trigger, fresh) + handoff + prompt
@@ -272,11 +358,12 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                     fallback["why"] = f"Claude window closed before producing output; {fallback['why']}"
                     codex_session = sessions.setdefault("codex", {})
                     codex_handoff = _handoff(history, "codex", codex_session.get("last_turn"))
-                    return _codex_turn(project, prompt, trigger, turn_started_at, fallback, inf, codex_session,
+                    return _codex_turn(project, prompt, trigger, turn_started_at, turn_id, fallback, inf, codex_session,
                                        not codex_session.get("session_id"), codex_handoff, model=None,
                                        on_start=on_start)
             if res.get("error") and not res.get("session_id"):
-                chat_log(project, "error", res["error"], trigger=trigger, engine="claude")
+                chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id)
+                res["turn_id"] = turn_id
                 return res
             pct = engines.context_percent(res.get("context_tokens", 0), "claude")
             _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
@@ -284,9 +371,9 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
-                     tools=_tool_log(res.get("tools") or []))
+                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id)
             S.regen_state_md(project)
-            res.update({"context_percent": pct, "completed": True})
+            res.update({"context_percent": pct, "completed": True, "turn_id": turn_id})
         return res
 
 
@@ -305,7 +392,7 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
                 "rotate_reason": session["rotate_reason"]})
 
 
-def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, choice: dict,
+def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and `alt` door as Claude, inside
     Codex's own sandbox (writes only there and to the Altitude home; the checkout is readable)."""
@@ -334,18 +421,20 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
            "usage": usage, "context_tokens": tokens, "cost": 0.0, "turns": 1, "structured": None,
            "error": identity_error or result.get("error"), "tools": result.get("tools") or [],
            "skipped": False, "completed": False,
-           "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice}
+           "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice, "turn_id": turn_id}
     pct = engines.context_percent(tokens, "codex") if tokens else 0.0
     if identity_error or (result.get("error") and not out["text"]):
         if reported_sid and not identity_error:
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
-        chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger, engine="codex")
+        chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
+                 engine="codex", turn_id=turn_id)
         return out
     _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
-             context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]))
+             context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
+             turn_id=turn_id)
     S.regen_state_md(project)
     out.update({"context_percent": pct, "completed": True})
     return out

@@ -140,14 +140,22 @@ from the web: the L3 turn creates it through `alt task new`. The composer's engi
 project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
 stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. A message sent while L3 is busy is queued, never refused: the composer stays
-open, the Send button reads Queue, and the message shows in the transcript as queued until its turn
-starts, with a control that takes Burak's chat back off the queue while it waits. Server-triggered
-work is also visible in its FIFO position but is not editable. The queue is a file in the project
-directory, so a reload, another device and a restart all see the same pending messages. Each turn
-drains it at its own boundary rather than at the next tick: consecutive chat messages fold into one
-turn in arrival order, each on its own line, while server-triggered messages keep their own turn, and
-nothing runs while a turn holds the project's L3 lock.
+lands in the history. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
+and trigger without copying its prompt. Chat renders that record as one thinking bubble on a fresh
+mount or reconnect; a tab already showing the same live streamed response suppresses the extra
+bubble. It never infers a turn indefinitely from `busy` or the last history role. The stream's
+completion and terminal history rows carry the turn id, so local output stays until history owns it
+and a completed assistant or error row wins over a raced active snapshot.
+
+A message sent while L3 is busy is queued, never refused: the composer stays open, the Send button
+reads Queue, and the message shows in the transcript as queued until its turn starts, when the queue
+row becomes the active thinking bubble. The API snapshots the queue and active record under the same
+lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
+waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
+file in the project directory, so a reload, another device and a restart all see the same pending
+messages. Each turn drains it at its own boundary rather than at the next tick: consecutive chat
+messages fold into one turn in arrival order, each on its own line, while server-triggered messages
+keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
 Chat, the task Conversation tab, and the project task card's quick-message panel use one controlled
 voice-capable composer. The routes retain ownership of their draft and normal submit function; the

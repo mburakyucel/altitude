@@ -3,7 +3,7 @@ import { Link, NavLink, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { streamChat, useChat, useChatDequeue, useL3Engine, useOverview } from "../data/api";
 import type { L3Engine } from "../data/api";
-import type { ChatMessage, ChatView, QueuedMessage } from "../data/api";
+import type { ActiveTurn, ChatMessage, ChatView, QueuedMessage } from "../data/api";
 import VoiceComposer from "../components/VoiceComposer";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
@@ -75,6 +75,7 @@ function HistoryBubble({ m }: { m: ChatMessage }) {
 
 interface LocalTurn {
   id: number;
+  turnId?: string;
   user: string;
   assistant: string;
   /** Signature of the transcript this turn was sent against (see `signature`). */
@@ -108,6 +109,16 @@ function QueuedBubble({
           Remove
         </button>
       ) : null}
+    />
+  );
+}
+
+function ActiveBubble({ turn }: { turn: ActiveTurn }) {
+  return (
+    <Bubble
+      role="assistant"
+      meta={metaLine("assistant", ["thinking", turn.trigger, age(turn.started_at) || null])}
+      text="Thinking…"
     />
   );
 }
@@ -150,6 +161,7 @@ export default function Chat() {
   const following = useRef(true);
 
   const history = chat.data?.history ?? [];
+  const active = chat.data?.active;
   const busy = chat.data?.busy ?? false;
   const queued = chat.data?.queued ?? [];
   const dequeue = useChatDequeue(project);
@@ -157,7 +169,22 @@ export default function Chat() {
   // Each local turn is keyed by its own id and holds the transcript it was sent against; it is
   // dropped in the same render as the refetched history that moved past it — never earlier, so a
   // repeated message keeps its bubble and its streamed reply, and never later, so it never doubles.
-  const pending = locals.filter((l) => l.base === sig);
+  const terminalTurns = new Set(history
+    .filter((m) => ["assistant", "error"].includes(m.role))
+    .map((m) => str(m["turn_id"]))
+    .filter(Boolean));
+  // A focus/refetch can reveal the server's just-written user row before the stream ends. Keep the
+  // current local response through reader completion and until its terminal history row arrives.
+  const pending = locals.filter((l) => l.base === sig
+    || (streaming && l.id === nextId.current)
+    || Boolean(l.turnId && !terminalTurns.has(l.turnId)));
+  const activeFinished = Boolean(active && terminalTurns.has(active.id));
+  const localOwnsActive = Boolean(active && pending.some((l) => l.turnId === active.id
+    || (streaming && l.id === nextId.current && !l.queueing)));
+  const shownActive = active && !activeFinished && !localOwnsActive
+    ? active
+    : null;
+  const activeId = shownActive?.id ?? "";
   const streamed = pending.map((l) => `${l.id}:${l.assistant.length}`).join(",");
 
   useEffect(() => {
@@ -168,7 +195,7 @@ export default function Chat() {
   useEffect(() => {
     const node = transcript.current;
     if (node && following.current) node.scrollTop = node.scrollHeight;
-  }, [project, sig, streamed]);
+  }, [project, sig, streamed, activeId]);
 
   const patch = (id: number, fn: (turn: LocalTurn) => LocalTurn) => {
     setLocals((prev) => prev.map((l) => (l.id === id ? fn(l) : l)));
@@ -198,18 +225,19 @@ export default function Chat() {
         // It streamed after all, whatever the page believed when it was sent.
         patch(id, (l) => ({
           ...l,
+          turnId: sent.turn_id ?? l.turnId,
           queueing: false,
           assistant: sent.error ? `${l.assistant}\n[error] ${sent.error}` : l.assistant,
         }));
       }
       setDraft("");
-      await queryClient.invalidateQueries({ queryKey: ["chat", project] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${message}` }));
       throw err;
     } finally {
       setStreaming(false);
+      await queryClient.invalidateQueries({ queryKey: ["chat", project] });
     }
   };
 
@@ -265,7 +293,7 @@ export default function Chat() {
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
         }}
       >
-        {history.length === 0 && pending.length === 0 && queued.length === 0 ? (
+        {history.length === 0 && pending.length === 0 && queued.length === 0 && !shownActive ? (
           <p className="text-muted">No messages yet.</p>
         ) : null}
         {history.map((m, i) => (
@@ -282,11 +310,12 @@ export default function Chat() {
               <Bubble
                 role="assistant"
                 meta={metaLine("assistant", ["streaming"])}
-                text={l.assistant}
+                text={l.assistant || "Thinking…"}
               />
             )}
           </div>
         ))}
+        {shownActive ? <ActiveBubble turn={shownActive} /> : null}
         {queued.map((m, i) => (
           <QueuedBubble
             key={m.id}
