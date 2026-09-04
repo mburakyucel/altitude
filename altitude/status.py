@@ -5,15 +5,16 @@
 """
 from __future__ import annotations
 
-from . import config, dispatch, git_policy, state as S, verify
+from . import config, dispatch, engines, git_policy, incidents, state as S, verify
 
 
 _TASK_FIELDS = (
     "state", "title", "attempt", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
-    "engine_model", "routing",
+    "engine_model", "routing", "waiting_on", "resume_after", "fault", "verified",
+    "spend", "paths", "created", "dispatched", "engine", "model",
 )
-_PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup"
+_PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup,files"
 _RUN_FIELDS = "databaseId,headSha,conclusion,status,workflowName"
 _PASSED = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 _FAILED = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
@@ -37,6 +38,124 @@ def _check_summary(rollup: object) -> dict:
         else:
             summary["pending"] += 1
     return summary
+
+
+def _pr_record(info: dict, number: int) -> dict:
+    merge = info.get("mergeCommit") or {}
+    files = info.get("files") if isinstance(info.get("files"), list) else []
+    return {"number": info.get("number", number), "state": info.get("state"),
+            "merged": info.get("state") == "MERGED",
+            "merged_at": info.get("mergedAt"),
+            "merge_sha": merge.get("oid") if isinstance(merge, dict) else None,
+            "head_ref": info.get("headRefName"), "head_sha": info.get("headRefOid"),
+            "checks": _check_summary(info.get("statusCheckRollup")),
+            "files": [str(row.get("path")) for row in files
+                      if isinstance(row, dict) and row.get("path")]}
+
+
+def pr(project: str, number: int) -> dict:
+    """One stable PR inspection from one gh call."""
+    errors: list[str] = []
+    try:
+        info = verify.gh(["pr", "view", str(number), "--json", _PR_FIELDS], config.project_path(project))
+    except (verify.VerifierFault, KeyError) as exc:
+        _error(errors, "pr", exc)
+        info = None
+    if not isinstance(info, dict):
+        if not errors:
+            _error(errors, "pr", f"PR #{number} not found")
+        record = _pr_record({}, number)
+    else:
+        record = _pr_record(info, number)
+    return {"project": project, **record, "errors": errors}
+
+
+def _report_list(report: dict, key: str, errors: list[str]) -> list:
+    value = report.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        _error(errors, f"report.{key}", "expected a list")
+        return []
+    return value
+
+
+def _report_sections(report: dict, errors: list[str]) -> dict:
+    landed = report.get("landed") or {}
+    if not isinstance(landed, dict):
+        _error(errors, "report.landed", "expected an object"); landed = {}
+    prs = landed.get("prs") or []
+    if not isinstance(prs, list) or any(not isinstance(row, dict) for row in prs):
+        _error(errors, "report.landed.prs", "expected a list of objects"); prs = []
+    blocked = report.get("blocked")
+    if blocked is not None and not isinstance(blocked, str):
+        _error(errors, "report.blocked", "expected text"); blocked = None
+    spend = report.get("spend") or {}
+    if not isinstance(spend, dict):
+        _error(errors, "report.spend", "expected an object"); spend = {}
+    return {"prs": prs, "blocked": blocked, "spend": spend,
+            **{key: _report_list(report, key, errors)
+               for key in ("decisions", "fyi", "follow_ups", "deviations")}}
+
+
+def task_report(project: str, slug: str) -> dict:
+    """The report as landed, plus its persisted verdict and completion digest."""
+    errors: list[str] = []
+    try:
+        task = S.load_task(project, slug)
+    except (KeyError, OSError, ValueError) as exc:
+        _error(errors, "task", exc); task = {}
+    try:
+        report = S.read_json(S.task_dir(project, slug) / "report.json", None)
+        if report is not None and not isinstance(report, dict):
+            raise TypeError("report is not an object")
+    except (OSError, ValueError, TypeError) as exc:
+        _error(errors, "report", exc); report = None
+    digest = None
+    digest_path = S.task_dir(project, slug) / "digest.md"
+    if task.get("state") == "done" and digest_path.exists():
+        try:
+            digest = digest_path.read_text().strip()
+        except OSError as exc:
+            _error(errors, "digest", exc)
+    if report is None:
+        _error(errors, "report", "report.json missing")
+    safe = report or {}
+    sections = _report_sections(safe, errors)
+    verified = task.get("verified") if isinstance(task.get("verified"), dict) else {}
+    return {"project": project, "slug": task.get("slug") or slug, "state": task.get("state"),
+            "verdict": verified.get("verdict"), **sections,
+            "digest": digest, "report": report, "errors": errors}
+
+
+def repo(project: str) -> dict:
+    """Local checkout, activation, fault counters, and one systemd observation."""
+    errors: list[str] = []
+    root = config.project_path(project)
+    checkout = git_policy.inspect_repository(root).as_dict()
+    if checkout.get("error"):
+        _error(errors, "checkout", checkout["error"])
+    dirty_files = None
+    try:
+        from . import land
+        dirty_files = len(land._changes(root))
+    except Exception as exc:  # the rest of repo inspection remains useful
+        _error(errors, "dirty_files", exc)
+    try:
+        restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
+    except (OSError, ValueError) as exc:
+        _error(errors, "restart", exc); restart = None
+    try:
+        raw_faults = S.read_json(incidents.FAULTS, {}) or {}
+        faults = {kind: {key: row.get(key) for key in ("count", "last", "incident")}
+                  for kind, row in raw_faults.items() if isinstance(row, dict)}
+    except (OSError, ValueError) as exc:
+        _error(errors, "faults", exc); faults = {}
+    service = engines.service_status()
+    if service.get("error"):
+        _error(errors, "service", service["error"])
+    return {"project": project, "checkout": checkout, "dirty_files": dirty_files,
+            "restart_pending": restart, "faults": faults, "service": service, "errors": errors}
 
 
 def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
@@ -179,15 +298,10 @@ def status(project: str, slug: str) -> dict:
         if not isinstance(info, dict):
             _error(errors, "prs", f"PR #{number} not found")
             continue
-        merge = info.get("mergeCommit") or {}
-        merge_sha = merge.get("oid") if isinstance(merge, dict) else None
-        merged = info.get("state") == "MERGED"
-        prs.append({"number": info.get("number", number), "state": info.get("state"),
-                    "head_ref": info.get("headRefName"), "head_sha": info.get("headRefOid"),
-                    "merged": merged, "merge_sha": merge_sha,
-                    "checks": _check_summary(info.get("statusCheckRollup"))})
-        if merged and merge_sha:
-            merge_candidates.append((str(info.get("mergedAt") or ""), index, str(merge_sha)))
+        record = _pr_record(info, number)
+        prs.append(record)
+        if record["merged"] and record["merge_sha"]:
+            merge_candidates.append((str(record["merged_at"] or ""), index, str(record["merge_sha"])))
     out["prs"] = prs
 
     if not merge_candidates:

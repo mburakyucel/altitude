@@ -1,7 +1,7 @@
 """Cross-project user-input queue, WIP summary, and digest text."""
 from __future__ import annotations
 
-from . import config, state as S, tasks as T
+from . import config, dispatch, state as S, tasks as T
 
 def queue() -> list[dict]:
     items = []
@@ -27,6 +27,54 @@ def wip() -> dict:
                         if t["state"] == "queued" or (t["state"] == "blocked" and t.get("resume_after"))]}
 
 
+def _lease_detail(project: str, task: dict, reason: str) -> tuple[str | None, list[str]]:
+    mine = dispatch.narrow(dispatch.task_paths(project, task))
+    for other in dispatch.leases(project, exclude=task["slug"]):
+        hits = dispatch.paths_overlap(mine, dispatch.narrow(other.get("paths") or []))
+        if hits and f"`{other['slug']}`" in reason:
+            return other["slug"], hits
+    return None, []
+
+
+def _waiting(project: str, task: dict, restart: dict | None) -> dict:
+    reason, kind = "", "checkpoint"
+    if task["state"] == "blocked" and not task.get("resume_after"):
+        who = task.get("waiting_on") or "burak"
+        kind = f"waiting-{who}"
+        reason = f"waiting on {'Burak' if who == 'burak' else 'L3'}: {task.get('blocked_reason') or 'blocked'}"
+    elif task["state"] == "queued" and restart and not restart.get("failed"):
+        kind = "restart"
+        reason = f"restart checkpoint since {restart.get('since') or '?'} ({len(restart.get('files') or [])} files)"
+    else:
+        reason = dispatch.wip_hold(project, task) or ""
+        if reason.startswith("file lease"):
+            kind = "lease"
+        elif reason.startswith("WIP limit"):
+            kind = "wip"
+        elif task.get("resume_after"):
+            kind, reason = "checkpoint", f"resume checkpoint {task['resume_after']}"
+        else:
+            reason = "ready for dispatch"
+    holder, files = _lease_detail(project, task, reason) if kind == "lease" else (None, [])
+    return {"project": project, "slug": task["slug"], "state": task["state"],
+            "age": S.age(task.get("updated") or task.get("created") or ""),
+            "kind": kind, "reason": reason, "holder": holder, "files": files}
+
+
+def queue_status() -> dict:
+    """Every running task and every queued/blocked task with its single current wait."""
+    restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
+    running, waiting = [], []
+    for project in config.load_projects():
+        for task in S.list_tasks(project):
+            if task["state"] == "running":
+                since = task.get("dispatched") or task.get("updated") or task.get("created") or ""
+                running.append({"project": project, "slug": task["slug"], "age": S.age(since), "since": since})
+            elif task["state"] in ("queued", "blocked"):
+                waiting.append(_waiting(project, task, restart))
+    return {"running": running, "waiting": waiting, "restart_pending": restart}
+
+
 def text() -> str:
     q = queue()
     lines = ["# Altitude digest", ""]
@@ -44,4 +92,3 @@ def text() -> str:
     txt = "\n".join(lines) + "\n"
     S.atomic_write(config.DIGEST_FILE, txt)
     return txt
-

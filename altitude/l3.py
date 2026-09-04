@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, route, state as S
+from . import config, engines, route, state as S, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -38,17 +40,75 @@ def chat_log(project: str, role: str, text: str, **meta) -> None:
         stream.write(json.dumps({"at": S.now(), "role": role, "text": text, **meta}, sort_keys=True) + "\n")
 
 
-def chat_history(project: str, limit: int = 60) -> list[dict]:
+def chat_history(project: str, limit: int | None = 60) -> list[dict]:
     path = config.project_dir(project) / "chat.jsonl"
     if not path.exists():
         return []
     result = []
-    for line in path.read_text().splitlines()[-limit:]:
+    lines = path.read_text().splitlines()
+    for line in (lines[-limit:] if limit is not None else lines):
         try:
             result.append(json.loads(line))
         except ValueError:
             pass
     return result
+
+
+def _tool_log(items: list) -> list[dict]:
+    """The bounded tool evidence stored in chat.jsonl, including shell text."""
+    out = []
+    for item in items[:40]:
+        if isinstance(item, dict):
+            entry = {"name": str(item.get("name") or "tool")}
+            if item.get("command") is not None:
+                entry["command"] = transcript._shell_command(item["command"])[:200]
+        else:  # legacy engine results carried only a tool name
+            entry = {"name": str(item or "tool")}
+        out.append(entry)
+    return out
+
+
+def _command_verb(command: str) -> tuple[str, bool]:
+    words = command.strip().split()
+    if not words or words[0] != "alt":
+        return (words[0] if words else "shell"), True
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in ("--project", "-p") else 1
+    if i >= len(words):
+        return "alt", False
+    verb = f"alt {words[i]}"
+    if words[i] in ("task", "incident", "l3", "project") and i + 1 < len(words):
+        verb += f" {words[i + 1]}"
+    return verb, False
+
+
+def tool_summary(project: str, days: int = 7) -> dict:
+    """Commands recorded on recent L3 assistant turns, grouped with ad-hoc verbs first."""
+    days = max(0, int(days))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    counts: dict[tuple[bool, str], Counter] = {}
+    for row in chat_history(project, None):
+        try:
+            at = datetime.fromisoformat(str(row.get("at") or ""))
+        except ValueError:
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        if at < since or row.get("role") != "assistant":
+            continue
+        for tool in row.get("tools") or []:
+            command = tool.get("command") if isinstance(tool, dict) else None
+            if not command:
+                continue
+            verb, ad_hoc = _command_verb(str(command))
+            counts.setdefault((ad_hoc, verb), Counter())[str(command)] += 1
+    groups = [{"verb": verb, "ad_hoc": ad_hoc, "count": sum(commands.values()),
+               "commands": [{"command": command, "count": count}
+                            for command, count in commands.most_common()]}
+              for (ad_hoc, verb), commands in sorted(
+                  counts.items(), key=lambda item: (not item[0][0], -sum(item[1].values()), item[0][1]))]
+    return {"project": project, "days": days, "since": since.isoformat(timespec="seconds"), "groups": groups}
 
 
 def busy(project: str) -> bool:
@@ -224,7 +284,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
-                     tools=(res.get("tools") or [])[:40])
+                     tools=_tool_log(res.get("tools") or []))
             S.regen_state_md(project)
             res.update({"context_percent": pct, "completed": True})
         return res
@@ -272,7 +332,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
     tokens = int(usage.get("input_tokens", 0) or 0)
     out = {"text": str(result.get("text") or ""), "session_id": reported_sid or sid or "",
            "usage": usage, "context_tokens": tokens, "cost": 0.0, "turns": 1, "structured": None,
-           "error": identity_error or result.get("error"), "tools": [], "skipped": False, "completed": False,
+           "error": identity_error or result.get("error"), "tools": result.get("tools") or [],
+           "skipped": False, "completed": False,
            "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice}
     pct = engines.context_percent(tokens, "codex") if tokens else 0.0
     if identity_error or (result.get("error") and not out["text"]):
@@ -284,7 +345,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, c
     _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
-             context_percent=pct, cache_tokens=usage.get("cached_input_tokens"))
+             context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]))
     S.regen_state_md(project)
     out.update({"context_percent": pct, "completed": True})
     return out

@@ -50,15 +50,24 @@ Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project confi
 tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private
 incident evidence. Runtime state is not source-controlled.
 
-Useful commands:
+Useful inspection commands print a compact text view; add `--json` for the complete record. Task
+status keeps its complete JSON view and adds `--brief` for compact orientation.
 
 ```sh
 make test
 make web
-make restart
-bin/alt --project <name> state
-bin/alt --project <name> task status <slug>
+bin/alt --project <name> task report <slug>
+bin/alt --project <name> task messages <slug> --last 5
+bin/alt --project <name> task events <slug> --last 5
+bin/alt --project <name> task status <slug> --brief
+bin/alt queue
+bin/alt --project <name> repo
+bin/alt --project <name> pr <number>
+bin/alt --project <name> l3 tools --days 7
 ```
+
+[`docs/CLI.md`](docs/CLI.md) is the inspection and task-lifecycle reference. `alt monitor` remains the separate
+quota and live-session view.
 
 ## Service lifecycle
 
