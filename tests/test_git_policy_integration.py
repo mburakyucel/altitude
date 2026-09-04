@@ -152,11 +152,16 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
 
     def merged_on_origin(self, path: str, body: str = "merged\n") -> str:
         """Another task's PR lands on origin/main while this checkout stays where it is."""
-        target = self.clone / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body)
+        return self.merged_files_on_origin({path: body})
+
+    def merged_files_on_origin(self, files: dict[str, str]) -> str:
+        """Another task's PR lands several paths in one commit while this checkout stays behind."""
+        for path, body in files.items():
+            target = self.clone / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
         git("add", "-A", cwd=self.clone)
-        git("commit", "-qm", f"merge {path}", cwd=self.clone)
+        git("commit", "-qm", "merge files", cwd=self.clone)
         git("push", "-q", "origin", "main", cwd=self.clone)
         return git("rev-parse", "HEAD", cwd=self.clone).strip()
 
@@ -175,9 +180,9 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         launch.assert_not_called()
         fault.assert_called_once()
 
-    def test_a_checkout_behind_origin_is_fast_forwarded_and_dispatches(self):
+    def test_an_unrelated_web_file_is_fast_forwarded_without_pending_activation(self):
         task = T.new("altitude", "Dispatch behind main", "Dispatch it.", actor="burak")
-        merged = self.merged_on_origin("web/src/app.tsx")
+        merged = self.merged_on_origin("web/README.md")
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
              mock.patch("altitude.incidents.system_fault") as fault:
@@ -186,9 +191,32 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual(self.head(), merged)
         self.assertEqual(S.load_task("altitude", task["slug"])["state"], "running")
         fault.assert_not_called()
-        self.assertFalse(self.pending.exists())                   # nothing under DEPLOY_DIRS moved
+        self.assertFalse(self.pending.exists())
 
-    def test_code_pulled_at_dispatch_marks_a_restart_pending(self):
+    def test_web_source_and_build_inputs_mark_activation_pending(self):
+        task = T.new("altitude", "Dispatch behind web", "Dispatch it.", actor="burak")
+        inputs = {
+            "web/src/app.tsx": "export default 1;\n",
+            "web/design/tokens.css": ":root {}\n",
+            "web/index.html": "<div id=\"root\"></div>\n",
+            "web/package.json": "{}\n",
+            "web/pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+            "web/tsconfig.json": "{}\n",
+            "web/vite.config.ts": "export default {};\n",
+        }
+        merged = self.merged_files_on_origin(inputs)
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            dispatch.run("altitude", task["slug"])
+
+        self.assertEqual(self.head(), merged)
+        pend = S.read_json(self.pending, {})
+        self.assertEqual(pend.get("files"), sorted(inputs))
+        self.assertIn("the deployed web bundle is older than main", T.inbox("altitude")[-1]["text"])
+        fault.assert_not_called()
+
+    def test_backend_code_pulled_at_dispatch_marks_activation_pending(self):
         task = T.new("altitude", "Dispatch behind code", "Dispatch it.", actor="burak")
         merged = self.merged_on_origin("altitude/x.py", "# new\n")
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
@@ -199,6 +227,7 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual(self.head(), merged)
         pend = S.read_json(self.pending, {})
         self.assertEqual((pend.get("files"), pend.get("head")), (["altitude/x.py"], merged))
+        self.assertIn("the running Altitude backend is older than main", T.inbox("altitude")[-1]["text"])
         fault.assert_not_called()                                 # flagged for an authorized restart, never restarted
 
     def test_a_resumed_task_fast_forwards_the_same_way(self):

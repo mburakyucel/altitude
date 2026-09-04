@@ -696,13 +696,31 @@ def _seconds_since(iso: str) -> float:
 
 
 RESTART_PENDING = "restart-pending.json"
-DEPLOY_DIRS = ("altitude/", "bin/", "systemd/")   # code the running altd loaded at start; everything else is read per use
+BACKEND_ACTIVATION_DIRS = ("altitude/", "bin/", "systemd/")
+WEB_BUILD_INPUTS = (
+    "web/src/",
+    "web/design/tokens.css",
+    "web/index.html",
+    "web/package.json",
+    "web/pnpm-lock.yaml",
+    "web/tsconfig.json",
+    "web/vite.config.ts",
+)
+
+
+def activation_component(path: str) -> str | None:
+    """The deployed component made older than main by this tracked path, if any."""
+    if path.startswith(BACKEND_ACTIVATION_DIRS):
+        return "backend"
+    if any(path.startswith(item) if item.endswith("/") else path == item for item in WEB_BUILD_INPUTS):
+        return "web"
+    return None
 
 
 def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
     """When a project's checkout is its deployment, fast-forward it to origin/main, so merged hooks, personas and
-    templates are what the next session runs. Python changes need a restart: those are announced with an FYI and
-    `monitor/restart-pending.json`, never restarted from here.
+    templates are what the next session runs. Loaded backend changes and tracked web build inputs need activation:
+    those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here.
 
     The one implementation `pull_after_done` and the dispatch/resume gate share. Returns notes, empty when the
     project does not deploy from its checkout or the checkout is already at origin/main. Anything that is not a
@@ -723,17 +741,22 @@ def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]
             f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
         )
     files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
-    code = [f for f in files if f.startswith(DEPLOY_DIRS)]
+    changed = [f for f in files if activation_component(f)]
     notes = [f"self-deploy: main {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
-    if code:
+    if changed:
         pend_p = config.MONITOR_DIR / RESTART_PENDING
         pend = S.read_json(pend_p, {}) or {}
-        pend = {"since": pend.get("since") or S.now(), "head": origin_sha, "files": sorted(set(pend.get("files", [])) | set(code))}
+        pending_files = sorted(set(pend.get("files", [])) | set(changed))
+        components = sorted({activation_component(path) for path in pending_files} - {None})
+        pend = {"since": pend.get("since") or S.now(), "head": origin_sha, "files": pending_files}
         S.write_json(pend_p, pend)
-        T.fyi(project, slug, f"restart pending: altd runs code older than main ({len(pend['files'])} file(s) under "
-                             f"{'/'.join(d.rstrip('/') for d in DEPLOY_DIRS)} changed since {pend['since'][:16]}Z) — "
-                             "an authorized service restart after verification.")
-        notes.append(f"restart pending ({len(code)} code files)")
+        subject = ("the running Altitude backend and deployed web bundle are" if len(components) == 2 else
+                   "the running Altitude backend is" if components == ["backend"] else
+                   "the deployed web bundle is")
+        T.fyi(project, slug, f"activation pending: {subject} older than main ({len(pending_files)} relevant file(s) "
+                             f"changed since {pend['since'][:16]}Z) — Altitude will build, restart safely, and verify "
+                             "the API and UI automatically at the next quiet point.")
+        notes.append(f"restart pending: activation of {len(pending_files)} {' and '.join(components)} file(s)")
     return notes
 
 

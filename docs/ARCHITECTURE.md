@@ -106,17 +106,22 @@ ordinary task. An incident raised by that repair task (`--source recovery`) goes
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
 
-A merged Altitude change marks a restart pending when the fast-forward brings in files under
-`altitude/`, `bin/`, or `systemd/` — the code the running service loaded at start — whether that
-fast-forward runs after a task lands or at the next dispatch. Everything else, hooks, personas and
-templates included, is read per use and deploys with the pull itself. The web app shows a banner on every page. New
-dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, altd
-runs the guarded restart script itself as a transient user unit outside its own cgroup, which verifies
-health afterwards; the banner's Restart button runs the same script sooner by hand. A restart that has
-not happened ten minutes after it was requested is a system fault for L3, and the hold lifts. Ordinary
-source changes never start, stop, mask, unmask, or restart the service; a lifecycle action by hand
-needs separate authorization and post-change
-health verification.
+A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
+backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle
+(`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
+`web/tsconfig.json`, `web/vite.config.ts`), whether the fast-forward runs after a task lands or at the
+next dispatch. Web docs, design boards, the unused npm lockfile, and other non-build files do not
+trigger activation. Hooks, personas, and templates are read per use and deploy with the pull itself.
+
+The web app's banner names backend changes, web changes, or both. New dispatches hold, and once no L2
+is running, no report is waiting and no L3 turn is in flight, altd runs the one guarded restart script
+as a transient user unit outside its own cgroup. It installs the pnpm-locked dependencies, builds and
+validates the latest bundle in staging, rechecks the checkout and quiet point, swaps the bundle,
+restarts safely, and verifies both API and UI; verification failure restores the prior bundle. The
+banner's Restart button runs the same path sooner by hand. A restart that has not happened ten minutes
+after it was requested is a system fault for L3, and the hold lifts. Ordinary source changes never
+start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
+authorization and post-change health verification.
 
 ## Interfaces and storage
 

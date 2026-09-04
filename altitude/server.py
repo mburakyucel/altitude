@@ -744,7 +744,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def restart_status() -> dict | None:
-    """The restart-pending flag plus what the page's Restart button waits for; None when nothing is pending."""
+    """Pending backend/web activation plus what the page's early Restart button waits for."""
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
         return None
@@ -759,10 +759,10 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 
 def auto_restart() -> None:
-    """Altitude restarts itself at the quiet point once it runs code older than main (Burak, 2026-09-03: a
-    merged fault fix is not a fix until the service runs it). Quiet means no task dispatching, running or
-    reported and no L3 turn in flight; `dispatch_waiting` holds new dispatches while a restart is pending,
-    so the quiet point comes. The restart unit re-checks all of that itself before touching the service."""
+    """Activate merged backend or web changes at the quiet point (Burak, 2026-09-03: a merged fix is not a fix
+    until the deployed service and bundle contain it). Quiet means no task dispatching, running or reported and
+    no L3 turn in flight; `dispatch_waiting` holds new dispatches while activation is pending, so the quiet point
+    comes. The restart unit re-checks all of that itself before touching the service."""
     status = restart_status()
     if not status or status["waiting_for"] or status.get("failed"):
         return
@@ -802,7 +802,7 @@ def restart_service() -> dict:
     res = subprocess.run(cmd, cwd=str(config.REPO), capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
         raise RuntimeError(f"systemd-run refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
-    log(f"restart requested from the page → unit {unit}; follow it with: journalctl --user -u {unit}")
+    log(f"guarded activation requested → unit {unit}; follow it with: journalctl --user -u {unit}")
     return {"ok": True, "unit": unit}
 
 

@@ -1,5 +1,4 @@
-"""A merged Altitude change marks a restart pending; Altitude restarts itself at the quiet point (Burak, 2026-09-03),
-and the page offers the restart by hand only when nothing is running."""
+"""Merged backend/web changes activate at the quiet point, with an early restart only when nothing runs."""
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -41,8 +40,9 @@ class TestRestartPending(AltitudeCase):
             with self.assertRaisesRegex(RuntimeError, "no bus"):
                 server.restart_service()
 
-    def test_the_quiet_point_restarts_the_service_by_itself(self):
-        S.write_json(self.flag, {"since": "2026-09-03T08:00:00+00:00", "head": "abc", "files": ["altitude/server.py"]})
+    def test_web_only_pending_work_uses_the_quiet_point_automatic_restart(self):
+        S.write_json(self.flag, {"since": "2026-09-03T08:00:00+00:00", "head": "abc",
+                                 "files": ["web/src/routes/Chat.tsx"]})
         with mock.patch.object(server, "restart_service", return_value={"ok": True, "unit": "altitude-restart-x"}) as restart:
             server.auto_restart()
             server.auto_restart()  # the unit is still building and swapping the bundle: no second request

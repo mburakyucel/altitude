@@ -59,10 +59,13 @@ bin/alt --project <name> task status <slug>
 ## Service lifecycle
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-Altitude restarts itself: a merged change to its own code marks a restart pending, new dispatches
-hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, `altd` runs the
-guarded restart script below as a transient user unit, which verifies health afterwards. A restart
-that has not happened ten minutes after it was requested is a system fault for L3 and the hold lifts.
+Altitude activates merged backend and web changes itself. A self-deploy fast-forward marks activation
+pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
+(`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
+`web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it. New
+dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, `altd`
+runs the guarded restart script below as a transient user unit. A restart that has not happened ten
+minutes after it was requested is a system fault for L3 and the hold lifts.
 
 To restart sooner by hand, press Restart on the web app's restart-pending banner (shown
 once nothing is running) or run `make restart` from the deployed primary checkout. The
