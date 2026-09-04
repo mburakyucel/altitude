@@ -72,11 +72,11 @@ class TestResumeHold(AltitudeCase):
 
     def test_usage_window_hold_uses_generic_waiting_wording(self):
         blocked = self._task("usage held", "blocked", "altitude/free.py", "2026-01-02T00:00:00+00:00")
-        with mock.patch.object(engines, "usage_hold", return_value="2026-01-03T00:00:00+00:00"):
+        with mock.patch.object(engines, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
             result = dispatch.resume(self.project, blocked["slug"])
             self.assertEqual(dispatch.resume_due(self.project), [])
 
-        hold = "usage limit: subscription window exhausted, resets 2026-01-03T00:00:00+00:00"
+        hold = "usage limit: subscription window exhausted, resets 2099-01-03T00:00:00+00:00"
         self.assertEqual(result, {"held": hold})
         self.assertEqual(S.load_task(self.project, blocked["slug"])["blocked_reason"], f"waiting: {hold}")
         self.assertEqual(self.launched, [])
@@ -126,24 +126,45 @@ class TestResumeHold(AltitudeCase):
         self.assertIn(f"`{oldest['slug']}`", dispatch.wip_hold(self.project, youngest) or "")
         self.assertEqual(dispatch.resume_due(self.project), [oldest["slug"]])
 
-    def test_cli_resume_reports_a_hold_or_the_new_worker(self):
-        main = runpy.run_path(str(ALT))["main"]
+    def test_cli_resume_requires_a_reason_and_altd_reports_a_hold_or_the_new_worker(self):
+        cli = runpy.run_path(str(ALT))
+        main = cli["main"]
+        main.__globals__["ACTOR"] = "burak"
         blocked = self._task("cli resume", "blocked", "altitude/cli.py", "2026-01-01T00:00:00+00:00")
 
         def invoke():
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                main(["--project", self.project, "task", "resume", blocked["slug"]])
+                main(["--project", self.project, "task", "resume", blocked["slug"],
+                      "--reason", "The dependency is available"])
             return json.loads(output.getvalue())
 
-        with mock.patch.object(engines, "usage_hold", return_value="2026-01-03T00:00:00+00:00"):
-            held = invoke()
+        queued = invoke()
+        self.assertTrue(queued["queued"], "resume with a required reason creates the daemon handoff")
+        self.assertEqual(queued["request"]["reason"], "The dependency is available",
+                         "the required reason survives in the daemon request")
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "blocked",
+                         "the CLI request does not launch the worker")
+        with mock.patch.object(engines, "usage_hold", return_value="2099-01-03T00:00:00+00:00"):
+            held = dispatch.run_task_operation(self.project, blocked["slug"])
+            held_retry = dispatch.run_task_operation(self.project, blocked["slug"])
         self.assertTrue(held["held"].startswith("usage limit"), held)
-        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "blocked")
+        self.assertTrue(held_retry["held"].startswith("usage limit"), held_retry)
+        self.assertEqual(held["request"]["status"], "executing",
+                         "altd keeps the durable daemon fence while a held request remains retryable")
+        self.assertEqual(len([event for event in S.read_events(self.project, blocked["slug"])
+                              if event["kind"] == "resume-held"]), 1,
+                         "a daemon retry of the same hold does not append another event")
+        self.assertNotIn(blocked["slug"], dispatch.pending_task_operations(self.project),
+                         "altd does not reschedule an explicit resume before its usage window reopens")
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "blocked",
+                         "a daemon-side usage hold leaves the worker stopped")
 
-        running = invoke()
-        self.assertEqual(running["agent"]["id"], f"new-{blocked['slug']}")
-        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running")
+        running = dispatch.run_task_operation(self.project, blocked["slug"])
+        self.assertEqual(running["request"]["status"], "done",
+                         "altd completes the same durable resume request")
+        self.assertEqual(S.load_task(self.project, blocked["slug"])["state"], "running",
+                         "only the daemon-side operation launches the worker")
 
 
 if __name__ == "__main__":

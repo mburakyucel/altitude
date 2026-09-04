@@ -22,6 +22,8 @@ phase deleted.
   applicable checks and review unless an explicit merge hold says otherwise.
 - Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
+- L3 is read-only on the deployment checkout on both engines. Its runtime `alt` and narrow external
+  reads cross its project's role-fenced altd socket; reason-bearing worker operations become durable requests that altd validates and executes.
 - Resource usage is shown, never acted on: the Monitor page reports both seats' windows, their
   reset times and how old each reading is, and which engine each role would get right now and why.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
@@ -43,7 +45,9 @@ phase deleted.
 has into Altitude: the backend validates every command against the task record under the project
 lock. `personas/` contains the L2 and L3 roles, and `schemas/` defines code-delivery reports. `hooks/` holds the Git hooks installed into every managed
 repository, the Claude inbox hook, and the statusline monitor. A Codex L2 runs in Codex's own
-workspace-write sandbox and uses the same door. `web/` is the React UI built into
+workspace-write sandbox and uses the same door. Claude and Codex L3 turns both run from fresh disposable
+runtime directories with the deployment checkout and Altitude state read-only. Codex's L3 profile denies direct
+command networking and the user-service bus, exposing only that project's role-fenced Unix socket. `web/` is the React UI built into
 `web/dist/` for the Python server to serve.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active

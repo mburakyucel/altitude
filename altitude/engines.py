@@ -231,7 +231,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
-                 timeout: int = config.L3_TURN_TIMEOUT) -> dict:
+                 timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
+                 add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
     made while a hold is in force.
@@ -245,6 +246,12 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                 "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False}
     cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
            "--permission-mode", permission_mode]
+    if permission_prompts:
+        cmd += ["--permission-prompts", permission_prompts]
+    if restricted:
+        cmd.append("--restricted")
+    if add_dirs:
+        cmd += ["--add-dir", *(str(path) for path in add_dirs)]
     if persona:
         cmd += ["--append-system-prompt-file", str(persona)]
     if allowed_tools:
@@ -552,6 +559,32 @@ def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
             "sandbox_workspace_write.network_access=true", 'approval_policy="never"']
 
 
+def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
+    """A Codex profile which denies L3 checkout/service writes and direct command networking.
+
+    I-20260903-075410: L3 needs broad reads and one disposable writable cwd. ``alt`` plus GitHub/service reads
+    cross altd's fixed Unix-socket protocol; the model cannot write Altitude state, reach mutating HTTP APIs,
+    use authenticated GitHub directly, connect to the user bus, or write a checkout.
+    """
+    profile = "altitude-l3"
+    bus = f"/run/user/{os.getuid()}/bus"
+    from .l3 import verb_socket_path
+    broker = verb_socket_path(project)
+    rules = {":root": "read", str(Path(cwd).resolve()): "write",
+             str(config.project_path(project).resolve()): "read", str(broker.resolve()): "read", bus: "deny"}
+    filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
+                                   for path, access in rules.items()) + "}"
+    sockets = "{" + ",".join((f"{json.dumps(str(broker.resolve()))}=\"allow\"",
+                                f"{json.dumps(bus)}=\"deny\"")) + "}"
+    return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":read-only"',
+            f"permissions.{profile}.filesystem={filesystem}",
+            "features.network_proxy=true",
+            f"permissions.{profile}.network.enabled=true",
+            f"permissions.{profile}.network.allow_local_binding=false",
+            f"permissions.{profile}.network.allow_upstream_proxy=false",
+            f"permissions.{profile}.network.unix_sockets={sockets}", 'approval_policy="never"']
+
+
 def _unit_active(unit: str) -> bool:
     if not unit:
         return False
@@ -757,15 +790,18 @@ def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> boo
 
 
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
-               extra_env: dict | None = None, resume: str | None = None, on_start=None) -> dict:
+               extra_env: dict | None = None, resume: str | None = None, on_start=None,
+               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
     so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
     cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), "--json", "--strict-config",
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
+    if ignore_user_config:
+        cmd.append("--ignore-user-config")
     if model:
         cmd += ["-m", model]
-    for setting in codex_sandbox(cwd):
+    for setting in sandbox_settings if sandbox_settings is not None else codex_sandbox(cwd):
         cmd += ["-c", setting]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']

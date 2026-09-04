@@ -94,6 +94,17 @@ def slugify(title: str) -> str:
     return s[:40].rstrip("-") or "task"
 
 
+def require_task_slug(slug: str) -> str:
+    """Accept only the flat identifiers created by ``slugify``.
+
+    Task identifiers cross several CLI and daemon boundaries. Keeping the check in the path resolver means no
+    caller can turn one project's lock into authority over a sibling project with ``..`` or a path separator.
+    """
+    if not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?", slug):
+        raise ValueError(f"invalid task slug {slug!r}")
+    return slug
+
+
 # ---- task folders -----------------------------------------------------------
 
 def tasks_dir(project: str) -> Path:
@@ -105,6 +116,7 @@ def archive_dir(project: str) -> Path:
 
 
 def task_dir(project: str, slug: str) -> Path:
+    slug = require_task_slug(slug)
     d = tasks_dir(project) / slug
     if d.is_dir():
         return d

@@ -27,6 +27,28 @@ class TransitionError(Exception):
 
 
 TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
+_UNSET = object()
+
+
+def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str | None = None,
+                          expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET) -> None:
+    """Fence a task transition against one pending/executing operator request.
+
+    I-20260904-062512: the check runs under the project lock held by every caller below. Only the daemon runner
+    naming the executing request may advance it, and a stop/reject must still name the worker the caller observed.
+    """
+    request = task.get("daemon_request") or {}
+    active = request.get("status") in ("pending", "executing")
+    if expected_daemon_request is None:
+        if active:
+            raise TransitionError(f"{slug}: daemon request {request.get('id')} owns this task")
+        return
+    if (request.get("id") != expected_daemon_request or request.get("status") != "executing"):
+        raise TransitionError(f"{slug}: daemon request {expected_daemon_request} is no longer executing")
+    if expected_agent_id is not _UNSET and task.get("agent_id") != expected_agent_id:
+        raise TransitionError(f"{slug}: worker identity changed")
+    if expected_session_id is not _UNSET and task.get("session_id") != expected_session_id:
+        raise TransitionError(f"{slug}: worker identity changed")
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
@@ -62,7 +84,7 @@ def _rows(path: Path, what: str) -> list[dict]:
 
 
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
-            expected_attempt: int | None = None) -> dict:
+            expected_attempt: int | None = None, wake_blocked: bool = True) -> dict:
     """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
@@ -85,7 +107,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             _append_jsonl(d / "inbox.jsonl", row)
             # I-20260904-062512: the durable inbox is also altd's handoff. The coordinator must not run the
             # provenance gate itself because its deployment-checkout Git metadata is deliberately read-only.
-            if task.get("state") == "blocked":
+            if task.get("state") == "blocked" and wake_blocked:
                 task["resume_request"] = row["id"]
                 task["resume_after"] = task.get("resume_after") or S.now()
                 task.pop("resume_failed", None)
@@ -121,7 +143,9 @@ def pending(project: str, slug: str) -> list[dict]:
     return _rows(S.task_dir(project, slug) / "inbox.jsonl", "task inbox")
 
 
-def claim_resume(project: str, slug: str) -> dict | None:
+def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None = None,
+                 expected_agent_id: object = _UNSET,
+                 expected_session_id: object = _UNSET) -> dict | None:
     """Persist one daemon-owned resume and remove its exact inbox batch before the provider can see hooks.
 
     The rows live in the claim until the task binds or the claim is released, so a failure can put them back
@@ -131,6 +155,9 @@ def claim_resume(project: str, slug: str) -> dict | None:
     path = S.task_dir(project, slug) / "inbox.jsonl"
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id)
         if task.get("state") != "blocked" or task.get("resume_claim"):
             return None
         rows = _rows(path, "task inbox")
@@ -140,6 +167,29 @@ def claim_resume(project: str, slug: str) -> dict | None:
         _save_claim_task(project, task)
         path.unlink(missing_ok=True)
         return claim
+
+
+def mark_resume_held(project: str, slug: str, hold: str, *,
+                     retry_at: str | None = None,
+                     expected_daemon_request: str | None = None,
+                     expected_agent_id: object = _UNSET,
+                     expected_session_id: object = _UNSET) -> dict:
+    """Keep a blocked resume due without letting an old request annotate a replacement worker."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id)
+        if task.get("state") != "blocked":
+            raise TransitionError(f"{slug}: expected blocked, found {task.get('state')}")
+        after = retry_at or task.get("resume_after") or S.now()
+        if task.get("resume_after") == after and task.get("blocked_reason") == f"waiting: {hold}":
+            return task
+        task["resume_after"] = after
+        task["blocked_reason"] = f"waiting: {hold}"
+        S.save_task(project, task)
+        S.append_event(project, slug, "resume-held", hold=hold)
+        return task
 
 
 def update_resume_claim(project: str, slug: str, claim_id: str, **updates) -> dict:
@@ -287,9 +337,15 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         return task
 
 
-def reject(project: str, slug: str, reason: str, actor: str = "burak") -> dict:
+def reject(project: str, slug: str, reason: str, actor: str = "burak", *,
+           expected_state: str | None = None, expected_agent_id: object = _UNSET,
+           expected_session_id: object = _UNSET, expected_daemon_request: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
+        if expected_state is not None and task.get("state") != expected_state:
+            raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         _clear_block(task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -312,6 +368,7 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         raise TransitionError(f"{slug}: dispatch requires a concrete worker and session")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
                      "routing": routing, "dispatched": S.now()})
@@ -323,6 +380,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
            expected_block_from: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug)
         if expected_state is not None and task["state"] != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task['state']}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -341,9 +399,13 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
 
 
 def block(project: str, slug: str, reason: str, actor: str = "altd", *,
-          expected_state: str | None = None, expected_attempt: int | None = None, updates: dict | None = None) -> dict:
+          expected_state: str | None = None, expected_attempt: int | None = None, updates: dict | None = None,
+          expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
+          expected_daemon_request: str | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -354,10 +416,15 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
 
 
 def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None = None,
-           session_id: str | None = None, expected_claim: str | None = None, **ev) -> dict:
+           session_id: str | None = None, expected_claim: str | None = None,
+           expected_daemon_request: str | None = None, expected_agent_id: object = _UNSET,
+           expected_session_id: object = _UNSET, **ev) -> dict:
     """blocked → running. With a worker, the task is bound to it; a resumed Claude session may carry a new id."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id)
         if expected_claim is not None and (task.get("resume_claim") or {}).get("id") != expected_claim:
             raise TransitionError(f"{slug}: resume claim {expected_claim} is no longer current")
         if agent_id:
@@ -367,13 +434,17 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
 
 
 def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None = None,
-            clear_worker: bool = False, **ev) -> dict:
+            clear_worker: bool = False, expected_daemon_request: str | None = None,
+            expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET, **ev) -> dict:
     """blocked → queued: a task blocked before any launch, or a fresh attempt after a worker's window ran out.
 
     The next dispatch routes by quota again unless ``engine`` names the one to use; ``clear_worker`` drops the
     exhausted worker's identity so the fresh attempt starts from the task's saved progress, not its transcript."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+                              expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id)
         if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
         task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None, "routing": None})
@@ -402,6 +473,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
          expected_state: str | None = None, expected_attempt: int | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -414,6 +486,8 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
             S.save_task(project, task)
             S.append_event(project, slug, "completion-requested", by=actor)
             return task
+        if task.get("state") == "running":
+            raise TransitionError(f"{slug}: cannot complete a running worker; wait for its report or stop/reject it")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
         if digest:
@@ -461,6 +535,8 @@ def set_spend(project: str, slug: str, **spend) -> dict:
 
 def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
     """An FYI is a line in the project's inbox.jsonl; the page shows the tail."""
+    if slug is not None:
+        S.require_task_slug(slug)
     item = {"at": S.now(), "kind": "fyi", "project": project, "slug": slug, "text": text.strip(), "by": actor, "seen": False}
     p = config.project_dir(project) / "inbox.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -528,6 +604,8 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3") -> dict:
 def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") -> dict:
     """PRs merge by default; a hold is an explicit, reasoned exception."""
     why = (why or "").strip() or None
+    if why is None and actor != "burak":
+        raise TransitionError("only Burak may release a merge hold")
     with S.project_lock(project):
         t = S.load_task(project, slug)
         t["hold_merge"] = why

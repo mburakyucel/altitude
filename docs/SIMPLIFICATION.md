@@ -1,8 +1,8 @@
-# Simplification record — 2026-09-02 to 2026-09-03
+# Simplification record — 2026-09-02 to 2026-09-04
 
 Burak reviewed `main` (`a4ca71c`) on 2026-09-02, closed the five draft PRs of the earlier autonomous
 simplification attempt (#138–#142, evidence in their closing comments; the only extract was the
-parent-directory fsync in `atomic_write`, #146), and recorded six paradigm decisions. The rebuild then
+parent-directory fsync in `atomic_write`, #146), and recorded seven paradigm decisions. The rebuild then
 ran module by module from `main` in eight phases and finished on 2026-09-03. Stated goal:
 **elegant, simple, modular, human-readable, robust.**
 
@@ -22,6 +22,7 @@ bundles rewritten on every event, a resume path that killed its own worker on ev
 | 4 | **Faults are project-scoped, two-tier.** | Tier one, code: transient failures are retried; a quota stop parks the task until the window reopens or starts a fresh attempt on the other engine from saved progress; each writes one task event. Tier two, L3: anything left after that (retries exhausted, git mismatch, unaccounted worker). The fault blocks only its own task and records an incident; the project's L3 receives it as one queued message, records the learning, and either fixes it directly if trivial or creates one ordinary task. An incident raised by a repair task does not wake L3 again; it goes to the Inbox. No global fuse, no clear command, no claim slots or backoff. A merged backend or web-bundle change marks activation pending; new dispatches hold and Altitude runs the guarded build-and-restart path at the quiet point, while the banner offers the same path sooner when idle. |
 | 5 | **Helpers are engine-native.** | The L2 uses its engine's own subagents (Claude Code Agent tool, Codex equivalent). Altitude does not track L1s or reviewers. Customization of helper paradigms lives in engine-native files (agent definitions, skills, hooks), not in Altitude. The L2 persona must state the delegation and context-hygiene expectations briefly, and keep a small `progress.md` (goal, done, next, how to verify) refreshed at milestones, never as a log. Auto-compact for Claude L2s stays as the explicit `autoCompactWindow` Altitude already passes. |
 | 6 | **One execution contract for both engines.** | Every worker is an untrusted process in its worktree. The only door into Altitude is the `alt` CLI, validated by the backend against the task record under the project lock. Codex keeps its native sandbox as containment but uses the same door. The inert-action broker, action schemas, Codex-specific personas, the cgroup unit dance, and the shell-inspecting guard hook go. If part of the contract fights an engine's native operating model, the contract adapts; a second contract is not built. Quota routing stays because two subscriptions is the reason for two engines. |
+| 7 | **Privilege attaches to verbs, not roles.** (2026-09-04) | L3's process is read-only on the deployment checkout on both engines: it reads everything and acts only through `alt`. Every operation that writes checkout Git metadata, changes a worker or session, or changes what the service serves runs in altd through a reason-bearing verb and records one task or incident event. Source changes, including one-liners, use an L2 worktree and PR. L3 reads the least-trusted text in the system; the adjacent deployment checkout must remain exactly `origin/main`; shell commands leave no durable task trail; and Codex parity comes from moving power into the daemon rather than disabling its sandbox. |
 
 Burak decides questions of this altitude; module-level calls are made by the implementing session and
 reported in the PR. Ask him only for a decision not recorded here.
@@ -58,6 +59,7 @@ reported in the PR. Ask him only for a decision not recorded here.
 | 6 | #161 | dead branches in `land.py`, `git_policy.py`, `config.py`, `server.py` | the `alt project` and `alt state` parsers, restored with a test |
 | 7 | #162 | the Project page's direct task creation, the `new` and `verify` task actions | Conversation and Live session tabs; the transcript reads every turn of the Codex thread |
 | 8 | #163, #164, #165 | 44 per-module isolation shims, the race families and their machinery, the review directory, the last compatibility reader (`l3.py`) and the last history sentences in the live docs | `tests/support.py` as the one fixture; `ARCHITECTURE.md` and `SESSION_LIFECYCLE.md` in their final shape; this page |
+| D7 | this PR (held for Burak) | Claude L3's checkout cwd, auto-approved commands, broad `gh issue *`, and caller-side CLI resume/stop/reject effects | one read-only L3 runtime contract; durable reason-bearing daemon requests with actor, target identity, refusal, and retry idempotence |
 
 | Lines | Before (`97e1197`) | After phase 8 |
 | --- | --- | --- |

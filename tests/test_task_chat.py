@@ -182,15 +182,19 @@ class TestTaskConversation(ChatCase):
             cli(["--project", self.project, "task", "reply", "forged"])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 1)
 
-    def test_cli_message_queues_for_a_running_l2_and_resumes_a_blocked_one(self):
+    def test_cli_message_queues_for_a_running_l2_and_leaves_blocked_resume_to_altd(self):
         self.setenv("ALTITUDE_ACTOR", "burak")
         with mock.patch.object(dispatch, "resume") as resume:
             payload = cli(["--project", self.project, "task", "message", self.slug, "Prefer one PR."])
             resume.assert_not_called()
             self.block()
-            cli(["--project", self.project, "task", "message", self.slug, "Go ahead."])
+            blocked_payload = cli(["--project", self.project, "task", "message", self.slug, "Go ahead."])
         self.assertEqual((payload["role"], payload["by"]), ("burak", "burak"))
-        resume.assert_called_once_with(self.project, self.slug)
+        resume.assert_not_called()  # I-20260904-062512: the CLI never performs the privileged resume.
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["resume_request"], blocked_payload["id"],
+                         "the blocked message leaves its exact durable daemon handoff")
+        self.assertTrue(task["resume_after"], "the blocked message schedules altd, not its caller")
         self.assertEqual([m["text"] for m in T.pending(self.project, self.slug)], ["Prefer one PR.", "Go ahead."])
 
     def test_task_conversation_corruption_is_not_silently_dropped(self):

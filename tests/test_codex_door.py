@@ -197,12 +197,14 @@ class TestDoor(AltitudeCase):
         return self.alt("--project", PROJECT, *args, env={"ALTITUDE_ACTOR": "l2", **(env or {})})
 
     def test_l2_has_only_the_worker_commands(self):
-        for args in (("task", "new", "--title", "x", "y"), ("dispatch", "s"), ("task", "resume", "s"),
-                     ("task", "stop", "s"), ("chat", "hi")):
+        for args in (("task", "new", "--title", "x", "y"), ("dispatch", "s"),
+                     ("task", "resume", "s", "--reason", "L3 daemon handoff only"),
+                     ("task", "stop", "s", "--reason", "L3 daemon handoff only"), ("chat", "hi")):
             with self.subTest(args=args):
                 out = self._alt(*args)
                 self.assertNotEqual(out.returncode, 0)
-                self.assertIn("not available to an L2 worker", out.stderr)
+                self.assertIn("not available to an L2 worker", out.stderr,
+                              "the required reason is present, so the role door decides before any daemon handoff")
         out = self._alt("task", "list")
         self.assertEqual(out.returncode, 0, out.stderr)
 
