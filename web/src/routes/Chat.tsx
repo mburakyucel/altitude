@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { streamChat, useChat, useChatDequeue, useL3Engine, useOverview } from "../data/api";
 import type { L3Engine } from "../data/api";
 import type { ChatMessage, ChatView, QueuedMessage } from "../data/api";
+import VoiceComposer from "../components/VoiceComposer";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
 function age(iso: string | null | undefined): string {
@@ -135,7 +136,11 @@ export default function Chat() {
   const overview = useOverview();
   const queryClient = useQueryClient();
 
-  const [draft, setDraft] = useState("");
+  // Route params can change without remounting Chat. Keep a separate draft per destination so text
+  // and voice review from one project's L3 can never be submitted to another project's L3.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draft = drafts[project] ?? "";
+  const setDraft = (text: string) => setDrafts((previous) => ({ ...previous, [project]: text }));
   // The project's L3 engine pin: a named engine holds every L3 turn there until set back to Auto.
   const pin = useL3Engine(project);
   const [locals, setLocals] = useState<LocalTurn[]>([]);
@@ -157,6 +162,7 @@ export default function Chat() {
 
   useEffect(() => {
     following.current = true;
+    setLocals([]);
   }, [project]);
 
   useEffect(() => {
@@ -168,15 +174,14 @@ export default function Chat() {
     setLocals((prev) => prev.map((l) => (l.id === id ? fn(l) : l)));
   };
 
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (submitted: string) => {
+    const text = submitted.trim();
     if (!text || streaming) return;
     const id = (nextId.current += 1);
     following.current = true;
     // A busy L3 queues this message, but the page's view of busy is up to one poll old: the server's
     // answer, streamed or queued, decides which of the two this turn turns out to be.
     setLocals((prev) => [...prev, { id, user: text, assistant: "", base: sig, queueing: busy }]);
-    setDraft("");
     setStreaming(true);
     try {
       const sent = await streamChat(project, text, (chunk) => {
@@ -197,10 +202,12 @@ export default function Chat() {
           assistant: sent.error ? `${l.assistant}\n[error] ${sent.error}` : l.assistant,
         }));
       }
+      setDraft("");
       await queryClient.invalidateQueries({ queryKey: ["chat", project] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       patch(id, (l) => ({ ...l, assistant: `${l.assistant}\n[error] ${message}` }));
+      throw err;
     } finally {
       setStreaming(false);
     }
@@ -290,36 +297,19 @@ export default function Chat() {
         ))}
       </section>
 
-      <form
-        className="flex min-w-0 shrink-0 flex-col gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <textarea
-          className="chat-composer field w-full"
-          aria-label="Message L3"
-          placeholder="Talk to L3 about roadmap, architecture, or what to build"
-          rows={3}
-          value={draft}
-          disabled={streaming}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-        />
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={streaming || draft.trim().length === 0}
-          >
-            {streaming ? "Sending…" : busy ? "Queue" : "Send"}
-          </button>
+      <VoiceComposer
+        key={project}
+        className="min-w-0 shrink-0"
+        value={draft}
+        onChange={setDraft}
+        onSubmit={send}
+        ariaLabel="Message L3"
+        placeholder="Talk to L3 about roadmap, architecture, or what to build"
+        submitLabel={busy ? "Queue" : "Send"}
+        submitting={streaming}
+        disabled={streaming}
+        actions={
+          <>
           <select
             className="field min-w-0"
             aria-label="L3 engine"
@@ -332,8 +322,9 @@ export default function Chat() {
             <option value="codex">Codex</option>
           </select>
           <span className="text-meta text-muted">⌘↵ sends</span>
-        </div>
-      </form>
+          </>
+        }
+      />
     </div>
   );
 }

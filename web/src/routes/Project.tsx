@@ -9,6 +9,7 @@ import {
   useTaskAction,
 } from "../data/api";
 import type { ProjectDecision, TaskRow } from "../data/api";
+import VoiceComposer from "../components/VoiceComposer";
 
 /** "5m", "3h", "2d" — empty string when the timestamp is missing or unparseable. */
 function age(value: unknown): string {
@@ -130,27 +131,21 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
         </Link>
       </div>
       {panel ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className="field flex-1"
+        <VoiceComposer
             value={text}
             placeholder="Message for the L2"
-            aria-label={`Message the L2 on ${task.slug}`}
-            onChange={(event) => setText(event.target.value)}
-          />
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={!text.trim() || act.isPending || message.isPending}
-            onClick={() => {
-              message.mutate({ project, slug: task.slug, text: text.trim() });
+            ariaLabel={`Message the L2 on ${task.slug}`}
+            rows={2}
+            autoFocus
+            onChange={setText}
+            disabled={act.isPending}
+            submitting={message.isPending}
+            onSubmit={async (submitted) => {
+              await message.mutateAsync({ project, slug: task.slug, text: submitted });
               setText("");
               setPanel("");
             }}
-          >
-            Send
-          </button>
-        </div>
+          />
       ) : null}
     </article>
   );
@@ -297,7 +292,7 @@ export default function Project() {
         {tasks.length === 0 ? (
           <p className="text-muted">No open tasks.</p>
         ) : (
-          tasks.map((task) => <TaskCard key={task.slug} project={name} task={task} />)
+          tasks.map((task) => <TaskCard key={`${name}:${task.slug}`} project={name} task={task} />)
         )}
       </section>
 

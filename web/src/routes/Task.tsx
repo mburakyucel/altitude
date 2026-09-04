@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useL2Message, useTask, useTaskAction } from "../data/api";
 import type { TaskMessage, TaskView } from "../data/api";
 import { asOf, engineName, modelName, older, SESSION_STALE_MS } from "../data/observed";
+import VoiceComposer from "../components/VoiceComposer";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared
 // fields (attempt, session_id, worktree, spend, live, ...) arrives typed
@@ -178,7 +179,7 @@ function TaskLayout({ project, task }: TaskContext) {
         </NavLink>
       </nav>
 
-      <Outlet context={{ project, task } satisfies TaskContext} />
+      <Outlet key={`${project}:${slug}`} context={{ project, task } satisfies TaskContext} />
     </div>
   );
 }
@@ -216,6 +217,10 @@ export function TaskConversation() {
       { onSuccess: refreshTask },
     );
   };
+  const submitMessage = async (text: string) => {
+    await sendL2.mutateAsync({ project, slug, text });
+    setMessage("");
+  };
 
   return (
     <div className="space-y-6">
@@ -247,38 +252,15 @@ export function TaskConversation() {
           ))}
         </div>
         {state === "running" || state === "blocked" ? (
-          <div className="space-y-2">
-            <textarea
-              className="field w-full"
-              aria-label="Message the L2"
-              placeholder="Ask a question or steer this task"
-              rows={3}
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && message.trim()) {
-                  e.preventDefault();
-                  sendL2.mutate(
-                    { project, slug, text: message.trim() },
-                    { onSuccess: () => setMessage("") },
-                  );
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="btn"
-              disabled={sendL2.isPending || message.trim().length === 0}
-              onClick={() => {
-                sendL2.mutate(
-                  { project, slug, text: message.trim() },
-                  { onSuccess: () => setMessage("") },
-                );
-              }}
-            >
-              Send
-            </button>
-          </div>
+          <VoiceComposer
+            value={message}
+            onChange={setMessage}
+            onSubmit={submitMessage}
+            ariaLabel="Message the L2"
+            placeholder="Ask a question or steer this task"
+            submitting={sendL2.isPending}
+            actions={<span className="text-meta text-muted">⌘↵ sends</span>}
+          />
         ) : null}
       </section>
 

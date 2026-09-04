@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 // @ts-expect-error Node types are not part of the browser app's TypeScript surface.
 import { rmSync } from "node:fs";
 import { renderApp } from "../test/render";
+import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -142,13 +143,14 @@ function mobileLayout(body: string, styles: string, width: number, height: numbe
         "const nodes = [document.documentElement, document.body, document.querySelector('main')," +
         "route, transcript, route.querySelector('header'), route.querySelector('nav')," +
         "route.querySelector('form'), route.querySelector('textarea')," +
-        "...route.querySelectorAll('article, article p, article span, .pill')];" +
+        "...route.querySelectorAll('article, article p, article span, .pill, .voice-review, .voice-transcript, .voice-review-actions, button')];" +
         "const bounds = route.getBoundingClientRect();" +
         "return { viewport: innerWidth, touch: matchMedia('(hover: none) and (pointer: coarse)').matches," +
         "nodes: nodes.map((node) => {" +
         "const rect = node.getBoundingClientRect(); return { tag: node.tagName, classes: node.className," +
-        "clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, left: rect.left, right: rect.right," +
-        "routeLeft: bounds.left, routeRight: bounds.right }; }) }; })()", returnByValue: true }, session);
+        "clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, clientHeight: node.clientHeight," +
+        "scrollHeight: node.scrollHeight, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom," +
+        "routeLeft: bounds.left, routeRight: bounds.right, routeTop: bounds.top, routeBottom: bounds.bottom }; }) }; })()", returnByValue: true }, session);
       console.log(JSON.stringify(measured.result.result.value));
     } finally {
       chrome.kill("SIGTERM");
@@ -167,10 +169,16 @@ function mobileLayout(body: string, styles: string, width: number, height: numbe
         classes: string;
         clientWidth: number;
         scrollWidth: number;
+        clientHeight: number;
+        scrollHeight: number;
         left: number;
         right: number;
+        top: number;
+        bottom: number;
         routeLeft: number;
         routeRight: number;
+        routeTop: number;
+        routeBottom: number;
       }>;
     };
   } finally {
@@ -222,7 +230,7 @@ describe("Chat", () => {
     );
     expect(transcript).not.toContainElement(screen.getByLabelText("Message L3"));
     expect(transcript).not.toContainElement(screen.getByRole("navigation", { name: "Projects" }));
-    expect(screen.getByLabelText("Message L3")).toHaveClass("chat-composer");
+    expect(screen.getByLabelText("Message L3")).toHaveClass("voice-composer-textarea");
   });
 
   it("contains hostile chat content at iPhone portrait and landscape widths", async () => {
@@ -456,6 +464,144 @@ describe("Chat", () => {
       text: "status?",
     });
     expect(composer).toHaveValue("");
+  });
+
+  it("uses the normal Queue path when voice Send is chosen while L3 is busy", async () => {
+    installVoiceBrowser();
+    let queued: unknown[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken ending" });
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        const text = (JSON.parse(String(init.body)) as { text: string }).text;
+        const row = { id: "voice-q", at: new Date().toISOString(), trigger: "chat", role: "burak",
+          text, position: 1 };
+        queued = [row];
+        return jsonResponse({ queued: row });
+      }
+      if (url.includes("/api/chat")) return jsonResponse({ ...chatView, busy: true, queued });
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.type(screen.getByLabelText("Message L3"), "Typed beginning");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+
+    await screen.findByRole("region", { name: "Voice transcript review" });
+    expect(postsToChat(fetchMock)).toHaveLength(0);
+    expect(screen.getByLabelText("Message L3")).toHaveValue("Typed beginning");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    await screen.findByText("you · queued · 0m");
+    expect(postsToChat(fetchMock)).toHaveLength(1);
+    expect(JSON.parse(String(postsToChat(fetchMock)[0]?.[1]?.body))).toEqual({
+      project: "altitude",
+      text: "Typed beginning spoken ending",
+    });
+  });
+
+  it("keeps the original draft and transcript review when Chat transport fails", async () => {
+    installVoiceBrowser();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/transcribe")) return jsonResponse({ text: "recoverable words" });
+      if (url.includes("/api/chat") && init?.method === "POST") throw new Error("offline");
+      if (url.includes("/api/chat")) return jsonResponse(chatView);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.type(screen.getByLabelText("Message L3"), "Original draft");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+    await screen.findByRole("region", { name: "Voice transcript review" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("transcript is still here");
+    expect(screen.getByLabelText("Message L3")).toHaveValue("Original draft");
+    expect(screen.getByRole("region", { name: "Voice transcript review" })).toHaveTextContent(
+      "recoverable words",
+    );
+  });
+
+  it("keeps long voice-review actions reachable at iPhone portrait and landscape sizes", async () => {
+    installVoiceBrowser();
+    const longTranscript = Array.from({ length: 500 }, (_, index) => `word${index}`).join(" ");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/transcribe")) return jsonResponse({ text: longTranscript });
+        if (url.includes("/api/chat")) return jsonResponse(chatView);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+    await screen.findByRole("region", { name: "Voice transcript review" });
+    const css = productionStyles();
+
+    for (const [width, height] of [[390, 844], [844, 390]] as const) {
+      const layout = mobileLayout(document.body.innerHTML, css, width, height);
+      const actions = layout.nodes.find((node) => node.classes === "voice-review-actions");
+      const text = layout.nodes.find((node) => node.classes === "voice-transcript");
+      expect(actions, `${width}x${height} review actions`).toBeDefined();
+      expect(actions!.bottom).toBeLessThanOrEqual(actions!.routeBottom + 0.5);
+      expect(actions!.top).toBeGreaterThanOrEqual(actions!.routeTop - 0.5);
+      expect(text!.scrollHeight).toBeGreaterThan(text!.clientHeight);
+    }
+  });
+
+  it("keeps drafts per project but cancels voice review when a cached Chat destination changes", async () => {
+    installVoiceBrowser();
+    const twoProjects = {
+      ...overview,
+      projects: [
+        { name: "altitude", managed: true },
+        { name: "sibling", managed: true },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(twoProjects);
+        if (url.includes("/api/transcribe")) return jsonResponse({ text: "only for altitude" });
+        if (url.includes("/api/chat/sibling")) {
+          return jsonResponse({ ...chatView, history: [{ role: "assistant", text: "Sibling chat" }] });
+        }
+        if (url.includes("/api/chat/altitude")) return jsonResponse(chatView);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.type(screen.getByLabelText("Message L3"), "Altitude draft");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+    await screen.findByRole("region", { name: "Voice transcript review" });
+
+    await user.click(screen.getByRole("link", { name: "sibling" }));
+    await screen.findByText("Sibling chat");
+    expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
+    expect(screen.getByLabelText("Message L3")).toHaveValue("");
+
+    await user.click(screen.getByRole("link", { name: "altitude" }));
+    await screen.findByText("how is it going?");
+    expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
+    expect(screen.getByLabelText("Message L3")).toHaveValue("Altitude draft");
   });
 
   it("numbers several queued messages and takes one back off the queue", async () => {

@@ -32,6 +32,10 @@ phase deleted.
   message for the project's L3, which records the learning and fixes the cause directly or creates
   one ordinary task. An incident raised by that repair task goes to the Inbox instead of waking L3
   again.
+- Every conversational composer has the same optional microphone control. Stopping a recording
+  produces a transcript review without changing the draft; **Edit / insert** appends it to the
+  editable draft and **Send** uses that composer's normal behavior, including Chat's **Queue** path
+  while L3 is busy. Cancel, denial, and transcription failure leave typing and the draft available.
 
 ## Repository and runtime
 
@@ -74,3 +78,23 @@ ignored runtime `web/dist`, restarts the user-level `altitude.service`, and wait
 web page to answer from a new process. The prior bundle is restored if verification fails. There is
 no separate web service and no `sudo` is required. Node 22+ and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
+
+## Voice input on iPhone
+
+Open Altitude at `https://10.88.0.1:8890` through WireGuard. Safari exposes the microphone only in a
+secure context, so the phone must trust the local CA used by Altitude's certificate; `/ca.crt` serves
+that CA when it needs to be installed. The microphone button remains a typing-only hint on plain
+HTTP or an unsupported browser.
+
+The browser records at most two minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
+converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
+path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
+audio is deleted after every success or failure and is never part of task or chat state. A recording
+is not a message: review its text, then choose **Edit / insert**, **Send** (or **Queue** while L3 is
+busy), or discard it.
+
+For a manual Safari check, open each of Chat, a task Conversation, and a project task's **Message
+L2** panel; record and stop; confirm the transcript appears separately from an existing draft; try
+both insertion and Send/Queue; then deny microphone access once and confirm the typed draft remains
+usable. If Safari reports that voice needs HTTPS, use the secure URL above and verify the local CA is
+enabled under Certificate Trust Settings.

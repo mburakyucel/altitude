@@ -55,6 +55,13 @@ conversation keeps them. An L2's block goes to L3 first: L3's `alt task message`
 `alt task escalate` turns it into an Inbox card for Burak; `--for-burak` on the block skips L3. On start,
 altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
+Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it
+records, uploads the bounded clip for transcription, and shows the returned text separately. **Edit /
+insert** changes only the local editable draft. The explicit **Send** action then calls the same Chat
+or L2-message endpoint as typed text, so a busy L3 durably queues that combined text at the same turn
+boundary and an L2 message follows the same checkpoint/resume rules. Cancel, discard, permission
+denial, and transcription failure create no conversation or queue record.
+
 `dispatch.resume` is the only way a session is launched again:
 
 1. a task blocked before any launch goes back to the queue;
