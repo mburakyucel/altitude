@@ -187,6 +187,55 @@ describe("VoiceComposer", () => {
     );
   });
 
+  it("auto-stops five seconds below the ten-minute server limit", async () => {
+    vi.useFakeTimers();
+    try {
+      installVoiceBrowser();
+      const fetchMock = vi.fn(async () => jsonResponse({ text: "full recording" }));
+      vi.stubGlobal("fetch", fetchMock);
+      render(<Harness />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Start voice recording" }));
+      await act(async () => {});
+      const active = FakeMediaRecorder.instances[0]!;
+      expect(active.stopCalls).toBe(0);
+
+      act(() => vi.advanceTimersByTime(594_999));
+      expect(active.stopCalls).toBe(0);
+
+      await act(async () => vi.advanceTimersByTime(1));
+      expect(active.stopCalls).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a recording over the new 16 MiB upload limit before fetching", async () => {
+    installVoiceBrowser();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    const active = FakeMediaRecorder.instances[0]!;
+    active.stop = () => {
+      active.state = "inactive";
+      queueMicrotask(() => {
+        active.ondataavailable?.({
+          data: new Blob([new Uint8Array((16 << 20) + 1)], { type: active.mimeType }),
+        });
+        active.onstop?.();
+      });
+    };
+
+    await user.click(screen.getByRole("button", { name: "Stop voice recording" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("recording is too large");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps a failed voice Send editable and clears its alert after insertion", async () => {
     installVoiceBrowser();
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ text: "still recoverable" })));

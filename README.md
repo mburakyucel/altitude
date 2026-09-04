@@ -98,7 +98,7 @@ secure context, so the phone must trust the local CA used by Altitude's certific
 that CA when it needs to be installed. The microphone button remains a typing-only hint on plain
 HTTP or an unsupported browser.
 
-The browser records at most two minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
+The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
 converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
 path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
 audio is deleted after every success or failure and is never part of task or chat state. A recording

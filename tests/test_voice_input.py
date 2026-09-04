@@ -56,7 +56,7 @@ class TestVoiceConversion(AltitudeCase):
 
         self.assertEqual(text, "the dictated words")
         self.assertIn("-t", self.converted)
-        self.assertEqual(self.converted[self.converted.index("-t") + 1], "121")
+        self.assertEqual(self.converted[self.converted.index("-t") + 1], "601")
         self.assertTrue(whisper.closed)
         self.assertIsNotNone(whisper.path)
         self.assertFalse(whisper.path.exists())
@@ -76,12 +76,12 @@ class TestVoiceConversion(AltitudeCase):
         self.assertFalse(target.exists())
         self.assertFalse(source.parent.exists())
 
-    def test_rejects_decoded_audio_past_the_two_minute_limit(self):
+    def test_rejects_decoded_audio_past_the_ten_minute_limit(self):
         self.patch(server.subprocess, "run", side_effect=self.fake_ffmpeg)
         self.patch(server, "_wav_seconds", return_value=server.VOICE_MAX_SECONDS + 0.1)
         connect = self.patch(server, "_whisper_connection")
 
-        with self.assertRaisesRegex(server.VoiceInputError, "limited to 2 minutes") as raised:
+        with self.assertRaisesRegex(server.VoiceInputError, "limited to 10 minutes") as raised:
             server.transcribe_voice(b"browser audio", "audio/webm")
 
         self.assertEqual(raised.exception.status, 413)
@@ -134,6 +134,7 @@ class TestVoiceEndpoint(AltitudeCase):
     def test_rejects_missing_oversize_and_unknown_recordings_before_transcription(self):
         transcribe = self.patch(server, "transcribe_voice")
 
+        self.assertEqual(server.VOICE_MAX_BODY, 16 << 20)
         self.assertEqual(self.request(b"", "audio/mp4")[0], 400)
         self.assertEqual(self.request(b"x", "application/octet-stream")[0], 415)
         # The handler rejects the declared size before trying to read that many bytes.
