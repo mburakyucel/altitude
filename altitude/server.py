@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
+import wave
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +24,130 @@ _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
 _l3_drain_requested: set[str] = set()
 CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
+
+# A phone records AAC/mp4 (Safari) or opus/webm (Chromium). Altitude only adapts those containers
+# to the path-based protocol of the existing local faster-whisper server; it owns no speech model.
+VOICE_MAX_BODY = 12 << 20
+VOICE_MAX_SECONDS = 120
+VOICE_TYPES = {
+    "audio/mp4": ".m4a",
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/aac": ".aac",
+    "audio/x-m4a": ".m4a",
+}
+VOICE_SOCKET = os.environ.get("WHISPER_SOCKET", "/tmp/whisper-server.sock")
+VOICE_BRIDGE = os.environ.get("WHISPER_BRIDGE", "127.0.0.1:8890")
+
+
+class VoiceInputError(RuntimeError):
+    """A safe, useful voice-input error that may cross the HTTP boundary."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
+def _whisper_connection() -> socket.socket | None:
+    """Reach the desktop Whisper socket directly, or its existing loopback bridge."""
+    direct = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        direct.connect(VOICE_SOCKET)
+        return direct
+    except OSError:
+        direct.close()
+    try:
+        host, port = VOICE_BRIDGE.rsplit(":", 1)
+        return socket.create_connection((host, int(port)), timeout=5)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _wav_seconds(path: Path) -> float:
+    with wave.open(str(path), "rb") as audio:
+        rate = audio.getframerate()
+        return audio.getnframes() / rate if rate else 0.0
+
+
+def transcribe_voice(raw: bytes, content_type: str) -> str:
+    """Convert one bounded browser recording, ask local Whisper for text, and retain no audio."""
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    extension = VOICE_TYPES.get(media_type)
+    if extension is None:
+        raise VoiceInputError("This browser's recording format is not supported.", 415)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="altitude-voice-") as work:
+            source = Path(work) / f"recording{extension}"
+            wav = Path(work) / "recording-16k.wav"
+            source.write_bytes(raw)
+            try:
+                converted = subprocess.run(
+                    [
+                        "ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(source),
+                        "-t", str(VOICE_MAX_SECONDS + 1), "-ar", "16000", "-ac", "1",
+                        "-acodec", "pcm_s16le", "-f", "wav", str(wav),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=45,
+                )
+            except FileNotFoundError as exc:
+                raise VoiceInputError("Voice transcription is unavailable on this host.", 503) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise VoiceInputError("The recording took too long to prepare. Try a shorter clip.", 504) from exc
+            if converted.returncode != 0 or not wav.is_file():
+                raise VoiceInputError("The recording could not be read. Try recording it again.", 422)
+            try:
+                seconds = _wav_seconds(wav)
+            except (OSError, EOFError, wave.Error) as exc:
+                raise VoiceInputError("The recording could not be read. Try recording it again.", 422) from exc
+            if seconds > VOICE_MAX_SECONDS:
+                raise VoiceInputError(f"Recordings are limited to {VOICE_MAX_SECONDS // 60} minutes.", 413)
+
+            upstream = _whisper_connection()
+            if upstream is None:
+                raise VoiceInputError(
+                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+                )
+            try:
+                upstream.settimeout(120)
+                upstream.sendall(str(wav).encode())
+                upstream.shutdown(socket.SHUT_WR)
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = upstream.recv(65536)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > (1 << 20):
+                        raise VoiceInputError("Voice transcription returned an invalid response.", 502)
+                    chunks.append(chunk)
+            except socket.timeout as exc:
+                raise VoiceInputError("Transcription took too long. Try again.", 504) from exc
+            except OSError as exc:
+                raise VoiceInputError(
+                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+                ) from exc
+            finally:
+                upstream.close()
+
+            text = b"".join(chunks).decode("utf-8", "replace").strip()
+            if text.startswith("ERROR:"):
+                raise VoiceInputError(
+                    "Voice transcription is temporarily unavailable. You can keep typing and try again.", 503
+                )
+            if not text:
+                raise VoiceInputError("No speech was detected. Your draft is unchanged.", 422)
+            return text
+    except VoiceInputError:
+        raise
+    except OSError as exc:
+        raise VoiceInputError("Voice transcription is unavailable on this host.", 503) from exc
 
 
 def log(msg: str) -> None:
@@ -560,6 +687,35 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
+    def _transcribe_voice(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._json({"error": "invalid recording size"}, 400)
+        if length <= 0:
+            return self._json({"error": "expected an audio recording"}, 400)
+        if length > VOICE_MAX_BODY:
+            return self._json({"error": "recording is too large"}, 413)
+        content_type = self.headers.get("Content-Type") or ""
+        if content_type.split(";", 1)[0].strip().lower() not in VOICE_TYPES:
+            return self._json({"error": "This browser's recording format is not supported."}, 415)
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            return self._json({"error": "the recording upload was incomplete"}, 400)
+        try:
+            text = transcribe_voice(raw, content_type)
+        except VoiceInputError as exc:
+            log(f"voice transcription failed ({exc.status}): {type(exc.__cause__).__name__ if exc.__cause__ else str(exc)}")
+            return self._json({"error": str(exc)}, exc.status)
+        except Exception as exc:  # noqa: BLE001 — internals stay in the private log, never the response
+            log(f"voice transcription failed: {exc!r}\n{traceback.format_exc()}")
+            return self._json(
+                {"error": "Voice transcription is temporarily unavailable. You can keep typing and try again."},
+                503,
+            )
+        log(f"voice transcription: {len(text)} characters from {length} uploaded bytes")
+        return self._json({"text": text})
+
     def _stream_open(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -622,9 +778,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
-        o = self._body()
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
+            if api == "transcribe":
+                return self._transcribe_voice()
+            o = self._body()
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
                 P = config.load_projects()

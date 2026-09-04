@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
+import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -82,6 +83,7 @@ function stub(task: unknown) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
+    if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken detail" });
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true, state: "queued" });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/task/")) return jsonResponse(task);
@@ -281,5 +283,61 @@ describe("Task", () => {
       slug: "fix-timer",
       text: "prefer the smaller diff",
     });
+  });
+
+  it("sends a reviewed voice transcript through the existing L2 message mutation", async () => {
+    installVoiceBrowser();
+    const fetchMock = stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByText("Fix the timer");
+    await user.type(screen.getByLabelText("Message the L2"), "Typed context.");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+    await screen.findByRole("region", { name: "Voice transcript review" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      project: "altitude",
+      slug: "fix-timer",
+      text: "Typed context. spoken detail",
+    });
+  });
+
+  it("resets the message composer when navigating between cached task destinations", async () => {
+    installVoiceBrowser();
+    const other = { ...running, slug: "other-task", title: "Other task", messages: [] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/transcribe")) return jsonResponse({ text: "fix-timer only" });
+        if (url.includes("/api/task/altitude/other-task")) return jsonResponse(other);
+        if (url.includes("/api/task/altitude/fix-timer")) return jsonResponse(running);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    const { router, user } = renderApp({ route });
+    await screen.findByText("Fix the timer");
+    await router.navigate("/projects/altitude/tasks/other-task");
+    await screen.findByRole("heading", { name: "Other task" });
+    await router.navigate(route);
+    await screen.findByRole("heading", { name: "Fix the timer" });
+
+    await user.type(screen.getByLabelText("Message the L2"), "Fix-only draft");
+    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
+    await screen.findByRole("region", { name: "Voice transcript review" });
+
+    await router.navigate("/projects/altitude/tasks/other-task");
+    await screen.findByRole("heading", { name: "Other task" });
+    expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
   });
 });

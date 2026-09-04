@@ -140,6 +140,30 @@ drains it at its own boundary rather than at the next tick: consecutive chat mes
 turn in arrival order, each on its own line, while server-triggered messages keep their own turn, and
 nothing runs while a turn holds the project's L3 lock.
 
+Chat, the task Conversation tab, and the project task card's quick-message panel use one controlled
+voice-capable composer. The routes retain ownership of their draft and normal submit function; the
+shared composer owns microphone permission, MediaRecorder state, a 115-second client stop below the
+server's 120-second decoded-audio limit, transcription,
+transcript review, cancellation, and focus restoration. A transcript stays separate until Burak
+chooses **Edit / insert** or explicitly sends it. Existing draft text is the prefix, separated from
+dictated text by one space when it does not already end in whitespace. Decision and reason fields
+remain ordinary form fields.
+
+`POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
+browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),
+limits the upload to 12 MiB, and asks `ffmpeg` for at most 121 seconds of 16 kHz mono PCM so a decoded
+clip over the 120-second product limit is rejected without unbounded output. Conversion lives in a
+unique temporary directory. The adapter sends the WAV path through `/tmp/whisper-server.sock`,
+falling back to the existing `127.0.0.1:8890` Whisper bridge, then removes the entire directory on
+success or failure. It neither persists raw audio nor owns or starts a speech model.
+
+Unreadable media, timeouts, and an unavailable Whisper service become concise client errors while
+converter paths and diagnostics stay in the private server log. The composer announces recording
+and transcribing, restores the editable field after cancel or error, and leaves the microphone as
+progressive enhancement. Altitude's WireGuard origin is HTTPS on `10.88.0.1:8890`; the service reuses
+the local-CA certificate whose SAN contains that address, which makes `getUserMedia` available to
+Safari after the CA is trusted on the phone.
+
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
 work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day
 windows from the statusline snapshot, and the Codex seat's windows named by the length the provider

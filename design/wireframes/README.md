@@ -64,6 +64,15 @@ sidebar from `web/design/tokens.css`, light theme only. Deliberate departures:
 - **A fade instead of a hard cut.** Where a transcript scrolls off the top, the boards fade it out
   over the first 36px.
 
+## Live voice composer
+
+The live Chat, task Conversation, and project quick-message surfaces extend the approved composer
+with one 44px circular microphone target inside the field. Recording and transcribing use a single
+quiet status line below it. A finished transcript appears in an accent-tint review panel with **Edit
+/ insert**, the surface's normal **Send** or **Queue** action, and a quiet discard action. The normal
+draft remains visible and unchanged until one of those completion actions is chosen. All mobile
+composer fields remain 16px and controls wrap instead of crossing the iPhone viewport.
+
 ## Assumptions where the record is silent
 
 - **A held PR is an Inbox card.** Today the Inbox lists only blocked tasks, and every card offers

@@ -332,6 +332,8 @@ export const ChatViewSchema = z
   })
   .passthrough();
 
+export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough();
+
 export type Quota = z.infer<typeof QuotaSchema>;
 export type CodexQuota = z.infer<typeof CodexQuotaSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
@@ -353,6 +355,19 @@ export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
+
+/** Upload one browser-native audio blob; the server normalizes it for the existing local Whisper service. */
+export async function transcribeVoice(audio: Blob, signal?: AbortSignal): Promise<string> {
+  const result = VoiceTranscriptSchema.parse(
+    await api("/api/transcribe", {
+      method: "POST",
+      body: audio,
+      headers: { "Content-Type": audio.type || "application/octet-stream" },
+      signal,
+    }),
+  );
+  return result.text;
+}
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
 
