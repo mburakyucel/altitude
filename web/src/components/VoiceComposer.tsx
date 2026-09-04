@@ -9,8 +9,8 @@ import {
 import { transcribeVoice } from "../data/api";
 
 // Leave five seconds below the server's decoded-audio cap for timer delay and AAC/container padding.
-const MAX_RECORDING_MS = 115_000;
-const MAX_UPLOAD_BYTES = 12 << 20;
+const MAX_RECORDING_MS = 595_000;
+const MAX_UPLOAD_BYTES = 16 << 20;
 
 type VoicePhase = "idle" | "starting" | "recording" | "stopping" | "transcribing" | "review" | "error";
 

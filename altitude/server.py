@@ -27,8 +27,8 @@ CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). Altitude only adapts those containers
 # to the path-based protocol of the existing local faster-whisper server; it owns no speech model.
-VOICE_MAX_BODY = 12 << 20
-VOICE_MAX_SECONDS = 120
+VOICE_MAX_BODY = 16 << 20
+VOICE_MAX_SECONDS = 600
 VOICE_TYPES = {
     "audio/mp4": ".m4a",
     "audio/webm": ".webm",
