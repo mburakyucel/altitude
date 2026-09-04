@@ -23,7 +23,10 @@ L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escala
 
 L3 maintains the project-level conversation, sees the active task set, and decides whether a
 request can be answered directly or needs an L2. It does not run a mandatory planning pipeline and
-cannot launch subagents directly. When code changes are needed, one L2 owns them.
+cannot launch subagents directly. Its routine inspection goes through compact `alt` verbs for task
+reports, recent messages and events, queue waits, repository/service state, PRs, and its own recent
+shell commands. L3 turns persist bounded shell command text with their tool evidence, so repeated
+ad-hoc commands are visible and can become stable verbs. When code changes are needed, one L2 owns them.
 
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so

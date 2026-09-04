@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
-L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "events"), ("task", "messages"), ("task", "list"),
+L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "report"), ("task", "events"), ("task", "messages"), ("task", "list"),
                ("task", "reply"), ("task", "block"), ("task", "done")}  # the door a worker may use
 
 
@@ -34,6 +34,120 @@ def out(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
 
 
+def _one_line(value, limit: int = 240) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _report_text(record: dict) -> str:
+    prs = [f"#{p.get('number')} {'merged' if p.get('merged') else 'not merged'}"
+           + (f" {str(p.get('merge_sha'))[:12]}" if p.get("merge_sha") else "") for p in record["prs"]]
+    lines = [f"report {record['slug']}: {record.get('verdict') or 'unverified'} ({record.get('state') or '?'})",
+             "PRs: " + (", ".join(prs) or "none"),
+             "Blocked: " + (_one_line(record.get("blocked")) if record.get("blocked") else "none")]
+    for key, label in (("decisions", "Decisions"), ("fyi", "FYI"), ("follow_ups", "Follow-ups"),
+                       ("deviations", "Deviations")):
+        lines.append(f"{label}: " + ("; ".join(_one_line(x) for x in record[key]) or "none"))
+    spend = ", ".join(f"{k}={v}" for k, v in record["spend"].items()) or "none"
+    lines.append(f"Spend: {spend}")
+    if record.get("digest"):
+        lines.append("Digest: " + _one_line(record["digest"]))
+    if record["errors"]:
+        lines.append("Errors: " + "; ".join(record["errors"]))
+    return "\n".join(lines)
+
+
+def _messages_text(rows: list[dict]) -> str:
+    return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {row.get('role') or '?'}"
+                     f" ({row.get('by') or '?'}): {_one_line(row.get('text') or '')}" for row in rows) or "No messages."
+
+
+def _events_text(rows: list[dict]) -> str:
+    lines = []
+    for row in rows:
+        kind = str(row.get("kind") or "event")
+        if kind == "state":
+            detail = f"{row.get('frm') or '?'} → {row.get('to') or '?'}"
+        else:
+            detail = next((str(row[key]) for key in ("reason", "hold", "note", "title") if row.get(key)), "")
+        by = f" · {row['by']}" if row.get("by") else ""
+        lines.append(f"[{S.age(str(row.get('at') or ''))}] {kind}" + (f": {_one_line(detail)}" if detail else "") + by)
+    return "\n".join(lines) or "No events."
+
+
+def _brief_text(record: dict) -> str:
+    from altitude import dispatch
+    prs = ", ".join(f"#{p['number']} {str(p.get('state') or '?').lower()}" for p in record["prs"]) or "none"
+    hold = record.get("hold_merge") or ((record.get("hold") or {}).get("reason")
+                                         if isinstance(record.get("hold"), dict) else record.get("hold"))
+    overlaps = []
+    for other in record["other_leases"]:
+        hits = dispatch.paths_overlap(dispatch.narrow(record["lease"]), other.get("hold_paths") or [])
+        if hits:
+            overlaps.append(f"{other['slug']} ({', '.join(hits)})")
+    engine_name = record.get("l2_engine") or record.get("engine")
+    model = record.get("engine_model") or record.get("model") or "default"
+    engine = f"{engine_name}/{model}" if engine_name else "unassigned"
+    return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}", f"engine/model: {engine}",
+                      f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
+                      f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
+                      "lease: " + (", ".join(record["lease"]) or "none"),
+                      "overlaps: " + ("; ".join(overlaps) or "none")])
+
+
+def _queue_text(record: dict) -> str:
+    lines = [f"Running ({len(record['running'])}):"]
+    lines += [f"- {row['project']}/{row['slug']} ({row['age']})" for row in record["running"]] or ["- none"]
+    lines.append(f"Waiting ({len(record['waiting'])}):")
+    lines += [f"- {row['project']}/{row['slug']} [{row['state']}]: {_one_line(row['reason'])}"
+              for row in record["waiting"]] or ["- none"]
+    return "\n".join(lines)
+
+
+def _repo_text(record: dict) -> str:
+    checkout, restart, service = record["checkout"], record["restart_pending"], record["service"]
+    drift = f"ahead {checkout.get('ahead', '?')}, behind {checkout.get('behind', '?')}"
+    pending = (f"{len(restart.get('files') or [])} files ({', '.join((restart.get('files') or [])[:6])}) "
+               f"since {restart.get('since') or '?'}"
+               if restart else "none")
+    faults = ", ".join(f"{kind}={row.get('count', 0)}" for kind, row in record["faults"].items()) or "none"
+    unit = f"{service.get('state') or '?'}/{service.get('substate') or '?'} PID {service.get('pid') or '-'}"
+    lines = [f"repo {record['project']}: {checkout.get('branch') or '?'} ({drift})",
+             f"dirty files: {record.get('dirty_files') if record.get('dirty_files') is not None else '?'}",
+             f"restart pending: {pending}", f"fault counters: {faults}",
+             f"service: {unit}; last restart {service.get('last_restart') or '?'}"]
+    if record["errors"]:
+        lines.append("errors: " + "; ".join(record["errors"]))
+    return "\n".join(lines)
+
+
+def _pr_text(record: dict) -> str:
+    checks = record["checks"]
+    state = f"PR #{record['number']}: {record.get('state') or '?'}; merge {record.get('merge_sha') or '-'}"
+    check_line = f"checks: {checks['passed']} passed, {checks['failed']} failed, {checks['pending']} pending"
+    shown = record["files"][:8]
+    suffix = f", … +{len(record['files']) - len(shown)} more" if len(record["files"]) > len(shown) else ""
+    files = f"files ({len(record['files'])}): " + ((", ".join(shown) + suffix) if shown else "none")
+    return "\n".join([state, check_line, files] + (["errors: " + "; ".join(record["errors"])] if record["errors"] else []))
+
+
+def _tools_text(record: dict) -> str:
+    ad_hoc = [group for group in record["groups"] if group["ad_hoc"]]
+    known = [group for group in record["groups"] if not group["ad_hoc"]]
+    lines = [f"L3 commands ({record['days']}d)", "Ad hoc:"]
+    lines += [f"- {group['verb']}: {group['count']} · " + "; ".join(
+        f"{row['count']}× {_one_line(row['command'], 160)}" for row in group["commands"][:2])
+              for group in ad_hoc[:8]] or ["- none"]
+    if len(ad_hoc) > 8:
+        lines.append(f"- … +{len(ad_hoc) - 8} more ad-hoc groups")
+    lines.append("Alt verbs:")
+    lines += [f"- {group['verb']}: {group['count']}" for group in known[:12]] or ["- none"]
+    if len(known) > 12:
+        lines.append(f"- … +{len(known) - 12} more alt verbs")
+    return "\n".join(lines)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
@@ -52,9 +166,11 @@ def main(argv=None) -> None:
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
             x.add_argument("--for-burak", action="store_true", help="the brief says to ask Burak here, or the call is plainly his: skip L3")
     es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", required=True, help="one plain dilemma for Burak, with a recommendation")
-    for name in ("show", "events", "messages"):
-        x = ts.add_parser(name); x.add_argument("slug")
-    x = ts.add_parser("status"); x.add_argument("slug", nargs="?")
+    ts.add_parser("show", help="compatibility alias for task status --json").add_argument("slug")
+    for name in ("events", "messages"):
+        x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--last", type=int, default=10); x.add_argument("--json", action="store_true", dest="as_json")
+    x = ts.add_parser("report"); x.add_argument("slug"); x.add_argument("--json", action="store_true", dest="as_json")
+    x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
     rs = ts.add_parser("resume", help="re-attach a blocked L2 with its transcript, worktree, and queued messages")
     rs.add_argument("slug")
     ms = ts.add_parser("message", help="queue a message for the task's L2; a blocked L2 resumes with it")
@@ -72,7 +188,12 @@ def main(argv=None) -> None:
     ls = ts.add_parser("list"); ls.add_argument("--all", action="store_true")
 
     f = sub.add_parser("fyi"); f.add_argument("slug", nargs="?"); f.add_argument("text")
-    sub.add_parser("decisions"); sub.add_parser("agents"); sub.add_parser("digest"); sub.add_parser("monitor")
+    sub.add_parser("decisions"); sub.add_parser("monitor")
+    q = sub.add_parser("queue"); q.add_argument("--json", action="store_true", dest="as_json")
+    rr = sub.add_parser("repo"); rr.add_argument("--json", action="store_true", dest="as_json")
+    pr = sub.add_parser("pr"); pr.add_argument("number", type=int); pr.add_argument("--json", action="store_true", dest="as_json")
+    l3p = sub.add_parser("l3"); l3s = l3p.add_subparsers(dest="l3cmd", required=True)
+    lt = l3s.add_parser("tools"); lt.add_argument("--days", type=int, default=7); lt.add_argument("--json", action="store_true", dest="as_json")
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -186,18 +307,24 @@ def main(argv=None) -> None:
             if not slug or not attempt:
                 sys.exit("alt task reply: ALTITUDE_TASK and ALTITUDE_ATTEMPT are required")
             out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt)))
-        elif tc == "show":
-            out(S.load_task(p, args.slug))
-        elif tc == "status":
+        elif tc in ("show", "status"):
             from altitude import status
             slug = args.slug or os.environ.get("ALTITUDE_TASK")
             if not slug:
                 sys.exit("alt task status: slug or ALTITUDE_TASK required")
-            out(status.status(p, slug))
+            record = status.status(p, slug)
+            print(_brief_text(record)) if tc == "status" and args.brief else out(record)
+        elif tc == "report":
+            from altitude import status
+            record = status.task_report(p, args.slug)
+            out(record) if args.as_json else print(_report_text(record))
         elif tc == "events":
-            out(S.read_events(p, args.slug))
+            count = max(0, args.last); rows = S.read_events(p, args.slug)
+            rows = rows[-count:] if count else []
+            out(rows) if args.as_json else print(_events_text(rows))
         elif tc == "messages":
-            out(T.task_messages(p, args.slug))
+            rows = T.task_messages(p, args.slug, args.last)
+            out(rows) if args.as_json else print(_messages_text(rows))
         elif tc == "list":
             out([{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")} for t in S.list_tasks(p, include_archive=args.all)])
         return
@@ -205,12 +332,20 @@ def main(argv=None) -> None:
         out(T.fyi(_project(args), args.slug, args.text, actor=ACTOR)); return
     if c == "decisions":
         from altitude import digest; out(digest.queue()); return
-    if c == "digest":
-        from altitude import digest; print(digest.text()); return
-    if c == "agents":
-        from altitude import engines; out(engines.claude_agents()); return
     if c == "monitor":
         from altitude import monitor; out({"quota": monitor.quota(), "sessions": monitor.sessions()}); return
+    if c == "queue":
+        from altitude import digest
+        record = digest.queue_status(); out(record) if args.as_json else print(_queue_text(record)); return
+    if c == "repo":
+        from altitude import status
+        record = status.repo(_project(args)); out(record) if args.as_json else print(_repo_text(record)); return
+    if c == "pr":
+        from altitude import status
+        record = status.pr(_project(args), args.number); out(record) if args.as_json else print(_pr_text(record)); return
+    if c == "l3":
+        from altitude import l3
+        record = l3.tool_summary(_project(args), args.days); out(record) if args.as_json else print(_tools_text(record)); return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return
     if c == "verify":

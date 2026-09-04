@@ -165,6 +165,33 @@ def clean_env() -> dict:
     return env
 
 
+def service_status(unit: str = "altitude.service") -> dict:
+    """Read the user service's state once; inspection failure stays in the record."""
+    record = {"unit": unit, "state": None, "substate": None, "pid": None,
+              "last_restart": None, "error": None}
+    try:
+        result = subprocess.run(
+            [SYSTEMCTL_BIN, "--user", "show", unit, "--property=ActiveState",
+             "--property=SubState", "--property=MainPID", "--property=ActiveEnterTimestamp"],
+            capture_output=True, text=True, timeout=15, env=codex_env(retain_user_bus=True))
+        if result.returncode:
+            raise RuntimeError((result.stderr or result.stdout).strip() or f"exit {result.returncode}")
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        record.update({"state": values.get("ActiveState"), "substate": values.get("SubState"),
+                       "pid": int(values.get("MainPID") or 0) or None,
+                       "last_restart": values.get("ActiveEnterTimestamp") or None})
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        record["error"] = str(exc)[:240]
+    return record
+
+
+def _tool(name: object, command: object = None) -> dict:
+    entry = {"name": str(name or "tool")}
+    if command is not None:
+        entry["command"] = str(command)
+    return entry
+
+
 def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
     """Altitude's clean environment plus the task identity, the same a Claude worker gets.
 
@@ -283,7 +310,9 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                     out["context_tokens"] = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) + int(u.get("cache_creation_input_tokens", 0))
                 for c in msg.get("content") or []:
                     if c.get("type") == "tool_use":
-                        out["tools"].append(c.get("name"))
+                        inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                        out["tools"].append(_tool(c.get("name"), inp.get("command")
+                                                  if c.get("name") == "Bash" else None))
                     elif c.get("type") == "text" and msg.get("model") == "<synthetic>":
                         out["synthetic"] = (out.get("synthetic") or "") + str(c.get("text") or "")
                 q = o.get("quotaLimits") or msg.get("quotaLimits")
@@ -757,9 +786,13 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     events = _codex_parse(stdout or "")
     messages = [str((event.get("item") or {}).get("text") or "") for event in events
                 if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
+    tools = [_tool("Bash", (event.get("item") or {}).get("command")) for event in events
+             if event.get("type") == "item.completed"
+             and (event.get("item") or {}).get("type") == "command_execution"]
     thread = _codex_thread(events)
     return {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
             "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
+            "tools": tools,
             "error": None if proc.returncode == 0 else (stderr or "").strip()[:500],
             "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
