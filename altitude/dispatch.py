@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import fcntl
 import json
+import os
 import subprocess
 import re
 from pathlib import Path
@@ -12,6 +13,10 @@ from . import config, engines, git_policy, route, state as S, tasks as T
 
 class DispatchFailure(T.TransitionError):
     """A launch fault that is already recorded as a system fault."""
+
+
+class ResumeFailure(RuntimeError, T.TransitionError):
+    """A session-resume fault that is already recorded as a system fault."""
 
 
 def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
@@ -28,13 +33,56 @@ def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchF
     return DispatchFailure(f"dispatch failed: {reason}")
 
 
-def record_resume_failure(project: str, slug: str, error: object) -> RuntimeError:
+def record_resume_failure(project: str, slug: str, claim_id: str, error: object, *,
+                          suppress_retry: bool = False) -> ResumeFailure:
     """Record a failed session relaunch as a system fault; the task stays blocked with the incident."""
     reason = str(error)[:300]
+    T.release_resume_claim(project, slug, claim_id, consume_request=True, suppress_retry=suppress_retry)
     S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
     incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
-    return RuntimeError(f"resume of {project}/{slug} failed: {reason}")
+    return ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
+
+
+def _stop_replacement(engine: str, worker_id: str, job_root: Path) -> str | None:
+    """Best-effort stop which never prevents the durable resume claim from being finalized."""
+    try:
+        engines.stop_l2_worker(engine, worker_id, job_root=job_root)
+        return None
+    except Exception as exc:  # noqa: BLE001 — the caller records this alongside the primary bind failure
+        return str(exc)[:200]
+
+
+def _claim_owner_live(claim: dict) -> bool:
+    """Whether the daemon process which owns a durable resume claim still exists."""
+    try:
+        os.kill(int(claim.get("owner_pid")), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _recover_resume_claim(project: str, slug: str, task: dict) -> dict | None:
+    """Adopt a launched worker after daemon restart, or safely release a claim made before launch."""
+    claim = task.get("resume_claim") or {}
+    if not claim or _claim_owner_live(claim):
+        return {"already_resuming": True} if claim else None
+    worker = claim.get("worker") or {}
+    if worker.get("id") and worker.get("sessionId"):
+        T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
+                 previous_worker=task.get("agent_id"), expected_claim=claim["id"])
+        return {"agent": worker, "recovered": True}
+    if claim.get("phase") == "claimed":
+        T.release_resume_claim(project, slug, claim["id"], consume_request=False)
+        return None
+    # The provider call crossed a daemon crash without returning a worker identity. Retrying could deliver the
+    # same inbox batch twice, so preserve it and fail closed for an explicit operator decision.
+    reason = "daemon exited while provider resume was launching; worker ownership cannot be proven"
+    T.release_resume_claim(project, slug, claim["id"], consume_request=True, suppress_retry=True)
+    S.append_event(project, slug, "resume-failed", reason=reason)
+    from . import incidents
+    incidents.system_fault("l2-resume-recovery", f"{project}/{slug}: {reason}", project=project, task=slug)
+    raise ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 
 def project_never_list(repo: Path) -> str:
@@ -252,8 +300,8 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         held = wip_hold(project, task)
         if held:
             raise T.TransitionError(held)
-    repo = config.project_path(project)
     try:
+        repo = config.project_path(project)
         with publication_settlement(project):
             settle_deploy_checkout(project, slug)
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
@@ -264,7 +312,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
     try:
         worktree_path = _task_worktree(repo, project, slug, origin_sha)
-    except (git_policy.GitPolicyError, T.TransitionError) as exc:
+    except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         from . import incidents
         incidents.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by task provenance gate: {exc}") from exc
@@ -353,8 +401,14 @@ def resume(project: str, slug: str) -> dict:
     back to the queue. A file lease or an exhausted usage window keeps the task blocked with `resume_after` set, and
     the next tick tries again."""
     task = S.load_task(project, slug)
+    if task["state"] == "running":
+        return {"already_running": True}
     if task["state"] != "blocked":
         raise T.TransitionError(f"{slug} is {task['state']}, not blocked")
+    recovered = _recover_resume_claim(project, slug, task)
+    if recovered is not None:
+        return recovered
+    task = S.load_task(project, slug)
     if not task.get("agent_id") or not task.get("session_id"):
         T.requeue(project, slug)
         return {"requeued": True}
@@ -369,28 +423,46 @@ def resume(project: str, slug: str) -> dict:
                 S.save_task(project, task)
         S.append_event(project, slug, "resume-held", hold=hold)
         return {"held": hold}
+    claim = T.claim_resume(project, slug)
+    if claim is None:
+        live = S.load_task(project, slug)
+        if live.get("state") == "running":
+            return {"already_running": True}
+        if live.get("resume_claim"):
+            return {"already_resuming": True}
+        raise T.TransitionError(f"{slug}: could not claim blocked task for resume")
+    task = S.load_task(project, slug)
     cwd = Path(task.get("worktree") or "")
     if not task.get("worktree") or not cwd.is_dir():
-        raise T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
-    repo = config.project_path(project)
+        error = T.TransitionError(f"worktree missing for {slug} ({task.get('worktree')}); dispatch again")
+        raise record_resume_failure(project, slug, claim["id"], error) from error
     try:
+        repo = config.project_path(project)
         with publication_settlement(project):
             settle_deploy_checkout(project, slug)
             origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
             # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
             _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
-    except (git_policy.GitPolicyError, T.TransitionError) as exc:
+    except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         from . import incidents
+        T.release_resume_claim(project, slug, claim["id"], consume_request=True)
         incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
-        raise T.TransitionError(f"resume refused by Git provenance gate: {exc}") from exc
+        raise ResumeFailure(f"resume refused by Git provenance gate: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence
+        raise record_resume_failure(project, slug, claim["id"], exc) from exc
     engine, job_root = l2_engine(task), l2_job_root(project, slug)
-    if engines.worker_live(engine, task, job_root=job_root):
-        engines.stop_l2_worker(engine, task["agent_id"], job_root=job_root)
-        if engines.worker_live(engine, task, job_root=job_root):
-            raise T.TransitionError(f"{slug}: worker {task['agent_id']} is still live after stop; try again")
-    rows = T.pending(project, slug)
-    prompt = T.render_inbox(rows) or "Continue from your progress file."
     try:
+        if engines.worker_live(engine, task, job_root=job_root):
+            engines.stop_l2_worker(engine, task["agent_id"], job_root=job_root)
+            if engines.worker_live(engine, task, job_root=job_root):
+                raise T.TransitionError(f"{slug}: worker {task['agent_id']} is still live after stop; try again")
+    except Exception as exc:
+        raise record_resume_failure(project, slug, claim["id"], exc) from exc
+    rows = claim["messages"]
+    prompt = T.render_inbox(rows) or "Continue from your progress file."
+    worker = {}
+    try:
+        T.update_resume_claim(project, slug, claim["id"], phase="launching")
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
             persona=config.PERSONAS / "l2.md", model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
@@ -401,16 +473,46 @@ def resume(project: str, slug: str) -> dict:
         if not worker.get("id") or not worker.get("sessionId"):
             raise RuntimeError("no concrete live worker")
     except Exception as exc:
-        raise record_resume_failure(project, slug, exc) from exc
+        raise record_resume_failure(project, slug, claim["id"], exc) from exc
+    try:
+        T.update_resume_claim(project, slug, claim["id"], phase="launched", worker=worker)
+    except Exception as exc:
+        stop_error = _stop_replacement(engine, worker["id"], job_root)
+        if isinstance(exc, T.TransitionError):
+            T.release_resume_claim(project, slug, claim["id"], consume_request=False)
+            if stop_error:
+                from . import incidents
+                incidents.system_fault("l2-resume", f"{project}/{slug}: replacement stop failed: {stop_error}",
+                                       project=project, task=slug)
+            raise
+        detail = f"{exc}; replacement stop also failed: {stop_error}" if stop_error else exc
+        raise record_resume_failure(project, slug, claim["id"], detail, suppress_retry=True) from exc
     try:
         T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
-                 previous_worker=task["agent_id"])
+                 previous_worker=task["agent_id"], expected_claim=claim["id"])
     except Exception as exc:  # the task moved on, or its state could not be written: nothing may own the new worker
-        engines.stop_l2_worker(engine, worker["id"], job_root=job_root)
+        try:
+            live = S.load_task(project, slug)
+        except (KeyError, OSError, ValueError):
+            live = {}
+        committed = (live.get("state") == "running" and live.get("agent_id") == worker["id"]
+                     and live.get("session_id") == worker["sessionId"] and not live.get("resume_claim"))
+        if committed:
+            # save_task is the commit point. A later event/STATE.md write must not turn the now-owned worker into
+            # an orphan; report that ancillary persistence fault without blocking the active task.
+            from . import incidents
+            incidents.system_fault("l2-resume-bookkeeping", f"{project}/{slug}: {exc}", project=project)
+            return {"agent": worker, "bookkeeping_error": str(exc)[:300]}
+        stop_error = _stop_replacement(engine, worker["id"], job_root)
         if isinstance(exc, T.TransitionError):
+            T.release_resume_claim(project, slug, claim["id"], consume_request=False)
+            if stop_error:
+                from . import incidents
+                incidents.system_fault("l2-resume", f"{project}/{slug}: replacement stop failed: {stop_error}",
+                                       project=project, task=slug)
             raise
-        raise record_resume_failure(project, slug, exc) from exc
-    T.take_inbox(project, slug, {row["id"] for row in rows})
+        detail = f"{exc}; replacement stop also failed: {stop_error}" if stop_error else exc
+        raise record_resume_failure(project, slug, claim["id"], detail, suppress_retry=True) from exc
     return {"agent": worker}
 
 
@@ -428,14 +530,27 @@ def stop(project: str, slug: str, *, by: str = "burak") -> dict:
 
 
 def resume_due(project: str) -> list[str]:
-    """Blocked tasks Altitude brings back itself, oldest first: a hold that has elapsed, or a message waiting for a
-    worker that exited. An exhausted usage window or a file lease keeps a task waiting."""
+    """Blocked tasks with a due daemon request or a turn-boundary inbox, oldest first.
+
+    A request survives a coordinator exit or daemon restart. An exhausted usage window or a file lease keeps the
+    task waiting; a task blocked before its first launch is included so the daemon can requeue it.
+    """
     now, due = S.now(), []
     for t in sorted(S.list_tasks(project), key=_resume_order):
-        if t["state"] != "blocked" or not t.get("agent_id"):
+        if t["state"] != "blocked":
             continue
+        claim = t.get("resume_claim") or {}
+        if claim:
+            if not _claim_owner_live(claim):
+                due.append(t["slug"])
+            continue  # a stale claim is recovered before ordinary due times, leases, WIP or usage holds
         after = t.get("resume_after") or ""
-        if after > now or (not after and not T.pending(project, t["slug"])):
+        inbox_due = (not after and not t.get("fault") and not t.get("resume_failed")
+                     and bool(T.pending(project, t["slug"])))
+        if (not after and not inbox_due) or after > now:
+            continue
+        if not t.get("agent_id") or not t.get("session_id"):
+            due.append(t["slug"])
             continue
         if engines.window_hold(l2_engine(t)):
             continue
@@ -591,7 +706,10 @@ def _lease_tasks(project: str, exclude: str | None = None) -> list[dict]:
     """Tasks that currently hold file leases, including blocked tasks queued to resume."""
     return [t for t in S.list_tasks(project)
             if t["slug"] != exclude
-            and (t["state"] == "running" or (t["state"] == "blocked" and t.get("resume_after")))]
+            and (t["state"] == "running"
+                 or (t["state"] == "blocked" and (t.get("resume_after") or t.get("resume_claim")
+                     or (not t.get("fault") and not t.get("resume_failed")
+                         and T.pending(project, t["slug"])))))]
 
 
 def leases(project: str, exclude: str | None = None) -> list[dict]:
@@ -617,7 +735,10 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
     proj = config.project(project)
     if task:
         mine = task_paths(project, task)
-        mine_pending = task.get("state") == "blocked" and bool(task.get("resume_after"))
+        mine_pending = (task.get("state") == "blocked" and bool(
+            task.get("resume_after") or task.get("resume_claim")
+            or (not task.get("fault") and not task.get("resume_failed")
+                and T.pending(project, task["slug"]))))
         holders = []
         for other in _lease_tasks(project, exclude=task["slug"]):
             pending_resume = other["state"] == "blocked"

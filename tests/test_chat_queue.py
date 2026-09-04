@@ -1,12 +1,257 @@
 """Burak's chat messages queue while L3 is busy and run at the next turn boundary, in arrival order."""
+import contextlib
+import io
 import json
+import runpy
 import socket
 import threading
 import unittest
 from unittest import mock
 
-from tests.support import AltitudeCase
-from altitude import config, dispatch, l3, server, state as S
+from tests.support import ALT, AltitudeCase
+from altitude import config, dispatch, engines, incidents, l3, server, state as S, tasks as T
+
+
+def cli(argv):
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        runpy.run_path(str(ALT))["main"](argv)
+    return json.loads(output.getvalue())
+
+
+class TestTaskMessageResumeQueue(AltitudeCase):
+    """I-20260904-062512: coordinator messages request, but never perform, a privileged resume."""
+
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+        task = T.new(self.project, "Blocked conversation", "Continue it.")
+        self.slug = task["slug"]
+        self.worktree = self.repo / ".claude" / "worktrees" / self.slug
+        self.worktree.mkdir(parents=True)
+        task.update({"state": "blocked", "attempt": 1, "session_id": "thread-old", "agent_id": "agent-old",
+                     "l2_engine": "codex", "worktree": str(self.worktree), "blocked_reason": "Need an answer.",
+                     "waiting_on": "l3"})
+        S.save_task(self.project, task)
+        self.setenv("ALTITUDE_ACTOR", "l3")
+
+    def test_l3_cli_saves_the_message_when_git_metadata_is_unavailable(self):
+        unavailable = PermissionError(".git/FETCH_HEAD is read-only in the coordinator")
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=unavailable) as fetch, \
+             mock.patch.object(incidents, "system_fault") as fault:
+            row = cli(["--project", self.project, "task", "message", self.slug, "Use the existing thread."])
+
+        fetch.assert_not_called()
+        fault.assert_not_called()
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["attempt"], task["session_id"]),
+                         ("blocked", 1, "thread-old"))
+        self.assertTrue(task["resume_after"], "the inbox append also leaves a durable daemon request")
+        self.assertEqual([message["id"] for message in T.pending(self.project, self.slug)], [row["id"]])
+        self.assertEqual(dispatch.resume_due(self.project), [self.slug])
+
+    def test_a_running_worker_gets_the_message_without_a_resume_request(self):
+        task = S.load_task(self.project, self.slug)
+        task.update({"state": "running", "blocked_reason": None})
+        task.pop("waiting_on", None)
+        S.save_task(self.project, task)
+
+        with mock.patch.object(dispatch, "resume") as resume:
+            row = cli(["--project", self.project, "task", "message", self.slug, "Keep going."])
+
+        resume.assert_not_called()
+        task = S.load_task(self.project, self.slug)
+        self.assertNotIn("resume_after", task)
+        self.assertEqual([message["id"] for message in T.pending(self.project, self.slug)], [row["id"]])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        T.block(self.project, self.slug, "turn ended without a report", expected_state="running")
+        self.assertEqual(dispatch.resume_due(self.project), [self.slug],
+                         "a running Codex message becomes due when its one-shot turn ends")
+        self.assertEqual([lease["slug"] for lease in dispatch.leases(self.project)], [self.slug],
+                         "the turn-boundary inbox retains its lease before the daemon claims it")
+
+    def test_daemon_wakes_coalesce_and_late_message_is_not_lost_or_duplicated(self):
+        first = T.message(self.project, self.slug, "l3", "First answer.", by="l3")
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def resume_l2(engine, name, session_id, prompt, **_kwargs):
+            calls.append((engine, name, session_id, prompt))
+            return {"returncode": 0, "stdout": "", "stderr": "",
+                    "agent": {"id": "agent-new", "sessionId": session_id, "state": "working"}}
+
+        real_bind = T.resume
+
+        def bind(*args, **kwargs):
+            started.set()
+            release.wait(10)
+            return real_bind(*args, **kwargs)
+
+        key = f"resume:{self.project}:{self.slug}"
+        with server._bg_guard:
+            server._bg.pop(key, None)
+        self.addCleanup(lambda: release.set())
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch, "settle_deploy_checkout"), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_validate_task_worktree"), \
+             mock.patch.object(engines, "worker_live", return_value=False), \
+             mock.patch.object(engines, "resume_l2", side_effect=resume_l2), \
+             mock.patch.object(T, "resume", side_effect=bind), \
+             mock.patch.object(incidents, "system_fault") as fault:
+            self.assertTrue(server.request_task_resume(self.project, self.slug))
+            self.assertTrue(started.wait(5))
+            claimed = S.load_task(self.project, self.slug)
+            self.assertTrue(claimed["dispatching"])
+            self.assertEqual(claimed["resume_claim"]["phase"], "launched")
+            self.assertEqual(claimed["resume_claim"]["worker"]["id"], "agent-new")
+            self.assertEqual(T.pending(self.project, self.slug), [],
+                             "the provider prompt batch leaves the hook-visible inbox before launch")
+            S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING,
+                         {"at": S.now(), "files": ["altitude/server.py"]})
+            self.assertIn(f"{self.project}/{self.slug}", server.restart_status()["waiting_for"],
+                          "a restart cannot cut across the daemon's provider launch")
+            self.assertFalse(server.request_task_resume(self.project, self.slug),
+                             "the message and daemon retry share one in-flight resume")
+            self.assertEqual(dispatch.resume(self.project, self.slug), {"already_resuming": True},
+                             "the durable claim also fences a second daemon process after restart")
+            late = T.message(self.project, self.slug, "l3", "Late answer.", by="l3")
+            self.assertFalse(server.request_task_resume(self.project, self.slug),
+                             "a lease-release wake cannot start a second provider turn")
+            release.set()
+            with server._bg_guard:
+                worker = server._bg[key]
+            worker.join(5)
+
+        fault.assert_not_called()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:3], ("codex", f"{self.project}/{self.slug}-1", "thread-old"))
+        self.assertIn("First answer.", calls[0][3])
+        self.assertNotIn("Late answer.", calls[0][3])
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["attempt"], task["session_id"]),
+                         ("running", 1, "thread-old"))
+        self.assertEqual([message["id"] for message in T.pending(self.project, self.slug)], [late["id"]])
+        self.assertEqual([message["id"] for message in T.task_messages(self.project, self.slug)],
+                         [first["id"], late["id"]])
+        self.assertEqual(dispatch.resume(self.project, self.slug), {"already_running": True})
+        self.assertEqual(len(calls), 1, "a stale daemon wake is an idempotent no-op")
+
+    def test_restarted_daemon_adopts_the_persisted_launched_worker_without_resuming_again(self):
+        message = T.message(self.project, self.slug, "l3", "Resume once.", by="l3")
+        task = S.load_task(self.project, self.slug)
+        task.pop("resume_after", None)
+        task.pop("resume_request", None)
+        S.save_task(self.project, task)  # the running-Codex turn-boundary path has inbox only
+        claim = T.claim_resume(self.project, self.slug)
+        self.assertEqual([lease["slug"] for lease in dispatch.leases(self.project)], [self.slug],
+                         "an inbox-only in-flight resume retains its file lease")
+        worker = {"id": "agent-replacement", "sessionId": "thread-old", "state": "working"}
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+                              worker=worker)
+
+        self.assertEqual(dispatch.resume_due(self.project), [self.slug])
+        with mock.patch.object(dispatch, "wip_hold", return_value="WIP limit"), \
+             mock.patch.object(engines, "window_hold", return_value="tomorrow"), \
+             mock.patch.object(engines, "resume_l2") as launch:
+            result = dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        self.assertEqual(result, {"agent": worker, "recovered": True})
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["agent_id"], task["session_id"], task["attempt"]),
+                         ("running", "agent-replacement", "thread-old", 1))
+        self.assertNotIn("resume_claim", task)
+        self.assertIsNone(task["dispatching"])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)], [message["id"]])
+
+    def test_restart_with_ambiguous_provider_launch_fails_closed_without_a_duplicate(self):
+        message = T.message(self.project, self.slug, "l3", "Do not deliver me twice.", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_pid=99999999)
+
+        with mock.patch.object(engines, "resume_l2") as launch, \
+             mock.patch.object(incidents, "system_fault") as fault:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "worker ownership cannot be proven"):
+                dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "l2-resume-recovery")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["state"], "blocked")
+        self.assertNotIn("resume_claim", task)
+        self.assertIsNone(task["dispatching"])
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)], [message["id"]])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_terminal_precondition_failure_is_reported_once_and_not_retried_each_tick(self):
+        T.message(self.project, self.slug, "l3", "Resume after checking the worktree.", by="l3")
+        task = S.load_task(self.project, self.slug)
+        task["worktree"] = str(self.repo / "missing-worktree")
+        S.save_task(self.project, task)
+
+        with mock.patch.object(incidents, "system_fault") as fault, \
+             mock.patch.object(engines, "resume_l2") as launch:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "worktree missing"):
+                dispatch.resume(self.project, self.slug)
+            self.assertEqual(dispatch.resume_due(self.project), [])
+            self.assertFalse(server.request_task_resume(self.project, self.slug),
+                             "a later tick does not retry a terminal precondition fault")
+
+        launch.assert_not_called()
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "l2-resume")
+
+    def test_old_worker_stop_failure_is_reported_once_and_not_retried_each_tick(self):
+        T.message(self.project, self.slug, "l3", "Resume after stopping the idle worker.", by="l3")
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch, "settle_deploy_checkout"), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_validate_task_worktree"), \
+             mock.patch.object(engines, "worker_live", return_value=True), \
+             mock.patch.object(engines, "stop_l2_worker", side_effect=RuntimeError("worker would not stop")), \
+             mock.patch.object(incidents, "system_fault") as fault, \
+             mock.patch.object(engines, "resume_l2") as launch:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "worker would not stop"):
+                dispatch.resume(self.project, self.slug)
+            self.assertEqual(dispatch.resume_due(self.project), [])
+            self.assertFalse(server.request_task_resume(self.project, self.slug))
+
+        launch.assert_not_called()
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "l2-resume")
+
+    def test_post_save_bookkeeping_failure_keeps_the_authoritatively_bound_worker(self):
+        message = T.message(self.project, self.slug, "l3", "Resume and keep the bound worker.", by="l3")
+        launched = {"returncode": 0, "stdout": "", "stderr": "",
+                    "agent": {"id": "agent-new", "sessionId": "thread-old", "state": "working"}}
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch, "settle_deploy_checkout"), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_validate_task_worktree"), \
+             mock.patch.object(engines, "worker_live", return_value=False), \
+             mock.patch.object(engines, "resume_l2", return_value=launched), \
+             mock.patch.object(engines, "stop_l2_worker") as stop, \
+             mock.patch.object(S, "append_event", side_effect=OSError("events disk unavailable")), \
+             mock.patch.object(incidents, "system_fault") as fault:
+            result = dispatch.resume(self.project, self.slug)
+
+        stop.assert_not_called()
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "l2-resume-bookkeeping")
+        self.assertIn("events disk unavailable", result["bookkeeping_error"])
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["agent_id"], task["session_id"]),
+                         ("running", "agent-new", "thread-old"))
+        self.assertNotIn("resume_claim", task)
+        self.assertIsNone(task["dispatching"])
+        self.assertEqual(T.pending(self.project, self.slug), [])
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)], [message["id"]])
 
 
 class TestChatQueue(AltitudeCase):

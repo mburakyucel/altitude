@@ -268,9 +268,11 @@ def main(argv=None) -> None:
         elif tc == "escalate":
             out(T.escalate(p, args.slug, args.question, actor=ACTOR))
         elif tc == "message":
-            from altitude import dispatch
             message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
-            if S.load_task(p, args.slug).get("state") == "blocked":
+            if ACTOR != "l3" and S.load_task(p, args.slug).get("state") == "blocked":
+                # The web/API caller already runs inside altd. A coordinator L3 instead leaves the durable
+                # resume_after request written with its message for altd's keyed resume runner.
+                from altitude import dispatch
                 dispatch.resume(p, args.slug)
             out(message)
         elif tc == "stop":

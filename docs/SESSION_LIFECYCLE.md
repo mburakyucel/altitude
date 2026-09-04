@@ -51,10 +51,14 @@ A message from Burak (task page, chat through L3, or `alt task message`) is appe
 conversation and to its inbox. Nothing is killed. A running Claude L2 receives the inbox at its next checkpoint:
 the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the
 session is about to stop. A running Codex L2 receives it when its current turn ends and the message resumes the
-thread with the inbox. A blocked task resumes at once with the message. Delivered messages leave the inbox; the
-conversation keeps them. An L2's block goes to L3 first: L3's `alt task message` resumes it, or
-`alt task escalate` turns it into an Inbox card for Burak; `--for-burak` on the block skips L3. On start,
-altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
+thread with the inbox. For a blocked task the same locked append records a due `resume_after` request. The L3
+CLI returns without fetching or writing the deployment checkout; altd sees the durable request on its next tick
+and its keyed resume runner coalesces a simultaneous API wake, retry, or lease release. Before provider launch it
+persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox. Delivered
+messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
+for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `alt task message` requests that
+daemon resume, or `alt task escalate` turns it into an Inbox card for Burak; `--for-burak` on the block skips L3.
+On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
 Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it
 records, uploads the bounded clip for transcription, and shows the returned text separately. **Edit /
@@ -63,15 +67,23 @@ or L2-message endpoint as typed text, so a busy L3 durably queues that combined 
 boundary and an L2 message follows the same checkpoint/resume rules. Cancel, discard, permission
 denial, and transcription failure create no conversation or queue record.
 
-`dispatch.resume` is the only way a session is launched again:
+`dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered resumes.
+The inbox and `resume_after` are the coordinator-to-daemon boundary: they survive coordinator exit and daemon
+restart. The keyed runner is the in-process fast path; a durable claim is the cross-process fence. Its
+`dispatching` marker also makes the independent restart guard wait. If altd restarts after the replacement worker
+identity is saved but before task binding, it adopts that worker. If it cannot prove whether a provider launch
+crossed an unexpected daemon exit, it reports a real recovery fault instead of risking a duplicate turn.
 
 1. a task blocked before any launch goes back to the queue;
-2. an exhausted window of a pinned engine or a file lease keeps the task blocked with `resume_after` set and a
-   `waiting: …` reason; the tick retries when it is due;
+2. `resume_after` makes a message request or operational retry due; an exhausted window of a pinned engine or a
+   file lease keeps the task blocked with a `waiting: …` reason until the request can run;
 3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
    worktree and commit provenance are validated, and a worker that is still live is stopped first;
 4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
-   replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault.
+   replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault. A genuine
+   provenance or relaunch fault restores the claimed batch, consumes only the generation it tried, and blocks
+   normally until another explicit request. A newer message carries a newer generation and stays due. A
+   coordinator filesystem restriction never reaches this trusted boundary.
 
 **Stop** (task page, `alt task stop`) blocks the task first and then stops its worker, so the poll never reads
 the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. An L2 that blocks with

@@ -37,6 +37,12 @@ def _append_jsonl(path: Path, row: dict) -> None:
         os.fsync(stream.fileno())
 
 
+def _save_claim_task(project: str, task: dict) -> None:
+    """Persist resume-transaction bookkeeping as one direct atomic status write."""
+    task["updated"] = S.now()
+    S.write_json(S.status_path(project, task["slug"]), task)
+
+
 def _rows(path: Path, what: str) -> list[dict]:
     """Read one JSONL file of messages, failing loudly on a corrupt record."""
     if not path.exists():
@@ -77,6 +83,16 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         _append_jsonl(d / "conversation.jsonl", row)
         if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
             _append_jsonl(d / "inbox.jsonl", row)
+            # I-20260904-062512: the durable inbox is also altd's handoff. The coordinator must not run the
+            # provenance gate itself because its deployment-checkout Git metadata is deliberately read-only.
+            if task.get("state") == "blocked":
+                task["resume_request"] = row["id"]
+                task["resume_after"] = task.get("resume_after") or S.now()
+                task.pop("resume_failed", None)
+                S.save_task(project, task)
+                S.append_event(project, slug, "resume-requested", by=row["by"], reason="task message",
+                               message_id=row["id"])
+                S.regen_state_md(project)
         S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
         return row
 
@@ -105,6 +121,77 @@ def pending(project: str, slug: str) -> list[dict]:
     return _rows(S.task_dir(project, slug) / "inbox.jsonl", "task inbox")
 
 
+def claim_resume(project: str, slug: str) -> dict | None:
+    """Persist one daemon-owned resume and remove its exact inbox batch before the provider can see hooks.
+
+    The rows live in the claim until the task binds or the claim is released, so a failure can put them back
+    without racing messages appended after this snapshot. ``dispatching`` makes the same claim visible to the
+    independent restart guard as well as altd's in-process keyed runner.
+    """
+    path = S.task_dir(project, slug) / "inbox.jsonl"
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "blocked" or task.get("resume_claim"):
+            return None
+        rows = _rows(path, "task inbox")
+        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
+                 "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
+        task.update({"resume_claim": claim, "dispatching": claim["at"]})
+        _save_claim_task(project, task)
+        path.unlink(missing_ok=True)
+        return claim
+
+
+def update_resume_claim(project: str, slug: str, claim_id: str, **updates) -> dict:
+    """Advance only the claim this daemon owns; a lifecycle race fails closed before provider binding."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        claim = task.get("resume_claim") or {}
+        if task.get("state") != "blocked" or claim.get("id") != claim_id:
+            raise TransitionError(f"{slug}: resume claim {claim_id} is no longer current")
+        claim.update(updates)
+        task["resume_claim"] = claim
+        _save_claim_task(project, task)
+        return claim
+
+
+def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_request: bool,
+                         suppress_retry: bool = False) -> bool:
+    """Release one failed claim, restoring its batch ahead of messages that arrived while it ran."""
+    path = S.task_dir(project, slug) / "inbox.jsonl"
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        claim = task.get("resume_claim") or {}
+        if claim.get("id") != claim_id:
+            return False
+        claimed = claim.get("messages") or []
+        current = _rows(path, "task inbox")
+        seen = {row["id"] for row in claimed}
+        rows = claimed + [row for row in current if row["id"] not in seen]
+        if rows:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+        else:
+            path.unlink(missing_ok=True)
+        task.pop("resume_claim", None)
+        task["dispatching"] = None
+        if suppress_retry:
+            task.pop("resume_after", None)
+            task.pop("resume_request", None)
+            task["resume_failed"] = claim_id
+        elif consume_request:
+            same_request = (claim.get("request") is not None
+                            and task.get("resume_request") == claim.get("request"))
+            same_timer = (claim.get("request") is None and not task.get("resume_request")
+                          and task.get("resume_after") == claim.get("resume_after"))
+            if same_request or same_timer:
+                task.pop("resume_after", None)
+                task.pop("resume_request", None)
+                task["resume_failed"] = claim_id
+        _save_claim_task(project, task)
+        S.regen_state_md(project)
+        return True
+
+
 def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dict]:
     """Remove delivered messages from the inbox (all of them, or only `ids`) and return them."""
     path = S.task_dir(project, slug) / "inbox.jsonl"
@@ -127,7 +214,7 @@ def render_inbox(rows: list[dict]) -> str:
 
 def _clear_block(task: dict) -> None:
     task["blocked_reason"] = None
-    for key in ("resume_after", "waiting_on", "fault", "escalated"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated"):
         task.pop(key, None)
 
 
@@ -267,10 +354,12 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
 
 
 def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None = None,
-           session_id: str | None = None, **ev) -> dict:
+           session_id: str | None = None, expected_claim: str | None = None, **ev) -> dict:
     """blocked → running. With a worker, the task is bound to it; a resumed Claude session may carry a new id."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if expected_claim is not None and (task.get("resume_claim") or {}).get("id") != expected_claim:
+            raise TransitionError(f"{slug}: resume claim {expected_claim} is no longer current")
         if agent_id:
             task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
         _clear_block(task)
