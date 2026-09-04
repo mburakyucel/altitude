@@ -31,8 +31,13 @@ ad-hoc commands are visible and can become stable verbs. When code changes are n
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop aborts a worker. The attempt number fences every L2
-command to the current attempt: an L2 may reply, block, complete, and land only its own task.
+worker at its next checkpoint; an explicit Stop aborts a worker. Appending a message to a blocked
+task also persists a due `resume_after` request. An L3 CLI process stops there: altd coalesces that
+request with timer and lease-release wakes, then owns Git provenance validation and provider relaunch. A
+durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
+replacement worker so a restarted daemon adopts rather than launches it again.
+The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
+and land only its own task.
 
 Helpers are engine-native. The L2 may delegate bounded slices to its engine's own subagents
 (Claude Code's Agent tool, Codex's equivalent); Altitude does not track them, and ownership never
@@ -77,11 +82,12 @@ lease and repository, commits, pushes, opens the PR, waits for configured checks
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
-resume fast-forward it themselves before the provenance gate reads it, so a PR another task merged
+daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged
 while it was still running no longer refuses every launch in the window until that task's report
-lands. The move is the same guarded fast-forward that runs after a task lands, and it happens only
-when the checkout is clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main
-checkout still refuses, unchanged and untouched.
+lands. A sandboxed coordinator never performs this fetch on behalf of a message. The move is the
+same guarded fast-forward that runs after a task lands, and it happens only when the checkout is
+clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main checkout still refuses,
+unchanged and untouched.
 
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the

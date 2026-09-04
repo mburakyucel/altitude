@@ -172,9 +172,10 @@ def spawn(key: str, fn, *a) -> bool:
                 fn(*a)
             except Exception as e:  # noqa: BLE001
                 log(f"[{key}] failed: {e}\n{traceback.format_exc()}")
-                parts = key.split(":")
-                incidents.system_fault(f"workflow:{parts[0]}", f"{key}: {e}", project=parts[1] if len(parts) > 1 else None,
-                                     task=parts[2] if len(parts) > 2 else None)
+                if not isinstance(e, (dispatch.DispatchFailure, dispatch.ResumeFailure)):
+                    parts = key.split(":")
+                    incidents.system_fault(f"workflow:{parts[0]}", f"{key}: {e}", project=parts[1] if len(parts) > 1 else None,
+                                           task=parts[2] if len(parts) > 2 else None)
         t = threading.Thread(target=run, name=key, daemon=True)
         _bg[key] = t
         t.start()
@@ -182,6 +183,12 @@ def spawn(key: str, fn, *a) -> bool:
 
 
 # ---- workflows the timers and buttons trigger --------------------------------
+
+def request_task_resume(project: str, slug: str, *, due: bool = True) -> bool:
+    """Wake one daemon-side resume; message, timer and lease-release requests coalesce on the same key."""
+    if due and slug not in dispatch.resume_due(project):
+        return False
+    return spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
 
 def request_l3_drain(project: str) -> bool:
     """Ask the project's one drain loop to run. A request that arrives while the loop is finishing
@@ -538,7 +545,7 @@ def tick() -> None:
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
             for slug in dispatch.resume_due(project):
-                spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
+                request_task_resume(project, slug)
             dispatch_waiting(project)
             for t in S.list_tasks(project, include_archive=True):
                 if t["state"] == "done" and not t.get("cleaned"):
@@ -808,7 +815,7 @@ class Handler(BaseHTTPRequestHandler):
                 if choice == "Resume":
                     if o.get("note"):
                         T.message(project, slug, "burak", str(o["note"]))
-                    spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
+                    request_task_resume(project, slug, due=False)
                 else:
                     T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
@@ -836,7 +843,7 @@ class Handler(BaseHTTPRequestHandler):
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 if S.load_task(project, slug).get("state") == "blocked":
-                    spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
+                    request_task_resume(project, slug)
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})

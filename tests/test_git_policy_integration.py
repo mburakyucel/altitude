@@ -77,6 +77,69 @@ class TestDispatchBoundaryOrdering(AltitudeCase):
         launch.assert_not_called()
 
 
+class TestDaemonResumeProvenance(AltitudeCase):
+    """A genuine daemon-side provenance refusal remains a task fault and consumes only its resume request."""
+
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+        make_repo(self.repo)
+        task = T.new(self.project, "Blocked provenance", "Resume it.")
+        self.slug = task["slug"]
+        worktree = add_worktree(self.repo, self.slug)
+        task.update({"state": "blocked", "attempt": 1, "session_id": "thread-old", "agent_id": "agent-old",
+                     "l2_engine": "codex", "worktree": str(worktree), "blocked_reason": "waiting", "waiting_on": "l3"})
+        S.save_task(self.project, task)
+
+    def test_real_daemon_provenance_failure_blocks_and_reports_without_losing_the_message(self):
+        message = T.message(self.project, self.slug, "l3", "The restriction is fixed.", by="l3")
+        error = git_policy.GitPolicyError("git fetch origin main: genuine remote provenance failure")
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch, "settle_deploy_checkout"), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=error), \
+             mock.patch.object(engines, "resume_l2") as launch, \
+             mock.patch("altitude.incidents.system_fault") as fault:
+            with self.assertRaisesRegex(T.TransitionError, "genuine remote provenance failure"):
+                dispatch.resume(self.project, self.slug)
+
+        launch.assert_not_called()
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args[0], "task-git-provenance")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["session_id"]), ("blocked", "thread-old"))
+        self.assertNotIn("resume_after", task, "a terminal fault waits for another explicit daemon request")
+        self.assertTrue(task["resume_failed"])
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)], [message["id"]])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_a_message_arriving_during_a_failed_resume_keeps_a_fresh_daemon_request(self):
+        first = T.message(self.project, self.slug, "l3", "First answer.", by="l3")
+        error = git_policy.GitPolicyError("remote provenance is still invalid")
+        arrived = []
+
+        def fail_after_message(*_args, **_kwargs):
+            arrived.append(T.message(self.project, self.slug, "l3", "Second answer.", by="l3"))
+            raise error
+
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(engines, "window_hold", return_value=None), \
+             mock.patch.object(dispatch, "settle_deploy_checkout"), \
+             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=fail_after_message), \
+             mock.patch("altitude.incidents.system_fault"):
+            with self.assertRaises(dispatch.ResumeFailure):
+                dispatch.resume(self.project, self.slug)
+
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["resume_request"], arrived[0]["id"])
+        self.assertTrue(task["resume_after"])
+        self.assertNotIn("resume_failed", task)
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)],
+                         [first["id"], arrived[0]["id"]])
+        self.assertEqual(dispatch.resume_due(self.project), [self.slug])
+
+
 class TestServiceGitPreflight(AltitudeCase):
     def setUp(self):
         super().setUp()
