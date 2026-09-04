@@ -295,6 +295,14 @@ class TestChatQueue(AltitudeCase):
     def queue_rows(self) -> list[dict]:
         return l3.queued(self.project)
 
+    def chat_view(self) -> dict:
+        return json.loads(self.request("GET", f"/api/chat/{self.project}")[1])
+
+    @staticmethod
+    def claude_result(text: str = "done") -> dict:
+        return {"text": text, "session_id": "s1", "context_tokens": 100, "cost": 0.0,
+                "usage": {}, "turns": 1, "error": None, "tools": []}
+
     def hold_l3(self):
         """Hold the project's turn lock the way a running turn does; the returned call gives it back."""
         held, done = threading.Event(), threading.Event()
@@ -326,17 +334,169 @@ class TestChatQueue(AltitudeCase):
         rows = self.queue_rows()
         self.assertEqual([(r["text"], r["trigger"], r["role"]) for r in rows],
                          [("first", "chat", "burak"), ("second", "chat", "burak")])
-        self.assertEqual(json.loads(self.request("GET", f"/api/chat/{self.project}")[1])["queued"], rows)
+        view = self.chat_view()
+        self.assertEqual(view["queued"], rows)
+        self.assertIsNone(view["active"], "a bare busy lock is not an L3 turn the Chat UI may infer")
 
     def test_a_free_l3_still_streams_the_answer(self):
         self.patch(l3, "turn", new=lambda project, text, *, trigger, on_text: (
-            on_text("two tasks."), {"session_id": "s1", "engine": "claude", "error": None})[1])
+            on_text("two tasks."), {"session_id": "s1", "engine": "claude", "error": None,
+                                    "turn_id": "turn-1"})[1])
         status, payload = self.request("POST", "/api/chat", {"project": self.project, "text": "status?"})
         self.assertEqual(status, 200)
         self.assertIn(b'"two tasks."', payload)
         self.assertIn(b'"done"', payload)
+        self.assertIn(b'"turn_id": "turn-1"', payload)
         self.assertNotIn(b'"queued"', payload)
         self.assertEqual(self.queue_rows(), [])
+
+    def test_get_chat_exposes_one_server_owned_active_turn_until_completion(self):
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def provider(_prompt, **_kwargs):
+            started.set()
+            release.wait(10)
+            return self.claude_result()
+
+        result = []
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(server, "request_l3_drain"):
+            worker = threading.Thread(
+                target=lambda: result.append(server.server_l3_turn(
+                    self.project, "private incident evidence", trigger="incident")), daemon=True)
+            worker.start()
+            self.assertTrue(started.wait(5))
+            first = self.chat_view()["active"]
+            running = self.chat_view()
+            second = running["active"]
+            self.assertEqual(set(first), {"id", "started_at", "trigger"})
+            self.assertEqual(first, second, "the active identity changed during one turn")
+            self.assertTrue(running["busy"])
+            self.assertEqual(first["trigger"], "incident")
+            self.assertNotIn("private incident evidence", json.dumps(first))
+            release.set()
+            worker.join(5)
+
+        self.assertEqual(result[0]["text"], "done")
+        final = self.chat_view()
+        self.assertIsNone(final["active"])
+        self.assertFalse(final["busy"])
+        self.assertEqual(final["history"][-1]["turn_id"], first["id"])
+
+    def test_queue_rows_become_one_active_folded_turn_then_terminal_history(self):
+        for text in ("first", "second"):
+            l3.queue_message(self.project, text, trigger="chat", role="burak")
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def provider(_prompt, **_kwargs):
+            started.set()
+            release.wait(10)
+            return self.claude_result("both answered")
+
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider):
+            worker = threading.Thread(target=server.drain_l3_queue, args=(self.project,), daemon=True)
+            worker.start()
+            self.assertTrue(started.wait(5))
+            active_view = self.chat_view()
+            self.assertEqual(active_view["queued"], [])
+            self.assertEqual(active_view["active"]["trigger"], "chat")
+            self.assertEqual(active_view["history"][-1]["text"], "first\n\nsecond")
+            self.assertEqual(active_view["history"][-1]["turn_id"], active_view["active"]["id"])
+            turn_id = active_view["active"]["id"]
+            release.set()
+            worker.join(5)
+
+        final = self.chat_view()
+        self.assertIsNone(final["active"])
+        self.assertEqual((final["history"][-1]["role"], final["history"][-1]["text"]),
+                         ("assistant", "both answered"))
+        self.assertEqual(final["history"][-1]["turn_id"], turn_id)
+
+    def test_queue_claim_and_active_publication_are_one_api_handoff(self):
+        l3.queue_message(self.project, "start this", trigger="chat", role="burak")
+        dequeued, release_handoff = threading.Event(), threading.Event()
+        provider_started, release_provider = threading.Event(), threading.Event()
+        view_done = threading.Event()
+        self.addCleanup(release_handoff.set)
+        self.addCleanup(release_provider.set)
+        original_write_queue = l3._write_queue
+
+        def pause_after_dequeue(path, rows):
+            original_write_queue(path, rows)
+            dequeued.set()
+            release_handoff.wait(10)
+
+        def provider(_prompt, **_kwargs):
+            provider_started.set()
+            release_provider.wait(10)
+            return self.claude_result()
+
+        views = []
+
+        def load_view():
+            views.append(self.chat_view())
+            view_done.set()
+
+        with self.deliverable(), mock.patch.object(l3, "_write_queue", side_effect=pause_after_dequeue), \
+             mock.patch.object(engines, "claude_print", side_effect=provider):
+            worker = threading.Thread(target=server.drain_l3_queue, args=(self.project,), daemon=True)
+            worker.start()
+            self.assertTrue(dequeued.wait(5))
+            reader = threading.Thread(target=load_view, daemon=True)
+            reader.start()
+            try:
+                self.assertFalse(view_done.wait(0.5),
+                                 "GET observed the queue after removal but before active publication")
+            finally:
+                release_handoff.set()
+            self.assertTrue(view_done.wait(5))
+            self.assertEqual(views[0]["queued"], [])
+            self.assertIsNotNone(views[0]["active"])
+            self.assertTrue(views[0]["busy"])
+            self.assertTrue(provider_started.wait(5))
+            release_provider.set()
+            worker.join(5)
+            reader.join(5)
+
+        self.assertIsNone(self.chat_view()["active"])
+
+    def test_provider_exception_clears_the_active_turn(self):
+        with self.deliverable(), mock.patch.object(
+                engines, "claude_print", side_effect=RuntimeError("provider failed")):
+            with self.assertRaisesRegex(RuntimeError, "provider failed"):
+                l3.turn(self.project, "hello", trigger="report-landed")
+        self.assertIsNone(l3.active(self.project))
+        terminal = l3.chat_history(self.project)[-1]
+        self.assertEqual((terminal["role"], terminal["trigger"]), ("error", "report-landed"))
+        self.assertIn("provider failed", terminal["text"])
+        self.assertTrue(terminal["turn_id"])
+
+    def test_client_disconnect_does_not_clear_or_cancel_the_active_turn(self):
+        started, release, completed = threading.Event(), threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def provider(_prompt, **_kwargs):
+            started.set()
+            release.wait(10)
+            return self.claude_result("finished without the page")
+
+        body = json.dumps({"project": self.project, "text": "hello"}).encode()
+        host, port = self.httpd.server_address
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(server, "request_l3_drain", side_effect=lambda _project: completed.set()):
+            with socket.create_connection((host, port), timeout=5) as sock:
+                sock.sendall(b"POST /api/chat HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                             + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+                self.assertIn(b"200", sock.recv(128))
+                self.assertTrue(started.wait(5))
+            self.assertIsNotNone(l3.active(self.project), "closing Chat canceled its active server turn")
+            release.set()
+            self.assertTrue(completed.wait(5))
+
+        self.assertIsNone(l3.active(self.project))
+        self.assertEqual(l3.chat_history(self.project)[-1]["text"], "finished without the page")
 
     def test_a_queued_message_is_removed_only_before_its_turn_starts(self):
         self.hold_l3()

@@ -320,9 +320,19 @@ export const QueuedMessageSchema = z
   })
   .passthrough();
 
+/** Server-owned identity of the L3 turn running now; prompt content is deliberately absent. */
+export const ActiveTurnSchema = z
+  .object({
+    id: z.string(),
+    started_at: z.string(),
+    trigger: z.string(),
+  })
+  .passthrough();
+
 export const ChatViewSchema = z
   .object({
     history: z.array(ChatMessageSchema),
+    active: ActiveTurnSchema.nullish(),
     busy: z.boolean(),
     /** Messages queued while L3 was busy, oldest first; they run in order at the next turn boundary. */
     queued: z.array(QueuedMessageSchema).nullish(),
@@ -354,6 +364,7 @@ export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type QueuedMessage = z.infer<typeof QueuedMessageSchema>;
+export type ActiveTurn = z.infer<typeof ActiveTurnSchema>;
 export type ChatView = z.infer<typeof ChatViewSchema>;
 
 /** Upload one browser-native audio blob; the server normalizes it for the existing local Whisper service. */
@@ -427,7 +438,10 @@ export function useChat(project: string, limit = 60) {
   return useQuery({
     queryKey: ["chat", project],
     queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
-    refetchInterval: pollInterval,
+    refetchInterval: (query) => {
+      const view = query.state.data;
+      return chatStreaming ? false : view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;
+    },
     enabled: Boolean(project),
   });
 }
@@ -577,6 +591,7 @@ export function useRestart() {
 // ---- chat streaming --------------------------------------------------------------------
 
 export interface ChatDone {
+  turn_id?: string | null;
   session_id?: string | null;
   context_percent?: number | null;
   turns?: number | null;

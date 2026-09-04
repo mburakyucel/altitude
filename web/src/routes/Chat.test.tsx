@@ -46,6 +46,7 @@ const chatView = {
       context_percent: 12,
     },
   ],
+  active: null,
   busy: false,
   l3: { session_id: "abcdef1234567890", context_percent: 12, turns: 3 },
 };
@@ -202,6 +203,218 @@ describe("Chat", () => {
     await screen.findByText("how is it going?");
     expect(screen.getByText("two tasks running.")).toBeInTheDocument();
     expect(screen.getByText("L3 · chat · 4m · ctx 12%")).toBeInTheDocument();
+  });
+
+  it("shows the authoritative active turn on a fresh mount", async () => {
+    const started = new Date().toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) {
+          return jsonResponse({
+            ...chatView,
+            active: { id: "turn-1", started_at: started, trigger: "incident" },
+            busy: true,
+          });
+        }
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    renderApp({ route });
+
+    expect(await screen.findByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("L3 · thinking · incident · 0m")).toBeInTheDocument();
+    expect(screen.getAllByText("Thinking…")).toHaveLength(1);
+  });
+
+  it("does not infer a thinking turn from busy and an unfinished-looking history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) {
+          return jsonResponse({
+            ...chatView,
+            active: null,
+            busy: true,
+            history: [{ role: "user", text: "last words" }],
+          });
+        }
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    renderApp({ route });
+    await screen.findByText("last words");
+    expect(screen.queryByText("Thinking…")).toBeNull();
+  });
+
+  it("replaces a waiting queue row with the active thinking turn", async () => {
+    const row = {
+      id: "q1",
+      at: new Date().toISOString(),
+      trigger: "chat",
+      role: "burak",
+      text: "answer after the boundary",
+    };
+    let current: unknown = { ...chatView, busy: true, queued: [row] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) return jsonResponse(current);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    const { queryClient } = renderApp({ route });
+    await screen.findByText("you · queued · 0m");
+    expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+
+    current = {
+      ...chatView,
+      busy: true,
+      queued: [],
+      active: { id: "turn-q1", started_at: new Date().toISOString(), trigger: "chat" },
+      history: [...chatView.history, { role: "user", text: row.text, turn_id: "turn-q1" }],
+    };
+    await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] });
+
+    expect(await screen.findByText("L3 · thinking · chat · 0m")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.getAllByText(row.text)).toHaveLength(1);
+  });
+
+  it("keeps one thinking bubble when the initiating tab also owns the live stream", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let current: unknown = chatView;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }), { status: 200 });
+      }
+      if (url.includes("/api/chat")) return jsonResponse(current);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { queryClient, user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.type(screen.getByLabelText("Message L3"), "status?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Thinking…");
+
+    const activeView = {
+      ...chatView,
+      busy: true,
+      active: { id: "turn-local", started_at: new Date().toISOString(), trigger: "chat" },
+      history: [...chatView.history, { role: "user", text: "status?", turn_id: "turn-local" }],
+    };
+    current = activeView;
+    act(() => {
+      queryClient.setQueryData(["chat", "altitude"], activeView);
+    });
+    expect(screen.getAllByText("Thinking…")).toHaveLength(1);
+
+    await act(async () => {
+      streamController?.enqueue(new TextEncoder().encode('{"t":"live answer"}\n'));
+    });
+    expect(await screen.findByText("live answer")).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).toBeNull();
+
+    await act(async () => {
+      streamController?.enqueue(new TextEncoder().encode(
+        '{"done":{"error":null,"turn_id":"turn-local"}}\n',
+      ));
+      streamController?.close();
+    });
+    await waitFor(() => expect(screen.getByText("live answer")).toBeInTheDocument());
+    expect(screen.queryByText("Thinking…")).toBeNull();
+
+    current = {
+      ...activeView,
+      history: [...activeView.history, {
+        role: "assistant",
+        text: "history answer",
+        turn_id: "turn-local",
+      }],
+    };
+    await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] });
+    expect(await screen.findByText("history answer")).toBeInTheDocument();
+    expect(screen.queryByText("live answer")).toBeNull();
+    expect(screen.queryByText("Thinking…")).toBeNull();
+  });
+
+  it("refetches authoritative active state when the local stream connection is lost", async () => {
+    let posted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/chat") && init?.method === "POST") {
+        posted = true;
+        throw new Error("connection lost");
+      }
+      if (url.includes("/api/chat")) {
+        return jsonResponse(posted ? {
+          ...chatView,
+          busy: true,
+          active: { id: "turn-live", started_at: new Date().toISOString(), trigger: "chat" },
+        } : chatView);
+      }
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { user } = renderApp({ route });
+    await screen.findByText("how is it going?");
+    await user.type(screen.getByLabelText("Message L3"), "status?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("L3 · thinking · chat · 0m")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["assistant", "finished answer"],
+    ["error", "provider failed"],
+  ])("hides thinking when the %s result reaches history", async (role, text) => {
+    const active = { id: "turn-terminal", started_at: new Date().toISOString(), trigger: "chat" };
+    let current = {
+      ...chatView,
+      active,
+      busy: true,
+      history: [...chatView.history, { role: "user", text: "status?", turn_id: active.id }],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/chat")) return jsonResponse(current);
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+
+    const { queryClient } = renderApp({ route });
+    await screen.findByText("Thinking…");
+    current = {
+      ...current,
+      history: [...current.history, { role, text, turn_id: active.id }],
+    };
+    await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] });
+
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("Thinking…")).toBeNull();
   });
 
   it("keeps only the transcript in the bounded scroll region", async () => {

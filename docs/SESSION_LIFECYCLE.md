@@ -130,6 +130,18 @@ provider transcript. A Claude limit after text or tool activity never causes the
 automatically replayed on Codex because that could duplicate side effects. Provider selection changes
 neither L3's project-level responsibility nor L2's end-to-end task ownership.
 
+Every direct, queued, folded, or server-triggered L3 turn publishes one process-local active record
+while it owns the project turn lock. The record contains only a stable turn id, its start time, and
+trigger; the prompt remains in the normal private/history path. `GET /api/chat` is the UI authority
+for this state. It snapshots the waiting queue and active record under one lifecycle guard, so claiming
+a queued row and publishing its turn cannot expose an idle state between them. The initiating tab keeps its streamed response and suppresses a duplicate active
+bubble, while a newly mounted or reconnected Chat reconstructs the thinking bubble from the active
+record. Stream completion and assistant or error history rows carry the same turn id, so live local
+output remains until terminal history replaces it and suppresses any raced active snapshot. A
+`finally` removes the record on every normal, provider-error, or exception path. If altd
+fails, the in-process turn ends and its process-local record disappears with it, so the replacement
+process cannot advertise stale work.
+
 ## Polling and cleanup
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
