@@ -1,89 +1,68 @@
-# Wireframes for the simplified product
+# Altitude product design
 
-Burak approved this wireframe set on 2026-09-03 (#166). It records the accepted design direction;
-implementation work still starts only with Burak's explicit go.
+This folder is the design record Altitude's own L3 and L2 read: static boards, the generator that
+writes them, and [`SPEC.md`](SPEC.md), which states every interaction, state, and rule the boards
+illustrate. **Where a board and the spec disagree, the spec wins.** A board shows one moment; the
+spec says what happens before and after it. Nothing here depends on a hosted tool: the files open
+from disk, from `serve.sh`, or from the Altitude UI's Design link.
 
-Every board is one static HTML file that shares `wireframes.css`, which imports the build's own
-`web/design/tokens.css`. There is no build step and no script; the only network fetch is the IBM
-Plex web font, with the token file's system fallback when it is offline. Nothing here touches
-`web/`.
+Burak approved this direction on 2026-09-05. It replaces the 2026-09-03 set (#166), which polished
+the console-shaped app (Inbox, Projects, Chat, Monitor as four routes). The redesign starts from the
+product instead: the rail lists projects, each project is one conversation with its L3, and the work
+that conversation creates sits beside it. One cross-project surface remains, **Needs you**.
+Implementation proceeds in the slices of `SPEC.md` §7, one task each, and starts only with the
+operator's explicit go.
 
 ## What each board shows
 
-Each route has a desktop board (1440×900) and an iPhone board (`Mobile*.html`). A DRAFT pill and
-an annotation strip run across the top of every board: why the layout is the way it is, and what
-the primary action is. Numbered callouts in the strip point at the same numbers on the board. The
-strip and the callouts are annotation, not UI.
+Desktop boards are 1440×900, phone boards an exact 390×844 iPhone screen, sheets 1200 wide. Every
+board opens in light; add `?dark` to the URL for the dark theme.
 
-| Board | Files | What it shows | Flow |
-| --- | --- | --- | --- |
-| Inbox | `Inbox.html`, `MobileInbox.html` | Only what needs Burak: a question from L3 with its recommendation, and a green PR held for his review. FYIs from L3 sit below as a quiet list. | Answer a decision; open a held PR |
-| Projects | `Projects.html`, `MobileProjects.html` | One card per managed project with what waits on Burak first, then the active work with state dots. Unmanaged folders wait below with Start L3. | See what is running; start L3 on a folder |
-| Chat | `Chat.html`, `MobileChat.html` | The Burak↔L3 conversation as a script: plain short replies, no ids or paths. Server-triggered turns fold into one line. Send is primary; the engine pin sits beside it with Auto as default. | Ask L3 for work or an answer |
-| Project page | `Project.html`, `MobileProject.html` | L3 in one sentence, then what needs Burak, then active work as task cards with owner, state, and PR. Folded sections for done work and links. | Follow one project; open a task |
-| Task page, Conversation | `TaskConversation.html`, `MobileTaskConversation.html` | The header says who works on the task, for how long, and where its PR stands. Tabs separate the Burak↔L2 exchange from the worker's session. Stop and Reject are quiet. | Ask or steer the owning L2 |
-| Task page, Live session | `TaskLive.html`, `MobileTaskLive.html` | The engine session as a Claude Code style transcript: tinted prompt blocks, the worker's prose, one compact row per tool call with its output folded beneath, thin separators for turns and Altitude's boundaries, subtle timestamps. Raw events stay one click away. | Watch the session under the task |
-| Monitor | `Monitor.html`, `MobileMonitor.html` | Quota per engine in human terms: what is used, when it resets, and where new work goes, with the 70% reserve line drawn on each gauge. Sessions show context as room used and the point where it compacts. | Check headroom |
-| Restart pending | `RestartPending.html`, `MobileRestartPending.html` | The Inbox route with the banner: what changed in words, and a Restart button that appears only once nothing runs. | Restart after a merge |
+| Board | Files | What it shows |
+| --- | --- | --- |
+| Project | `Project.html`, `MobileProject.html` | The rail (Needs you, projects with state dot and count, unmanaged folders, engine readout, Monitor, operator). The project's conversation with L3: operator bubbles, L3 prose, an inline task card for a task the turn created, one folded system line, the composer with engine pin and microphone. The work panel: Needs you cards, Active rows, Done this week folded. On the phone the project name in the header is the switcher, and the tab bar is Chat, Work, Needs you, Monitor. |
+| Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with dot and count, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
+| Project work | `MobileWork.html` | The work panel as the phone's Work tab: same sections and cards as the desktop panel. |
+| Needs you | `NeedsYou.html`, `MobileNeedsYou.html` | Every decision waiting on the operator, grouped by project, each card with the asker's recommendation, two option buttons, and More context. The one cross-project route. |
+| Decision page | `Decision.html`, `MobileDecision.html` | What More context opens: the question, the options with an optional note, why the asker recommends one, where the question came from (a short timeline), evidence chips into the task, the live session, and the record, and a follow-up composer addressed to whoever asked. The work panel keeps the card selected. |
+| Task page | `Task.html` | The operator's conversation with the task's L2 beside the live engine session, with header rows for title, state chips, PR, and the quiet Stop and Reject. The phone task page is not drawn; `SPEC.md` §3.10 gives its layout. |
+| First run | `FirstRun.html` | No managed project yet: the folders Altitude found, pick one, Start L3. |
+| Composer states | `ComposerStates.html` | Idle, typing, listening, transcribing, landed, busy (Queue), denied, unavailable, failed: what appears and disappears at each step. No transcript box ever appears (issue #195). |
+| Decision card states | `DecisionStates.html` | Waiting, follow-up sent, answer arrived, asked by an L2, deciding, decided, failed. |
+| System turns in chat | `SystemTurnStates.html` | A landed report, a fault, a restart, or an FYI is one folded line in the conversation: one turn, several grouped, expanded, in progress, fault, FYI. |
 
-The desktop sidebar carries the Inbox count and a small engine readout on every route, so the
-answer to "is anything waiting, and do we have quota" never needs a page change. On the phone the
-same four routes are a tab bar; the Inbox tab carries the count.
+Monitor is not redrawn: its 2026-09-03 content (both seats' windows and resets in human terms, the
+age of each reading, where each role would go now and why, live sessions) moves into the new shell
+unchanged. The restart-pending banner keeps its rule (`SPEC.md` §3.13).
 
-## How to render
+## View
+
+```
+google-chrome design/wireframes/index.html      # every board on one canvas; see VIEWER.md
+design/wireframes/serve.sh                      # the same over HTTP, for a phone on the network
+```
+
+The Altitude UI links to the same viewer from the project page whenever the checkout has these
+boards. Any single board opens on its own as a plain file.
+
+## Render
 
 ```
 design/wireframes/shots.sh
 ```
 
-The script renders every board with the Chrome on this machine (`CHROME=/path/to/chrome` overrides
-it) into `design/wireframes/shots/`, which is gitignored. Desktop boards render at 1440×900: a 64px
-strip above an 836px app. Mobile boards render at 390×960: a 116px strip above an exact 390×844
-iPhone screen with its status bar, Dynamic Island, curved corners, and the 34px home area. The
-brief's 390×844 is that phone screen; the strip sits outside it so annotation never takes phone
-pixels. Open any `.html` file in a browser to read it without rendering.
+Renders every board in both themes into `design/wireframes/shots/` (gitignored) with the Chrome on
+this machine (`CHROME=` overrides). Each board's size is read from the board itself.
 
-## Values reused and where the boards depart from them
+## Change
 
-The boards take their type scale, radii, colours, spacing, the 44px target minimum, and the 232px
-sidebar from `web/design/tokens.css`, light theme only. Deliberate departures:
+The boards, `wireframes.css`, and `boards.js` are written by `gen.py`; edit the generator, run
+`python3 design/wireframes/gen.py`, and commit the output with it. A new board is one `board(...)`
+call and one row in the generator's `ROUTES` table. `wireframes.css` imports the build's
+`web/design/tokens.css` and adds the redesign's departures at the top; `SPEC.md` §6 lists them.
+A change in behaviour is a change to `SPEC.md` first; the boards follow it.
 
-- **White on the accent.** Filled buttons, the DRAFT pill, and callouts use `#fff`, as the build's
-  `.btn-primary` does; the token file has no on-accent colour.
-- **Sentence-case section headings.** The build's `.label` is 11px uppercase. The boards use 14px
-  semibold sentence case for section heads ("Needs you", "Active work") and keep uppercase only for
-  the DRAFT pill and count badges. Chip and tab labels are 13px, the token `--text-meta`, not the
-  11px label size.
-- **Amber for "held for your review".** The review card's rule, its chip, and the `held` state dot
-  borrow `--data-claimed` and the `chip-claimed` pair. The build uses those for claimed items;
-  here they mean "waits on Burak but nothing is wrong", so red stays for blocked and stopped.
-- **Ink as fill.** The Dynamic Island, the home indicator, and the status glyphs use
-  `--text-primary` as a fill colour.
-- **16px fields on the phone.** Every mobile input is 16px so iOS does not zoom on focus; the
-  desktop composer keeps `--text-body`.
-- **A fade instead of a hard cut.** Where a transcript scrolls off the top, the boards fade it out
-  over the first 36px.
+## Content
 
-## Live voice composer
-
-The live Chat, task Conversation, and project quick-message surfaces extend the approved composer
-with one 44px circular microphone target inside the field. Recording and transcribing use a single
-quiet status line below it. A finished transcript appears in an accent-tint review panel with **Edit
-/ insert**, the surface's normal **Send** or **Queue** action, and a quiet discard action. The normal
-draft remains visible and unchanged until one of those completion actions is chosen. All mobile
-composer fields remain 16px and controls wrap instead of crossing the iPhone viewport.
-
-## Assumptions where the record is silent
-
-- **A held PR is an Inbox card.** Today the Inbox lists only blocked tasks, and every card offers
-  Resume and Reject. The boards assume each escalation carries its own option labels and L3's
-  recommendation, and that a green PR held for Burak appears as a card with "Open PR" and "Ask
-  the L2".
-- **Server-triggered L3 turns fold.** Chat shows them as one muted line with a Show link, so the
-  transcript stays a conversation.
-- **The Live session tab is a transcript.** It follows Burak's 2026-09-03 requirement: prompt
-  blocks, assistant prose, one row per tool call with output collapsed, separators for task
-  boundaries, subtle timestamps, phone friendly. Today's JSON event cards stay behind Raw events.
-- **Content is realistic, not recorded.** The quota numbers, the context percentages, and the
-  altitude tasks are the readings from the morning of 2026-09-03. The voice-tutor project, the two
-  unmanaged folders, and the exact wording of the exchanges are illustrative.
+The exchanges, tasks, quota readings, and project names on the boards are realistic, not recorded.
+Engine names appear as the configured engines would; the operator's name is the configured one.

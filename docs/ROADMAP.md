@@ -8,9 +8,9 @@ stays separate from ordinary source work and requires explicit authorization.
 
 ## Current product work
 
-The simplified-product wireframes (#166) were approved and checked in under
-`design/wireframes/` on 2026-09-03. The durable backlog is GitHub issues selected by Burak. The
-current priorities are:
+The product redesign, approved on 2026-09-05, replaced the 2026-09-03 wireframes under
+`design/wireframes/`; its `SPEC.md` governs the UI and lists the implementation slices, each one
+task. The durable backlog is GitHub issues selected by Burak. The current priorities are:
 
 - expose a clear project overview of active work and items that need Burak;
 - make direct task conversation with the owning L2 simple and readable;

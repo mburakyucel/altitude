@@ -6,7 +6,7 @@ L2 owner, and that L2 may work alone or delegate bounded slices to its engine's 
 
 Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work.
-The approved wireframes for the simplified product's UI are in
+The product design, boards plus the spec that governs them, is in
 [`design/wireframes/README.md`](design/wireframes/README.md).
 
 The 2026-09 module-by-module simplification is complete. [`docs/SIMPLIFICATION.md`](docs/SIMPLIFICATION.md)

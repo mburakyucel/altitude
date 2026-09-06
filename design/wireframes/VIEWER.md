@@ -66,15 +66,16 @@ build's `web/design/tokens.css` from two levels up.
 
 ## Add a board
 
-Add one entry to `boards.js`, in the order of the table in `README.md`:
+`boards.js` is written by `gen.py` from its `ROUTES` table, one row per route:
 
-```js
-{ label: 'Settings', desktop: 'Settings.html', mobile: 'MobileSettings.html' },
+```python
+("Settings", "Settings", "MobileSettings"),
 ```
 
-That is the whole change: the canvas, the side list, and the keyboard order all come from that list.
-A route may carry its own `desktopSize` / `mobileSize` (`{ w, h }`) if it does not render at the
-1440×900 and 390×960 the other boards use.
+Add the row and the matching `board(...)` calls, run `python3 design/wireframes/gen.py`, and the
+canvas, the side list, and the keyboard order follow. A route with only a desktop or only a phone
+board leaves the other slot empty, and a sheet that is not 1440×900 gets its own size from the board
+itself.
 
 A listed file that is not there renders as a red "File not found" tile naming the file, so a stale
 entry shows itself the moment the viewer opens rather than leaving a blank space.

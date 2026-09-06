@@ -10,7 +10,7 @@
   var ROUTES = window.WIREFRAME_BOARDS || [];
   var SIZES = window.WIREFRAME_SIZES || {};
   var DESKTOP = SIZES.desktop || { w: 1440, h: 900, name: 'Desktop' };
-  var MOBILE = SIZES.mobile || { w: 390, h: 960, name: 'iPhone' };
+  var MOBILE = SIZES.mobile || { w: 390, h: 844, name: 'iPhone' };
 
   var GAP_PAIR = 56;    // desktop board ↔ its phone board
   var GAP_X = 240;      // between route groups
@@ -62,6 +62,7 @@
         var board = {
           kind: spec[0], file: spec[1], group: group, index: boards.length,
           name: route.label + ' · ' + (size.name || spec[0]),
+          sizeName: size.name || spec[0],
           rect: { x: gx + spec[3], y: gy + LABEL_H, w: size.w, h: size.h }
         };
         el.appendChild(boardEl(board, size, spec[3]));
@@ -169,7 +170,7 @@
       group.boards.forEach(function (board) {
         var b = document.createElement('button');
         b.type = 'button';
-        b.textContent = (board.kind === 'mobile' ? MOBILE.name : DESKTOP.name);
+        b.textContent = board.sizeName;
         b.addEventListener('click', function () { showBoard(board.index); });
         board.railButton = b;
         if (board.missing) b.classList.add('gone');
