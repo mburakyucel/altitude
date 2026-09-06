@@ -210,6 +210,17 @@ progressive enhancement. Altitude's WireGuard origin is HTTPS on `10.88.0.1:8890
 the local-CA certificate whose SAN contains that address, which makes `getUserMedia` available to
 Safari after the CA is trusted on the phone.
 
+The same server serves each project's wireframe boards. `GET /design/<project>` redirects to
+`/design/<project>/design/wireframes/index.html`, read from that project's own deployment checkout on
+every request and sent uncached, so a merged board change needs no build step and no restart to be
+visible. Only the `design/wireframes/` and `web/design/` subtrees are readable and only the
+extensions a board needs; the resolved path must stay inside those subtrees, and a project without
+`design/wireframes/index.html`, a directory, and anything outside the rule are one plain 404. The
+tree is mirrored under the prefix because a board's stylesheet imports the build's design tokens two
+levels up. `/api/project` reports that URL only when the boards exist, and the project page turns it
+into a Design link that opens in a new tab. Any project with boards gets one; the route knows nothing
+about this repository's own.
+
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
 work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day
 windows from the statusline snapshot, and the Codex seat's windows named by the length the provider

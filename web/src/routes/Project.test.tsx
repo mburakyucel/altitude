@@ -227,4 +227,39 @@ describe("Project", () => {
     expect(within(stuckCard).queryByText(/operational hold/)).toBeNull();
     expect(stuckCard).toHaveClass("border-danger/40");
   });
+
+  // The link is present only when the project checkout has boards: it is the server's answer, not
+  // a guess the page makes from the project name.
+  it("opens the wireframe viewer in a new tab when the project has one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/overview")) return jsonResponse(overview);
+        if (url.includes("/api/project/altitude"))
+          return jsonResponse({
+            ...project,
+            design_viewer: "/design/altitude/design/wireframes/index.html",
+          });
+        return jsonResponse({ error: "not found" }, 404);
+      }),
+    );
+    renderApp({ route: "/projects/altitude" });
+
+    const link = await screen.findByRole("link", { name: "Design" });
+    expect(link).toHaveAttribute("href", "/design/altitude/design/wireframes/index.html");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+    expect(link.className).toContain("hover:border-accent");
+    expect(link.className).toContain("active:bg-accent-tint");
+    expect(link.className).not.toContain("hover:text-accent"); // the label is accent already
+  });
+
+  it("shows no Design link for a project without boards", async () => {
+    mockFetch();
+    renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("link", { name: "Fix the timer" });
+    expect(screen.queryByRole("link", { name: "Design" })).toBeNull();
+  });
 });

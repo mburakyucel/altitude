@@ -18,7 +18,7 @@ import wave
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, quote, unquote
 
 from . import config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, route, state as S, tasks as T, transcript, verify
 
@@ -40,6 +40,33 @@ L3_TASK_TARGETS = {
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status",
 }
+
+# The wireframe boards of any project that has them, served read-only from its own checkout so the
+# browser always shows what is on main. The tree is mirrored under the prefix rather than flattened:
+# `wireframes.css` imports the build's `web/design/tokens.css` from two levels up, and a board
+# without its tokens is not the board.
+DESIGN_ROUTE = "design"
+DESIGN_ENTRY = "design/wireframes/index.html"
+DESIGN_TREES = ("design/wireframes", "web/design")
+DESIGN_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".woff2": "font/woff2",
+}
+
+
+def design_viewer_url(project: str) -> str | None:
+    """Where this project's wireframe viewer is served, or None when the project has no boards."""
+    try:
+        root = config.project_path(project)
+    except (KeyError, OSError):
+        return None
+    return f"/{DESIGN_ROUTE}/{quote(project)}/{DESIGN_ENTRY}" if (root / DESIGN_ENTRY).is_file() else None
+
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). Altitude only adapts those containers
 # to the path-based protocol of the existing local faster-whisper server; it owns no speech model.
@@ -869,6 +896,51 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _plain(self, text: str, code: int) -> None:
+        body = f"{text}\n".encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _design(self, parts: list[str]) -> None:
+        """A project's wireframe boards, read from its own checkout on every request: the viewer
+        shows what is on main, with nothing to rebuild after a merge. Two subtrees of that checkout
+        are readable, only the listed extensions, and nothing is cached, so an edit that lands is the
+        edit the browser draws. A project without boards, a directory, and an escape attempt are all
+        the same plain 404."""
+        project = unquote(parts[1]) if len(parts) > 1 else ""
+        entry = design_viewer_url(project)
+        if entry is None:
+            return self._plain("not found", 404)
+        if len(parts) == 2:  # the stable per-project link; the boards' relative imports need the depth
+            return self._redirect(entry)
+        root = config.project_path(project).resolve()
+        try:
+            resolved = (root / unquote("/".join(parts[2:]))).resolve()
+        except (OSError, ValueError):  # embedded NUL and friends
+            return self._plain("not found", 404)
+        ctype = DESIGN_TYPES.get(resolved.suffix.lower())
+        readable = any(resolved.is_relative_to((root / tree).resolve()) for tree in DESIGN_TREES)
+        if ctype is None or not readable or not resolved.is_file():
+            return self._plain("not found", 404)
+        data = resolved.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def _static(self, raw_path: str) -> None:
         """The built SPA (web/dist): hashed /assets/* immutable, index.html no-store, and any
         other GET falls back to index.html so client-side routes deep-link. A missing build is
@@ -961,6 +1033,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts and parts[0] == "ca.crt":  # the local CA, for installing on a phone once
                 return self._file(config.TLS_DIR / "ca.crt", "application/x-x509-ca-cert")
+            if parts and parts[0] == DESIGN_ROUTE:
+                return self._design(parts)
             if not parts or parts[0] != "api":
                 return self._static(u.path)
             api = parts[1] if len(parts) > 1 else ""
@@ -1228,6 +1302,7 @@ def project_view(name: str) -> dict:
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
+            "design_viewer": design_viewer_url(name),
             "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
