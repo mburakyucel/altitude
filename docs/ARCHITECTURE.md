@@ -55,6 +55,21 @@ L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provide
 that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
 [Session lifecycle](SESSION_LIFECYCLE.md) for identity, routing, messages, containment, and context.
 
+Both roles read two layers of rules. The personas in `personas/` are the global layer: how anyone
+works under Altitude on any project, carrying nothing project-specific. The repository's own
+instructions file — `CLAUDE.md`, or `AGENTS.md` where an engine reads that instead — is the project
+layer, owned by the operator of that repository and read first. Altitude's own `CLAUDE.md` is simply
+the project file of the project being built.
+
+Everything that encodes the operator, their providers, or their hardware sits behind a named seam.
+The operator seam is one configured name and role, so personas, docs, and UI text say "the operator"
+or read the configured name. The engine seam is `engines.py`, `route.py`, and `config.py`: engine-specific
+code lives there and nowhere else, Altitude runs with any single engine alone, and adding or removing an
+engine touches only those three modules. The capability seam is the local services — the speech socket,
+`ffmpeg`, a GPU — each optional, detected, and degrading to an explicit unavailable state.
+`tests/test_project_layers.py` holds the per-file counts of provider and operator names outside the
+seams as a ratchet that can only fall.
+
 ## Task lifecycle
 
 ```text

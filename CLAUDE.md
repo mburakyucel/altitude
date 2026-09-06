@@ -3,9 +3,27 @@
 Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
 description; Git history is the archive.
 
-`docs/SIMPLIFICATION.md` records Burak's seven paradigm decisions (2026-09-02 through 2026-09-04) and the working rules
-for every PR: deletion first, every added check names the incident it prevents, the six review
+`docs/SIMPLIFICATION.md` records Burak's eight paradigm decisions (2026-09-02 through 2026-09-04) and the working rules
+for every PR: deletion first, every added check names the incident it prevents, the seven review
 questions answered in the PR body, full suites. Ask Burak only for a decision not recorded there.
+
+This file is the project layer: Altitude's own rules, owned by the operator of this repository. The
+personas in `personas/` are the global layer — how anyone works under Altitude on any project — and
+carry nothing project-specific. Rules like the seams rule, the review questions, and deletion first
+belong here and in `docs/SIMPLIFICATION.md`, never in a persona.
+
+## Seams
+
+Altitude is built for one operator on one machine, and everything that encodes that operator, their
+providers, or their hardware sits behind a named seam (decision 8). The operator seam is one
+configured name and role: personas, docs, and UI text say "the operator" or read the configured name.
+The engine seam is `altitude/engines.py`, `altitude/route.py`, and `altitude/config.py`: no other
+file spells a provider name or assumes a given engine exists, Altitude runs with any single engine
+alone, and adding or removing an engine touches only the seam. The capability seam is local services
+(the speech socket, `ffmpeg`, a GPU): optional, detected, and degrading to an explicit unavailable
+state, as voice input does. New code obeys the rule; existing code migrates only when a PR already
+touches it, never as its own project. `tests/test_project_layers.py` ratchets the counts so mentions
+outside a seam can only fall.
 
 ## Roles
 
@@ -33,6 +51,16 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 - If work should be deferred, create or update a GitHub issue and reject/archive the active task.
 - Never publish credentials, tokens, private incident evidence, or security-sensitive operational
   details.
+
+## UI
+
+From the wireframe-implementation phase on, a PR that implements or changes a UI component ships
+with that component's interaction states specified — empty, loading, listening, error, denied, and
+what appears and disappears after each action — and walked through on phone and desktop before the
+work is done. Review checks the states, not only the happy path; a state that is only described is
+not walked through. Functionality-first UI was acceptable before the boards were approved and is
+not now. The failure this prevents: after a voice message is sent the transcript box stays on
+screen, and that box should not exist at all (issue #195).
 
 ## Faults and service state
 
