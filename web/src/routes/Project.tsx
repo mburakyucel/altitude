@@ -266,14 +266,29 @@ export default function Project() {
   const fyis = [...(data.inbox ?? [])].reverse().slice(0, 10);
   const incidents = [...(data.incidents ?? [])].reverse();
   const archive = data.archive ?? [];
+  const designViewer = str(raw.design_viewer); // the server answers with the URL, or nothing at all
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      <header className="flex flex-wrap items-baseline gap-3">
+      <header className="flex flex-wrap items-center gap-3">
         <Link className="text-meta" to="/projects">
           ‹ Projects
         </Link>
         <h1 className="text-page-title font-semibold">{data.name}</h1>
+        {/* Absent unless the project checkout has boards to show. Hover draws the accent border,
+            a press fills with the accent tint, and the shell's :focus-visible ring is the keyboard
+            state; the label is already accent, so only those two carry the change. A new tab, so
+            the boards' own pan/zoom keys never fight this page's. */}
+        {designViewer ? (
+          <a
+            className="btn ml-auto hover:border-accent active:bg-accent-tint"
+            href={designViewer}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Design
+          </a>
+        ) : null}
       </header>
 
       <L3Card project={name} data={raw} />

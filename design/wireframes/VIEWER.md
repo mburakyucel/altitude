@@ -14,6 +14,26 @@ Double-clicking the file works too. There is no build step, nothing to install, 
 no network request of its own. (The boards themselves ask for the IBM Plex web font and fall back to
 system fonts offline, exactly as they do when opened one at a time.)
 
+## From the Altitude UI
+
+The project page carries a **Design** link whenever that project's checkout has
+`design/wireframes/index.html`. It opens the boards in a new tab, on the same host and port as the
+rest of the UI — desktop and phone alike, with nothing to start:
+
+```
+/design/<project>                                  redirects to
+/design/<project>/design/wireframes/index.html
+```
+
+`altd` serves them read-only from the project's deployment checkout, reading each file on the
+request and sending it uncached, so the boards a merge lands are the boards the next reload draws.
+The tree is mirrored under the prefix rather than flattened, so `wireframes.css`'s import of
+`../../web/design/tokens.css` resolves exactly as it does under `serve.sh`. Only `design/wireframes/`
+and `web/design/` are readable, only `.html .css .js .svg .png .jpg .woff2`, and a directory is a
+404 rather than a listing.
+
+That checkout is `main`, so boards still on a branch are the case `serve.sh` below covers.
+
 ## Move around
 
 | | |

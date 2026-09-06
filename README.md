@@ -48,7 +48,9 @@ repository, the Claude inbox hook, and the statusline monitor. A Codex L2 runs i
 workspace-write sandbox and uses the same door. Claude and Codex L3 turns both run from fresh disposable
 runtime directories with the deployment checkout and Altitude state read-only. Codex's L3 profile denies direct
 command networking and the user-service bus, exposing only that project's role-fenced Unix socket. `web/` is the React UI built into
-`web/dist/` for the Python server to serve.
+`web/dist/` for the Python server to serve. That server also serves any project's wireframe
+boards read-only from the project's own checkout at `/design/<project>`, which the project page
+links to when the boards exist.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
 tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private
