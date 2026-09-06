@@ -2,7 +2,7 @@
 
 Burak reviewed `main` (`a4ca71c`) on 2026-09-02, closed the five draft PRs of the earlier autonomous
 simplification attempt (#138–#142, evidence in their closing comments; the only extract was the
-parent-directory fsync in `atomic_write`, #146), and recorded seven paradigm decisions. The rebuild then
+parent-directory fsync in `atomic_write`, #146), and recorded eight paradigm decisions. The rebuild then
 ran module by module from `main` in eight phases and finished on 2026-09-03. Stated goal:
 **elegant, simple, modular, human-readable, robust.**
 
@@ -23,6 +23,16 @@ bundles rewritten on every event, a resume path that killed its own worker on ev
 | 5 | **Helpers are engine-native.** | The L2 uses its engine's own subagents (Claude Code Agent tool, Codex equivalent). Altitude does not track L1s or reviewers. Customization of helper paradigms lives in engine-native files (agent definitions, skills, hooks), not in Altitude. The L2 persona must state the delegation and context-hygiene expectations briefly, and keep a small `progress.md` (goal, done, next, how to verify) refreshed at milestones, never as a log. Auto-compact for Claude L2s stays as the explicit `autoCompactWindow` Altitude already passes. |
 | 6 | **One execution contract for both engines.** | Every worker is an untrusted process in its worktree. The only door into Altitude is the `alt` CLI, validated by the backend against the task record under the project lock. Codex keeps its native sandbox as containment but uses the same door. The inert-action broker, action schemas, Codex-specific personas, the cgroup unit dance, and the shell-inspecting guard hook go. If part of the contract fights an engine's native operating model, the contract adapts; a second contract is not built. Quota routing stays because two subscriptions is the reason for two engines. |
 | 7 | **Privilege attaches to verbs, not roles.** (2026-09-04) | L3's process is read-only on the deployment checkout on both engines: it reads everything and acts only through `alt`. Every operation that writes checkout Git metadata, changes a worker or session, or changes what the service serves runs in altd through a reason-bearing verb and records one task or incident event. Source changes, including one-liners, use an L2 worktree and PR. L3 reads the least-trusted text in the system; the adjacent deployment checkout must remain exactly `origin/main`; shell commands leave no durable task trail; and Codex parity comes from moving power into the daemon rather than disabling its sandbox. |
+| 8 | **Seams, not a rewrite.** (2026-09-04) | Altitude is built for one operator on one machine, and anything that encodes that operator, their providers, or their hardware sits behind a named seam. The operator seam is one configured name and role: personas, docs, and UI text say "the operator" or read the configured name instead of spelling a person's name. The engine seam is `altitude/engines.py`, `altitude/route.py`, and `altitude/config.py`: engine-specific code is expected there and nowhere else, no other file spells a provider name or assumes a given engine exists, Altitude runs with any single engine alone, and adding or removing an engine touches only the seam. The capability seam is local services (the speech socket, `ffmpeg`, a GPU): optional, detected, and degraded to an explicit unavailable state, as voice input already is. New code obeys the rule; existing code migrates only when a PR touches it, never as its own project. A cancelled subscription or a new tool must cost a seam, not a rewrite. |
+
+## The two rule layers
+
+The personas in `personas/` are the global layer: how anyone works under Altitude on any project.
+They carry no project-specific rule. The repository's own instructions file is the project layer,
+owned by the operator per project: `CLAUDE.md`, or `AGENTS.md` where an engine reads that instead.
+When Altitude builds Altitude, its `CLAUDE.md` is simply the project file of the project being
+built. The seams rule, the review questions, deletion first, and parity live in that project layer
+(`CLAUDE.md` and this page) and never move into a persona.
 
 Burak decides questions of this altitude; module-level calls are made by the implementing session and
 reported in the PR. Ask him only for a decision not recorded here.
@@ -37,8 +47,10 @@ reported in the PR. Ask him only for a decision not recorded here.
 3. The PR body answers, in at most fifteen lines: what user-visible or safety behaviour the module
    provides; which callers, records, external effects, and tests depend on it; whether the behaviour
    is still wanted; whether it can be expressed with fewer owners, states, artifacts, or compatibility
-   paths; what is removed; and what test or end-to-end observation proves parity. "Simpler" is not
-   evidence on its own, and an existing test is not evidence that a mechanism is still wanted.
+   paths; what is removed; what test or end-to-end observation proves parity; and what in the change
+   works only for this operator, this subscription mix, or this machine, and which seam holds it —
+   could an engine be dropped tomorrow by touching only the seam? "Simpler" is not evidence on its
+   own, and an existing test is not evidence that a mechanism is still wanted.
 4. Full Python and web suites on every PR. After any change to dispatch, engines, or landing, one real
    tiny task end to end: chat, task, PR, checks, merge, archive.
 
@@ -59,7 +71,7 @@ reported in the PR. Ask him only for a decision not recorded here.
 | 6 | #161 | dead branches in `land.py`, `git_policy.py`, `config.py`, `server.py` | the `alt project` and `alt state` parsers, restored with a test |
 | 7 | #162 | the Project page's direct task creation, the `new` and `verify` task actions | Conversation and Live session tabs; the transcript reads every turn of the Codex thread |
 | 8 | #163, #164, #165 | 44 per-module isolation shims, the race families and their machinery, the review directory, the last compatibility reader (`l3.py`) and the last history sentences in the live docs | `tests/support.py` as the one fixture; `ARCHITECTURE.md` and `SESSION_LIFECYCLE.md` in their final shape; this page |
-| D7 | this PR (held for Burak) | Claude L3's checkout cwd, auto-approved commands, broad `gh issue *`, and caller-side CLI resume/stop/reject effects | one read-only L3 runtime contract; durable reason-bearing daemon requests with actor, target identity, refusal, and retry idempotence |
+| D7 | #194 | Claude L3's checkout cwd, auto-approved commands, broad `gh issue *`, and caller-side CLI resume/stop/reject effects | one read-only L3 runtime contract; durable reason-bearing daemon requests with actor, target identity, refusal, and retry idempotence |
 
 | Lines | Before (`97e1197`) | After phase 8 |
 | --- | --- | --- |
