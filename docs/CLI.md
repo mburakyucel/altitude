@@ -26,16 +26,23 @@ tasks waiting for Burak.
 `alt l3 tools` groups the shell commands persisted with recent L3 turns. Commands outside the `alt`
 door appear first so recurring inspection pipelines are easy to replace with known verbs.
 
+An L3 process is read-only on the deployment checkout and Altitude home. Its direct shell reads are limited
+to Git log/diff-stat/show-stat and the altitude user journal. Runtime shims carry every `alt` invocation plus
+`gh pr` view/list/diff/checks, GitHub issue/run inspection, and altitude service status over that project's
+same-user altd Unix socket. The socket fixes the project independently of request data. The broker re-applies the
+L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
+repository; source editing, Git writes, GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
+
 ## Task lifecycle
 
 ```text
 alt task new --title <title> [--paths a.py,b/] [--hold-merge <reason>] -
 alt task message <slug> <text>
 alt task reply <text>
-alt task block <slug> --reason <reason> [--for-burak | --fault]
+alt task block <slug> --reason <reason> [--for-burak | --fault]  # current L2 only
 alt task escalate <slug> --question <question>
-alt task resume|stop <slug>
-alt task hold-merge <slug> (--why <reason> | --off)
+alt task resume|stop <slug> --reason <reason>
+alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
 alt task done <slug> --digest <text>
 alt task reject <slug> --reason <reason>
 ```
@@ -43,3 +50,11 @@ alt task reject <slug> --reason <reason>
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
+
+For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
+`daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the
+worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.
+A repeated reason after a genuine later lifecycle creates a new request against that lifecycle's identity.
+A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
+worker in the caller. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
+while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.

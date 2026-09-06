@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import re
+import uuid
 from pathlib import Path
 
 from . import config, engines, git_policy, route, state as S, tasks as T
@@ -62,7 +63,8 @@ def _claim_owner_live(claim: dict) -> bool:
         return False
 
 
-def _recover_resume_claim(project: str, slug: str, task: dict) -> dict | None:
+def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request_id: str | None = None,
+                          daemon_fence: dict | None = None) -> dict | None:
     """Adopt a launched worker after daemon restart, or safely release a claim made before launch."""
     claim = task.get("resume_claim") or {}
     if not claim or _claim_owner_live(claim):
@@ -70,7 +72,8 @@ def _recover_resume_claim(project: str, slug: str, task: dict) -> dict | None:
     worker = claim.get("worker") or {}
     if worker.get("id") and worker.get("sessionId"):
         T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
-                 previous_worker=task.get("agent_id"), expected_claim=claim["id"])
+                 previous_worker=task.get("agent_id"), expected_claim=claim["id"],
+                 expected_daemon_request=daemon_request_id, **(daemon_fence or {}))
         return {"agent": worker, "recovered": True}
     if claim.get("phase") == "claimed":
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
@@ -102,6 +105,153 @@ def l2_engine(task: dict) -> str:
 
 def l2_job_root(project: str, slug: str) -> Path:
     return S.task_dir(project, slug) / "l2-engine"
+
+
+DAEMON_TASK_OPERATIONS = {
+    "resume": {"from": ("blocked",), "done": ("running", "queued")},
+    "stop": {"from": ("running",), "done": ("blocked",)},
+    "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
+}
+
+
+def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:
+    """Persist one L3/operator request for altd; this process never touches Git or a worker.
+
+    I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
+    worker identity snapshot prevents a delayed resume, stop, or reject from applying to a replacement session.
+    """
+    reason = str(reason or "").strip()
+    if operation not in DAEMON_TASK_OPERATIONS:
+        raise T.TransitionError(f"unknown daemon task operation {operation!r}")
+    if not reason:
+        raise T.TransitionError(f"task {operation} requires a reason")
+    if actor not in ("l3", "burak"):
+        raise T.TransitionError(f"task {operation} is available only to L3 or Burak")
+    contract = DAEMON_TASK_OPERATIONS[operation]
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        previous = task.get("daemon_request") or {}
+        same = (previous.get("operation"), previous.get("reason"), previous.get("actor")) == (
+            operation, reason, actor)
+        if previous.get("status") in ("pending", "executing"):
+            if same:
+                return {"queued": True, "idempotent": True, "request": previous}
+            raise T.TransitionError(
+                f"{slug}: {previous.get('operation')} is already queued for altd as {previous.get('id')}"
+            )
+        if previous.get("status") in ("done", "refused", "failed") and same:
+            receipt = (previous.get("result_state"), previous.get("result_agent_id"),
+                       previous.get("result_session_id"))
+            current = (task.get("state"), task.get("agent_id"), task.get("session_id"))
+            # A retry is the same operation only while the task still matches its terminal receipt. A later
+            # lifecycle may legitimately need the same human reason again, but gets a new request/id/event.
+            if previous.get("result_state") is None or receipt == current:
+                return {"queued": False, "idempotent": True, "request": previous}
+        if task.get("state") not in contract["from"]:
+            raise T.TransitionError(
+                f"{slug}: cannot {operation} from {task.get('state')}; expected {' or '.join(contract['from'])}"
+            )
+        request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
+                   "actor": actor, "status": "pending", "expected_state": task.get("state"),
+                   "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
+        task["daemon_request"] = request
+        if operation == "resume":
+            task["resume_after"] = task.get("resume_after") or request["at"]
+        S.save_task(project, task)
+        S.append_event(project, slug, "daemon-request", task=slug, request_id=request["id"],
+                       operation=operation, reason=reason, by=actor)
+        S.regen_state_md(project)
+        return {"queued": True, "idempotent": False, "request": request}
+
+
+def pending_task_operations(project: str) -> list[str]:
+    """Task-local daemon requests, including a reject archived just before its receipt was saved."""
+    now = S.now()
+    pending = [task for task in S.list_tasks(project, include_archive=True)
+               if (task.get("daemon_request") or {}).get("status") in ("pending", "executing")
+               and not ((task.get("daemon_request") or {}).get("operation") == "resume"
+                        and (task.get("resume_after") or "") > now)]
+    return [task["slug"] for task in sorted(
+        pending, key=lambda task: ((task.get("daemon_request") or {}).get("at") or "", task["slug"]))]
+
+
+def _finish_task_operation(project: str, slug: str, request_id: str | None, status: str,
+                           note: str = "") -> dict:
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        request = task.get("daemon_request") or {}
+        if request.get("id") != request_id:
+            return {"stale": True}
+        request.update({"status": status, "completed_at": S.now(), "note": str(note or "")[:300],
+                        "result_state": task.get("state"), "result_agent_id": task.get("agent_id"),
+                        "result_session_id": task.get("session_id")})
+        task["daemon_request"] = request
+        if request.get("operation") == "resume" and status not in ("pending", "executing"):
+            task.pop("resume_after", None)
+        S.save_task(project, task)
+        return {"request": request, "state": task.get("state")}
+
+
+def run_task_operation(project: str, slug: str) -> dict:
+    """Execute one durable request in altd, once, against the worker identity the caller observed.
+
+    I-20260904-062512: ``executing`` is a durable fence. Task transitions re-check its id, state,
+    and worker identity while holding the same project lock, so a delayed operation cannot affect a replacement.
+    """
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        request = dict(task.get("daemon_request") or {})
+        status = request.get("status")
+        if status not in ("pending", "executing"):
+            return {"idempotent": True, "request": request, "state": task.get("state")}
+        operation, request_id = request.get("operation"), request.get("id")
+        if operation not in DAEMON_TASK_OPERATIONS or not request_id:
+            terminal = ("refused", "invalid request")
+        else:
+            state = task.get("state")
+            identity_changed = (
+                task.get("agent_id") != request.get("agent_id")
+                or task.get("session_id") != request.get("session_id"))
+            # I-20260904-062512: resume installs a replacement identity before the final receipt. If altd exits
+            # in that narrow window, the durable target state proves this executing request already succeeded.
+            if operation == "resume" and status == "executing" and state in DAEMON_TASK_OPERATIONS[operation]["done"]:
+                terminal = ("done", "resume already reached its target state")
+            elif identity_changed:
+                terminal = ("refused", "worker identity changed")
+            elif state in DAEMON_TASK_OPERATIONS[operation]["done"] and operation != "stop":
+                terminal = ("done", "already in target state")
+            elif state not in DAEMON_TASK_OPERATIONS[operation]["from"] and not (
+                    operation == "stop" and state == "blocked"):
+                terminal = ("refused", f"task changed to {state}")
+            else:
+                terminal = None
+                if status == "pending":
+                    request.update({"status": "executing", "started_at": S.now()})
+                    task["daemon_request"] = request
+                    S.save_task(project, task)
+    if terminal:
+        return _finish_task_operation(project, slug, request_id, *terminal)
+
+    try:
+        if operation == "resume":
+            result = resume(project, slug, daemon_request_id=request_id)
+            if result.get("held") or result.get("already_resuming"):
+                return {"pending": True, "request": request, **result}
+        elif operation == "stop":
+            result = stop(project, slug, by=request["actor"], reason=request["reason"],
+                          daemon_request_id=request_id, expected_agent_id=request.get("agent_id"),
+                          expected_session_id=request.get("session_id"))
+        else:
+            result = T.reject(
+                project, slug, request["reason"], actor=request["actor"],
+                expected_state=request.get("expected_state"), expected_agent_id=request.get("agent_id"),
+                expected_session_id=request.get("session_id"), expected_daemon_request=request_id)
+    except ResumeFailure as exc:
+        _finish_task_operation(project, slug, request_id, "failed", str(exc))
+        raise
+    except T.TransitionError as exc:
+        return _finish_task_operation(project, slug, request_id, "refused", str(exc))
+    return _finish_task_operation(project, slug, request_id, "done", str(result)[:300])
 
 
 @contextmanager
@@ -393,7 +543,7 @@ def l2_env(project: str, slug: str, attempt: int) -> dict:
             "ALTITUDE_SESSION_KEY": S.session_key(project, slug, attempt)}
 
 
-def resume(project: str, slug: str) -> dict:
+def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
     """Start a blocked task's provider session again in its worktree, with whatever waits in its inbox.
 
     This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
@@ -401,29 +551,38 @@ def resume(project: str, slug: str) -> dict:
     back to the queue. A file lease or an exhausted usage window keeps the task blocked with `resume_after` set, and
     the next tick tries again."""
     task = S.load_task(project, slug)
+    active_request = task.get("daemon_request") or {}
+    if daemon_request_id is not None:
+        if (active_request.get("id") != daemon_request_id
+                or active_request.get("operation") != "resume"
+                or active_request.get("status") != "executing"):
+            raise T.TransitionError(f"{slug}: daemon resume request {daemon_request_id} is no longer executing")
+        daemon_fence = {"expected_agent_id": active_request.get("agent_id"),
+                        "expected_session_id": active_request.get("session_id")}
+    else:
+        daemon_fence = {}
+        if active_request.get("status") in ("pending", "executing"):
+            raise T.TransitionError(f"{slug}: daemon request {active_request.get('id')} owns this task")
     if task["state"] == "running":
         return {"already_running": True}
     if task["state"] != "blocked":
         raise T.TransitionError(f"{slug} is {task['state']}, not blocked")
-    recovered = _recover_resume_claim(project, slug, task)
+    recovered = _recover_resume_claim(project, slug, task, daemon_request_id=daemon_request_id,
+                                      daemon_fence=daemon_fence)
     if recovered is not None:
         return recovered
     task = S.load_task(project, slug)
     if not task.get("agent_id") or not task.get("session_id"):
-        T.requeue(project, slug)
+        T.requeue(project, slug, expected_daemon_request=daemon_request_id, **daemon_fence)
         return {"requeued": True}
     window = engines.window_hold(l2_engine(task))
     hold = f"usage limit: subscription window exhausted, resets {window}" if window else wip_hold(project, task)
     if hold:
-        with S.project_lock(project):
-            task = S.load_task(project, slug)
-            if task["state"] == "blocked":
-                task["resume_after"] = task.get("resume_after") or S.now()
-                task["blocked_reason"] = f"waiting: {hold}"
-                S.save_task(project, task)
-        S.append_event(project, slug, "resume-held", hold=hold)
+        T.mark_resume_held(project, slug, hold, retry_at=window,
+                           expected_daemon_request=daemon_request_id,
+                           **daemon_fence)
         return {"held": hold}
-    claim = T.claim_resume(project, slug)
+    claim = T.claim_resume(project, slug, expected_daemon_request=daemon_request_id, **daemon_fence)
     if claim is None:
         live = S.load_task(project, slug)
         if live.get("state") == "running":
@@ -489,7 +648,8 @@ def resume(project: str, slug: str) -> dict:
         raise record_resume_failure(project, slug, claim["id"], detail, suppress_retry=True) from exc
     try:
         T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
-                 previous_worker=task["agent_id"], expected_claim=claim["id"])
+                 previous_worker=task["agent_id"], expected_claim=claim["id"],
+                 expected_daemon_request=daemon_request_id, **daemon_fence)
     except Exception as exc:  # the task moved on, or its state could not be written: nothing may own the new worker
         try:
             live = S.load_task(project, slug)
@@ -516,16 +676,26 @@ def resume(project: str, slug: str) -> dict:
     return {"agent": worker}
 
 
-def stop(project: str, slug: str, *, by: str = "burak") -> dict:
+def stop(project: str, slug: str, *, by: str = "burak", reason: str | None = None,
+         daemon_request_id: str | None = None, expected_agent_id: str | None = None,
+         expected_session_id: str | None = None) -> dict:
     """Abort the task's worker. The task blocks; a message or Resume starts the same session again, Reject ends it."""
+    reason = str(reason or f"stopped by {by}").strip()
     task = S.load_task(project, slug)
+    active_request = task.get("daemon_request") or {}
+    if active_request.get("status") in ("pending", "executing") and (
+            active_request.get("id") != daemon_request_id or active_request.get("operation") != "stop"):
+        raise T.TransitionError(f"{slug}: daemon request {active_request.get('id')} owns this task")
     if task["state"] == "running":  # block first, so the poll does not read the exiting worker as a death
-        T.block(project, slug, f"stopped by {by}", actor=by, expected_state="running")
+        T.block(project, slug, reason, actor=by, expected_state="running",
+                expected_agent_id=expected_agent_id, expected_session_id=expected_session_id,
+                expected_daemon_request=daemon_request_id)
     elif task["state"] != "blocked":
         raise T.TransitionError(f"{slug} is {task['state']}; nothing to stop")
     if task.get("agent_id"):
         note = engines.stop_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
-        S.append_event(project, slug, "stopped", agent_id=task["agent_id"], by=by, note=str(note or "")[:200])
+        S.append_event(project, slug, "stopped", agent_id=task["agent_id"], by=by, reason=reason,
+                       note=str(note or "")[:200])
     return S.load_task(project, slug)
 
 
@@ -539,6 +709,8 @@ def resume_due(project: str) -> list[str]:
     for t in sorted(S.list_tasks(project), key=_resume_order):
         if t["state"] != "blocked":
             continue
+        if (t.get("daemon_request") or {}).get("status") in ("pending", "executing"):
+            continue  # explicit resume/stop/reject is owned by the daemon-operation runner
         claim = t.get("resume_claim") or {}
         if claim:
             if not _claim_owner_live(claim):

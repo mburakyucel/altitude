@@ -557,7 +557,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if hold_merge:  # an explicit merge hold is the exception to merge-by-default
         if merge:
             raise LandError(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
-                            f"the L3 releases it with `alt task hold-merge {slug} --off`; "
+                            f"Burak releases it with `alt task hold-merge {slug} --off`; "
                             "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
               "the PR will be opened but not merged")

@@ -67,7 +67,12 @@ or L2-message endpoint as typed text, so a busy L3 durably queues that combined 
 boundary and an L2 message follows the same checkpoint/resume rules. Cancel, discard, permission
 denial, and transcription failure create no conversation or queue record.
 
-`dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered resumes.
+`dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
+explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
+`daemon_request`; the CLI process performs no Git or worker operation. One `daemon-request` event names
+the task, operation, actor (`l3` or `burak`), reason, and request id. Altd executes the request, refuses
+a changed state or worker/session identity, and makes a retry with the same reason and actor idempotent
+while its terminal state/worker receipt still matches. A later lifecycle receives a new request and event.
 The inbox and `resume_after` are the coordinator-to-daemon boundary: they survive coordinator exit and daemon
 restart. The keyed runner is the in-process fast path; a durable claim is the cross-process fence. Its
 `dispatching` marker also makes the independent restart guard wait. If altd restarts after the replacement worker
@@ -85,8 +90,9 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    normally until another explicit request. A newer message carries a newer generation and stays due. A
    coordinator filesystem restriction never reaches this trusted boundary.
 
-**Stop** (task page, `alt task stop`) blocks the task first and then stops its worker, so the poll never reads
-the exiting worker as a death. A message or Resume brings the same session back; Reject ends the task. An L2 that blocks with
+**Stop** (task page, `alt task stop --reason …`) runs in altd, blocks the task first, and then stops its worker,
+so the poll never reads the exiting worker as a death. A message or `alt task resume --reason …` brings the same
+session back; `alt task reject --reason …` ends the task and removes its worker in altd. An L2 that blocks with
 `--fault` takes the system-fault path (incident, one L3 message) instead of asking Burak. A failed
 resume blocks the task with an incident and leaves the provider conversation to L3. A cross-provider
 continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
@@ -99,13 +105,25 @@ CLI, and the backend applies the identity, clean-Git, lease, provenance, and mer
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
 
-## Codex containment
+## Engine containment
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
 directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
-carries the task identity. A Codex L3 turn runs the same way from a disposable runtime directory under the
-project's Altitude folder, reading the project checkout and reaching GitHub through `gh` like a Claude L3; both
-engines use the same `alt` commands under the same backend checks, from one persona.
+carries the task identity. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
+runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
+user-service bus are denied, and only that project's role-fenced altd Unix socket is reachable. A Claude L3 turn has the same runtime cwd and uses
+`--restricted`, `dontAsk`, no unattended permission
+prompts, no Edit/Write/NotebookEdit tools, and an exact allowlist. Both can read the checkout with Git
+log/diff-stat/show-stat shims and the altitude journal. Runtime shims send every `alt` invocation and fixed
+GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
+daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
+write shapes are absent. Claude's native Bash
+sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its
+hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
+Claude's confinement, while Codex retains its native filesystem sandbox.
+
+An existing Claude L3 session that predates this confinement policy is rotated before its next turn. Each engine
+keeps its own resumable L3 session after that boundary is established.
 
 Each Codex turn runs in a transient user unit created by the user manager, because altd's own `NoNewPrivileges`
 hardening would stop Codex's nested bwrap from starting. The outer launcher alone receives the user-session bus;

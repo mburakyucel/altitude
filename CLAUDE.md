@@ -3,14 +3,16 @@
 Read `README.md` and `docs/ARCHITECTURE.md` before changing behavior. They are the active system
 description; Git history is the archive.
 
-`docs/SIMPLIFICATION.md` records Burak's six paradigm decisions (2026-09-02) and the working rules
+`docs/SIMPLIFICATION.md` records Burak's seven paradigm decisions (2026-09-02 through 2026-09-04) and the working rules
 for every PR: deletion first, every added check names the incident it prevents, the six review
 questions answered in the PR body, full suites. Ask Burak only for a decision not recorded there.
 
 ## Roles
 
 - L3 is Burak's project-level point of contact. It uses judgment to answer, coordinate, or create
-  one task owned by one L2.
+  one task owned by one L2. Its process is read-only on the deployment checkout on both engines;
+  it changes operational state only through the documented `alt` verbs, while source changes belong
+  to an L2 worktree and PR.
 - L2 owns a task end-to-end. Its block goes to L3 first; it flags a block for Burak only when the
   brief says so or the call is plainly his. Burak can still steer it directly in the task
   conversation. It may implement directly or delegate bounded slices to its engine's own subagents;
@@ -36,7 +38,7 @@ questions answered in the PR body, full suites. Ask Burak only for a decision no
 
 A system fault blocks only its own task, files an incident, and leaves one message for the
 project's L3, whether altd detected it or an L2 reported it with `alt task block --fault`. L3 fixes
-the cause or creates the one repair task; Burak is not the one to repair the machine. There is no global hold: other tasks keep running. After a restart L3 receives the list of active tasks and resumes the ones blocked by a fault the
+the cause through a trusted `alt` verb or creates the one repair task; it never edits source or runs Git in the deployment checkout, and Burak is not the one to repair the machine. There is no global hold: other tasks keep running. After a restart L3 receives the list of active tasks and resumes the ones blocked by a fault the
 restart fixed.
 
 Altitude restarts itself at the next quiet point after a merged change to its own code (no worker

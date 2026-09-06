@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import socket
+import socketserver
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -23,7 +26,20 @@ LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
 _bg_guard = threading.Lock()
 _l3_drain_requested: set[str] = set()
+_l3_verb_brokers: dict[str, "_L3VerbServer"] = {}
+_l3_verb_broker_guard = threading.Lock()
 CAPACITY_RETRY_DELAYS = (30, 60, 120, 300, 600, 900)
+L3_VERB_MAX_REQUEST = 4 << 20
+L3_VERB_MAX_OUTPUT = 8 << 20
+L3_GH_READS = {
+    ("pr", "view"), ("pr", "list"), ("pr", "diff"), ("pr", "checks"),
+    ("issue", "list"), ("issue", "view"),
+    ("run", "list"), ("run", "view"), ("run", "watch"),
+}
+L3_TASK_TARGETS = {
+    "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
+    "paths", "hold-merge", "done", "status",
+}
 
 # A phone records AAC/mp4 (Safari) or opus/webm (Chromium). Altitude only adapts those containers
 # to the path-based protocol of the existing local faster-whisper server; it owns no speech model.
@@ -190,6 +206,199 @@ def request_task_resume(project: str, slug: str, *, due: bool = True) -> bool:
         return False
     return spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
 
+
+def request_daemon_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:
+    """Persist an operator request before scheduling its one daemon-side runner."""
+    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor)
+    if result.get("queued"):
+        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+    return result
+
+
+def l3_verb_request(project: str, request: dict) -> dict:
+    """Execute one role-fenced ``alt`` verb or fixed read for a confined L3."""
+    config.project(project)  # the per-project socket binds the authority; request JSON cannot select it
+    kind = request.get("kind")
+    if kind == "alt":
+        args = request.get("args")
+        stdin = request.get("stdin") or ""
+        if (not isinstance(args, list) or len(args) > 128
+                or any(not isinstance(arg, str) or len(arg) > 16384 for arg in args)
+                or not isinstance(stdin, str) or len(stdin.encode()) > L3_VERB_MAX_REQUEST):
+            raise ValueError("invalid alt verb arguments")
+        project_options = {"--p", "--pr", "--pro", "--proj", "--proje", "--projec", "--project"}
+        file_options = {"--f", "--fi", "--fil", "--file"}
+        if any(arg.split("=", 1)[0] in project_options | file_options
+               or arg.startswith("-p") and not arg.startswith("--") for arg in args):
+            raise ValueError("the L3 socket fixes the project and accepts input only on stdin")
+        _validate_l3_alt_args(args)
+        env = engines.clean_env()
+        env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+        try:
+            result = subprocess.run([str(config.REPO / "bin" / "alt"), *args], input=stdin,
+                                    cwd=str(config.project_path(project)), env=env,
+                                    capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"returncode": 1, "stdout": "", "stderr": f"alt verb failed: {exc}\n"}
+        return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
+                "stderr": _l3_bounded(result.stderr or "")}
+    if kind == "service":
+        unit = str(request.get("unit") or "")
+        if not re.fullmatch(r"altitude(?:[-@.][A-Za-z0-9_.@-]+)*", unit):
+            raise ValueError("only altitude user-service status is readable")
+        return engines.service_status(unit)
+    if kind != "gh":
+        raise ValueError("unknown L3 read")
+    args = request.get("args")
+    if (not isinstance(args, list) or len(args) < 2 or len(args) > 64
+            or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
+        raise ValueError("invalid gh read arguments")
+    redirected = any(
+        arg in ("--repo", "-R") or arg.startswith(("--repo=", "-R="))
+        or (arg.startswith("-R") and len(arg) > 2)
+        or "://" in arg or "/" in arg
+        for arg in args[2:]
+    )
+    if (tuple(args[:2]) not in L3_GH_READS
+            or any(arg == "--web" or arg.startswith("--web=") for arg in args[2:])
+            or redirected):
+        raise ValueError("L3 may only use the documented gh read commands")
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)  # cwd plus rejected repo selectors binds reads to this project's checkout
+    env["GH_PAGER"] = "cat"
+    try:
+        result = subprocess.run(["gh", *args], cwd=str(config.project_path(project)), env=env,
+                                capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"returncode": 1, "stdout": "", "stderr": f"gh read failed: {exc}\n"}
+
+    return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
+            "stderr": _l3_bounded(result.stderr or "")}
+
+
+def _validate_l3_alt_args(args: list[str]) -> None:
+    """Reject path-shaped identifiers before altd invokes the ordinary CLI parser."""
+    if len(args) >= 3 and args[:1] == ["task"] and args[1] in L3_TASK_TARGETS:
+        S.require_task_slug(args[2])
+    if args[:2] == ["task", "block"]:
+        raise ValueError("L3 must use task stop --reason for a running worker")
+    if args[:2] == ["task", "hold-merge"] and "--off" in args[3:]:
+        raise ValueError("only Burak may release a merge hold")
+    if args[:1] == ["fyi"] and len(args) >= 3:
+        S.require_task_slug(args[1])
+    if args[:2] == ["incident", "amend"]:
+        if len(args) < 3 or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", args[2]):
+            raise ValueError("invalid incident id")
+    if args[:2] == ["incident", "new"]:
+        tasks = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == "--task"]
+        tasks += [arg.split("=", 1)[1] for arg in args if arg.startswith("--task=")]
+        for slug in tasks:
+            S.require_task_slug(slug)
+
+
+def _l3_bounded(value: str) -> str:
+    raw = value.encode(errors="replace")
+    if len(raw) <= L3_VERB_MAX_OUTPUT:
+        return value
+    return raw[:L3_VERB_MAX_OUTPUT].decode(errors="replace") + "\n[output truncated by altd]\n"
+
+
+class _L3VerbHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        data = bytearray()
+        while len(data) <= L3_VERB_MAX_REQUEST and b"\n" not in data:
+            chunk = self.request.recv(min(65536, L3_VERB_MAX_REQUEST + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        try:
+            if len(data) > L3_VERB_MAX_REQUEST:
+                raise ValueError("L3 verb request is too large")
+            request = json.loads(bytes(data).split(b"\n", 1)[0])
+            if not isinstance(request, dict):
+                raise ValueError("L3 verb request must be an object")
+            response = l3_verb_request(self.server.project, request)
+        except (ValueError, KeyError, TypeError) as exc:
+            response = {"error": str(exc)[:300]}
+        except Exception as exc:  # noqa: BLE001 — a broker failure returns no daemon internals
+            log(f"L3 verb broker failed: {exc}\n{traceback.format_exc()}")
+            response = {"error": "verb unavailable"}
+        self.request.sendall((json.dumps(response) + "\n").encode())
+
+
+class _L3VerbServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path: str, project: str):
+        self.project = project
+        super().__init__(path, _L3VerbHandler)
+
+
+def start_l3_verb_broker(project: str, path: Path | None = None) -> _L3VerbServer:
+    """Bind one project-scoped L3 capability socket; refuse non-socket path collisions."""
+    config.project(project)
+    path = Path(path or l3.verb_socket_path(project))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        mode = None
+    if mode is not None:
+        if not stat.S_ISSOCK(mode):
+            raise RuntimeError(f"L3 verb socket path is not a socket: {path}")
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(0.2)
+            probe.connect(str(path))
+        except OSError:
+            path.unlink()
+        else:
+            raise RuntimeError(f"L3 verb socket is already active: {path}")
+        finally:
+            probe.close()
+    broker = _L3VerbServer(str(path), project)
+    path.chmod(0o600)
+    broker.socket_path = path
+    threading.Thread(target=broker.serve_forever, name="l3-verb-broker", daemon=True).start()
+    return broker
+
+
+def stop_l3_verb_broker(broker: _L3VerbServer) -> None:
+    path = broker.socket_path
+    broker.shutdown()
+    broker.server_close()
+    try:
+        if path.is_socket():
+            path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def ensure_l3_verb_broker(project: str) -> _L3VerbServer:
+    """Create the project's broker once, including for a project registered after altd started."""
+    with _l3_verb_broker_guard:
+        broker = _l3_verb_brokers.get(project)
+        if broker is None:
+            broker = start_l3_verb_broker(project)
+            _l3_verb_brokers[project] = broker
+        return broker
+
+
+def remove_l3_verb_broker(project: str) -> None:
+    with _l3_verb_broker_guard:
+        broker = _l3_verb_brokers.pop(project, None)
+    if broker is not None:
+        stop_l3_verb_broker(broker)
+
+
+def stop_l3_verb_brokers() -> None:
+    with _l3_verb_broker_guard:
+        brokers = list(_l3_verb_brokers.values())
+        _l3_verb_brokers.clear()
+    for broker in reversed(brokers):
+        stop_l3_verb_broker(broker)
+
+
 def request_l3_drain(project: str) -> bool:
     """Ask the project's one drain loop to run. A request that arrives while the loop is finishing
     is remembered, so a turn boundary cannot miss a message queued at the same instant."""
@@ -208,6 +417,7 @@ def drain_l3_queue(project: str) -> None:
     boundary rather than at the next tick. Requests coalesce into this keyed loop instead of nesting
     another; if another turn owns L3, that turn's completion makes the next request."""
     key = f"l3-queue:{project}"
+    ensure_l3_verb_broker(project)
     while True:
         with _bg_guard:
             _l3_drain_requested.discard(project)
@@ -225,6 +435,7 @@ def drain_l3_queue(project: str) -> None:
 def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
     """Run one server-owned turn and request its queue drain at the turn boundary, success or error."""
     try:
+        ensure_l3_verb_broker(project)
         return l3.turn(project, prompt, **kwargs)
     finally:
         request_l3_drain(project)
@@ -251,7 +462,8 @@ def restart_notice() -> None:
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
                          + "\n\nCheck each with `alt task status <slug>`. Resume a task blocked by a fault the restart should "
-                         "have fixed (`alt task resume <slug>`); leave a task waiting on Burak to him; a running task keeps "
+                         "have fixed (`alt task resume <slug> --reason \"restart fixed the fault\"`); leave a task waiting on "
+                         "Burak to him; a running task keeps "
                          "its worker. Reply in two or three plain sentences.", trigger="restart")
         log(f"[{project}] restart notice queued for L3 ({len(active)} active tasks)")
 
@@ -541,6 +753,8 @@ def tick() -> None:
         try:
             if l3.queue_path(project).exists():
                 request_l3_drain(project)
+            for slug in dispatch.pending_task_operations(project):
+                spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
             for item in dispatch.poll(project):
                 spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
             resume_stranded_reports(project)
@@ -794,6 +1008,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
                 P = config.load_projects()
+                previous = P.get(name)
                 path = Path(o.get("path") or (config.PROJECT_ROOTS[0] / name))
                 if not path.is_dir():
                     return self._json({"error": f"{path} is not a directory"}, 400)
@@ -801,11 +1016,22 @@ class Handler(BaseHTTPRequestHandler):
                            "wip": int(o.get("wip") or config.WIP_PER_PROJECT)}
                 config.save_projects(P)
                 config.project_dir(name).mkdir(parents=True, exist_ok=True)
+                try:
+                    ensure_l3_verb_broker(name)
+                except (OSError, RuntimeError) as exc:
+                    P = config.load_projects()
+                    if previous is None:
+                        P.pop(name, None)
+                    else:
+                        P[name] = previous
+                    config.save_projects(P)
+                    return self._json({"error": f"cannot establish the L3 verb boundary: {exc}"}, 500)
                 S.regen_state_md(name)
                 spawn(f"start:{name}", start_l3, name)
                 return self._json({"ok": True, "project": P[name]})
             if api == "project" and len(parts) > 2 and parts[2] == "remove":
                 P = config.load_projects(); P.pop(o["name"], None); config.save_projects(P)
+                remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
             if api == "decide":
                 project, slug, opt = o["project"], o["slug"], o.get("option")
@@ -814,21 +1040,27 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "only blocked tasks need a user decision"}, 409)
                 choice = ["Resume", "Reject"][int(opt)]
                 if choice == "Resume":
-                    if o.get("note"):
-                        T.message(project, slug, "burak", str(o["note"]))
-                    request_task_resume(project, slug, due=False)
+                    note = str(o.get("note") or "").strip()
+                    if note:
+                        # Persist the note without its ordinary timer wake; the following durable request
+                        # becomes the only resume owner before a runner can start.
+                        T.message(project, slug, "burak", note, wake_blocked=False)
+                    request_daemon_task_operation(project, slug, "resume", note or "resumed by Burak",
+                                                  actor="burak")
                 else:
-                    T.reject(project, slug, o.get("note") or "rejected by Burak", actor="burak")
-                return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+                    request_daemon_task_operation(project, slug, "reject",
+                                                  o.get("note") or "rejected by Burak", actor="burak")
+                return self._json({"ok": True, "queued": True,
+                                   "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by Burak"
                 if action == "reject":
-                    T.reject(project, slug, reason, actor="burak")
+                    request_daemon_task_operation(project, slug, "reject", reason, actor="burak")
                 elif action == "done":
                     T.done(project, slug, actor="burak")
                 elif action == "stop":
-                    dispatch.stop(project, slug)
+                    request_daemon_task_operation(project, slug, "stop", reason, actor="burak")
                 elif action == "dispatch":
                     spawn(f"dispatch:{project}", dispatch_waiting, project)
                 else:
@@ -1039,11 +1271,6 @@ def main(host: str | None = None, port: int | None = None) -> None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     host = host or config.HOST
     port = port or config.PORT
-    if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
-        restart_notice()
-        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
-    else:
-        log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     try:
         srv = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
@@ -1051,6 +1278,19 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
         raise SystemExit(1)
     srv.daemon_threads = True
+    try:
+        for project in config.load_projects():
+            ensure_l3_verb_broker(project)
+    except (OSError, RuntimeError) as e:
+        stop_l3_verb_brokers()
+        srv.server_close()
+        log(f"cannot bind the L3 verb broker ({e}); refusing to start without the confinement boundary")
+        raise SystemExit(1) from e
+    if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        restart_notice()
+        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
+    else:
+        log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     scheme = "http"
     crt, key = config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key"
     if config.TLS and crt.is_file() and key.is_file():
@@ -1066,6 +1306,9 @@ def main(host: str | None = None, port: int | None = None) -> None:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        srv.server_close()
+        stop_l3_verb_brokers()
 
 
 def tls_init(ip: str | None = None) -> dict:

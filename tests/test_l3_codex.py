@@ -37,6 +37,8 @@ class TestL3Sessions(AltitudeCase):
 
         def fake_codex(prompt, **kwargs):
             seen.update(kwargs, prompt=prompt)
+            runtime = Path(kwargs["cwd"])
+            seen["runtime_was_real"] = runtime.is_dir() and not runtime.is_symlink()
             return {"text": "coordinated", "session_id": "cx-state", "reported_session_id": "cx-state",
                     "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
 
@@ -44,7 +46,12 @@ class TestL3Sessions(AltitudeCase):
              mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
             out = l3.turn(self.project, "coordinate this")
 
-        self.assertEqual(Path(seen["cwd"]), config.project_dir(self.project) / "l3-codex-runtime")
+        runtime = Path(seen["cwd"])
+        self.assertEqual(runtime.parent, config.project_dir(self.project),
+                         "altd creates the fresh runtime inside this project's state directory")
+        self.assertTrue(runtime.name.startswith("l3-codex-") and seen["runtime_was_real"],
+                        "the daemon handoff never trusts a reusable or symlinked runtime path")
+        self.assertFalse(runtime.exists(), "the fresh runtime is removed after the Codex turn")
         self.assertTrue(seen["prompt"].startswith((config.PERSONAS / "l3.md").read_text()), "one persona per role")
         self.assertEqual(seen["extra_env"]["ALTITUDE_ACTOR"], "l3")
         self.assertNotIn("schema", seen)

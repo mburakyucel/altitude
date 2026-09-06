@@ -13,6 +13,22 @@ from altitude import config, state as S, tasks as T  # noqa: E402
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
 L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "report"), ("task", "events"), ("task", "messages"), ("task", "list"),
                ("task", "reply"), ("task", "block"), ("task", "done")}  # the door a worker may use
+L3_COMMANDS = {
+    ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
+    ("repo", None), ("pr", None), ("l3", "tools"),
+    *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
+                                    "status", "show", "resume", "message", "stop", "paths", "hold-merge",
+                                    "done", "list")),
+    *(("incident", name) for name in ("new", "amend", "list")),
+}
+
+
+class ExactArgumentParser(argparse.ArgumentParser):
+    """The daemon validates exact CLI spellings; argparse must not silently invent aliases."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs["allow_abbrev"] = False
+        super().__init__(*args, **kwargs)
 
 
 def _project(args) -> str:
@@ -149,7 +165,7 @@ def _tools_text(record: dict) -> str:
 
 
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(prog="alt")
+    ap = ExactArgumentParser(prog="alt")
     ap.add_argument("--project", "-p")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
@@ -171,12 +187,12 @@ def main(argv=None) -> None:
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--last", type=int, default=10); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("report"); x.add_argument("slug"); x.add_argument("--json", action="store_true", dest="as_json")
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
-    rs = ts.add_parser("resume", help="re-attach a blocked L2 with its transcript, worktree, and queued messages")
-    rs.add_argument("slug")
+    rs = ts.add_parser("resume", help="ask altd to re-attach a blocked L2 with its transcript, worktree, and queued messages")
+    rs.add_argument("slug"); rs.add_argument("--reason", required=True)
     ms = ts.add_parser("message", help="queue a message for the task's L2; a blocked L2 resumes with it")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
-    st = ts.add_parser("stop", help="stop the task's L2 worker; the task blocks until resumed")
-    st.add_argument("slug")
+    st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
+    st.add_argument("slug"); st.add_argument("--reason", required=True)
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
@@ -214,6 +230,11 @@ def main(argv=None) -> None:
     c = args.cmd
     if ACTOR == "l2" and (c, getattr(args, "tcmd", None)) not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
         sys.exit(f"alt {c}: not available to an L2 worker; use status, messages, reply, block, done, or land")
+    actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
+                     getattr(args, "icmd", None) if c == "incident" else
+                     getattr(args, "l3cmd", None) if c == "l3" else None)
+    if ACTOR == "l3" and actor_command not in L3_COMMANDS:
+        sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
     if c == "project":
         P = config.load_projects()
         if args.pcmd == "add":
@@ -238,7 +259,8 @@ def main(argv=None) -> None:
         if tc == "new":
             out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
         elif tc == "reject":
-            out(T.reject(p, args.slug, args.reason, actor=ACTOR))
+            from altitude import dispatch
+            out(dispatch.request_task_operation(p, args.slug, "reject", args.reason, actor=ACTOR))
         elif tc == "block":
             if ACTOR == "l2":
                 attempt = os.environ.get("ALTITUDE_ATTEMPT")
@@ -264,20 +286,15 @@ def main(argv=None) -> None:
                     or {"state": "blocked", "note": "this fault was already filed today; L3 was told once"})
         elif tc == "resume":
             from altitude import dispatch
-            out(dispatch.resume(p, args.slug))
+            out(dispatch.request_task_operation(p, args.slug, "resume", args.reason, actor=ACTOR))
         elif tc == "escalate":
             out(T.escalate(p, args.slug, args.question, actor=ACTOR))
         elif tc == "message":
             message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
-            if ACTOR != "l3" and S.load_task(p, args.slug).get("state") == "blocked":
-                # The web/API caller already runs inside altd. A coordinator L3 instead leaves the durable
-                # resume_after request written with its message for altd's keyed resume runner.
-                from altitude import dispatch
-                dispatch.resume(p, args.slug)
             out(message)
         elif tc == "stop":
             from altitude import dispatch
-            out(dispatch.stop(p, args.slug, by=ACTOR))
+            out(dispatch.request_task_operation(p, args.slug, "stop", args.reason, actor=ACTOR))
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
             if not declared:
@@ -293,6 +310,8 @@ def main(argv=None) -> None:
         elif tc == "hold-merge":
             if not args.off and not args.why:
                 sys.exit("alt task hold-merge: --why <reason> (or --off)")
+            if args.off and ACTOR != "burak":
+                sys.exit("alt task hold-merge: only Burak may release a merge hold")
             out(T.set_hold_merge(p, args.slug, None if args.off else args.why, actor=ACTOR))
         elif tc == "done":
             if ACTOR == "l2" and not os.environ.get("ALTITUDE_ATTEMPT"):

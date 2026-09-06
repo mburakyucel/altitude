@@ -26,7 +26,8 @@ request can be answered directly or needs an L2. It does not run a mandatory pla
 cannot launch subagents directly. Its routine inspection goes through compact `alt` verbs for task
 reports, recent messages and events, queue waits, repository/service state, PRs, and its own recent
 shell commands. L3 turns persist bounded shell command text with their tool evidence, so repeated
-ad-hoc commands are visible and can become stable verbs. When code changes are needed, one L2 owns them.
+ad-hoc commands are visible and can become stable verbs. Its process is read-only on the deployment
+checkout on either engine; source changes always belong to one L2 worktree and PR.
 
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
@@ -36,6 +37,11 @@ task also persists a due `resume_after` request. An L3 CLI process stops there: 
 request with timer and lease-release wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
+Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI after persisting one
+`daemon-request` event with the task, actor, operation, and required reason. Altd checks the recorded
+state and worker/session identity, refuses a stale target, and treats a retry of the same completed
+request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
+identity-fenced request before altd relaunches, stops, or removes a worker.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 and land only its own task.
 
@@ -95,8 +101,16 @@ project lock. Claude Code runs as a background job with Altitude's hooks for inb
 telemetry. Codex keeps its native workspace-write sandbox as containment and uses the same door;
 Altitude reads its thread and usage from the worker's stdout JSONL. A turn that ends without a
 report, a block, or a completion blocks the task as ended without a report, on either engine. A
-Codex L3 turn is contained the same way from a disposable runtime directory under the project's
-Altitude folder.
+Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
+deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
+and only that project's role-fenced altd Unix socket is reachable. A Claude L3 turn uses an equivalent runtime cwd,
+`dontAsk` with unattended prompts denied, restricted settings, only Read/Grep/Glob/Bash, no editing
+tools, and exact read/`alt` command rules. Runtime shims send every `alt` invocation plus authenticated GitHub
+and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
+re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no write-shaped
+GitHub or service operation. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
+is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
+the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
 
 ## Faults
 

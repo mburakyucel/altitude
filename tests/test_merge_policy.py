@@ -17,7 +17,9 @@ class TestMergePolicy(AltitudeCase):
         T.new(self.project, "merge-hold", "req", hold_merge="rewrites the deploy workflow")
         b = dispatch.build_brief(self.project, "merge-hold")
         self.assertIn("Held for Burak", b); self.assertIn("rewrites the deploy workflow", b)
-        T.set_hold_merge(self.project, "merge-hold", None, actor="l3")
+        with self.assertRaisesRegex(T.TransitionError, "only Burak"):
+            T.set_hold_merge(self.project, "merge-hold", None, actor="l3")
+        T.set_hold_merge(self.project, "merge-hold", None, actor="burak")
         self.assertIsNone(S.load_task(self.project, "merge-hold")["hold_merge"])
         self.assertNotIn("Held for Burak", dispatch.build_brief(self.project, "merge-hold"))
         T.set_hold_merge(self.project, "merge-hold", "  spends money  ", actor="l3")

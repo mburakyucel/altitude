@@ -1,6 +1,13 @@
 """The L3 coordinator: one serialized turn, with a resumable session per provider."""
 from __future__ import annotations
+import hashlib
 import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import threading
 import uuid
 from collections import Counter
@@ -16,8 +23,188 @@ _lifecycle_guards: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _turn_local = threading.local()
 
-ALLOWED_TOOLS = ("Read,Grep,Glob,Bash(alt *),Bash(git log*),Bash(git diff --stat*),Bash(gh pr view*),"
-                 "Bash(gh pr list*),Bash(gh issue *),Bash(gh run *)")
+L3_CONFINEMENT_VERSION = 1
+L3_TOOLS = "Read,Grep,Glob,Bash"
+ALLOWED_TOOLS = ",".join((
+    "Read", "Grep", "Glob",
+    "Bash(alt state *)", "Bash(alt task new *)", "Bash(alt task reject *)",
+    "Bash(alt task report *)", "Bash(alt task messages *)", "Bash(alt task events *)",
+    "Bash(alt task status *)", "Bash(alt task show *)", "Bash(alt task list *)", "Bash(alt task message *)",
+    "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)",
+    "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
+    "Bash(alt fyi *)", "Bash(alt decisions *)", "Bash(alt monitor *)", "Bash(alt queue *)",
+    "Bash(alt repo *)", "Bash(alt pr *)", "Bash(alt l3 tools *)",
+    "Bash(alt incident new *)", "Bash(alt incident amend *)", "Bash(alt incident list *)",
+    "Bash(git log *)", "Bash(git diff --stat *)", "Bash(git show --stat *)",
+    "Bash(gh pr view *)", "Bash(gh pr list *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)",
+    "Bash(gh issue list *)", "Bash(gh issue view *)", "Bash(gh run list *)", "Bash(gh run view *)",
+    "Bash(gh run watch *)",
+    "Bash(journalctl --user -u altitude*)", "Bash(systemctl --user status altitude*)",
+))
+
+
+def _write_executable(path: Path, text: str) -> None:
+    if not path.exists() or path.read_text() != text:
+        S.atomic_write(path, text)
+    path.chmod(0o700)
+
+
+def verb_socket_path(project: str) -> Path:
+    """One capability socket per project; the pathname, not model-supplied JSON, binds its authority."""
+    name = hashlib.sha256(project.encode()).hexdigest()[:20]
+    return config.ROOT / "l3-verbs" / f"{name}.sock"
+
+
+def _remove_runtime(runtime: Path) -> None:
+    """Remove only the daemon-created per-turn directory, never a path an old turn can retarget."""
+    try:
+        if runtime.is_symlink():
+            runtime.unlink()
+        else:
+            shutil.rmtree(runtime)
+    except FileNotFoundError:
+        pass
+
+
+def _l3_runtime(project: str, engine: str) -> Path:
+    """A disposable cwd with narrow read shims; the deployment checkout is never a working directory.
+
+    Claude's deny-by-default permission rules approve only these command names. The shims keep variable Git and
+    journal arguments read-only while still resolving them against the project named in the turn header. Codex has
+    the same cwd and shims in addition to its native filesystem sandbox.
+    """
+    parent = config.project_dir(project)
+    parent.mkdir(parents=True, exist_ok=True)
+    # I-20260903-075410: a fresh unpredictable directory is created by altd after the previous turn exits.
+    # Reusing a model-writable pathname would let one turn replace it with a checkout symlink for the next.
+    runtime = Path(tempfile.mkdtemp(prefix=f"l3-{engine}-", dir=parent))
+    bindir = runtime / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    repo = config.project_path(project).resolve()
+    real_git = shutil.which("git") or "/usr/bin/git"
+    real_journalctl = shutil.which("journalctl") or "/usr/bin/journalctl"
+    python = sys.executable
+    _write_executable(bindir / "git", f'''#!{python}
+import os, sys
+args = sys.argv[1:]
+allowed = bool(args) and args[0] in ("log", "diff", "show")
+if args and args[0] in ("diff", "show"):
+    allowed = allowed and any(arg == "--stat" or arg.startswith("--stat=") for arg in args[1:])
+blocked = any(arg == "-o" or arg.startswith(("--output", "--ext-diff", "--textconv")) for arg in args[1:])
+if not allowed or blocked:
+    print("git: L3 checkout access is read-only; use log, diff --stat, or show --stat", file=sys.stderr)
+    raise SystemExit(77)
+os.execv({json.dumps(real_git)}, [{json.dumps(real_git)}, "--no-pager", "-c", "diff.external=", "-C",
+         {json.dumps(str(repo))}, *args])
+''')
+    _write_executable(bindir / "journalctl", f'''#!{python}
+import os, re, sys
+args = sys.argv[1:]
+unit = args[2] if len(args) >= 3 and args[:2] == ["--user", "-u"] else ""
+rest = args[3:]
+safe = {{"--no-pager", "-r", "--reverse", "-f", "--follow"}}
+pairs = {{"-n", "--lines", "--since", "--until", "-o", "--output"}}
+i = 0
+while i < len(rest):
+    if rest[i] in safe:
+        i += 1
+    elif rest[i] in pairs and i + 1 < len(rest):
+        i += 2
+    else:
+        print("journalctl: L3 may only read the altitude user journal", file=sys.stderr)
+        raise SystemExit(77)
+if not re.fullmatch(r"altitude(?:[-@.][A-Za-z0-9_.@-]+)*", unit):
+    print("journalctl: L3 may only read the altitude user journal", file=sys.stderr)
+    raise SystemExit(77)
+os.execv({json.dumps(real_journalctl)}, [{json.dumps(real_journalctl)}, *args])
+''')
+    broker = verb_socket_path(project).resolve()
+    _write_executable(bindir / "alt", f'''#!{python}
+import json, socket, sys
+request = {{"kind": "alt", "args": sys.argv[1:],
+           "stdin": sys.stdin.read(2 << 20)}}
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(130)
+        client.connect({json.dumps(str(broker))})
+        client.sendall((json.dumps(request) + "\\n").encode())
+        client.shutdown(socket.SHUT_WR)
+        data = bytearray()
+        while chunk := client.recv(65536):
+            data.extend(chunk)
+    response = json.loads(data)
+except Exception as exc:
+    print(f"alt: altd verb broker unavailable: {{exc}}", file=sys.stderr)
+    raise SystemExit(1)
+if response.get("error"):
+    print("alt: " + str(response["error"]), file=sys.stderr)
+    raise SystemExit(1)
+sys.stdout.write(str(response.get("stdout") or ""))
+sys.stderr.write(str(response.get("stderr") or ""))
+raise SystemExit(int(response.get("returncode") or 0))
+''')
+    _write_executable(bindir / "gh", f'''#!{python}
+import json, socket, sys
+request = {{"kind": "gh", "args": sys.argv[1:]}}
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(130)
+        client.connect({json.dumps(str(broker))})
+        client.sendall((json.dumps(request) + "\\n").encode())
+        client.shutdown(socket.SHUT_WR)
+        data = bytearray()
+        while chunk := client.recv(65536):
+            data.extend(chunk)
+    response = json.loads(data)
+except Exception as exc:
+    print(f"gh: altd verb broker unavailable: {{exc}}", file=sys.stderr)
+    raise SystemExit(1)
+if response.get("error"):
+    print("gh: " + str(response["error"]), file=sys.stderr)
+    raise SystemExit(1)
+sys.stdout.write(str(response.get("stdout") or ""))
+sys.stderr.write(str(response.get("stderr") or ""))
+raise SystemExit(int(response.get("returncode") or 0))
+''')
+    _write_executable(bindir / "systemctl", f'''#!{python}
+import json, re, socket, sys
+args = sys.argv[1:]
+rest = [arg for arg in args[3:] if arg != "--no-pager"]
+unit = args[2] if len(args) >= 3 else ""
+if args[:2] != ["--user", "status"] or rest or not re.fullmatch(r"altitude(?:[-@.][A-Za-z0-9_.@-]+)*", unit):
+    print("systemctl: L3 may only read altitude user-service status", file=sys.stderr)
+    raise SystemExit(77)
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(20)
+        client.connect({json.dumps(str(broker))})
+        request = {{"kind": "service", "unit": unit}}
+        client.sendall((json.dumps(request) + "\\n").encode())
+        client.shutdown(socket.SHUT_WR)
+        data = bytearray()
+        while chunk := client.recv(65536):
+            data.extend(chunk)
+    record = json.loads(data)
+except Exception as exc:
+    print(f"systemctl: altd verb broker unavailable: {{exc}}", file=sys.stderr)
+    raise SystemExit(1)
+if record.get("error"):
+    print("systemctl: " + str(record["error"]), file=sys.stderr)
+    raise SystemExit(1)
+print(f"{{unit}}: {{record.get('state') or '?'}}/{{record.get('substate') or '?'}} PID {{record.get('pid') or '-'}}")
+''')
+    return runtime
+
+
+def _l3_env(project: str, runtime: Path) -> dict[str, str]:
+    env = {"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT),
+           "PATH": str(runtime / "bin") + os.pathsep + engines.clean_env()["PATH"]}
+    remote = subprocess.run([shutil.which("git") or "git", "remote", "get-url", "origin"],
+                            cwd=str(config.project_path(project)), capture_output=True, text=True, timeout=15)
+    match = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?$", remote.stdout.strip()) if not remote.returncode else None
+    if match:
+        env["GH_REPO"] = match.group(1)
+    return env
 
 
 def lock(project: str) -> threading.Lock:
@@ -323,10 +510,14 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         session = sessions.setdefault(engine, {})
         sid = session.get("session_id")
         over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
-        fresh = not sid or session.get("rotate_next", False) or over
+        confinement_changed = (engine == "claude" and bool(sid)
+                               and session.get("confinement_version") != L3_CONFINEMENT_VERSION)
+        fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
         if fresh and sid:
+            rotate_reason = "L3 confinement policy changed" if confinement_changed else (
+                session.get("rotate_reason") or "context threshold")
             S.project_log(project, "l3-rotate", engine=engine, old=sid,
-                          reason=session.get("rotate_reason") or "context threshold")
+                          reason=rotate_reason)
             session.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
                             "context_percent": 0, "rotated_from": sid, "rotated_at": S.now()})
             inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
@@ -342,12 +533,17 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                               handoff, model=model, on_start=on_start)
         else:
             text = _header(project, trigger, fresh) + handoff + prompt
-            res = engines.claude_print(
-                text, cwd=config.project_path(project), resume=None if fresh else sid,
-                persona=config.PERSONAS / "l3.md", allowed_tools=ALLOWED_TOOLS, permission_mode="auto",
-                model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text, on_start=on_start,
-                extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project,
-                           "ALTITUDE_HOME": str(config.ROOT)})
+            runtime = _l3_runtime(project, "claude")
+            try:
+                res = engines.claude_print(
+                    text, cwd=runtime, resume=None if fresh else sid,
+                    persona=config.PERSONAS / "l3.md", allowed_tools=ALLOWED_TOOLS, tools=L3_TOOLS,
+                    permission_mode="dontAsk", permission_prompts="none", restricted=True,
+                    add_dirs=(config.project_path(project), config.ROOT),
+                    model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text, on_start=on_start,
+                    extra_env=_l3_env(project, runtime))
+            finally:
+                _remove_runtime(runtime)
             res.update({"skipped": False, "_turn_started_at": turn_started_at, "engine": "claude",
                         "routing": choice})
             # A provider-limit result can follow tool side effects. Never replay such a turn automatically elsewhere.
@@ -368,6 +564,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             pct = engines.context_percent(res.get("context_tokens", 0), "claude")
             _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
                           res.get("cost", 0.0), res.get("usage") or {}, choice)
+            session["confinement_version"] = L3_CONFINEMENT_VERSION
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
@@ -394,21 +591,25 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None) -> dict:
-    """One Codex L3 turn from a disposable runtime directory: the same persona and `alt` door as Claude, inside
-    Codex's own sandbox (writes only there and to the Altitude home; the checkout is readable)."""
+    """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
+    inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     proj = config.project(project)
     sid = None if fresh else session.get("session_id")
     body = _header(project, trigger, fresh) + handoff + prompt
     if fresh:
         body = ((config.PERSONAS / "l3.md").read_text() + "\n\n"
                 + f"[altitude] Engine: Codex — {choice['why']}.\n\n" + body)
-    runtime = config.project_dir(project) / "l3-codex-runtime"
-    runtime.mkdir(parents=True, exist_ok=True)
+    runtime = _l3_runtime(project, "codex")
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
-    result = engines.codex_exec(
-        body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
-        effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
-        extra_env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+    try:
+        result = engines.codex_exec(
+            body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
+            effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
+            extra_env=_l3_env(project, runtime),
+            sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
+            ignore_user_config=True)
+    finally:
+        _remove_runtime(runtime)
     reported_sid = result.get("reported_session_id") or result.get("session_id")
     identity_error = None
     if not reported_sid:
