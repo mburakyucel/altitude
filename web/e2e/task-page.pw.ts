@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { TaskMessageSchema } from "../src/data/api";
 import { liveProject } from "./live-data";
 import { walkthrough } from "./walkthrough";
 
@@ -248,7 +249,7 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
 
   await walk.open(taskPath(project.name, done!.slug));
   await walk.state("01-done", {
-    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), ...(pr ? [v.main.getByText(`PR #${pr} merged`, { exact: false })] : [])],
+    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), ...(pr ? [v.main.locator(".task-chips, .task-state-line").getByText(`PR #${pr} merged`, { exact: false })] : [])],
     hidden: [v.composer, v.stop, v.reject],
   });
   await walk.state("02-done-session-ended", {
@@ -267,10 +268,26 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
     hold_merge: "review before merge",
     report_json: { landed: { prs: [{ number, merged: false }], main_runs: [{ conclusion: "failure" }] } },
   });
+  const repository = "https://github.com/example/project";
+  let projectRepository: string | null = repository;
+  await page.route((url) => url.pathname === `/api/project/${encodeURIComponent(project.name)}`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), repository: projectRepository } });
+  });
   await walk.open(taskPath(project.name, done!.slug));
+  const prLink = v.main.getByRole("link", { name: `PR #${number} open · main checks failed` });
   await walk.state("03-pr-open-checks-failed-and-held", {
-    visible: [v.main.getByText(`PR #${number} open · main checks failed`), v.main.getByText("Merge held · review before merge")],
+    visible: [prLink, v.main.getByText("Merge held · review before merge")],
     hidden: [],
+  });
+  await expect(prLink).toHaveAttribute("href", `${repository}/pull/${number}`);
+  await expect(prLink).toHaveAttribute("target", "_blank");
+  await expect(prLink).toHaveAttribute("rel", "noopener noreferrer");
+  projectRepository = null;
+  await walk.open(taskPath(project.name, done!.slug));
+  await walk.state("03b-pr-without-repository", {
+    visible: [v.main.getByText(`PR #${number} open · main checks failed`, { exact: false })],
+    hidden: [prLink],
   });
 
   await clearRoutes(page);
@@ -296,7 +313,8 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
   await page.route((url) => url.pathname === "/api/l2/message", async (route) => {
     if (refuse) return route.fulfill({ status: 409, json: { error: "no active session" } });
     const body = route.request().postDataJSON() as { text: string };
-    const message = { id: `ui-${sent.length + 1}`, at: new Date().toISOString(), role: "l2", text: body.text };
+    const role = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3");
+    const message = { id: `ui-${sent.length + 1}`, at: new Date().toISOString(), role, text: body.text };
     sent.push(message);
     return route.fulfill({ json: { ok: true, message } });
   });

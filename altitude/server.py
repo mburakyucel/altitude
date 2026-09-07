@@ -1342,8 +1342,17 @@ def home_relative(path: Path) -> str:
         return str(path)
 
 
+def repository_url(origin: str) -> str | None:
+    """The GitHub web URL for an HTTPS or SSH origin, otherwise None."""
+    match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+                         r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", origin.strip(), re.I)
+    return f"https://github.com/{match[1]}/{match[2]}" if match else None
+
+
 def project_view(name: str) -> dict:
     proj = config.project(name)
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
+                            capture_output=True, text=True, timeout=10)
     live = {s["slug"]: s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("project") == name}
     tasks = []
     for t in S.list_tasks(name):
@@ -1353,7 +1362,7 @@ def project_view(name: str) -> dict:
     order = {"blocked": 0, "running": 1, "reported": 2, "queued": 3}
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
-            "design_viewer": design_viewer_url(name),
+            "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
             "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),

@@ -3,6 +3,7 @@ First run scans, the operator's configured name, and the fault count behind the 
 one endpoint the project header uses to start an L3 that never ran (SPEC.md §3.1, §3.2, §3.12)."""
 import http.client
 import json
+import subprocess
 import threading
 import time
 import unittest
@@ -11,6 +12,30 @@ from pathlib import Path
 from tests.support import AltitudeCase
 from tests.test_monitor_view import write_snapshot
 from altitude import config, route, server, state as S, tasks as T
+
+
+class TestRepository(AltitudeCase):
+    def test_origin_to_web_url(self):
+        for origin in ("https://github.com/example/project", "https://github.com/example/project.git",
+                       "git@github.com:example/project.git", "ssh://git@github.com/example/project.git",
+                       "https://github.com/example/project.git/\n"):
+            with self.subTest(origin=origin):
+                self.assertEqual(server.repository_url(origin), "https://github.com/example/project")
+        for origin in ("", "/local/repo", "git@gitlab.com:example/project.git",
+                       "https://github.com.example.org/example/project", "https://github.com/example/project/pull/1"):
+            with self.subTest(origin=origin):
+                self.assertIsNone(server.repository_url(origin))
+
+    def test_project_view_reads_its_checkout_origin(self):
+        def git(*args):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+
+        git("init")
+        self.assertIsNone(server.project_view(self.project)["repository"])
+        git("remote", "add", "origin", "git@github.com:example/project.git")
+        self.assertEqual(server.project_view(self.project)["repository"], "https://github.com/example/project")
+        git("remote", "set-url", "origin", "https://gitlab.com/example/project.git")
+        self.assertIsNone(server.project_view(self.project)["repository"])
 
 
 class TestOverview(AltitudeCase):

@@ -242,6 +242,7 @@ export const ProjectViewSchema = z
     state_md: z.string().nullish(),
     /** The wireframe viewer's URL when the checkout has boards; absent otherwise. */
     design_viewer: z.string().nullish(),
+    repository: z.string().nullish(),
   })
   .passthrough();
 

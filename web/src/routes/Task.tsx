@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { Link, NavLink, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { sendL2Message, taskAction, useOverview, useTask } from "../data/api";
+import { sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { agoText, when } from "../data/observed";
 import VoiceComposer from "../components/VoiceComposer";
@@ -39,6 +39,7 @@ type Tone = "ok" | "held" | "danger" | undefined;
 interface Chip {
   text: string;
   tone?: Tone;
+  href?: string;
 }
 
 interface Facts {
@@ -68,7 +69,7 @@ function oneSentence(text: string): string {
   return /[.!?]$/.test(first) ? first : `${first}.`;
 }
 
-export function taskFacts(task: TaskView, overview: Overview | undefined, project: string): Facts {
+export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
   const faultKind = str(task["fault"]);
@@ -94,6 +95,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       ? {
           text: [`PR #${number} ${merged ? "merged" : "open"}`, checks].filter(Boolean).join(" · "),
           tone: conclusion === "failure" ? "danger" : merged ? "ok" : undefined,
+          href: repository ? `${repository}/pull/${number}` : undefined,
         }
       : null;
   const hold = str(task["hold_merge"]);
@@ -423,7 +425,7 @@ function Chips({ chips }: { chips: Chip[] }) {
     <div className="task-chips">
       {chips.map((chip) => (
         <span key={chip.text} className="chip" data-tone={chip.tone}>
-          {chip.text}
+          <ChipText chip={chip} />
         </span>
       ))}
     </div>
@@ -448,6 +450,10 @@ function BlockLines({ facts }: { facts: Facts }) {
   return null;
 }
 
+function ChipText({ chip }: { chip: Chip }) {
+  return chip.href ? <a href={chip.href} target="_blank" rel="noopener noreferrer">{chip.text}</a> : chip.text;
+}
+
 function PanelIcon() {
   return (
     <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
@@ -469,7 +475,8 @@ function TaskPage({
   liveRoute: boolean;
 }) {
   const { phone, panelInline } = useViewport();
-  const facts = taskFacts(task, overview, project);
+  const projectQuery = useProject(project);
+  const facts = taskFacts(task, overview, project, projectQuery.data?.repository);
   const decision = overview?.queue.find((d) => d.project === project && d.slug === task.slug);
   // A block on the operator shows its card; the reason line stands in until the row has loaded.
   const blockFacts =
@@ -498,7 +505,7 @@ function TaskPage({
             {facts.chips.map((chip, index) => (
               <span key={chip.text} data-tone={chip.tone}>
                 {index > 0 ? " · " : ""}
-                {chip.text}
+                <ChipText chip={chip} />
               </span>
             ))}
           </p>
