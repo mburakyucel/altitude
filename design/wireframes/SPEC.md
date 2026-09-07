@@ -274,6 +274,25 @@ and a link to the archive); error.
 
 ### 3.10 Task page
 
+The existing task header includes a compact **Observed tokens** disclosure on phone and desktop,
+also present in the report view. The folded row shows the cumulative observed total (unknown when
+unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
+session rows, or say **Provider total · helpers unsplit**, with inclusive input/output and available
+cache-read, cache-write and reasoning subsets. Cache/reasoning fields are parts of input/output,
+never additional totals. Attempts survive resume and engine handoff; project L3 work is excluded.
+The display is separate from the context line and quota readouts and makes no cost claim.
+
+Data: `GET /api/task/<project>/<slug>` `token_usage`, retained on the archived task. Reads use the
+daemon's saved observation; opening or polling the disclosure never starts collection or a model.
+States: task loading uses the page skeleton; absent readings say **Token usage unknown**; live
+counter updates keep the disclosure open; partial readings keep known counts and explain gaps;
+checked time older than one minute says stale while live; provider counter time is shown separately;
+collector errors retain prior numbers with unavailable/partial coverage; finalization shows retained
+counts and its timestamp. Expand reveals rows and limitations; collapse removes them. Task read
+failure keeps the existing error and Retry behavior. The disclosure is read-only, so listening and
+permission prompts do not apply; unreadable local logs use the unavailable state. Expanded details
+scroll within the header on phone. `web/e2e/task-usage.pw.ts` walks these states at both viewports.
+
 Desktop anatomy: header rows (crumb and actions; title with state dot; a muted line; state chips:
 state, engine and model, PR with checks state, hold reason); left the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by

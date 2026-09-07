@@ -953,9 +953,12 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
 
 def poll(project: str) -> list[dict]:
     """Return L2 turns that exited, using each task's persisted engine adapter."""
+    from . import usage
     task_rows = S.list_tasks(project)
     finished = []
     for t in task_rows:
+        if t["state"] in ("running", "blocked", "reported"):
+            t = usage.refresh(project, t["slug"])
         report = S.task_dir(project, t["slug"]) / "report.json"
         # I-20260907-165145: an earlier attempt/resume's report cannot account for a vanished worker.
         started = t.get("worker_started_at")

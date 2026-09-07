@@ -8,7 +8,7 @@ _TASK_FIELDS = (
     "state", "title", "attempt", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
     "engine_model", "engine_reasoning_effort", "routing", "waiting_on", "resume_after", "fault", "verified",
-    "spend", "paths", "created", "dispatched", "engine", "model",
+    "spend", "paths", "created", "dispatched", "engine", "model", "token_usage",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup,files"
 _RUN_FIELDS = "databaseId,headSha,conclusion,status,workflowName"
@@ -121,6 +121,7 @@ def task_report(project: str, slug: str) -> dict:
     verified = task.get("verified") if isinstance(task.get("verified"), dict) else {}
     return {"project": project, "slug": task.get("slug") or slug, "state": task.get("state"),
             "verdict": verified.get("verdict"), **sections,
+            "token_usage": task.get("token_usage"),
             "digest": digest, "report": report, "errors": errors}
 
 

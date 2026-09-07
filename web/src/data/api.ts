@@ -255,6 +255,39 @@ export const TaskMessageSchema = z
   })
   .passthrough();
 
+// Passive task consumption, separate from context occupancy, quota and agent-authored spend.
+// Cache counters are subsets of normalized input; reasoning is a subset of output.
+const tokenCounters = {
+  total_tokens: z.number().nullish(),
+  input_tokens: z.number().nullish(),
+  output_tokens: z.number().nullish(),
+  cache_read_tokens: z.number().nullish(),
+  cache_write_tokens: z.number().nullish(),
+  reasoning_tokens: z.number().nullish(),
+};
+
+export const TokenSessionSchema = z.object({
+  engine: z.string(),
+  session_id: z.string(),
+  parent_session_id: z.string().nullish(),
+  attempt: z.number().nullish(),
+  role: z.string(),
+  status: z.string().default("unknown"),
+  ...tokenCounters,
+  observed_at: z.string().nullish(),
+  notes: z.array(z.string()).default([]),
+}).passthrough();
+
+export const TokenUsageSchema = z.object({
+  status: z.string().default("unknown"),
+  ...tokenCounters,
+  checked_at: z.string().nullish(),
+  observed_at: z.string().nullish(),
+  finalized_at: z.string().nullish(),
+  notes: z.array(z.string()).default([]),
+  sessions: z.array(TokenSessionSchema).default([]),
+}).passthrough();
+
 export const TaskViewSchema = z
   .object({
     slug: z.string(),
@@ -265,6 +298,7 @@ export const TaskViewSchema = z
     messages: z.array(TaskMessageSchema).nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
     report_json: z.unknown().nullish(),
+    token_usage: TokenUsageSchema.nullish(),
     live: z.unknown().nullish(),
   })
   .passthrough();
@@ -379,6 +413,8 @@ export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
 export type ProjectView = z.infer<typeof ProjectViewSchema>;
 export type TaskMessage = z.infer<typeof TaskMessageSchema>;
+export type TokenSession = z.infer<typeof TokenSessionSchema>;
+export type TaskTokenUsage = z.infer<typeof TokenUsageSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;

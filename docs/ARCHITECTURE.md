@@ -273,6 +273,23 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+Task token accounting is passive. `usage.py` retains each recorded task owner identity before a
+resume or recovery replaces it, and asks `engines.py` for normalized local observations. The daemon
+collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
+`status.json.token_usage` snapshot and do no provider-log scanning. Engine adapters increment byte
+cursors over complete JSONL records and retain numeric response/message identities for deduplication
+in task-local `token-usage.json`. Discovery reads bounded provider metadata behind the engine seam.
+Neither telemetry nor helper discovery creates managed sessions, model calls, incidents, holds, or
+routing decisions. L3's project conversation is outside task accounting.
+
+Task transitions refresh available evidence for reports and completion; archive retains both the
+public snapshot and collector state before worktree cleanup. The worker-authored report's `spend`
+does not supply token accounting. Task API, status JSON, report inspection JSON, and the task/report
+views expose the same observation, including partial/unknown coverage and last checked, last counter,
+and finalization times. Lost logs and collection failures retain earlier evidence, mark gaps, and
+never prevent delivery. A final read drains only a bounded backlog; unread evidence stays partial.
+See [the engine counting semantics](SESSION_LIFECYCLE.md#task-token-accounting).
+
 The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make test`
 runs Python unit and integration tests with throwaway state; `pnpm --dir web test` runs the web
 unit suite. `make ui` runs the separate Playwright `web/e2e/*.pw.ts` suite against a running
