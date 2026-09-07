@@ -7,9 +7,8 @@ import { useStarting } from "./shell/starting";
 import FirstRun from "./routes/FirstRun";
 import NeedsYou from "./routes/NeedsYou";
 import ProjectPage from "./routes/Project";
-import Task, { TaskConversation } from "./routes/Task";
+import Task from "./routes/Task";
 import Monitor from "./routes/Monitor";
-import LiveSession from "./routes/LiveSession";
 
 /** /projects: the first managed project, or First run when nothing is managed or a start is under way
  * (SPEC.md §2.1, §3.12). */
@@ -54,14 +53,10 @@ export const routes: RouteObject[] = [
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
       // /projects/:name/decisions/:slug is reserved for the decision page (slice 3).
-      {
-        path: "/projects/:name/tasks/:slug",
-        element: <Task />,
-        children: [
-          { index: true, element: <TaskConversation /> },
-          { path: "live", element: <LiveSession /> },
-        ],
-      },
+      // One page for both: the desktop shows the conversation beside the live session, the phone
+      // tabs between them and `/live` selects the second tab (SPEC.md §2.1, §3.10).
+      { path: "/projects/:name/tasks/:slug", element: <Task /> },
+      { path: "/projects/:name/tasks/:slug/live", element: <Task /> },
       { path: "/chat", loader: () => redirect("/projects") },
       { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },
       { path: "/monitor", element: <Monitor /> },

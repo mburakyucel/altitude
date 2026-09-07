@@ -247,7 +247,9 @@ composer as §3.3 and §3.6, placeholder "Message the L2"); right the live sessi
 toggled by the header button) as a transcript: tinted prompt blocks, the worker's prose, one compact
 row per tool call with output folded, separators at task boundaries, subtle timestamps, **Raw
 events** behind a toggle. Actions **Stop** and **Reject** are quiet text buttons with an inline
-confirm ("Stop this task? Its worker ends; the branch stays."); no browser dialogs.
+confirm ("Stop this task? Its worker ends; the branch stays."); no browser dialogs. Below 1280px the
+live session panel follows the §2.2 rule for the work panel: an overlay from the header's panel
+button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop too.
 
 Phone (not drawn; this is the layout): header with back and the title; a state line; a two-tab row
 **Conversation | Live session** (the `live` route selects the second); content; the composer pinned

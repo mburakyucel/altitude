@@ -1,6 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/render";
+import { screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -12,12 +12,15 @@ function jsonResponse(obj: unknown, status = 200): Response {
 
 const overview = {
   projects: [{ name: "altitude", managed: true }],
-  queue: [],
+  queue: [] as unknown[],
   fyis: [],
-  wip: { per_project: {}, machine: 0, waiting: [] },
+  wip: { per_project: {}, machine: 0, waiting: [] as unknown[] },
   quota: { known: false },
+  engines: [{ engine: "claude", label: "Claude", known: true }],
   now: new Date().toISOString(),
 };
+
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const running = {
   slug: "fix-timer",
@@ -25,38 +28,68 @@ const running = {
   title: "Fix the timer",
   attempt: 1,
   session_id: "0123456789abcdef",
-  agent_id: "a-9",
-  worktree: ".claude/worktrees/fix-timer",
-  spend: { turns: 12, subagent_launches_reported: 2, edits_hook: 7, retries: 0 },
-  live: {
-    state: "running",
-    edits: 7,
-    context_percent: 34,
-    agent: { status: "working" },
-  },
-  files: { request: "REQUEST BODY", report: "REPORT BODY" },
-  events: [
-    { at: "2026-08-29T12:00:00", kind: "dispatched", detail: "worker up" },
-    { at: "2026-08-29T12:05:00", kind: "progress" },
-  ],
-  report_json: { ok: true },
+  l2_engine: "claude",
+  engine_model: "opus",
+  dispatched: ago(7),
+  updated: ago(1),
+  live: { state: "running", context_percent: 34 },
+  files: {},
+  events: [],
+  report_json: null,
   messages: [
     { id: "m-1", at: "2026-08-29T12:01:00Z", role: "burak", text: "Keep the change focused." },
     { id: "m-2", at: "2026-08-29T12:02:00Z", role: "l2", text: "I will use one focused PR." },
+    { id: "m-3", at: "2026-08-30T09:00:00Z", role: "l3", text: "Answered from the brief." },
   ],
 };
 
-const queued = { ...running, state: "queued", live: null };
+const queued = { ...running, state: "queued", live: null, session_id: "", dispatched: null };
 
 const held = {
   ...running,
   state: "blocked",
   live: null,
-  blocked_reason: "usage limit: the subscription window is exhausted, resets 2026-08-30T02:00",
+  blocked_reason: "usage limit: the window resets at 02:00",
   resume_after: "2026-08-30T02:00",
 };
 
-const noSession = { ...queued, session_id: "" };
+const stuck = {
+  ...running,
+  state: "blocked",
+  live: null,
+  blocked_reason: "Should the timer keep the old default?",
+  resume_after: null,
+};
+
+const decision = {
+  project: "altitude",
+  slug: "fix-timer",
+  kind: "decision",
+  title: "Fix the timer",
+  question: "Should the timer keep the old default?",
+  asked: ago(3),
+  options: ["Keep it", "Change it"],
+};
+
+const askingL3 = { ...stuck, waiting_on: "l3", blocked_reason: "which suite covers the timer" };
+
+const faulted = {
+  ...stuck,
+  waiting_on: "l3",
+  fault: "sandbox",
+  blocked_reason: "The sandbox refused the network socket. Tried twice with the bundled browser.",
+};
+
+const done = {
+  ...running,
+  state: "done",
+  live: null,
+  prs: [202],
+  report_json: { landed: { prs: [{ number: 202, merged: true }], main_runs: [{ conclusion: "success" }] } },
+  messages: [],
+};
+
+const rejected = { ...done, state: "rejected", prs: [], report_json: null };
 
 const transcript = {
   project: "altitude",
@@ -65,29 +98,40 @@ const transcript = {
   session_id: "0123456789abcdef",
   cursor: 2,
   events: [
-    { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "state" },
+    { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "queued → running" },
     { seq: 1, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
   ],
   redaction: "credential-shaped keys and values are redacted",
 };
 
-const stuck = {
-  ...running,
-  state: "blocked",
-  live: null,
-  blocked_reason: "the test suite will not run",
-  resume_after: null,
-};
+interface StubOptions {
+  overview?: typeof overview;
+  message?: () => Response;
+  action?: () => Response;
+  task?: () => Response;
+}
 
-function stub(task: unknown) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+function stub(task: unknown, options: StubOptions = {}) {
+  // The server keeps an accepted message on the task: the refetch after a send returns it.
+  const sent: unknown[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/overview")) return jsonResponse(overview);
+    if (url.includes("/api/overview")) return jsonResponse(options.overview ?? overview);
     if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken detail" });
-    if (url.includes("/api/task/action")) return jsonResponse({ ok: true, state: "queued" });
+    if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
-    if (url.includes("/api/task/")) return jsonResponse(task);
-    if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
+    if (url.includes("/api/task/")) {
+      if (options.task) return options.task();
+      const record = task as { messages?: unknown[] };
+      return jsonResponse({ ...record, messages: [...(record.messages ?? []), ...sent] });
+    }
+    if (url.includes("/api/l2/message")) {
+      if (options.message) return options.message();
+      const body = JSON.parse(String(init?.body)) as { text: string };
+      const message = { id: `m-${sent.length + 9}`, at: new Date().toISOString(), role: running.messages[0]?.role, text: body.text };
+      sent.push(message);
+      return jsonResponse({ ok: true, message });
+    }
     if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
     return jsonResponse({ error: "not found" }, 404);
   });
@@ -95,76 +139,106 @@ function stub(task: unknown) {
   return fetchMock;
 }
 
-const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-
-const observed = {
-  ...running,
-  engine_model: "opus",
-  live: { ...running.live, context_state: "ok", at: ago(2) },
-};
-
-const stale = { ...observed, live: { ...observed.live, at: ago(20) } };
+const actionCall = (fetchMock: ReturnType<typeof stub>) =>
+  fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
 
 const route = "/projects/altitude/tasks/fix-timer";
 
-describe("Task", () => {
-  it("renders the task detail and live state", async () => {
-    stub(running);
+afterEach(() => setViewport(1024));
+
+describe("Task on desktop", () => {
+  it("shows the header rows, the conversation, and the live session panel for a running task", async () => {
+    setViewport(1440);
+    const fetchMock = stub(running);
     renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getByText(/subagents 2/)).toBeInTheDocument();
-    expect(screen.getByText(/attempt 1/)).toBeInTheDocument();
-    expect(screen.getByText(/session 01234567 /)).toBeInTheDocument();
-    expect(screen.getByText(/attach: claude attach a-9/)).toBeInTheDocument();
-    expect(screen.getByText("REQUEST BODY")).toBeInTheDocument();
-    expect(screen.getByText("REPORT BODY")).toBeInTheDocument();
-    expect(screen.getByText("Events (2)")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
-    expect(screen.getByText("Keep the change focused.")).toBeInTheDocument();
-    expect(screen.getByText("I will use one focused PR.")).toBeInTheDocument();
-    expect(document.querySelector('[data-role="burak"]')).toHaveTextContent("You");
-    expect(document.querySelector('[data-role="l2"]')).toHaveTextContent("L2");
-    expect(screen.getByText(/dispatched \{"detail":"worker up"\}/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "‹ altitude" })).toHaveAttribute(
-      "href",
-      "/projects/altitude",
+    expect(screen.getByLabelText("Loading")).toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByRole("link", { name: "‹ altitude" })).toHaveAttribute("href", "/projects/altitude");
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
+    expect(screen.getByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeInTheDocument();
+
+    const convo = screen.getByRole("region", { name: "Task conversation" });
+    const mine = convo.querySelector("[data-mine]");
+    expect(mine).toHaveTextContent("Keep the change focused.");
+    expect(mine?.querySelector(".bubble")).toBeInTheDocument();
+    const reply = convo.querySelector('[data-role="l2"]');
+    expect(reply).toHaveTextContent("I will use one focused PR.");
+    expect(reply?.querySelector(".bubble")).toBeNull();
+    expect(convo.querySelector('[data-role="l3"]')).toHaveTextContent("L3Answered from the brief.");
+    const days = within(convo).getAllByRole("separator").map((n) => n.textContent);
+    expect(days).toHaveLength(2);
+    expect(days[0]).toMatch(/Aug 29$/);
+    expect(days[1]).toMatch(/Aug 30$/);
+    expect(screen.getByLabelText("Message the L2")).toHaveAttribute("placeholder", "Message the L2");
+    expect(screen.getByText("Reaches the L2 at its next checkpoint.")).toBeInTheDocument();
+
+    const panel = screen.getByRole("region", { name: "Live session" });
+    expect(await within(panel).findByText("Reading the timer code")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(panel).getByText("Following live · new steps appear at the bottom")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "true");
+    expect(String(fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"))?.[0])).toContain(
+      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
     );
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 
-  it("dispatches a queued task", async () => {
+  it("opens the live session as an overlay below the inline width and closes it again", async () => {
+    stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.queryByRole("region", { name: "Live session" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Live session" }));
+    const dialog = screen.getByRole("dialog", { name: "Live session" });
+    expect(await within(dialog).findByText("Reading the timer code")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Live session" })).toBeNull();
+  });
+
+  it("opens the panel when the route ends in /live", async () => {
+    stub(running);
+    renderApp({ route: `${route}/live` });
+    expect(await screen.findByRole("dialog", { name: "Live session" })).toBeInTheDocument();
+  });
+
+  it("stops a task through an inline confirm, never a browser dialog", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const fetchMock = stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    const group = screen.getByRole("group", { name: "Stop this task?" });
+    expect(group).toHaveTextContent("Stop this task? Its worker ends; the branch stays.");
+    await user.click(within(group).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("group", { name: "Stop this task?" })).toBeNull();
+    expect(actionCall(fetchMock)).toBeUndefined();
+
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    await user.click(within(screen.getByRole("group", { name: "Stop this task?" })).getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "stop" });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Stop this task?" })).toBeNull());
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects with an optional reason", async () => {
     const fetchMock = stub(queued);
     const { user } = renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    await user.click(screen.getByRole("button", { name: "Dispatch" }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
-    expect(call?.[1]?.method).toBe("POST");
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "fix-timer",
-      action: "dispatch",
-    });
-  });
-
-  it("sends the typed reason with a reject", async () => {
-    const fetchMock = stub(queued);
-    const { user } = renderApp({ route });
-
-    await screen.findByText("Fix the timer");
-    await user.type(screen.getByLabelText("Reason"), "waiting on the API");
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reject" }));
-
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+    const group = screen.getByRole("group", { name: "Reject this task?" });
+    expect(group).toHaveTextContent("Reject this task? Its worker ends and the task is archived.");
+    await user.type(within(group).getByLabelText("Reason (optional)"), "waiting on the API");
+    await user.click(within(group).getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({
       project: "altitude",
       slug: "fix-timer",
       action: "reject",
@@ -172,143 +246,191 @@ describe("Task", () => {
     });
   });
 
-  it("refuses reject until a reason is typed", async () => {
-    const fetchMock = stub(queued);
+  it("keeps the confirm open with a Retry when the action fails", async () => {
+    stub(running, { action: () => jsonResponse({ error: "altd is restarting" }, 503) });
     const { user } = renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    const reject = screen.getByRole("button", { name: "Reject" });
-    expect(reject).toBeDisabled();
-    // a non-destructive action in the same row is unaffected
-    expect(screen.getByRole("button", { name: "Dispatch" })).toBeEnabled();
-
-    await user.click(reject);
-    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(false);
-
-    await user.type(screen.getByLabelText("Reason"), "   ");
-    expect(reject).toBeDisabled();
-
-    await user.type(screen.getByLabelText("Reason"), "waiting on the API");
-    expect(reject).toBeEnabled();
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    const group = screen.getByRole("group", { name: "Stop this task?" });
+    await user.click(within(group).getByRole("button", { name: "Stop" }));
+    expect(await within(group).findByRole("alert")).toHaveTextContent("Could not stop the task. Retry");
   });
 
-  // Held by Altitude (blocked + resume_after) is queued, not stuck on you: the sentence says who
-  // resumes it, and the line drops the danger colour a real block keeps.
-  it("reads a held task as queued rather than blocked", async () => {
-    stub(held);
+  it("says what a queued task waits for where the session would be", async () => {
+    const fetchMock = stub(queued, {
+      overview: { ...overview, wip: { ...overview.wip, waiting: [{ project: "altitude", slug: "fix-timer", why: "dispatch" }] } },
+    });
+    setViewport(1440);
     renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    const line = screen.getByText(
-      /^Queued: Altitude resumes this L2 itself when the operational hold clears \(usage limit: /,
-    );
-    expect(line).toHaveClass("text-ink-2");
-    expect(line).not.toHaveClass("text-danger");
-    expect(screen.queryByText(/^Blocked: /)).toBeNull();
-  });
-
-  it("keeps the danger line for a blocked task with no resume", async () => {
-    stub(stuck);
-    renderApp({ route });
-
-    await screen.findByText("Fix the timer");
-    const line = screen.getByText("Blocked: the test suite will not run");
-    expect(line).toHaveClass("text-danger");
-    expect(document.body.textContent).not.toContain("operational hold");
-  });
-
-  it("opens the live session as the task's second tab", async () => {
-    const fetchMock = stub(running);
-    const { user } = renderApp({ route });
-
-    await screen.findByText("Fix the timer");
-    await user.click(screen.getByRole("link", { name: "Live session" }));
-
-    expect(await screen.findByText("Reading the timer code")).toBeInTheDocument();
-    expect(screen.getByText("Fix the timer")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"));
-    expect(String(call?.[0])).toContain(
-      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
-    );
-  });
-
-  it("says so when the task has no session yet", async () => {
-    const fetchMock = stub(noSession);
-    renderApp({ route: `${route}/live` });
-
-    expect(await screen.findByText(/No session yet/)).toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    const panel = screen.getByRole("region", { name: "Live session" });
+    expect(await within(panel).findByText("Waits for dispatch")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Raw events" })).toBeNull();
+    expect(screen.queryByLabelText("Message the L2")).toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
   });
 
-  it("separates the task's own state from its worker's, in product names", async () => {
-    stub(observed);
+  it("reads a held task as queued, waiting for resume", async () => {
+    setViewport(1440);
+    stub(held);
     renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    expect(screen.getByText("Task")).toBeInTheDocument();
-    expect(screen.getByText("Worker")).toBeInTheDocument();
-    expect(screen.getByText(/fix-timer · attempt 1 · worktree/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Claude · Opus 5 · session 01234567 · context 34% \(ok\) as of 2m ago/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("stale")).not.toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Blocked")).toBeNull();
+    const panel = screen.getByRole("region", { name: "Live session" });
+    expect(within(panel).getByText("Waits for resume · usage limit: the window resets at 02:00")).toBeInTheDocument();
+    expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
   });
 
-  it("labels a live worker's figures stale once its snapshot ages out", async () => {
-    stub(stale);
+  it("puts the decision card at the top of the conversation when the task waits on the operator", async () => {
+    stub(stuck, { overview: { ...overview, queue: [decision] } });
     renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    expect(screen.getByText(/context 34% \(ok\) as of 20m ago/)).toBeInTheDocument();
-    expect(screen.getByText("stale")).toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    const convo = screen.getByRole("region", { name: "Task conversation" });
+    const card = within(convo).getByRole("article", { name: "Fix the timer" });
+    expect(card).toHaveTextContent("Should the timer keep the old default?");
+    expect(convo.firstElementChild?.firstElementChild).toHaveClass("convo-col");
+    expect(convo.querySelector(".convo-col > :first-child")).toHaveClass("task-decision");
+    expect(document.querySelector(".task-line")).toBeNull();
+    expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
   });
 
-  it("messages the L2 while the task is running", async () => {
+  it("says a block waits for L3's answer", async () => {
+    stub(askingL3);
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    const line = document.querySelector(".task-line");
+    expect(line).toHaveAttribute("role", "status");
+    expect(line).toHaveTextContent("Waits for L3's answer · which suite covers the timer");
+    expect(line).not.toHaveClass("text-danger");
+  });
+
+  it("shows a fault as one red sentence and says L3 has been told", async () => {
+    stub(faulted);
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    const line = document.querySelector(".task-line");
+    expect(line).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+    expect(line).not.toHaveTextContent("Tried twice");
+    expect(line).toHaveClass("text-danger");
+  });
+
+  it("reads a done task read-only with its PR in the header", async () => {
+    setViewport(1440);
+    stub(done);
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText("PR #202 merged · main checks passed")).toHaveAttribute("data-tone", "ok");
+    expect(screen.getByText("attempt 1 · done 1 min ago")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(screen.getByText("No messages on this task.")).toBeInTheDocument();
+    const panel = screen.getByRole("region", { name: "Live session" });
+    expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
+  });
+
+  it("reads a rejected task the same way", async () => {
+    stub(rejected);
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByText("Rejected")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+  });
+
+  it("shows the bubble at once and keeps the stored row once the server accepts it", async () => {
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
 
-    await screen.findByText("Fix the timer");
-    expect(screen.queryByRole("button", { name: "Dispatch" })).toBeNull();
-
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     await user.type(screen.getByLabelText("Message the L2"), "prefer the smaller diff");
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
-    });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "fix-timer",
-      text: "prefer the smaller diff",
-    });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "prefer the smaller diff" });
+    const row = await screen.findByText("prefer the smaller diff");
+    await waitFor(() => expect(row.closest(".msg-row")).not.toHaveAttribute("data-pending"));
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("sends a reviewed voice transcript through the existing L2 message mutation", async () => {
+  it("returns the draft with Not sent. Retry when the server refuses the message", async () => {
+    let refuse = true;
+    const fetchMock = stub(running, {
+      message: () =>
+        refuse
+          ? jsonResponse({ error: "no active session" }, 409)
+          : jsonResponse({ ok: true, message: { id: "m-9", at: new Date().toISOString(), role: "l2", text: "" } }),
+    });
+    const { user } = renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.type(screen.getByLabelText("Message the L2"), "prefer the smaller diff");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Retry");
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("prefer the smaller diff");
+    expect(document.querySelector("[data-pending]")).toBeNull();
+
+    refuse = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/l2/message"))).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it("says when the attempt has no session file", async () => {
+    setViewport(1440);
+    const fetchMock = stub({ ...running, session_id: "" });
+    renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    const panel = screen.getByRole("region", { name: "Live session" });
+    expect(within(panel).getByText("No session file for this attempt")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
+  });
+
+  it("offers Retry when the task cannot be loaded", async () => {
+    let fail = true;
+    stub(running, { task: () => (fail ? jsonResponse({ error: "boom" }, 500) : jsonResponse(running)) });
+    const { user } = renderApp({ route });
+
+    expect(await screen.findByText(/Could not load the task/)).toBeInTheDocument();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Fix the timer" })).toBeInTheDocument();
+  });
+
+  it("sends a reviewed voice transcript through the same message path", async () => {
     installVoiceBrowser();
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
 
-    await screen.findByText("Fix the timer");
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     await user.type(screen.getByLabelText("Message the L2"), "Typed context.");
     await user.click(screen.getByRole("button", { name: "Start voice recording" }));
     await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
     await screen.findByRole("region", { name: "Voice transcript review" });
     await user.click(screen.getByRole("button", { name: "Send" }));
 
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
-    });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
     const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "fix-timer",
-      text: "Typed context. spoken detail",
-    });
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Typed context. spoken detail" });
   });
 
-  it("resets the message composer when navigating between cached task destinations", async () => {
+  it("resets the composer when navigating between cached tasks", async () => {
     installVoiceBrowser();
     const other = { ...running, slug: "other-task", title: "Other task", messages: [] };
     vi.stubGlobal(
@@ -324,11 +446,11 @@ describe("Task", () => {
     );
 
     const { router, user } = renderApp({ route });
-    await screen.findByText("Fix the timer");
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     await router.navigate("/projects/altitude/tasks/other-task");
-    await screen.findByRole("heading", { name: "Other task" });
+    await screen.findByRole("heading", { level: 1, name: "Other task" });
     await router.navigate(route);
-    await screen.findByRole("heading", { name: "Fix the timer" });
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
 
     await user.type(screen.getByLabelText("Message the L2"), "Fix-only draft");
     await user.click(screen.getByRole("button", { name: "Start voice recording" }));
@@ -336,8 +458,54 @@ describe("Task", () => {
     await screen.findByRole("region", { name: "Voice transcript review" });
 
     await router.navigate("/projects/altitude/tasks/other-task");
-    await screen.findByRole("heading", { name: "Other task" });
+    await screen.findByRole("heading", { level: 1, name: "Other task" });
     expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+  });
+});
+
+describe("Task on the phone", () => {
+  it("shows the state line, the two tabs, and the composer above the tab bar", async () => {
+    setViewport(390);
+    stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+    expect(document.querySelector(".task-state-line")).toHaveTextContent("Running · Opus on Claude");
+    const tabs = screen.getByRole("navigation", { name: "Task views" });
+    expect(within(tabs).getByRole("link", { name: "Conversation" })).toHaveAttribute("aria-current", "page");
+    expect(within(tabs).getByRole("link", { name: "Live session" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Live session" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+
+    await user.click(within(tabs).getByRole("link", { name: "Live session" }));
+    expect(within(tabs).getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
+    const panel = await screen.findByRole("region", { name: "Live session" });
+    expect(await within(panel).findByText("Reading the timer code")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("confirms Stop inline under the state line", async () => {
+    setViewport(390);
+    const fetchMock = stub(running);
+    const { user } = renderApp({ route });
+
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    const group = screen.getByRole("group", { name: "Stop this task?" });
+    await user.click(within(group).getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+  });
+
+  it("shows the fault line and the decision card on the phone too", async () => {
+    setViewport(390);
+    stub(faulted);
+    renderApp({ route });
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(document.querySelector(".task-line")).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
   });
 });

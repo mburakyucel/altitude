@@ -10,12 +10,15 @@ export const DESKTOP_MIN = 1024;
 export const PANEL_INLINE_MIN = 1280;
 export const RAIL_WIDTH = 260;
 export const PANEL_WIDTH = 340;
+/** The task page's live session panel (SPEC.md §3.10). */
+export const LIVE_PANEL_WIDTH = 480;
 export const PHONE_HEADER_HEIGHT = 54;
 export const TAB_BAR_HEIGHT = 84;
 
 export const LAYOUT_SIZES = {
   "--rail-w": `${RAIL_WIDTH}px`,
   "--panel-w": `${PANEL_WIDTH}px`,
+  "--live-w": `${LIVE_PANEL_WIDTH}px`,
   "--phone-header-h": `${PHONE_HEADER_HEIGHT}px`,
   "--tab-bar-h": `${TAB_BAR_HEIGHT}px`,
 } as CSSProperties;

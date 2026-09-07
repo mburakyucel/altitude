@@ -41,8 +41,11 @@ phase deleted.
   one readout row per configured engine, Monitor, and the operator row with the theme toggle. On a
   phone a 54px header and a four-tab bar (Chat, Work, Needs you, Monitor) replace it. `/` is Needs
   you, every decision across projects as cards; `/projects/<name>` is the project's L3 conversation
-  with its work panel; with no managed project every project route shows First run, which starts L3
-  for a folder. The selected project persists per browser, and every badge counts decisions only.
+  with its work panel; `/projects/<name>/tasks/<slug>` is the task page, the operator's conversation
+  with the L2 beside the worker's live session read as a transcript, Stop and Reject behind an inline
+  confirm, and on a phone the Conversation and Live session tabs; with no managed project every
+  project route shows First run, which starts L3 for a folder. The selected project persists per
+  browser, and every badge counts decisions only.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
 - An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;

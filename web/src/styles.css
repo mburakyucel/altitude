@@ -137,21 +137,6 @@
     border-radius: var(--radius-input);
     background: var(--surface);
   }
-  .tab {
-    padding: 8px 12px;
-    margin-bottom: -1px;
-    border-bottom: 2px solid transparent;
-    color: var(--text-secondary);
-    font-weight: 500;
-    text-decoration: none;
-  }
-  .tab:hover {
-    color: var(--text-primary);
-  }
-  .tab[aria-current="page"] {
-    border-bottom-color: var(--accent);
-    color: var(--accent-text);
-  }
   .toast {
     position: relative;
     display: flex;
@@ -179,40 +164,43 @@
     animation-play-state: paused;
   }
 
-  /* Live session: a task's worker session read like a Claude Code window. */
+  /* The live session transcript (SPEC.md §3.10): tinted prompt blocks, the worker's prose, one compact
+   * row per tool call with its output folded, separators at task boundaries, subtle timestamps. */
   .session {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
   }
   .session-head {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    margin-bottom: 4px;
-    font-size: var(--text-meta);
-    color: var(--text-muted);
-  }
-  .session-marker {
-    font-family: var(--font-mono);
+    margin-bottom: 2px;
+    font-size: 12px;
+    font-weight: 600;
     color: var(--accent-text);
+  }
+  .session-reply > .session-head {
+    color: var(--text-muted);
   }
   .session-time {
     margin-left: auto;
     font-family: var(--font-mono);
     font-size: var(--text-label);
+    font-weight: 400;
     color: var(--text-muted);
     white-space: nowrap;
   }
   .session-prompt {
-    padding: 12px 16px;
-    border-left: 3px solid var(--accent);
-    border-radius: 0 var(--radius-card) var(--radius-card) 0;
+    padding: 10px 12px;
+    border: 1px solid var(--accent-tint-border);
+    border-radius: var(--radius-control);
     background: var(--accent-tint);
+    font-size: var(--text-meta);
   }
   .session-reply {
-    padding: 4px 0 4px 16px;
+    padding: 2px 0;
   }
   .session-prose {
     display: flex;
@@ -246,69 +234,84 @@
     overflow: auto;
   }
   .session-tool {
-    margin-left: 16px;
-    padding-left: 12px;
-    border-left: 3px solid var(--hairline);
     min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--card);
   }
   .session-tool > summary {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    min-height: 32px;
-    padding: 4px 0;
-    color: var(--text-secondary);
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    padding: 4px 12px;
+    color: var(--text-primary);
     cursor: pointer;
     list-style: none;
   }
   .session-tool > summary::-webkit-details-marker {
     display: none;
   }
-  .session-tool > summary::before {
-    content: "▸";
-    font-size: var(--text-label);
-    color: var(--text-muted);
+  .session-tool-name {
+    flex: none;
+    min-width: 42px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
   }
-  .session-tool[open] > summary::before {
-    content: "▾";
+  .session-call {
+    min-width: 0;
+    flex: 1;
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session-tool[open] .session-call {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .session-hint {
+    flex: none;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .session-hint::after {
+    content: " ›";
+  }
+  .session-tool[open] .session-hint::after {
+    content: " ⌄";
   }
   .session-tool[data-error="true"] > summary {
     color: var(--danger);
   }
-  .session-tool > .session-out {
-    margin: 4px 0 8px;
-  }
-  .session-call {
-    min-width: 0;
-    color: var(--text-primary);
-    overflow-wrap: anywhere;
-  }
-  .session-hint {
-    font-size: var(--text-label);
-    color: var(--text-muted);
-    white-space: nowrap;
+  .session-tool > .session-out,
+  .session-tool > .session-notice {
+    margin: 0 12px 10px;
   }
   .session-boundary {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 8px 0;
-    font-size: var(--text-label);
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    padding: 6px 0;
+    font-size: 12px;
     color: var(--text-muted);
   }
   .session-boundary::before,
   .session-boundary::after {
     content: "";
     flex: 1;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--hairline);
+  }
+  .session-boundary[data-tone="live"] {
+    color: var(--success-text);
   }
   .session-boundary .session-time {
     margin-left: 0;
   }
   .session-error {
+    margin: 0;
     font-size: var(--text-meta);
     color: var(--danger);
   }
@@ -317,6 +320,28 @@
     font-size: var(--text-meta);
     color: var(--text-muted);
     white-space: pre-wrap;
+  }
+  .raw-row {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--card);
+  }
+  .raw-meta {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  .raw-summary {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
   }
 
   /* One composer for every operator↔L2/L3 text surface, with voice as progressive enhancement. */
@@ -1231,6 +1256,400 @@
   border: 1px solid var(--chip-claimed-border);
   background: var(--chip-claimed-bg);
   color: var(--chip-claimed-text);
+}
+
+/* The task page (§3.10). Desktop: header rows, the conversation, the live session panel at
+ * --live-w (an overlay below the inline width, like the work panel). Phone: a state line with the
+ * quiet actions, two tabs, the content, the composer pinned above the tab bar. */
+.task-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.task-header {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 24px 14px 28px;
+  border-bottom: 1px solid var(--border);
+}
+.task-crumb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-crumb {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.task-crumb:hover {
+  color: var(--text-primary);
+}
+.task-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.task-action {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: var(--text-meta);
+}
+.task-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.task-sub {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+.task-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.task-chips .chip {
+  height: 22px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.chip[data-tone="ok"] {
+  border-color: transparent;
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+.chip[data-tone="held"] {
+  border-color: var(--chip-claimed-border);
+  background: var(--chip-claimed-bg);
+  color: var(--chip-claimed-text);
+}
+.chip[data-tone="danger"] {
+  border-color: transparent;
+  color: var(--danger);
+}
+.task-line {
+  margin: 4px 0 0;
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+.task-confirm {
+  display: flex;
+  max-width: 560px;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+.task-confirm-text {
+  margin: 0;
+}
+.task-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.task-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.task-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* The conversation column (§3.3): 720px, bottom-anchored, operator bubbles right, L2 prose left. */
+.task-convo {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.task-convo-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 16px 28px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.convo-col {
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  flex-direction: column;
+  gap: 18px;
+  margin: auto auto 0;
+}
+.convo-empty {
+  margin: 0;
+  font-size: 15px;
+}
+.day-divider {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.msg-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.msg-row[data-mine] {
+  align-items: flex-end;
+}
+.msg-row[data-pending] {
+  opacity: 0.6;
+}
+.bubble {
+  max-width: 76%;
+  padding: 10px 16px;
+  border-radius: var(--radius-bubble);
+  background: var(--bubble);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reply {
+  display: flex;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.reply .session-prose {
+  gap: 12px;
+}
+.reply-from {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.msg-time {
+  font-size: var(--text-label);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.msg-row:hover .msg-time,
+.msg-row[data-time-shown] .msg-time {
+  opacity: 1;
+}
+
+/* The composer (§3.6) on the task page: slice 1's VoiceComposer in the §3.6 shape, hint line under it. */
+.task-composer {
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 auto;
+  padding: 4px 28px 16px;
+}
+.task-composer .voice-composer-textarea {
+  padding: 12px 58px 12px 18px;
+  border-radius: var(--radius-composer);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 15px;
+}
+.task-composer .voice-mic {
+  right: 8px;
+  bottom: 8px;
+  width: 36px;
+  height: 36px;
+}
+.composer-hint {
+  margin: 0;
+  padding: 0 18px;
+  font-size: 12px;
+}
+
+/* The live session panel (§3.10). */
+.live-panel {
+  display: flex;
+  width: var(--live-w);
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+.overlay .live-panel {
+  width: 100%;
+  border-left: 0;
+}
+.overlay[data-side="right"] .overlay-panel:has(> .live-panel) {
+  width: var(--live-w);
+}
+.live-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 12px 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.live-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.live-pulse {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--border);
+}
+.live-pulse[data-tone="live"] {
+  background: var(--success-text);
+  animation: voice-pulse 1.6s ease-in-out infinite;
+}
+.live-pulse[data-tone="muted"] {
+  background: var(--text-muted);
+}
+.live-tools {
+  display: flex;
+  gap: 2px;
+}
+.live-tool {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: var(--text-meta);
+}
+.live-tool[aria-pressed="true"] {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+.live-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.live-line {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* The phone task page: the state line, the tab row, then the content and its pinned composer. */
+.task-phone-head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 8px 4px 16px;
+}
+.task-state-line {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+.task-state-line .dot {
+  margin-right: 4px;
+}
+.task-state-line [data-tone="danger"] {
+  color: var(--danger);
+}
+.task-phone-head .task-confirm,
+.task-phone-head .task-line {
+  width: 100%;
+  margin-right: 8px;
+}
+.task-tabs {
+  display: grid;
+  flex: none;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+}
+.task-tab {
+  display: flex;
+  min-height: var(--target-min);
+  align-items: center;
+  justify-content: center;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-decoration: none;
+}
+.task-tab[aria-current="page"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent-text);
+}
+.task-page[data-phone] .task-convo-scroll {
+  padding: 12px 16px 8px;
+}
+.task-page[data-phone] .task-composer {
+  padding: 4px 12px 12px;
+}
+.task-page[data-phone] .live-panel {
+  width: auto;
+  flex: 1;
+  border-left: 0;
+  background: transparent;
+}
+.task-page[data-phone] .live-head {
+  min-height: 44px;
+  padding: 4px 8px 4px 16px;
+}
+/* A landscape phone has no room for a bounded transcript between the tabs and the tab bar: the
+ * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
+@media (orientation: landscape) {
+  .task-page[data-phone] .task-convo {
+    overflow-y: auto;
+  }
+  .task-page[data-phone] .task-convo-scroll {
+    min-height: max-content;
+    flex: none;
+    overflow: visible;
+  }
 }
 
 @keyframes skeleton-pulse {
