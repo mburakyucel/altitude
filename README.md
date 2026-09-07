@@ -116,6 +116,14 @@ steps and machine-specific defaults; the shipped service unit needs adaptation f
 Altitude is still being prepared for invited collaborators. No open-source license has been
 selected, and this milestone does not change repository visibility.
 
+## Project faults
+
+A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
+notification in the owning project. Repeated fault kinds are deduplicated within each project;
+another affected task still gets a coordinator notification. Repair-task faults do not wake the
+coordinator again. Machine faults without a project notify the registered `altitude` project, or
+remain in the machine fault ledger when it is absent.
+
 ## Remove a project
 
 In the project's **More actions** menu, **Remove project** detaches L3 and stops Altitude

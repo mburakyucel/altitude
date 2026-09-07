@@ -78,54 +78,57 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> tup
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
-    """Tier two of decision 4: block the faulting task, file one incident per kind per day, tell L3 once.
+    """Block the faulting task; deduplicate incidents by source project and kind for 24 hours.
 
-    The incident and the L3 message go to the project that owns Altitude's code (`altitude` when it is
-    registered, else the faulting project). A fault raised by a repair task reaches the Inbox only, so a
-    repair cannot wake L3 in a loop. Returns None when this kind was already filed within the window.
+    Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
+    registered `altitude`, or only the fault ledger if absent. Repair tasks never wake L3 again.
+    A repeat notifies L3 only when it newly blocks a non-repair task; otherwise it returns None.
     """
     from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
     touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind)
                        if project and task else (False, False))
-    target = "altitude" if "altitude" in config.load_projects() else project
+    target = project or ("altitude" if "altitude" in config.load_projects() else None)
+    key = json.dumps([project, kind])
     with _fault_lock():
         faults = S.read_json(FAULTS, {}) or {}
-        rec = faults.get(kind) or {}
+        # The 2026-09-07 project leak left unscoped records pointing to another project's evidence.
+        # Preserve those records, but never reuse them for deduplication or incident references.
+        rec = faults.get(key) or {}
         recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
                   and rec.get("incident"))
         rec = {"first": rec.get("first") or S.now(), "last": S.now(),
                "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
                "detail": detail[:500], "project": project, "task": task}
-        faults[kind] = rec
+        faults[key] = rec
         S.write_json(FAULTS, faults)
         if recent or not target:
             if not (recent and touched and target and not repair):
                 return None
             # 2026-09-03 08:10Z: a second task blocked by the day's main-unpushed fault sat waiting on L3, which
-            # was never told. One incident per kind per day still holds; a newly blocked task is one more line.
+            # was never told. One incident per project/kind still holds; a newly blocked task is one more line.
             where = f"{project}/{task}"
             T.fyi(target, task, f"SYSTEM FAULT [{kind}] again — {detail[:300]} — blocking {where}; incident "
-                  f"{rec['incident']} holds the evidence.", actor="altd")
+                  f"{target}/{rec['incident']} holds the evidence.", actor="altd")
             l3.queue_message(target, f"System fault [{kind}] again, now blocking {where}: {detail[:600]}\n\n"
-                             f"Incident {rec['incident']} from earlier today already holds the evidence; amend it only if this "
+                             f"Incident {target}/{rec['incident']} from earlier today already holds the evidence; amend it only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
                              "the cause is gone. Answer in one or two plain sentences.", trigger="incident")
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
-                           what=f"Altitude's own machinery failed ({kind})" + (f" while serving project `{project}`" if project and project != target else "") + f": {detail[:800]}",
-                           evidence=f"monitor/faults.json[{kind}]; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
+                           what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
+                           evidence=f"monitor/faults.json key {key}; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
                            tags=["system-fault", kind], actor="altd")
         rec["incident"] = inc["id"]
-        faults[kind] = rec
+        faults[key] = rec
         S.write_json(FAULTS, faults)
     where = f"{project}/{task}" if project and task else project or target
-    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {inc['id']}."
+    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {target}/{inc['id']}."
           + (" Raised by a repair task, so L3 is not woken again." if repair else ""), actor="altd")
     if not repair:
         l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
-                         f"Its task is blocked and incident {inc['id']} holds the evidence. Read the evidence, record "
+                         f"Its task is blocked and incident {target}/{inc['id']} holds the evidence. Read the evidence, record "
                          "what you learned with `alt incident amend`, then fix the cause directly if that is trivial or "
                          "create one ordinary task. Answer in two or three plain sentences.", trigger="incident")
     return {"kind": kind, "incident": inc["id"], "count": rec["count"]}

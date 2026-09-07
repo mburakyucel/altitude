@@ -231,13 +231,17 @@ with backoff; a usage-window stop starts a fresh attempt on the other engine fro
 `progress.md`, or parks a task pinned to one engine until its window reopens; each writes one task
 event. A Claude usage-window stop is recorded once for the machine, because the subscription is
 machine-wide; Codex reports its limits per turn. Tier two is L3: whatever remains blocks only its own
-task, files private incident evidence (one incident per fault kind per day), and leaves one message
-in the project's L3 queue; a repeat of that kind blocking another task adds one line for L3, not a
-new incident. An L2 that meets an environment fault (a sandbox, host, or tool refusing
+task, files private incident evidence (one incident per source project and fault kind per 24-hour
+window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind
+blocking another task in the project adds one line for L3, not a new incident. The machine fault
+ledger keys records by the JSON-encoded pair `[project, kind]` (`null` for a projectless fault);
+incident references include their owning project. Unscoped historical records remain evidence and do not suppress
+notifications. Machine faults without a project notify registered `altitude`; when it is absent,
+they only update the machine fault ledger. An L2 that meets an environment fault (a sandbox, host, or tool refusing
 what the brief requires) reports it with `alt task block --fault` and takes the same path, so the
 cause reaches L3 instead of sitting on Needs you as a question for the operator. The server delivers that message as a turn when L3 is free and an engine
 is available; L3 records the learning on the incident and fixes the cause directly or creates one
-ordinary task. An incident raised by that repair task (`--source recovery`) goes to Needs you instead
+ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
 

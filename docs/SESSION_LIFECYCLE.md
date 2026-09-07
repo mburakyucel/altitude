@@ -126,8 +126,13 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 **Stop** (task page, `alt task stop --reason …`) runs in altd, blocks the task first, and then stops its worker,
 so the poll never reads the exiting worker as a death. A message or `alt task resume --reason …` brings the same
 session back; `alt task reject --reason …` ends the task and removes its worker in altd. An L2 that blocks with
-`--fault` takes the system-fault path (incident, one L3 message) instead of asking Burak. A failed
-resume blocks the task with an incident and leaves the provider conversation to L3. A cross-provider
+`--fault` takes the system-fault path instead of asking Burak: the task, incident, FYI and L3
+notification all stay in its project. Fault deduplication uses the source project and kind for a
+24-hour window; another task newly blocked by that kind in the same project still notifies its L3
+with the same project's incident reference. Repair-task faults (`--source recovery`) never wake L3
+again. Faults without a project notify registered `altitude`, or only update the machine fault
+ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
+conversation to its project's L3. A cross-provider
 continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
 window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
 to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
