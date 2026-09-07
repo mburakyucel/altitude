@@ -70,7 +70,6 @@ current hold and unchanged PR before recording the release. The owner then reche
 - **Selective attention.** Needs you collects escalated questions across projects. L3 handles
   questions the record settles and receives faults for recovery. Monitor shows engine routing,
   usage windows and observed sessions, including missing or stale readings.
-
 - **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
   owner/helper breakdowns, and retain the final observation with the archived task.
 

@@ -50,6 +50,7 @@ conversation excerpt beginning at a complete message. Quota numbers are illustra
   sanitized Markdown, image paths and anchors, then inspect both widths. Open the original images
   to review details that are small in a desktop README column.
 
-These captures describe the UI at `ddbad55` (merged #232). The richer decision page is approved
+These captures describe the UI at `8562ca1` (merged through #238). Task token readings are absent
+from this fixture, so the app shows its unknown state. The richer decision page is approved
 design but remains unmerged at this capture baseline. The current More context link opens the
 task; Resume/Reject are lifecycle actions. No proposed UI is passed off as a screenshot.
