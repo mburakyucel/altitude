@@ -14,3 +14,8 @@ and Live session, and `/report` under it is the task's report view. L3 creates t
 conversation; the UI never creates one. Shared API, mutation, toast, and test helpers live under
 `src/data/` and `src/test/`; the conversation's rows, the system line, and the one composer live
 under `src/components/`.
+
+The project header's **Design boards** opens `/design/<project>`, the generated viewer described
+in [`design/wireframes/README.md`](../design/wireframes/README.md). The boards and spec jointly
+record the visual design and rules. The viewer reads the committed HTML directly, so a board
+update needs regeneration with `gen.py` and a checkout update, without rebuilding the SPA.

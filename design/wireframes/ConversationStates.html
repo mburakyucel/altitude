@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Altitude wireframe: ConversationStates</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+<div class="root" data-theme="light" style="width:1200px;height:740px">
+<div style="padding:28px 40px"><h1 style="font-size:20px;margin:0">Conversation and report states</h1></div><div class="sheetgrid"><div class="st"><div class="lab">L3 never ran<span>header offers Start L3</span></div><div class="statebox"><span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p></div></div><div class="st"><div class="lab">Conversation empty<span>L3 has run before</span></div><div class="statebox"><p class="muted">Say what you want done. L3 answers or creates one task.</p></div></div><div class="st"><div class="lab">Conversation loading<span>three prose-shaped rows</span></div><div class="statebox"><div class="skel" style="height:40px"></div><div class="skel" style="width:80%;height:40px"></div><div class="skel" style="width:90%;height:40px"></div></div></div><div class="st"><div class="lab">Conversation error<span>cached rows stay visible</span></div><div class="statebox"><p class="danger">Could not load the conversation. <a href="#">Retry</a></p><div class="l3"><p>The task’s PR is ready for review.</p></div></div></div><div class="st"><div class="lab">Report loading<span>heading skeleton</span></div><div class="statebox"><div class="skel" style="width:45%;height:24px"></div></div></div><div class="st"><div class="lab">Report empty / error<span>Retry repeats the read</span></div><div class="statebox"><p class="muted">No report yet.</p><p class="danger">Could not load the report. <a href="#">Retry</a></p></div></div></div>
+</div>
+<script>if(location.search.indexOf('dark')>=0)document.querySelector('.root').dataset.theme='dark'</script>
+</body>
+</html>
