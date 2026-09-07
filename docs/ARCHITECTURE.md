@@ -429,6 +429,14 @@ with a live waveform and timer, transcribing, landed, denied, unavailable, refus
 phone and desktop widths in `web/e2e/conversation.pw.ts`. Decision and reason fields remain
 ordinary form fields.
 
+The L2 task's phone tabs replace the current router history entry and retain its location state;
+the desktop live panel toggle stays local. `/live` remains addressable and selects the live view
+on reload. Both task Back controls traverse the existing browser history when React Router's
+entry index indicates an in-app predecessor. With no such predecessor, app Back replaces the
+task entry with the owning project's L3 conversation. Browser Back remains native, and links to
+other pages or tasks still push entries. `web/e2e/task-navigation.pw.ts` exercises Back and Forward
+with real browser history at both viewports.
+
 The task card (`web/src/components/TaskCard.tsx`, spec §3.5) is one component in two sizes: the
 bordered card under an L3 reply that created the task and the row in the work panel. Its meta line
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,

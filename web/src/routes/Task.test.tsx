@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
@@ -161,7 +161,7 @@ describe("Task on desktop", () => {
 
     expect(screen.getByLabelText("Loading")).toBeInTheDocument();
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(screen.getByRole("link", { name: "‹ altitude" })).toHaveAttribute("href", "/projects/altitude");
+    expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
     expect(screen.getByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeInTheDocument();
@@ -496,6 +496,23 @@ describe("Task on desktop", () => {
 });
 
 describe("Task on the phone", () => {
+  it("keeps repeated view switches in one history entry and preserves the originating tab", async () => {
+    setViewport(390);
+    stub(running);
+    const { user, router } = renderApp({ route: "/projects/altitude?tab=work" });
+    await act(() => router.navigate(route, { state: { tab: "needs" } }));
+    await screen.findByRole("navigation", { name: "Task views" });
+    for (const name of ["Live session", "Conversation", "Live session", "Conversation", "Live session"]) {
+      await user.click(within(screen.getByRole("navigation", { name: "Task views" })).getByRole("link", { name }));
+    }
+    await act(() => router.navigate(-1));
+    expect(router.state.location.pathname + router.state.location.search).toBe("/projects/altitude?tab=work");
+    await act(() => router.navigate(1));
+    expect(router.state.location.pathname).toBe(`${route}/live`);
+    expect(router.state.location.state).toEqual({ tab: "needs" });
+    expect(await screen.findByRole("region", { name: "Live session" })).toBeInTheDocument();
+  });
+
   it("shows the state line, the two tabs, and the composer above the tab bar", async () => {
     setViewport(390);
     stub(running);

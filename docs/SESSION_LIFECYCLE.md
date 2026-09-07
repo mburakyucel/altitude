@@ -297,6 +297,13 @@ altd is down. The daemon reads durable completion and inbox records at the next 
 
 ## Live transcript
 
+Conversation and Live session are local views of one L2 task. Phone tab changes replace the
+current browser entry while retaining navigation state; the desktop panel toggle is local state.
+The `/live` URL opens the live view on direct entry and reload. Browser Back and app Back return
+to the preceding page after normal in-app entry. Without an in-app predecessor, app Back replaces
+the task entry with its owning project's L3 conversation; browser Back follows the browser's own
+history. Viewing, switching views, and leaving the page do not change the worker's lifecycle.
+
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline
 in time order, and the page renders it as a conversation. Prompts (the brief, a resume, a task message the
