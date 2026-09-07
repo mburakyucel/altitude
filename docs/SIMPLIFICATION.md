@@ -28,6 +28,8 @@ bundles rewritten on every event, a resume path that killed its own worker on ev
 | 10 | **Operational settings are state behind reason-bearing verbs available to L3** (2026-09-07) | An operational cap changes through one recorded daemon command without a PR, restart, or free WIP slot. Source changes by L3 remain forbidden. |
 | 11 | **Running workers do not hold activation.** (operator, 2026-09-07) | A merged change activates as soon as no dispatch marker or resume claim, L3 turn, or report verification is in flight. Detached workers survive and are adopted after restart; running and blocked tasks are not a condition. New dispatches continue while activation is pending. Dispatch and L3 turns wait only from the restart unit request until the replacement daemon is ready, bounded by the ten-minute restart fault. The banner offers Restart at the same narrow quiet point. The failure prevented is the 2026-09-07 pipeline starvation: parallel running tasks kept activation pending for hours and queued tasks could not dispatch. |
 
+Decision 11 correction — I-20260907-165145: both engines' L2 workers use independent transient units; a vanished worker without a report from its latest launch/resume raises a system fault.
+
 ## The two rule layers
 
 The personas in `personas/` are the global layer: how anyone works under Altitude on any project.

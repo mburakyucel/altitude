@@ -185,7 +185,11 @@ trigger activation. Hooks, personas, and templates are read per use and deploy w
 The web app's restart banner sits above the header on every route while activation is pending: it
 says in words whether the backend, the web app, or both changed, how many files landed and when, and
 that Altitude restarts at the next quiet moment; it names any dispatch, L3 turn or report verification
-in flight. Running and blocked workers survive activation and do not hold it. Dispatch continues
+in flight. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
+running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
+service retain `KillMode=control-group`, so stopping a worker takes all its descendants. An exited or
+missing worker requires a report written since its latest launch or resume; without one it blocks
+with a system fault and incident, rather than replaying an older report. Dispatch continues
 while activation is pending. When those short windows are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and

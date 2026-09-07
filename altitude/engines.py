@@ -170,6 +170,12 @@ def usage_hold() -> str | None:
 
 
 def claude_stop(agent_id: str) -> str:
+    row = next((a for a in claude_agents() if a.get("id") == agent_id), {})
+    if row.get("name"):
+        unit = _claude_unit(row["name"])
+        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
+        if _unit_active(unit):  # I-20260907-165145: Stop owns every descendant, including detached children.
+            raise RuntimeError(f"worker {agent_id} is still running after stop")
     p = subprocess.run([config.CLAUDE_BIN, "stop", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
     return (p.stdout or p.stderr).strip()
 
@@ -384,22 +390,16 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     return out
 
 
-def _run_cli(cmd: list[str], *, cwd: Path, env: dict) -> subprocess.CompletedProcess:
-    """Run one CLI command with a bounded wait; a timeout kills it and keeps its output."""
-    proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=env)
+def _run_cli(cmd: list[str], *, name: str, cwd: Path, env: dict) -> subprocess.CompletedProcess:
+    """Start a forking background job in the shared transient-unit boundary."""
+    unit = _claude_unit(name)
     try:
-        stdout, stderr = proc.communicate(timeout=120)
-    except subprocess.TimeoutExpired as exc:
-        proc.kill()
-        stdout, stderr = proc.communicate()
-        exc.stdout, exc.stderr = stdout, stderr
-        raise
+        return subprocess.run(_codex_service_command(unit, cmd, env, background=True), cwd=str(cwd),
+                              capture_output=True, text=True, timeout=120,
+                              env=codex_env(retain_user_bus=True))
     except BaseException:
-        proc.kill()
-        proc.wait()
+        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, timeout=120)
         raise
-    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None, persona: Path | None = None,
@@ -417,9 +417,7 @@ def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None,
     if model:
         cmd += ["--model", model]
     cmd += ["--settings", str(settings or claude_settings())]
-    env = clean_env()
-    env.update(extra_env or {})
-    p = _run_cli(cmd + [prompt], cwd=cwd, env=env)
+    p = _run_cli(cmd + [prompt], name=name, cwd=cwd, env=codex_env(extra_env))
     row = _new_claude_agent(name, before)
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": row}
 
@@ -462,14 +460,13 @@ def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, pers
     if model:
         cmd += ["--model", model]
     cmd += ["--settings", str(settings or claude_settings())]
-    env = clean_env()
-    env.update(extra_env or {})
-    p = _run_cli(cmd + [prompt], cwd=cwd, env=env)
+    p = _run_cli(cmd + [prompt], name=name, cwd=cwd, env=codex_env(extra_env))
     return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode,
             "agent": _new_claude_agent(name, before)}
 
 
 def claude_rm(agent_id: str) -> str:
+    claude_stop(agent_id)
     p = subprocess.run([config.CLAUDE_BIN, "rm", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
     return (p.stdout + p.stderr).strip()
 
@@ -480,7 +477,11 @@ def _codex_unit(worker_id: str) -> str:
     return f"{CODEX_SYSTEMD_PREFIX}{safe}.service"
 
 
-def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str]) -> list[str]:
+def _claude_unit(name: str) -> str:
+    return f"altitude-claude-{uuid.uuid5(uuid.NAMESPACE_URL, name).hex}.service"
+
+
+def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str], *, background: bool = False) -> list[str]:
     """Run a turn in a user-manager-created transient service with its own cgroup.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
@@ -492,7 +493,9 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
     # and reconstruct only the already-sanitized child environment so task identity survives without ambient manager
     # credentials or control sockets crossing the boundary.
     scrub = [ENV_BIN, "-i", *(f"{key}={child_env[key]}" for key in sorted(child_env))]
-    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--pipe", f"--unit={unit}", "--quiet", "--collect",
+    # I-20260907-165145: --bg forks; startup waits for its launcher, lifetime follows all descendants.
+    lifecycle = (["--service-type=forking", "--property=ExitType=cgroup"] if background else ["--wait", "--pipe"])
+    return [SYSTEMD_RUN_BIN, "--user", *lifecycle, f"--unit={unit}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
 
@@ -823,8 +826,11 @@ def worker(engine: str, task: dict, *, rows: list[dict] | None = None, job_root:
     if engine == "codex":
         return codex_worker(task.get("agent_id"), job_root=job_root)
     rows = claude_agents() if rows is None else rows
-    return (next((a for a in rows if a.get("sessionId") == task.get("session_id")), None)
-            or next((a for a in rows if a.get("id") == task.get("agent_id")), None))
+    row = next((a for a in rows if a.get("id") == task.get("agent_id")), None)
+    if (row and row.get("name") and row.get("state") not in ("done", "failed", "stopped")
+            and not _unit_active(_claude_unit(row["name"]))):
+        row = {**row, "state": "failed", "status": "exited"}  # I-20260907-165145: registry may outlive its unit.
+    return row
 
 
 def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
@@ -842,7 +848,8 @@ def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> boo
         row = codex_worker(task.get("agent_id"), job_root=job_root)
         return bool(row and row.get("state") == "working")
     wt = task.get("worktree")
-    return any(a.get("cwd") == wt and a.get("state") not in ("failed", "done", "stopped") for a in claude_agents())
+    return any(a.get("cwd") == wt and (a.get("state") not in ("failed", "done", "stopped")
+               or (a.get("name") and _unit_active(_claude_unit(a["name"])))) for a in claude_agents())
 
 
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
