@@ -162,7 +162,8 @@ One composer everywhere (project chat, decision follow-up, task conversation). A
 field (`--radius-composer`), placeholder naming the recipient ("Message L3 about <project>",
 "Ask a follow-up before you decide", "Message the L2"); a left pill (engine pin on the L3 chat:
 Auto or an engine name; recipient pill "To L3 / To the L2" on the decision page; none on the task
-conversation); microphone button; Send button (accent circle, arrow). A hint line under the field,
+conversation); microphone button; send control. The send control is the arrow in an accent circle
+in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted. Phone fields are 16px so iOS does not zoom.
 
 Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
@@ -170,13 +171,13 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 
 | State | What is on screen | What changes |
 | --- | --- | --- |
-| Idle | placeholder, mic, Send disabled | typing enables Send |
-| Typing | draft text, Send enabled | Enter or Send: the draft becomes a bubble at once, the field clears |
+| Idle | placeholder, mic, arrow disabled | typing enables the arrow |
+| Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
 | Sending | the bubble shows at 60% until the server accepts it | accepted: full opacity; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
-| Busy (L3 mid-turn) | Send reads **Queue**; hint reads "L3 is mid-turn · runs next" | Queue appends to `queued[]`; a queued row appears under the conversation in muted text with **Remove** (`POST /api/chat/remove`) |
-| Listening | Cancel, Stop, and Send (accent circle, arrow), live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; Send or Enter: transcribe and send at once |
-| Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and Send/Queue disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
-| Landed | the transcript is appended to the draft, cursor at the end, Send enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
+| Busy (L3 mid-turn) | the same arrow, enabled with a draft; hint reads "L3 is mid-turn · runs next" | the arrow appends to `queued[]`; a queued row appears under the conversation in muted text with **Remove** (`POST /api/chat/remove`) |
+| Listening | Cancel, Stop, and the same arrow, live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; the arrow or Enter: transcribe and send at once |
+| Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and arrow disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
+| Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
 | Denied | mic shows disabled; hint reads "Microphone blocked in the browser. Typing works." | stays until the page reloads with permission |
 | Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, or nothing when the browser lacks recording | typing unaffected |
 | Recipient pill | To L3 (default when L3 asked), To the L2 (default when the L2 flagged the operator) | changes where the follow-up goes (§4.3) |
@@ -308,7 +309,7 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 ### 4.2 One conversation, in order
 
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
-shows Queue and the queued rows sit under the conversation until they run. A running turn shows
+keeps the arrow and the queued rows sit under the conversation until they run. A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.

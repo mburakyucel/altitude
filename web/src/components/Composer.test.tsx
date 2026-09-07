@@ -49,13 +49,17 @@ function stubTranscribe(text: string | null, gate?: Promise<void>) {
 }
 
 describe("Composer", () => {
-  it("Idle: Send is disabled until a draft exists; Enter sends and clears; Shift+Enter adds a line", async () => {
+  // 2026-09-07 decision: the send control must not turn into visible Send/Queue words.
+  it("Idle and Typing: the arrow enables with a draft; Enter sends and clears; Shift+Enter adds a line", async () => {
     const onSubmit = vi.fn();
     const { user, field } = mount({ onSubmit });
     const send = screen.getByRole("button", { name: "Send" });
+    expect(send.textContent).toBe("");
+    expect(send.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(send).toBeDisabled();
 
     await user.type(field, "hello");
+    expect(send.textContent).toBe("");
     expect(send).toBeEnabled();
     await user.keyboard("{Shift>}{Enter}{/Shift}");
     expect(field).toHaveValue("hello\n");
@@ -66,16 +70,21 @@ describe("Composer", () => {
     expect(send).toBeDisabled();
   });
 
-  it("Busy: Send reads Queue and the hint says the message runs next", async () => {
+  it("Busy: the arrow queues and the hint says the message runs next", async () => {
     const onSubmit = vi.fn();
     const { user, field } = mount({ onSubmit, busy: true });
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
     const queue = screen.getByRole("button", { name: "Queue" });
+    expect(queue.textContent).toBe("");
+    expect(queue.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(queue).toBeDisabled();
     expect(screen.getByText("L3 is mid-turn · runs next")).toBeInTheDocument();
     await user.type(field, "later please");
+    expect(queue).toBeEnabled();
     await user.click(queue);
     expect(onSubmit).toHaveBeenCalledWith("later please");
+    expect(field).toHaveValue("");
+    expect(queue).toBeDisabled();
   });
 
   it("refused: the draft returns, the hint reads Not sent. Retry, and Retry sends the same text", async () => {
@@ -110,6 +119,7 @@ describe("Composer", () => {
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(screen.getByRole("button", { name: "Cancel voice input" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" }).textContent).toBe("");
     expect(screen.getByLabelText("Recording time")).toHaveTextContent("0:00");
     expect(field).toHaveAttribute("placeholder", "");
     expect(field).toHaveValue("Keep this");
@@ -158,10 +168,13 @@ describe("Composer", () => {
     const { user, field } = mount({ initial: "Fix the timer", onSubmit, busy: action === "Busy" });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     const stop = await screen.findByRole("button", { name: "Stop voice input" });
+    const send = screen.getByRole("button", { name: action === "Busy" ? "Queue" : "Send" });
+    expect(send.textContent).toBe("");
+    expect(send.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     if (action === "Enter") {
       stop.focus();
       await user.keyboard("{Enter}");
-    } else await user.click(screen.getByRole("button", { name: "Send" }));
+    } else await user.click(send);
     expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: action === "Busy" ? "Queue" : "Send" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
