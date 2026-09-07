@@ -18,7 +18,7 @@ class TestLifecycle(AltitudeCase):
         self.assertEqual(S.load_task(self.project, t["slug"])["attempt"], 1)
 
         T.block(self.project, t["slug"], "Which rollback signal should I use?")
-        self.assertEqual(T.decisions(self.project)[0]["kind"], "blocked")
+        self.assertEqual(T.decisions(self.project)[0]["kind"], "stopped", "a block by altd without an L2 question")
 
         T.resume(self.project, t["slug"])
         T.report(self.project, t["slug"], {"verdict": "ok", "prs": [140]})
@@ -36,7 +36,8 @@ class TestLifecycle(AltitudeCase):
         self.assertEqual(S.task_dir(self.project, t2["slug"]).parent.name, "archive")
         self.assertNotIn(t2["slug"], (config.project_dir(self.project) / "STATE.md").read_text())
 
-        self.assertIsInstance(T.inbox(self.project), list)
+        self.assertFalse((config.project_dir(self.project) / "inbox.jsonl").exists(),
+                         "FYIs are chat rows; the project inbox file is gone (SPEC.md §5.2 note 3)")
 
 
 if __name__ == "__main__":

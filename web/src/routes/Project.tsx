@@ -1,20 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import {
-  useChat,
-  useL2Message,
-  useL3Reset,
-  useL3Start,
-  useOverview,
-  useProject,
-  useProjectRemove,
-  useTaskAction,
-} from "../data/api";
+import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
-import { age, ageText, agoText, when } from "../data/observed";
-import Composer from "../components/Composer";
+import { agoText, when } from "../data/observed";
 import { DecisionCard } from "../components/DecisionCard";
+import { TaskCard } from "../components/TaskCard";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
@@ -34,145 +25,64 @@ function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function num(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function arr(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-// ---- the interim task card (the old project page's; slice 3 replaces it with §3.5) --------------
-
-/** Actions offered directly on the compact task card. */
-function actionsFor(state: string): { action: string; label: string; primary?: boolean }[] {
-  const out: { action: string; label: string; primary?: boolean }[] = [];
-  if (state === "queued") out.push({ action: "dispatch", label: "Dispatch" });
-  return out;
-}
-
-function TaskCard({ project, task }: { project: string; task: TaskRow }) {
-  const [panel, setPanel] = useState<"" | "message">("");
-  const [text, setText] = useState("");
-  const act = useTaskAction(project);
-  const message = useL2Message(project);
-
-  const state = task.state ?? "";
-  const raw = dict(task);
-  const live = dict(task.live);
-  const agent = dict(live.agent);
-
-  const meta: string[] = [];
-  if (state === "running") {
-    const status = str(agent.status) || "?";
-    const agentState = str(agent.state);
-    meta.push(`L2 ${status}${agentState ? `/${agentState}` : ""}`);
-    meta.push(`ctx ${num(live.context_percent) ?? "?"}%`);
-    meta.push(`edits ${num(live.edits) ?? 0}`);
-  }
-  const prs = arr(raw.prs);
-  if (prs.length > 0) meta.push(`PRs ${prs.map((n) => `#${String(n)}`).join(" ")}`);
-  const blockedReason = str(raw.blocked_reason);
-  // A blocked task carrying resume_after is *held* by Altitude, not stuck on the operator: it says so
-  // in words and keeps the neutral card, so only a real block gets the danger border.
-  const held = state === "blocked" && Boolean(task.resume_after);
-  if (held) {
-    meta.push(
-      `queued: Altitude resumes this L2 itself when the operational hold clears (${blockedReason})`,
-    );
-  } else if (blockedReason) {
-    meta.push(`blocked: ${blockedReason}`);
-  }
-
-  const progress = str(task.progress_tail);
-  const canMessage = ["running", "blocked"].includes(state);
-
-  return (
-    <article className={`card space-y-3 ${state === "blocked" && !held ? "border-danger/40" : ""}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="pill">{state}</span>
-        <Link
-          className="text-card-title font-semibold"
-          to={`/projects/${project}/tasks/${task.slug}`}
-        >
-          {task.title || task.slug}
-        </Link>
-        <span className="ml-auto text-meta text-muted">{age(task.updated)}</span>
-      </div>
-      {meta.length > 0 ? <p className="text-meta text-muted">{meta.join(" · ")}</p> : null}
-      {progress ? (
-        <details>
-          <summary className="text-meta text-muted">Progress</summary>
-          <pre className="mt-2 overflow-x-auto text-meta text-ink-2">{progress}</pre>
-        </details>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        {actionsFor(state).map((a) => (
-          <button
-            key={a.action}
-            type="button"
-            className={a.primary ? "btn btn-primary" : "btn"}
-            disabled={act.isPending}
-            onClick={() => act.mutate({ project, slug: task.slug, action: a.action })}
-          >
-            {a.label}
-          </button>
-        ))}
-        {canMessage ? (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setPanel(panel === "message" ? "" : "message")}
-          >
-            Message L2
-          </button>
-        ) : null}
-        <Link className="ml-auto text-meta" to={`/projects/${project}/tasks/${task.slug}`}>
-          Open
-        </Link>
-      </div>
-      {panel ? (
-        <Composer
-          value={text}
-          placeholder="Message the L2"
-          ariaLabel={`Message the L2 on ${task.slug}`}
-          autoFocus
-          onChange={setText}
-          disabled={act.isPending}
-          onSubmit={async (submitted) => {
-            await message.mutateAsync({ project, slug: task.slug, text: submitted });
-            setPanel("");
-          }}
-        />
-      ) : null}
-    </article>
-  );
-}
-
 // ---- the work panel (SPEC.md §3.7) ------------------------------------------------------------
 
 const WEEK_MS = 7 * 86_400_000;
+/** The section-move fade (§3.7). */
+export const MOVE_MS = 200;
 
-function WorkPanel({
+/** Which section a task sits in: a card under Needs you, a row under Active, or a row under Done. */
+function sectionOf(task: TaskRow, decided: Set<string>): "needs" | "active" | "done" {
+  if (decided.has(task.slug)) return "needs";
+  return task.state === "done" || task.state === "rejected" ? "done" : "active";
+}
+
+export function WorkPanel({
   name,
   project,
   decisions,
+  selected = null,
 }: {
   name: string;
   project: UseQueryResult<ProjectView>;
   decisions: Decision[];
+  /** The decision whose page is open beside the panel: its card gets the accent border. */
+  selected?: string | null;
 }) {
+  const decided = new Set(decisions.map((d) => d.slug));
   const tasks = project.data?.tasks ?? [];
+  const active = tasks.filter((t) => sectionOf(t, decided) === "active");
   const doneThisWeek = (project.data?.archive ?? []).filter((t) => {
     const at = when(t.updated);
-    return t.state === "done" && at != null && Date.now() - at < WEEK_MS;
+    return (t.state === "done" || t.state === "rejected") && at != null && Date.now() - at < WEEK_MS;
   });
+  // §3.7: a row whose task just changed section fades in where it now belongs (200ms). The mark
+  // outlives the render that noticed the move so the animation finishes whatever refetches meanwhile.
+  const sections = useRef(new Map<string, string>());
+  const movedAt = useRef(new Map<string, number>());
+  const now = new Map<string, string>();
+  for (const t of tasks) now.set(t.slug, sectionOf(t, decided));
+  for (const t of doneThisWeek) now.set(t.slug, "done");
+  for (const [slug, section] of now) {
+    const before = sections.current.get(slug);
+    if (before && before !== section) movedAt.current.set(slug, Date.now());
+  }
+  useEffect(() => {
+    sections.current = now;
+  });
+  const moved = { has: (slug: string) => Date.now() - (movedAt.current.get(slug) ?? 0) < MOVE_MS * 5 };
+  const row = (task: TaskRow) => (
+    <div key={`${name}:${task.slug}`} className="wp-row" data-moved={moved.has(task.slug) || undefined}>
+      <TaskCard project={name} task={task} variant="row" decision={decisions.find((d) => d.slug === task.slug)} />
+    </div>
+  );
+
   return (
     <section className="work-panel" aria-label="Work">
-      <div>
-        <h2 className="text-card-title font-semibold">Work</h2>
-        <p className="text-meta text-muted">
-          {tasks.length} active · {doneThisWeek.length} done this week
+      <div className="wp-head">
+        <h2 className="wp-title">Work</h2>
+        <p className="wp-count text-muted">
+          {active.length} active · {doneThisWeek.length} done this week
         </p>
       </div>
       {project.isPending ? (
@@ -193,34 +103,34 @@ function WorkPanel({
       ) : (
         <>
           {decisions.length > 0 ? (
-            <section className="flex flex-col gap-3" aria-label="Needs you">
-              <h3 className="label">Needs you ({decisions.length})</h3>
-              {decisions.map((d) => (
-                <DecisionCard key={`${d.project}:${d.slug}`} decision={d} />
-              ))}
+            <section className="wp-section" aria-label="Needs you">
+              <h3 className="wp-section-title">
+                Needs you <span className="text-muted">({decisions.length})</span>
+              </h3>
+              <div className="wp-cards">
+                {decisions.map((d) => (
+                  <div key={`${d.project}:${d.slug}`} className="wp-row" data-moved={moved.has(d.slug) || undefined}>
+                    <DecisionCard decision={d} selected={selected === d.slug} from="project" />
+                  </div>
+                ))}
+              </div>
             </section>
           ) : null}
-          {tasks.length > 0 ? (
-            <section className="flex flex-col gap-3" aria-label="Active">
-              <h3 className="label">Active ({tasks.length})</h3>
-              {tasks.map((task) => (
-                <TaskCard key={`${name}:${task.slug}`} project={name} task={task} />
-              ))}
+          {active.length > 0 ? (
+            <section className="wp-section" aria-label="Active">
+              <h3 className="wp-section-title">
+                Active <span className="text-muted">({active.length})</span>
+              </h3>
+              <div className="wp-rows">{active.map(row)}</div>
             </section>
           ) : null}
-          {decisions.length === 0 && tasks.length === 0 ? (
+          {decisions.length === 0 && active.length === 0 ? (
             <p className="text-muted">Nothing running. Ask L3 for something.</p>
           ) : null}
           {doneThisWeek.length > 0 ? (
-            <details>
-              <summary className="label cursor-pointer">Done this week ({doneThisWeek.length})</summary>
-              <ul className="mt-2 flex flex-col gap-1 text-meta text-muted">
-                {doneThisWeek.map((task) => (
-                  <li key={task.slug}>
-                    <Link to={`/projects/${name}/tasks/${task.slug}`}>{task.title || task.slug}</Link>
-                  </li>
-                ))}
-              </ul>
+            <details className="wp-fold">
+              <summary className="wp-fold-summary">Done this week ({doneThisWeek.length})</summary>
+              <div className="wp-rows">{doneThisWeek.map(row)}</div>
             </details>
           ) : null}
         </>

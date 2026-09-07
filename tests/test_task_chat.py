@@ -133,7 +133,8 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], "burak")
         cards = T.decisions(self.project)
-        self.assertEqual([c["question"] for c in cards], ["Stopped mid-task: Which colour?"])
+        self.assertEqual([(c["kind"], c["asked_by"], c["question"]) for c in cards], [("asks", "l2", "Which colour?")])
+        self.assertEqual([o["label"] for o in cards[0]["options"]], ["Resume", "Reject"])
         self.assertEqual(len(self.l3_queue()), 1, "a block flagged for Burak does not wake L3")
 
     def test_l3_answers_a_block_or_escalates_it_as_one_dilemma(self):
@@ -142,8 +143,8 @@ class TestTaskConversation(ChatCase):
         T.escalate(self.project, self.slug, "Keep the old API (recommended) or break it now?")
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["waiting_on"], task["escalated"]), ("burak", True))
-        self.assertEqual([c["question"] for c in T.decisions(self.project)],
-                         ["L3 asks: Keep the old API (recommended) or break it now?"])
+        self.assertEqual([(c["kind"], c["asked_by"], c["question"]) for c in T.decisions(self.project)],
+                         [("asks", "l3", "Keep the old API (recommended) or break it now?")])
         self.assertEqual(S.read_events(self.project, self.slug)[-1]["kind"], "escalated")
         with self.assertRaises(T.TransitionError):
             T.escalate(self.project, self.slug, "")

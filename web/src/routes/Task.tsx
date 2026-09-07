@@ -379,7 +379,7 @@ function ChipText({ chip }: { chip: Chip }) {
   return chip.href ? <a href={chip.href} target="_blank" rel="noopener noreferrer">{chip.text}</a> : chip.text;
 }
 
-function PanelIcon() {
+export function PanelIcon() {
   return (
     <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
       <rect x="3" y="4" width="14" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="1.6" />

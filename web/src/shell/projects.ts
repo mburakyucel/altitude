@@ -17,11 +17,16 @@ export function decisionsFor(overview: Overview | undefined, project: string): D
 
 export type DotState = "running" | "waiting" | "danger" | "idle";
 
-/** The state dot (SPEC.md §3.1): a fault or a stop beats a wait, a wait beats running work. */
+/**
+ * The state dot (SPEC.md §3.1): a fault or a stop beats a wait, a wait beats running work. Only a
+ * decision for the operator is a wait; a task blocked waiting on L3 is Altitude's own work and keeps
+ * the running dot (§3.5), as does a landed report L3 is handling.
+ */
 export function dotFor(row: ProjectRow, decisions: Decision[]): DotState {
   if ((row.counts?.fault ?? 0) > 0 || decisions.some((d) => decisionKind(d).tone === "danger")) return "danger";
   if (decisions.length > 0) return "waiting";
-  if ((row.counts?.running ?? 0) > 0) return "running";
+  const counts = row.counts ?? {};
+  if ((counts["running"] ?? 0) > 0 || (counts["waits_l3"] ?? 0) > 0 || (counts["reported"] ?? 0) > 0) return "running";
   return "idle";
 }
 

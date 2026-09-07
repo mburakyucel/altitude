@@ -93,7 +93,7 @@ hard-codes one, and one configured engine means one row.
 | Element | States |
 | --- | --- |
 | Project row | selected (tint background, `--text-primary`); unselected (`--text-secondary`); hover (tint at half) |
-| State dot | running (accent); waits for the operator (`--data-claimed`); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
+| State dot | running (accent: a running L2, a task blocked waiting on L3, or a landed report L3 is handling); waits for the operator (`--data-claimed`: a decision in the queue); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
 | Count badge | decisions waiting in that project; hidden at zero |
 | Needs you badge | decisions across projects; hidden at zero |
 | Unmanaged folders line | N folders found under the configured root; click opens First run for the picked folder; hidden at zero |
@@ -201,10 +201,19 @@ yet."); error ("Could not load the report." and Retry).
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click
 opens the task page.
 
-States by task state: queued ("Queued · waits for a lease on <file>" or "waits for dispatch");
-running ("Running · <model> on <engine> · started N min ago"); blocked on the operator ("Waits for
-your answer", amber dot); blocked by a fault ("Blocked: <one sentence>", red dot); done ("Done ·
-PR #N merged", shown under Done this week); rejected ("Rejected", under Done this week).
+States by task state: queued ("Queued · <hold>", where the hold is the queue's own reason: "waits
+for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
+for resume at <time>", or plain "waits for dispatch"; never a file lease, which the queue does not
+hold, decision 9); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
+on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
+only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
+operator ("Waits for your answer", amber dot, red when the task was stopped mid-task); blocked by a
+fault ("Blocked: <one sentence>", red dot); reported ("Report landed · waits for L3", running dot);
+done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
+week).
+
+The same card is the row in the work panel and the card under an L3 reply that created the task
+(§5.2 note 4); a slug the project no longer lists renders as the row with the slug as its title.
 
 ### 3.6 Composer
 
@@ -246,15 +255,21 @@ Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filte
 
 States: loading (two card skeletons, three row skeletons); empty ("Nothing running. Ask L3 for
 something."); a card selected (accent border, while its decision page is open); a row's task
-just changed state (the row moves sections with a 200ms fade).
+just changed state (the row moves sections with a 200ms fade). A task with a card under Needs you
+has no row under Active; "N active" counts the rows. Done this week holds the tasks done or
+rejected in the last seven days and is hidden when there are none.
 
 ### 3.8 Decision card
 
 Compact (panel, Needs you) and full (the decision page's top) share one anatomy: kind row (kind
-label and age), question (600), why (the recommendation in one or two sentences), two option
-buttons with the recommended one primary, **More context** link. Kind labels and colours:
-**L3 asks** (`--accent-text`); **Ready for review** (`--data-claimed`, a green PR held for the
-operator); **Stopped mid-task** and **Fault** (`--danger`). Cards on Needs you carry a project chip.
+label, the task title, and the age), question (600), why (the recommendation in one or two
+sentences), the option buttons with the recommended one primary, **More context** link, which opens
+the decision page. Kind labels and colours: **L3 asks** and **The L2 asks** (`--accent-text`);
+**Ready for review** (`--data-claimed`, a green PR held for the operator; no producer records this
+kind yet); **Stopped mid-task** (a block without a question, by the operator or by altd) and
+**Fault** (`--danger`). Cards on Needs you carry a project chip. Needs you lists the cards in one
+column, newest question last, with the line "N things wait on you across N projects" above and the
+calm line below; it does not group by project.
 
 Data: `GET /api/overview` `queue[]` entries `{project, slug, kind, title, question, detail, asked,
 options}` extended in slice 3 with `recommendation` (the recommended option and why, one or two
@@ -271,6 +286,11 @@ carries `{project, slug, option, note}`.
 | Decided | the card collapses out (200ms); the task's row updates; nothing else appears |
 | Failed | buttons re-enabled; one line: "Could not record the decision. Retry." |
 | Stale | the task was resumed or rejected elsewhere (CLI, another window): the card leaves on the next poll with no message |
+
+A follow-up to the L2 is a task-conversation message, so it resumes the blocked L2 (`docs/SESSION_LIFECYCLE.md`);
+the card leaves with the task and returns with the L2's new block if it asks again. Follow-ups
+mirror on the card only from the current window: rows since the block that raised this decision,
+so an earlier decision's exchange on the same task does not reappear.
 
 ### 3.9 Decision page
 
@@ -289,8 +309,18 @@ the tab it was opened from.
 
 States: loading; ready; follow-up in flight ("L3 is answering…" under the composer; the answer lands
 in the timeline and on the card); already decided ("Decided N min ago: <option>" banner, options
-gone, composer gone, the rest stays readable); task gone (archived: "This task was <archived state>."
-and a link to the archive); error.
+gone, composer gone, the rest stays readable; a task resumed elsewhere without a recorded decision
+reads "This task was resumed elsewhere; it is <state> now."); task gone (archived: "This task was
+<archived state>." and a link to the archived task's page); error.
+
+**Why L3 recommends <option>** shows the recommendation's why and, when the asker described the
+options, each option's description on its own line. The timeline lists the task's events since the
+block that raised the decision (the L2's block as a quote, L3's escalation, the operator's stop, a
+resume, a decision, an FYI) and the follow-ups with their answers, in time order, then "now". The
+evidence chips are the task conversation, the live session when the task has one, the full report
+when one landed, each PR the task records (linked through the project's repository), and each `#N`
+the question names; the record has no web location yet, so there is no "decision in the record"
+chip.
 
 ### 3.10 Task page
 
@@ -505,7 +535,10 @@ the working rules (the design decision of 2026-09-05).
    carries `tasks: [slug]`, written by the server when the turn's task creation lands.
 5. **Decisions carry their labels.** `tasks.decisions` returns `recommendation`, `asked_by`, and
    the asker's labelled `options` (falling back to Resume and Reject for a block recorded without
-   them); `POST /api/decide` accepts `option` and `note` and records both on the task.
+   them); `POST /api/decide` accepts `option` and `note` and records both on the task. Until an
+   escalation carries structured fields, the options and the recommendation are parsed from the
+   question text: "Option A:" / "A:" prefixes name the options, "(recommended)" or "I recommend A"
+   names the recommendation, and the label is the option's first clause.
 6. **Follow-ups carry the slug.** A `chat` row created from a decision page stores the decision's
    slug so the page and the card can mirror the exchange.
 

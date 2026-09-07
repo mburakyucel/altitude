@@ -97,6 +97,12 @@ persists a cross-process claim and moves that claim's exact message batch out of
 messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
 for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
+The operator's choice (`POST /api/decide` with an option and an optional note) is recorded on the task as its `decision`
+and a `decided` event; a reject option rejects the task with the note as the reason, any other option appends a task
+message naming the choice and the note and requests the daemon resume, so the L2 reads the answer as its inbox at the
+next checkpoint. A follow-up sent before choosing goes to the asker: to L3 as a chat turn that carries the task's slug
+(the prompt tells L3 the task stays blocked), or to the L2 as an ordinary task message, which resumes it like any
+other. An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
 On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
 Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.

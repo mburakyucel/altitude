@@ -12,13 +12,16 @@ const ICONS: Record<Tab, string> = {
   monitor: "M3 15a7 7 0 1 1 14 0M10 15l3-5",
 };
 
-/** Which tab the current page belongs to; a task page pushed over a tab keeps that tab lit. */
+/** Which tab the current page belongs to; a task or decision page pushed over a tab keeps that tab lit. */
 export function activeTab(pathname: string, state: unknown, search: string): Tab {
   if (pathname === "/") return "needs";
   if (pathname.startsWith("/monitor")) return "monitor";
+  const from = state && typeof state === "object" ? (state as { tab?: unknown }).tab : null;
   if (/^\/projects\/[^/]+\/tasks\//.test(pathname)) {
-    const from = state && typeof state === "object" ? (state as { tab?: unknown }).tab : null;
     return from === "needs" || from === "chat" ? from : "work";
+  }
+  if (/^\/projects\/[^/]+\/decisions\//.test(pathname)) {
+    return from === "work" || from === "chat" ? from : "needs";
   }
   return new URLSearchParams(search).get("tab") === "work" ? "work" : "chat";
 }

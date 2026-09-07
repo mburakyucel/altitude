@@ -12,10 +12,16 @@ const decision = {
   project: "tutor",
   slug: "fix-audio",
   title: "Fix the audio",
-  question: "L3 asks: Which upload limit should stand?",
+  kind: "asks",
+  asked_by: "l3",
+  question: "Which upload limit should stand?",
   asked: ago(4),
-  options: ["Resume", "Reject"],
-  kind: "blocked",
+  since: ago(4),
+  options: [
+    { key: "resume", label: "Resume" },
+    { key: "reject", label: "Reject" },
+  ],
+  recommendation: { option: "resume", why: "" },
 };
 
 const overview = {

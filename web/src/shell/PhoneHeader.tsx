@@ -8,6 +8,11 @@ import { Overlay } from "./Overlay";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
 import { setSelectedProject } from "./scope";
 
+/** The tab a task page opened from the decision page keeps lit. */
+function activeTabState(from: unknown): "needs" | "work" {
+  return from === "needs" ? "needs" : "work";
+}
+
 /** The project switcher sheet (SPEC.md §3.11): managed projects, then the folders First run offers. */
 function Switcher({
   overview,
@@ -52,13 +57,17 @@ function Switcher({
 }
 
 /** The 54px phone header (SPEC.md §2.2): the project name with a chevron on project tabs, a back control
- * and the task's title on a pushed task page (§3.10), "Altitude" on the global tabs. */
+ * and the task's title on a pushed task page (§3.10), a back control, the crumb and Open task on a
+ * pushed decision page (§3.9), "Altitude" on the global tabs. */
 export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const projectMatch = useMatch("/projects/:name/*");
   const taskMatch = useMatch("/projects/:name/tasks/:slug/*");
+  const decisionMatch = useMatch("/projects/:name/decisions/:slug");
+  const pushed = Boolean(taskMatch || decisionMatch);
+  const from = location.state && typeof location.state === "object" ? (location.state as { from?: unknown }).from : null;
   const name = projectMatch?.params.name ?? "";
   // The same cache entry the task page reads: no request of the header's own.
   const task = useTask(taskMatch?.params.name ?? "", taskMatch?.params.slug ?? "");
@@ -70,12 +79,13 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
 
   const back = () => {
     if (location.key !== "default") navigate(-1);
+    else if (decisionMatch && from === "needs") navigate("/");
     else navigate(`/projects/${name}?tab=work`);
   };
 
   return (
     <header className="phone-header">
-      {taskMatch ? (
+      {pushed ? (
         <button type="button" className="icon-btn" aria-label="Back" onClick={back}>
           <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
             <path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -84,7 +94,7 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
       ) : (
         <span className="icon-btn invisible" aria-hidden />
       )}
-      {switchable && !taskMatch ? (
+      {switchable && !pushed ? (
         <button
           type="button"
           className="phone-title phone-title-button"
@@ -100,11 +110,25 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
       ) : (
         <h1 className="phone-title">
           <span className="truncate">
-            {taskMatch ? task.data?.title || taskMatch.params.slug : isProject ? name : "Altitude"}
+            {taskMatch
+              ? task.data?.title || taskMatch.params.slug
+              : decisionMatch
+                ? from === "needs"
+                  ? "Needs you"
+                  : name
+                : isProject
+                  ? name
+                  : "Altitude"}
           </span>
         </h1>
       )}
-      <span className="icon-btn invisible" aria-hidden />
+      {decisionMatch ? (
+        <Link className="btn btn-ghost task-action" to={`/projects/${name}/tasks/${decisionMatch.params.slug}`} state={{ tab: activeTabState(from) }}>
+          Open task
+        </Link>
+      ) : (
+        <span className="icon-btn invisible" aria-hidden />
+      )}
       {open ? <Switcher overview={overview} current={name} onClose={() => setOpen(false)} /> : null}
     </header>
   );

@@ -95,6 +95,13 @@ else:
 '''
 
 
+def fyi_rows(project: str) -> list[dict]:
+    """The project's FYIs: the system rows in its chat (SPEC.md §5.2 note 3)."""
+    from altitude import l3
+    return [row for row in l3.chat_history(project, None)
+            if row.get("role") == "system" and row.get("trigger") == "fyi"]
+
+
 def git(*args: str, cwd: Path) -> str:
     """Run git in `cwd`; fail the test on error; return stdout."""
     p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)

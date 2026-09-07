@@ -921,6 +921,372 @@
   -webkit-line-clamp: 2;
 }
 
+.decision[data-selected] {
+  border-color: var(--accent);
+}
+.decision-task {
+  min-width: 0;
+  flex: 1;
+  font-weight: 500;
+}
+.decision-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.btn-lg {
+  min-height: 44px;
+  padding: 0 20px;
+  font-size: var(--text-body);
+}
+/* Follow-ups mirrored on the card (§3.8, §4.3): the question, then the answer block. */
+.decision-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.decision-fu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--accent-tint);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+.decision-fu[data-wait] {
+  background: var(--bubble);
+  color: var(--text-secondary);
+}
+.decision-fu-q,
+.decision-fu-a {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.decision-fu b {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.decision-fu-a > :last-child {
+  margin-bottom: 0;
+}
+.shell[data-phone] .decision-fu {
+  font-size: 14px;
+}
+
+/* The task card (§3.5): a card under the reply that created the task, the row in the work panel. */
+.task-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.task-card[data-variant="card"] {
+  max-width: 480px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+.task-card[data-variant="card"]:hover {
+  border-color: var(--text-muted);
+}
+.task-card[data-variant="row"] {
+  padding: 10px 4px;
+  border-top: 1px solid var(--hairline);
+}
+.task-card[data-variant="row"]:hover {
+  background: var(--hairline);
+}
+.task-card-dot {
+  flex: none;
+}
+.task-card-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card[data-variant="row"] .task-card-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+.task-card-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card-go {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* The work panel sections (§3.7): Needs you cards, Active rows, Done this week folded. */
+.wp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wp-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.wp-count {
+  margin: 0;
+  font-size: 12px;
+}
+.wp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wp-section-title,
+.wp-fold-summary {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.wp-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wp-rows {
+  display: flex;
+  flex-direction: column;
+}
+.wp-fold-summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+}
+.wp-fold-summary::-webkit-details-marker {
+  display: none;
+}
+.wp-fold-summary::before {
+  content: "▸ ";
+}
+.wp-fold[open] .wp-fold-summary::before {
+  content: "▾ ";
+}
+.wp-fold[open] .wp-fold-summary {
+  margin-bottom: 8px;
+}
+/* A row whose task just changed section fades in where it now belongs (200ms). */
+.wp-row[data-moved] {
+  animation: wp-move 200ms ease-out;
+}
+@keyframes wp-move {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Needs you (§3.3): the cards in one column with the project chip, then the calm line. */
+.needs-page {
+  gap: 16px;
+}
+.needs-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.needs-sub {
+  margin: 0;
+  font-size: var(--text-meta);
+}
+.needs-list {
+  display: flex;
+  max-width: 720px;
+  flex-direction: column;
+  gap: 12px;
+}
+.calm {
+  margin: 8px 0 0;
+  font-size: var(--text-meta);
+}
+
+/* The decision page (§3.9). */
+.decision-scroll {
+  padding-top: 10px;
+}
+.decision-col {
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  flex-direction: column;
+  gap: 22px;
+  margin: 0 auto;
+}
+.decision-chips {
+  flex-wrap: nowrap;
+}
+.decision-age {
+  flex: none;
+  margin-left: auto;
+  font-weight: 400;
+}
+.decision-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.shell[data-phone] .decision-title {
+  font-size: 20px;
+}
+.decision-options-page {
+  gap: 10px;
+}
+.decision-note {
+  width: auto;
+  min-width: 200px;
+  min-height: 36px;
+  flex: 1;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+.decision-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.shell[data-phone] .decision-options-page .btn {
+  flex: 1;
+}
+.shell[data-phone] .decision-note {
+  width: 100%;
+  min-height: 44px;
+  flex-basis: 100%;
+  border-radius: var(--radius-card);
+  font-size: 14px;
+}
+.decision-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--accent-tint);
+  font-size: var(--text-meta);
+}
+.dsh {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.dp {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.dp + .dp {
+  margin-top: 8px;
+}
+.tl {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tli {
+  display: grid;
+  grid-template-columns: 44px 12px minmax(0, 1fr);
+  gap: 0 12px;
+  padding: 6px 0;
+}
+.tl-time {
+  padding-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tl-mark {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.tl-mark i {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.tl-mark i[data-you] {
+  background: var(--accent);
+}
+.tl-mark::after {
+  content: "";
+  position: absolute;
+  top: 19px;
+  bottom: -8px;
+  left: 5.5px;
+  width: 1px;
+  background: var(--hairline);
+}
+.tli:last-child .tl-mark::after {
+  display: none;
+}
+.tl-body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.tl-body b {
+  font-weight: 600;
+}
+.tl-body q {
+  display: block;
+  margin-top: 3px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-secondary);
+  quotes: none;
+}
+.evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.evidence-chip {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: 13px;
+  text-decoration: none;
+}
+.evidence-chip:hover {
+  border-color: var(--text-muted);
+}
+
 /* The restart banner (§3.13): a strip above the header on every route, in the accent tint. */
 .restart-banner {
   display: flex;
@@ -1430,24 +1796,6 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.turn-task {
-  display: flex;
-  max-width: 480px;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--card);
-  color: var(--text-primary);
-  font-size: var(--text-meta);
-  font-weight: 500;
-  text-decoration: none;
-}
-.turn-task .text-muted {
-  margin-left: auto;
-  font-weight: 400;
 }
 /* Messages waiting for the next turn boundary (§4.2): muted rows under the conversation. */
 .queued {

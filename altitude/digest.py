@@ -1,7 +1,7 @@
 """Cross-project user-input queue, WIP summary, and digest text."""
 from __future__ import annotations
 
-from . import config, dispatch, state as S, tasks as T
+from . import config, dispatch, route, state as S, tasks as T
 
 def queue() -> list[dict]:
     items = []
@@ -11,18 +11,14 @@ def queue() -> list[dict]:
     return items
 
 
-def fyis(limit: int = 30) -> list[dict]:
-    out = []
-    for p in config.load_projects():
-        out += T.inbox(p, limit)
-    out.sort(key=lambda i: i["at"], reverse=True)
-    return out[:limit]
-
-
 def wip() -> dict:
+    """The running counts and every task waiting for a slot, each with its hold (the queued task card names
+    it, SPEC.md §3.5): the WIP limit, engine availability, a pending activation, or a resume checkpoint."""
     per = {p: sum(1 for t in S.list_tasks(p) if t["state"] == "running") for p in config.load_projects()}
+    restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
     return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT, "limit_machine": config.WIP_PER_MACHINE,
-            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "queued" else "resume"}
+            "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "queued" else "resume",
+                         "hold": _waiting(p, t, restart)["reason"]}
                         for p in config.load_projects() for t in S.list_tasks(p)
                         if t["state"] == "queued" or (t["state"] == "blocked" and t.get("resume_after"))]}
 
@@ -43,7 +39,12 @@ def _waiting(project: str, task: dict, restart: dict | None) -> dict:
         elif task.get("resume_after"):
             kind, reason = "checkpoint", f"resume checkpoint {task['resume_after']}"
         else:
-            reason = "ready for dispatch"
+            forced = task.get("engine") or task.get("l2_engine") or config.project(project).get("l2_engine")
+            choice = route.pick_engine("l2", forced=forced)
+            if choice.get("engine"):
+                reason = "ready for dispatch"
+            else:
+                kind, reason = "engine", f"engine hold: {choice['why']}"
     return {"project": project, "slug": task["slug"], "state": task["state"],
             "age": S.age(task.get("updated") or task.get("created") or ""),
             "kind": kind, "reason": reason, "holder": None, "files": []}
@@ -74,9 +75,6 @@ def text() -> str:
     lines.append(f"Running: {w['machine']} L2 task(s) — " + ", ".join(f"{p} {n}" for p, n in w["per_project"].items() if n) + ".")
     if w["waiting"]:
         lines.append("Waiting for a slot: " + ", ".join(f"{x['project']}/{x['slug']}" for x in w["waiting"]) + ".")
-    f = fyis(8)
-    if f:
-        lines += ["", "Recent FYIs:"] + [f"- [{i['project']}] {i['text'][:200]}" for i in f]
     txt = "\n".join(lines) + "\n"
     S.atomic_write(config.DIGEST_FILE, txt)
     return txt

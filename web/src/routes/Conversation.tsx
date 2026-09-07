@@ -9,6 +9,7 @@ import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
+import { TaskCard } from "../components/TaskCard";
 import type { SystemTurn } from "../components/SystemLine";
 
 /*
@@ -125,19 +126,13 @@ interface Local {
 }
 
 /** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
+/** The task cards under a reply that created tasks (SPEC.md §3.5, §5.2 note 4). */
 function TurnTasks({ project, slugs, titles }: { project: string; slugs: string[]; titles: Map<string, TaskRow> }) {
   return (
     <div className="turn-tasks">
-      {slugs.map((slug) => {
-        const task = titles.get(slug);
-        return (
-          <Link key={slug} className="turn-task" to={`/projects/${project}/tasks/${slug}`}>
-            <span className="dot" data-state={task?.state ?? "queued"} aria-hidden />
-            <span className="truncate">{task?.title || slug}</span>
-            <span className="text-muted">{task?.state ?? "created"}</span>
-          </Link>
-        );
-      })}
+      {slugs.map((slug) => (
+        <TaskCard key={slug} project={project} task={titles.get(slug) ?? { slug }} />
+      ))}
     </div>
   );
 }

@@ -1240,23 +1240,27 @@ class Handler(BaseHTTPRequestHandler):
                 remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
             if api == "decide":
-                project, slug, opt = o["project"], o["slug"], o.get("option")
+                # SPEC.md §5.2 note 5: the option (a label, key, or index) and the note are recorded on the
+                # task before the lifecycle acts; the L2 reads the choice when it resumes.
+                project, slug = o["project"], o["slug"]
                 t = S.load_task(project, slug)
                 if t["state"] != "blocked":
                     return self._json({"error": "only blocked tasks need a user decision"}, 409)
-                choice = ["Resume", "Reject"][int(opt)]
-                if choice == "Resume":
-                    note = str(o.get("note") or "").strip()
-                    if note:
-                        # Persist the note without its ordinary timer wake; the following durable request
-                        # becomes the only resume owner before a runner can start.
-                        T.message(project, slug, "burak", note, wake_blocked=False)
-                    request_daemon_task_operation(project, slug, "resume", note or "resumed by Burak",
-                                                  actor="burak")
-                else:
+                try:
+                    decision = T.decide(project, slug, o.get("option"), o.get("note"))
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 400)
+                if decision["key"] == "reject":
                     request_daemon_task_operation(project, slug, "reject",
-                                                  o.get("note") or "rejected by Burak", actor="burak")
-                return self._json({"ok": True, "queued": True,
+                                                  decision["note"] or "rejected by Burak", actor="burak")
+                else:
+                    if decision["message"]:
+                        # Persist the answer without its ordinary timer wake; the following durable request
+                        # becomes the only resume owner before a runner can start.
+                        T.message(project, slug, "burak", decision["message"], wake_blocked=False)
+                    request_daemon_task_operation(project, slug, "resume",
+                                                  decision["message"] or "resumed by Burak", actor="burak")
+                return self._json({"ok": True, "queued": True, "decision": decision,
                                    "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
@@ -1306,11 +1310,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "This project is not managed. Add its folder again to attach L3."}, 409)
                 if not text:
                     return self._json({"error": "empty"}, 400)
+                # A follow-up from a decision page names the decision's task (SPEC.md §5.2 note 6).
+                try:
+                    slug = S.require_task_slug(o["slug"]) if o.get("slug") else None
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
                 if l3.busy(project) or config.restart_in_progress():
                     # Burak types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
                     try:
-                        row = l3.queue_message(project, text, trigger="chat", role="burak")
+                        row = l3.queue_message(project, text, trigger="chat", role="burak", slug=slug)
                     except ValueError as exc:
                         return self._json({"error": str(exc)}, 409)
                     request_l3_drain(project)
@@ -1341,7 +1350,8 @@ class Handler(BaseHTTPRequestHandler):
                         gone.append(e)
                         log(f"POST {self.path}: client went away as the turn started ({type(e).__name__}: {e})")
 
-                res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started)
+                res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started,
+                                     **({"slug": slug} if slug else {}))
                 if gone:
                     return
                 self._stream_send({"done": {k: res.get(k) for k in (
@@ -1469,9 +1479,12 @@ def overview() -> dict:
             ts = S.list_tasks(p["name"])
             p["counts"] = {s: sum(1 for t in ts if t["state"] == s) for s in S.STATES}
             p["counts"]["fault"] = sum(1 for t in ts if t.get("fault"))  # the rail's danger dot
+            # A block waiting on L3 is Altitude's wait, so the rail dot keeps running (SPEC.md §3.1).
+            p["counts"]["waits_l3"] = sum(1 for t in ts if t["state"] == "blocked" and not t.get("fault")
+                                          and not t.get("resume_after") and t.get("waiting_on") == "l3")
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
-    return {"projects": projects, "queue": digest.queue(), "fyis": digest.fyis(30), "wip": digest.wip(), "quota": monitor.quota(),
+    return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
             "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.PROJECT_ROOTS],
             "operator": config.OPERATOR, "restart": restart_status(), "now": S.now()}
 
@@ -1590,8 +1603,8 @@ def project_view(name: str) -> dict:
     tasks.sort(key=lambda t: (order.get(t["state"], 9), t["updated"]))
     return {"name": name, "config": proj, "l3": l3.info(name), "busy": l3.busy(name), "tasks": tasks,
             "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
-            "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
-            "inbox": T.inbox(name, 30), "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
+            "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
+            "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
             "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 

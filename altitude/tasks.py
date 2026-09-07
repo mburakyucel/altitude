@@ -542,49 +542,169 @@ def set_spend(project: str, slug: str, **spend) -> dict:
         return task
 
 
-# ---- User decisions and FYIs -------------------------------------------------
+# ---- Decisions and FYIs -------------------------------------------------
 
 def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
-    """An FYI is a line in the project's inbox.jsonl; the page shows the tail."""
+    """An FYI is a system row in the project's chat (SPEC.md §5.2 note 3); the conversation draws it as
+    a system line. A task FYI is also an event in the task's record."""
     if slug is not None:
         S.require_task_slug(slug)
-    item = {"at": S.now(), "kind": "fyi", "project": project, "slug": slug, "text": text.strip(), "by": actor, "seen": False}
-    p = config.project_dir(project) / "inbox.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        import json
-        f.write(json.dumps(item, sort_keys=True) + "\n")
+    from . import l3
+    text = text.strip()
+    row = l3.chat_log(project, "system", text, trigger="fyi", slug=slug, by=actor)
     if slug:
-        S.append_event(project, slug, "fyi", text=text.strip(), by=actor)
-    return item
+        S.append_event(project, slug, "fyi", text=text, by=actor)
+    return row
 
 
-def inbox(project: str, limit: int = 50) -> list[dict]:
-    import json
-    p = config.project_dir(project) / "inbox.jsonl"
-    if not p.exists():
-        return []
-    out = []
-    for line in p.read_text().splitlines()[-limit:]:
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            pass
-    return out
+#: A block recorded without labelled options offers the two the lifecycle always has.
+FALLBACK_OPTIONS = [{"key": "resume", "label": "Resume", "text": ""},
+                    {"key": "reject", "label": "Reject", "text": ""}]
+
+#: "Option A:" / "Option 1)" anywhere, or a sentence-initial "A:" / "A (recommended, ...):".
+_OPTION_MARK = re.compile(
+    r"(?:\bOption\s+(?P<key>[A-Za-z0-9])\s*(?:\((?P<note>[^)]*)\))?\s*[:)]\s+"
+    r"|(?:^|(?<=[.!?;]\s)|(?<=\n))(?P<key2>[A-H])\s*(?:\((?P<note2>[^)]*)\))?\s*[:)]\s+)")
+_RECOMMEND = re.compile(r"recommend", re.IGNORECASE)
+_RECOMMENDED_KEY = re.compile(r"recommend\w*\s+(?:is\s+|would\s+be\s+|option\s+)*(?P<key>[A-Za-z0-9])\b(?![\w-])",
+                              re.IGNORECASE)
+LABEL_LIMIT = 48
+
+
+def option_label(text: str, key: str) -> str:
+    """A button-sized label from an option's prose: its first clause, sentence-cased, cut at a word."""
+    clause = re.split(r"[,;:]\s|\s[—–]\s|(?<=[.!?])\s", text.strip(), maxsplit=1)[0].strip().rstrip(".!?")
+    if not clause:
+        return f"Option {key}"
+    label = clause[0].upper() + clause[1:]
+    if len(label) > LABEL_LIMIT:
+        cut = label[:LABEL_LIMIT - 1]
+        label = (cut[:cut.rfind(" ")] if " " in cut[10:] else cut).rstrip(" ,;:") + "…"
+    return label
+
+
+def parse_dilemma(text: str) -> dict:
+    """The asker's options and recommendation, read from the escalation prose until an escalation carries
+    structured fields (SPEC.md §5.2 note 5). Returns ``question`` (the text before the options), ``options``
+    ``[{key, label, text}]`` (empty when fewer than two parse), and ``recommendation`` ``{option, why}``."""
+    text = (text or "").strip()
+    marks = []
+    for m in _OPTION_MARK.finditer(text):
+        key = (m.group("key") or m.group("key2") or "").upper()
+        if key and key not in [k for k, *_ in marks]:
+            marks.append((key, m, (m.group("note") or m.group("note2") or "")))
+    if len(marks) < 2:
+        parts = _sentences(text)
+        why = " ".join(s for s in parts if _RECOMMEND.search(s)) if len(parts) > 1 else ""
+        return {"question": text, "options": [], "recommendation": {"option": None, "why": why}}
+    question = text[:marks[0][1].start()].strip()
+    options, recommended, tail = [], None, ""
+    for i, (key, m, note) in enumerate(marks):
+        body = text[m.end():marks[i + 1][1].start()] if i + 1 < len(marks) else text[m.end():]
+        if i + 1 == len(marks):  # the last option ends where the recommendation starts
+            parts, rest = _sentences(body), []
+            for j, s in enumerate(parts):
+                if _RECOMMEND.search(s):
+                    rest, parts = parts[j:], parts[:j]
+                    break
+            body, tail = " ".join(parts), " ".join(rest)
+        inline = re.search(r"\s*\((?:[^)]*\b)?recommended\b[^)]*\)", body, re.IGNORECASE)
+        if inline:  # "keep it (recommended)" marks the option as well
+            body = body[:inline.start()] + body[inline.end():]
+        if _RECOMMEND.search(note) or inline:
+            recommended = key
+        options.append({"key": key, "label": option_label(body, key), "text": body.strip()})
+    labels = [o["label"] for o in options]
+    for o in options:
+        if labels.count(o["label"]) > 1:
+            o["label"] = f"Option {o['key']}"
+    # "Reply A or B" is the asker's instruction; the option buttons replace it.
+    why = " ".join(s for s in _sentences(tail) if not re.match(r"(?:Reply|Answer|Choose|Pick)\b", s)).strip()
+    if recommended is None:
+        found = _RECOMMENDED_KEY.search(why) or _RECOMMENDED_KEY.search(question)
+        if found and found.group("key").upper() in [o["key"] for o in options]:
+            recommended = found.group("key").upper()
+    return {"question": question or text, "options": options,
+            "recommendation": {"option": recommended, "why": why}}
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+
+
+def decision_options(task: dict) -> list[dict]:
+    """The options a blocked task offers: the asker's, else Resume and Reject."""
+    parsed = parse_dilemma(task.get("blocked_reason") or "")
+    return parsed["options"] or [dict(o) for o in FALLBACK_OPTIONS]
+
+
+def decision_row(project: str, task: dict) -> dict:
+    """One decision as the cards and the page read it (SPEC.md §3.8, §5.2 note 5)."""
+    events = S.read_events(project, task["slug"])
+    reason = (task.get("blocked_reason") or "no reason recorded").strip()
+    parsed = parse_dilemma(reason)
+    blocks = [e for e in events if e.get("kind") == "state" and e.get("to") == "blocked"]
+    escalations = [e for e in events if e.get("kind") == "escalated"]
+    decided = [e for e in events if e.get("kind") == "decided"]
+    escalated = bool(task.get("escalated"))
+    by = (blocks[-1].get("by") if blocks else None) or "altd"
+    if task.get("fault"):
+        kind = "fault"
+    elif escalated or by == "l2":
+        kind = "asks"
+    else:
+        kind = "stopped"
+    floor = decided[-1]["at"] if decided else (task.get("created") or "")
+    window = [e["at"] for e in blocks if e.get("at", "") >= floor]
+    asked = (escalations[-1]["at"] if escalated and escalations else blocks[-1]["at"] if blocks
+             else task.get("updated"))
+    return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": kind,
+            "asked_by": "l3" if escalated else "l2", "question": parsed["question"], "detail": reason,
+            "options": parsed["options"] or [dict(o) for o in FALLBACK_OPTIONS],
+            "recommendation": parsed["recommendation"], "asked": asked,
+            "since": window[0] if window else floor or asked}
 
 
 def decisions(project: str) -> list[dict]:
-    """Tasks blocked on Burak: an L2's block flagged for him, L3's escalation, or a block from before L3 saw
-    blocks first. A block waiting on L3, or on a timed hold, is Altitude's wait, not a decision."""
-    out = []
-    for t in S.list_tasks(project):
-        if t["state"] == "blocked" and not t.get("resume_after") and t.get("waiting_on", "burak") == "burak":
-            who = "L3 asks" if t.get("escalated") else "Stopped mid-task"
-            out.append({"project": project, "slug": t["slug"], "title": t["title"],
-                        "question": f"{who}: {short_reason(t.get('blocked_reason') or 'no reason recorded')}",
-                        "options": ["Resume", "Reject"], "asked": t.get("updated"), "kind": "blocked",
-                        "detail": t.get("blocked_reason")})
-    return out
+    """Tasks blocked on the operator: an L2's block flagged for them, L3's escalation, or a block from before
+    L3 saw blocks first. A block waiting on L3, or on a timed hold, is Altitude's wait, not a decision."""
+    return [decision_row(project, t) for t in S.list_tasks(project)
+            if t["state"] == "blocked" and not t.get("resume_after") and t.get("waiting_on", "burak") == "burak"]
+
+
+def decide(project: str, slug: str, option, note: str | None, actor: str = "burak") -> dict:
+    """Record the operator's choice on the task before the lifecycle acts on it (SPEC.md §5.2 note 5).
+    ``option`` is a label, a key, or an index into the task's options. Returns the record plus ``message``,
+    the text the L2 reads when it resumes (empty for a plain Resume without a note)."""
+    note = str(note or "").strip()
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "blocked":
+            raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
+        options = decision_options(task)
+        chosen = None
+        if isinstance(option, bool) or option is None:
+            chosen = None
+        elif isinstance(option, int) or (isinstance(option, str) and option.strip().isdigit()):
+            index = int(option)
+            chosen = options[index] if 0 <= index < len(options) else None
+        elif isinstance(option, str):
+            wanted = option.strip().lower()
+            chosen = next((o for o in options if wanted in (o["key"].lower(), o["label"].lower())), None)
+        if chosen is None:
+            raise TransitionError(f"{slug}: option must be one of "
+                                  + ", ".join(o["label"] for o in options))
+        record = {"key": chosen["key"], "option": chosen["label"], "note": note, "at": S.now(), "by": actor}
+        task["decision"] = record
+        S.save_task(project, task)
+    S.append_event(project, slug, "decided", **record)
+    if chosen["key"] == "reject":
+        message = ""
+    elif chosen["key"] == "resume":
+        message = note
+    else:
+        message = f"Decision: {chosen['key']} ({chosen['label']})." + (f" {note}" if note else "")
+    return {**record, "message": message}
 
 
 def block_question(slug: str, reason: str) -> str:

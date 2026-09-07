@@ -350,16 +350,17 @@ which both worker personas direct the task owner to read first.
 
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
-compact cards grouped by project, answered through `POST /api/decide`), the project page at
+compact cards in one column, answered through `POST /api/decide`), the project page at
 `/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
-the work panel), the task page, and Monitor. `/projects` and `/chat/<name>` redirect to the project
+the work panel), the decision page at `/projects/<name>/decisions/<slug>`, the task page, and
+Monitor. `/projects` and `/chat/<name>` redirect to the project
 page, and with no managed project every project route shows First run, which lists the folders under
 the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
 first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
 narrower is the phone: a 54px header and an 84px tab bar (Chat, Work, Needs you, Monitor), where
-the header names the selected project and opens the switcher sheet, and a task page pushes over its
-tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
+the header names the selected project and opens the switcher sheet, and a task or decision page
+pushes over its tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
 selected project is browser state under `localStorage`, set by the rail, the switcher, a project
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
 rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
@@ -367,7 +368,7 @@ display name the engine seam gives, so the web code names no provider; the same 
 scan roots First run names and the operator's configured name. `POST /api/l3/start` runs the start
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
-the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a link row
+the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
 under the reply. The composer's engine pill pins the project's L3 to one configured engine, named as
 `engines[]` reports it, until set back to Auto; on Auto the weekly quota decides, and a turn stays on
 the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
@@ -414,8 +415,8 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages fold into one turn in arrival order, each on its own line, while server-triggered messages
 keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-The project conversation, the task page's conversation, and the project task card's quick-message
-panel use one composer component, `web/src/components/Composer.tsx`, with no page-specific props.
+The project conversation, the task page's conversation, and the decision page's follow-up use one
+composer component, `web/src/components/Composer.tsx`, with no page-specific props.
 The page owns its draft and its submit function, and a submit that throws is a refused send: the
 bubble leaves, the draft returns, and the hint reads "Not sent. Retry." The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
@@ -427,6 +428,35 @@ name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 tabl
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
 phone and desktop widths in `web/e2e/conversation.pw.ts`. Decision and reason fields remain
 ordinary form fields.
+
+The task card (`web/src/components/TaskCard.tsx`, spec §3.5) is one component in two sizes: the
+bordered card under an L3 reply that created the task and the row in the work panel. Its meta line
+comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
+the queue's own reason (the WIP limit, an engine hold, a restart in progress, a resume checkpoint,
+or plain dispatch), so the card never names a file lease. A task blocked waiting on L3 reads "Waits
+for L3" with the running dot, and the rail's project dot counts it as running (`counts.waits_l3`);
+only a decision in the queue turns either dot amber. The work panel (spec §3.7) reads the project's
+tasks and the overview queue filtered to the project: the queue's decisions as compact cards under
+Needs you, every other active task as a row under Active, and the tasks done or rejected in the last
+seven days folded under Done this week; a task that changes section fades in where it now belongs.
+
+A decision (spec §3.8, §3.9) is one card wherever it appears. `GET /api/overview` `queue[]` carries,
+per blocked task waiting on the operator, `kind` (`asks`, `stopped`, or `fault`), `asked_by` (`l3`
+for an escalation, `l2` for a block the L2 flagged for the operator), the question, labelled
+`options`, the `recommendation` (the option and why), `asked`, and `since`, the time the current
+block began. Until escalations carry structured fields, `tasks.parse_dilemma` reads the options and
+the recommendation from the question text ("Option A:" or "A:" prefixes, "(recommended)", "I
+recommend A"), and a block recorded without options offers Resume and Reject. `POST /api/decide`
+takes `{project, slug, option, note}`, where `option` is the key, the label, or the index; the server
+records `{key, option, note, at, by}` as the task's `decision` and a `decided` event, then rejects the
+task (the note as the reason) or resumes it with a task message that names the choice and the note,
+so the L2 reads the answer at its next checkpoint. The decision page reads the task's events for its
+timeline and evidence; a follow-up to L3 is a chat turn posted with the decision's `slug`, which the
+server stores on the turn's rows and reports on the active turn, and a follow-up to the L2 is a task
+message; the card and the page mirror the rows that carry the slug or sit in the task conversation
+since `since`, so nothing is copied. An FYI (`tasks.fyi`) is a chat row `{role: "system", trigger:
+"fyi", slug, text}` in the project's conversation; there is no project inbox file and no `fyis` in the
+digest or the overview.
 
 `POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),

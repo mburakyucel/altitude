@@ -1,7 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
-import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -45,11 +44,17 @@ const decision = {
   project: "altitude",
   slug: "add-badge",
   title: "Add the badge",
-  question: "L3 asks: Which badge colour should the count use?",
+  kind: "asks",
+  asked_by: "l3",
+  question: "Which badge colour should the count use?",
   detail: "The boards show accent; the old build used amber.",
   asked: ago(4),
-  options: ["Resume", "Reject"],
-  kind: "blocked",
+  since: ago(4),
+  options: [
+    { key: "resume", label: "Resume" },
+    { key: "reject", label: "Reject" },
+  ],
+  recommendation: { option: "resume", why: "The boards show accent; the old build used amber." },
 };
 
 const overview = {
@@ -96,13 +101,6 @@ function mockFetch(fixtures: Fixtures = {}) {
 function posted(fetchMock: ReturnType<typeof vi.fn>, path: string) {
   const call = fetchMock.mock.calls.find(([u]) => String(u).includes(path));
   return call ? JSON.parse(String((call[1] as RequestInit | undefined)?.body)) : null;
-}
-
-/** The <article> a task title link sits in — the element carrying the card's styling. */
-function cardFor(title: HTMLElement): HTMLElement {
-  const card = title.closest("article");
-  if (!card) throw new Error("task title is not inside a card");
-  return card;
 }
 
 async function openPanel(user: ReturnType<typeof renderApp>["user"]) {
@@ -214,9 +212,9 @@ describe("Project page", () => {
     const { user } = renderApp({ route: "/projects/altitude" });
 
     const panel = await openPanel(user);
-    expect(within(panel).getByText("2 active · 1 done this week")).toBeInTheDocument();
-    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
-    expect(within(panel).getByText("Needs you (1)")).toBeInTheDocument();
+    expect(within(panel).getByText("1 active · 1 done this week")).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: /^Fix the timer/ })).toBeInTheDocument();
+    expect(within(panel).getByRole("heading", { name: "Needs you (1)" })).toBeInTheDocument();
     expect(within(panel).getByText("Done this week (1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Work panel" })).toHaveAttribute("aria-pressed", "true");
 
@@ -230,7 +228,7 @@ describe("Project page", () => {
     renderApp({ route: "/projects/altitude" });
 
     const panel = await screen.findByRole("region", { name: "Work" });
-    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: /^Fix the timer/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Work panel" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -252,134 +250,65 @@ describe("Project page", () => {
 
     expect(await screen.findByRole("heading", { name: "altitude", level: 1 })).toHaveClass("phone-title");
     const panel = await screen.findByRole("region", { name: "Work" });
-    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: /^Fix the timer/ })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Work panel" })).toBeNull();
     expect(screen.getByRole("link", { name: /^Work/ })).toHaveAttribute("aria-current", "page");
   });
 
-  it("dispatches a queued task through /api/task/action", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
-
-    const panel = await openPanel(user);
-    await user.click(within(panel).getByRole("button", { name: "Dispatch" }));
-
-    await waitFor(() => {
-      expect(posted(fetchMock, "/api/task/action")).toEqual({
-        project: "altitude",
-        slug: "add-badge",
-        action: "dispatch",
-      });
-    });
-  });
-
-  it("sends a note into a running L2", async () => {
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
-
-    const panel = await openPanel(user);
-    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
-    await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "check the toast timer");
-    await user.click(within(panel).getByRole("button", { name: "Send" }));
-
-    await waitFor(() => {
-      expect(posted(fetchMock, "/api/l2/message")).toEqual({
-        project: "altitude",
-        slug: "fix-timer",
-        text: "check the toast timer",
-      });
-    });
-  });
-
-  it("lands a transcript in the quick-message draft with nothing else on screen (issue #195)", async () => {
-    installVoiceBrowser();
-    const fetchMock = mockFetch();
-    const { user } = renderApp({ route: "/projects/altitude" });
-
-    const panel = await openPanel(user);
-    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
-    const field = screen.getByLabelText("Message the L2 on fix-timer");
-    await user.type(field, "Typed lead");
-    await user.click(within(panel).getByRole("button", { name: "Start voice input" }));
-    await user.click(await within(panel).findByRole("button", { name: "Stop voice input" }));
-    await waitFor(() => expect(field).toHaveValue("Typed lead spoken check"));
-    expect(screen.queryByRole("region", { name: /transcript/i })).toBeNull();
-    expect(screen.queryByText("spoken check")).toBeNull();
-    await user.click(within(panel).getByRole("button", { name: "Send" }));
-
-    await waitFor(() => {
-      expect(posted(fetchMock, "/api/l2/message")).toEqual({
-        project: "altitude",
-        slug: "fix-timer",
-        text: "Typed lead spoken check",
-      });
-    });
-  });
-
-  it("drops a quick-message draft when the project destination changes", async () => {
-    installVoiceBrowser();
+  // §3.5: the row's meta comes from the task's state and the queue's own hold text, never a lease.
+  it("reads each row's state: running with its engine, queued with the hold, waits for L3, done with its PR", async () => {
+    const waitsL3 = { slug: "ask-l3", state: "blocked", title: "Ask L3", updated: ago(1), waiting_on: "l3", blocked_reason: "which suite?" };
+    const queued = { slug: "later", state: "queued", title: "Later", updated: ago(5) };
+    const runner = { ...project.tasks[0], l2_engine: "alpha", engine_model: "opus", dispatched: ago(2) };
+    const done = { slug: "shipped", state: "done", title: "Shipped", updated: ago(30), prs: [212] };
     mockFetch({
       overview: {
         ...overview,
-        projects: [
-          { name: "altitude", managed: true },
-          { name: "sibling", managed: true },
-        ],
+        queue: [],
+        wip: { per_project: {}, machine: 1, waiting: [{ project: "altitude", slug: "later", why: "dispatch", hold: "WIP limit 1 reached for altitude (1 running)" }] },
       },
+      project: { ...project, tasks: [runner, waitsL3, queued], archive: [done] },
     });
-    setViewport(1440);
-    const { router, user } = renderApp({ route: "/projects/altitude" });
-    const panel = await screen.findByRole("region", { name: "Work" });
-    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
-    const field = screen.getByLabelText("Message the L2 on fix-timer");
-    await user.type(field, "Private draft");
-    await user.click(within(panel).getByRole("button", { name: "Start voice input" }));
-    await user.click(await within(panel).findByRole("button", { name: "Stop voice input" }));
-    await waitFor(() => expect(field).toHaveValue("Private draft spoken check"));
-
-    await router.navigate("/projects/sibling");
-    await screen.findByRole("heading", { name: "sibling" });
-    await user.click(await screen.findByRole("button", { name: "Message L2" }));
-    expect(screen.getByLabelText("Message the L2 on fix-timer")).toHaveValue("");
-  });
-
-  // A blocked task with resume_after is held by Altitude, not stuck on the operator: it says so and
-  // keeps the neutral card. A blocked task without one is still a real block, danger border and all.
-  it("separates a held task from a blocked one", async () => {
-    const held = {
-      slug: "held-task",
-      state: "blocked",
-      title: "Held task",
-      updated: ago(3),
-      blocked_reason: "usage limit: the subscription window is exhausted, resets 2026-08-30T02:00",
-      resume_after: "2026-08-30T02:00",
-    };
-    const stuck = {
-      slug: "stuck-task",
-      state: "blocked",
-      title: "Stuck task",
-      updated: ago(4),
-      blocked_reason: "the test suite will not run",
-      resume_after: null,
-    };
-    mockFetch({ overview: { ...overview, queue: [] }, project: { ...project, tasks: [held, stuck] } });
     setViewport(1440);
     renderApp({ route: "/projects/altitude" });
 
-    const heldCard = cardFor(await screen.findByRole("link", { name: "Held task" }));
-    expect(
-      within(heldCard).getByText(
-        /^queued: Altitude resumes this L2 itself when the operational hold clears \(usage limit: /,
-      ),
-    ).toBeInTheDocument();
-    expect(within(heldCard).queryByText(/^blocked: /)).toBeNull();
-    expect(heldCard).not.toHaveClass("border-danger/40");
+    const panel = await screen.findByRole("region", { name: "Work" });
+    const active = within(panel).getByRole("region", { name: "Active" });
+    const row = (name: RegExp) => within(active).getByRole("link", { name });
+    expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · Running · Opus on Alpha · started 2 min ago");
+    expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waits for L3");
+    expect(row(/^Ask L3/).querySelector(".dot")).toHaveAttribute("data-state", "running");
+    expect(row(/^Later/)).toHaveAccessibleName("Later · Queued · waits for a slot · WIP limit 1 reached for altitude (1 running)");
+    expect(within(panel).queryByRole("region", { name: "Needs you" })).toBeNull();
 
-    const stuckCard = cardFor(screen.getByRole("link", { name: "Stuck task" }));
-    expect(within(stuckCard).getByText("blocked: the test suite will not run")).toBeInTheDocument();
-    expect(within(stuckCard).queryByText(/operational hold/)).toBeNull();
-    expect(stuckCard).toHaveClass("border-danger/40");
+    const fold = within(panel).getByText("Done this week (1)");
+    expect(fold.closest("details")).not.toHaveAttribute("open");
+    fold.click();
+    expect(fold.closest("details")).toHaveAttribute("open");
+    expect(within(panel).getByRole("link", { name: /^Shipped/ })).toHaveAccessibleName("Shipped · Done · PR #212 merged");
+  });
+
+  // §3.7: a decision answered from the panel collapses its card; the task lands in Active on the next read.
+  it("answers a decision from the panel and moves the task to Active", async () => {
+    const fixtures: Fixtures = {};
+    const fetchMock = mockFetch(fixtures);
+    setViewport(1440);
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    const panel = await screen.findByRole("region", { name: "Work" });
+    const card = within(panel).getByRole("article", { name: "Add the badge" });
+    expect(within(card).getByText("L3 asks")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "More context" })).toHaveAttribute("href", "/projects/altitude/decisions/add-badge");
+    expect(within(panel).queryByRole("link", { name: /^Add the badge/ })).toBeNull();
+
+    fixtures.overview = { ...overview, queue: [] };
+    await user.click(within(card).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/decide")).toEqual({ project: "altitude", slug: "add-badge", option: "resume" }));
+    await waitFor(() => expect(within(panel).queryByRole("article", { name: "Add the badge" })).toBeNull());
+    const row = await within(panel).findByRole("link", { name: /^Add the badge/ });
+    expect(row).toHaveAccessibleName("Add the badge · Queued · waits for dispatch");
+    expect(row.closest(".wp-row")).toHaveAttribute("data-moved");
   });
 
   // The item is present only when the project checkout has boards: it is the server's answer, not
