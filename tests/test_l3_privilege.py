@@ -27,6 +27,8 @@ class TestIssueVerbs(AltitudeCase):
 
         def run(args, **kwargs):
             if args[0] == "gh":
+                if args[1:3] == ["issue", "close"]:
+                    return subprocess.CompletedProcess(args, 0, "", "Closed issue #42\n")
                 return subprocess.CompletedProcess(args, 0, self.url + "\n", "")
             return real_run(args, **kwargs)
 
@@ -58,6 +60,44 @@ class TestIssueVerbs(AltitudeCase):
         self.assertIn("Bash(alt issue new *)", l3.ALLOWED_TOOLS)
         self.assertIn("Bash(alt issue comment *)", l3.ALLOWED_TOOLS)
 
+    def test_l3_close_maps_both_reasons_to_origin_and_records_the_receipt(self):
+        self.setenv("GH_REPO", "other/private")
+        for reason, gh_reason in (("completed", "completed"), ("not-planned", "not planned")):
+            with self.subTest(reason=reason):
+                result = self.request("close", "42", "--reason", reason, body="")
+                self.assertEqual(result, {"returncode": 0, "stdout": self.url + "\n", "stderr": ""})
+                call = self.run.call_args
+                self.assertEqual(call.args[0], ["gh", "issue", "close", "42", "--repo",
+                                               "https://github.com/team/project", "--reason", gh_reason])
+                self.assertEqual(call.kwargs["cwd"], self.repo)
+                self.assertEqual(call.kwargs["input"], "")
+                self.assertNotIn("GH_REPO", call.kwargs["env"])
+        events = S.read_project_log(self.project)
+        self.assertEqual([(e["kind"], e["actor"], e["number"], e["reason"], e["url"]) for e in events],
+                         [("issue-close", "l3", 42, reason, self.url) for reason in ("completed", "not-planned")])
+        self.assertIn("Bash(alt issue close *)", l3.ALLOWED_TOOLS)
+
+    def test_close_refuses_extra_authority_and_published_text(self):
+        invalid = [[], ["--reason", "duplicate"], ["--reason", "not planned"], ["--rea", "completed"],
+                   ["--reason", "completed", "-"], ["--reason", "completed", "--comment", "Text"],
+                   ["--reason", "completed", "--repo", "other/repo"],
+                   ["--reason", "completed", "--project", "other"],
+                   ["--reason", "completed", "--file", "/etc/passwd"]]
+        for flags in invalid:
+            with self.subTest(flags=flags), self.assertRaises(ValueError):
+                self.request("close", "42", *flags, body="")
+        for number in ("0", "-1", "https://github.com/other/repo/issues/42"):
+            with self.subTest(number=number), self.assertRaises(ValueError):
+                self.request("close", number, "--reason", "completed", body="")
+        for body in ("Closing comment", f"Read {Path.home()}/private.txt", "See incidents/private.md"):
+            with self.subTest(body=body), self.assertRaisesRegex(ValueError, "no body"):
+                self.request("close", "42", "--reason", "completed", body=body)
+        for operation in ("close", "reopen", "delete", "edit", "transfer"):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "gh read"):
+                server.l3_verb_request(self.project, {"kind": "gh", "args": ["issue", operation, "42"]})
+        self.run.assert_not_called()
+        self.assertEqual(S.read_project_log(self.project), [])
+
     def test_claude_boundary_refuses_private_paths_and_incident_files_before_gh(self):
         private = [f"Read {Path.home()}/private.txt", f"[evidence](file://{Path.home()}/private.txt)",
                    str(Path.home()).replace("/", "//") + "/private.txt",
@@ -77,19 +117,22 @@ class TestIssueVerbs(AltitudeCase):
         self.request("new", "--title", "Backlog", "-", body="I-20260907-123456; docs/ARCHITECTURE.md")
 
     def test_issue_grammar_and_l2_refusal_have_no_external_effect(self):
-        for args in (["list"], ["close", "42"], ["edit", "42"], ["new", "-"],
+        for args in (["list"], ["close", "42"], ["edit", "42"], ["reopen", "42"], ["delete", "42"], ["new", "-"],
                      ["new", "--title", "", "-"], ["new", "--title", "X", "body-file.md"],
                      ["comment", "0", "-"], ["comment", "https://github.com/other/repo/issues/1", "-"],
                      ["comment", "42", "--repo", "other/repo", "-"], ["new", "--tit", "X", "-"]):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 self.request(*args)
         self.run.assert_not_called()
-        for args in (["new", "--title", "X", "-"], ["comment", "42", "-"]):
+        for args in (["new", "--title", "X", "-"], ["comment", "42", "-"],
+                     ["close", "42", "--reason", "completed"]):
             result = self.alt("issue", *args, env={"ALTITUDE_ACTOR": "l2"})
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not available to an L2", result.stderr)
         with self.assertRaisesRegex(ValueError, "L2"):
             server.issue_write(self.project, "new", "body", actor="l2", title="X")
+        with self.assertRaisesRegex(ValueError, "L2"):
+            server.issue_write(self.project, "close", "", actor="l2", number=42, reason="completed")
 
     def test_failed_gh_and_non_github_origin_do_not_record_success(self):
         with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "no origin")):
@@ -100,7 +143,79 @@ class TestIssueVerbs(AltitudeCase):
                 subprocess.CompletedProcess([], 1, "", "failure\nsecond line")]):
             with self.assertRaisesRegex(ValueError, "failure second line"):
                 self.request("comment", "42", "-")
+        with mock.patch.object(server.subprocess, "run", side_effect=[
+                subprocess.CompletedProcess([], 0, "https://github.com/team/project.git", ""),
+                subprocess.CompletedProcess([], 1, "", "closure refused")]):
+            with self.assertRaisesRegex(ValueError, "closure refused"):
+                self.request("close", "42", "--reason", "completed", body="")
         self.assertEqual(S.read_project_log(self.project), [])
+
+    def test_operator_close_cli_and_api_validate_the_same_operation(self):
+        http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        for reason in ("completed", "not-planned"):
+            result = self.alt("issue", "close", "42", "--reason", reason,
+                              env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project,
+                                   "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(http.server_port),
+                                   "ALTITUDE_TLS": "0"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), self.url)
+        payload = {"project": self.project, "operation": "close", "number": 42, "reason": "completed",
+                   "actor": "l3"}
+
+        def post(body):
+            request = urllib.request.Request(f"http://127.0.0.1:{http.server_port}/api/issue",
+                                             data=json.dumps(body).encode(),
+                                             headers={"Content-Type": "application/json"})
+            return urllib.request.urlopen(request)
+
+        with post(payload) as response:
+            self.assertEqual(json.load(response), {"url": self.url})
+        events = S.read_project_log(self.project)
+        self.assertEqual([e["actor"] for e in events], ["operator"] * 3)
+        self.run.reset_mock()
+        for change in ({"reason": None}, {"reason": ""}, {"reason": "duplicate"}, {"reason": []},
+                       {"number": True}, {"number": 0}, {"number": -1}, {"number": "42"},
+                       {"number": "https://github.com/other/repo/issues/42"},
+                       {"body": "Closing comment"}, {"body": None}, {"title": "X"}, {"labels": ["X"]},
+                       {"repo": "other/repo"}, {"operation": "reopen"}, {"operation": "delete"},
+                       {"operation": "comment", "body": "Text"}, {"operation": "new", "title": "X"}):
+            with self.subTest(change=change), self.assertRaises(urllib.error.HTTPError) as error:
+                post(payload | change)
+            self.assertEqual(error.exception.code, 400)
+            self.assertIn("alt issue", json.load(error.exception)["error"])
+        self.run.assert_not_called()
+        self.assertEqual(S.read_project_log(self.project), events)
+
+    def test_close_through_coordinator_mcp_and_real_project_socket(self):
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        runtime = l3._l3_runtime(self.project, "codex")
+        self.addCleanup(l3._remove_runtime, runtime)
+        settings = tomllib.loads("\n".join(engines.codex_l3_permissions(runtime, project=self.project)))
+        adapter = settings["mcp_servers"]["altitude"]
+        requests = [
+            {"kind": "alt", "args": ["issue", "close", "42", "--reason", "completed"]},
+            {"kind": "alt", "args": ["issue", "close", "42", "--reason", "not-planned"]},
+            {"kind": "alt", "args": ["issue", "close", "42", "--reason", "completed", "--repo", "other/repo"]},
+            {"kind": "gh", "args": ["issue", "close", "42"]},
+        ]
+        wire = "\n".join(json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                                     "params": {"name": "coordinator", "arguments": request}})
+                         for i, request in enumerate(requests))
+        result = subprocess.run([adapter["command"], *adapter["args"]], input=wire + "\n", cwd=runtime,
+                                env=os.environ | l3._l3_env(self.project, runtime),
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line)["result"] for line in result.stdout.splitlines()]
+        self.assertEqual([reply["isError"] for reply in replies], [False, False, True, True])
+        for reply in replies[:2]:
+            self.assertEqual(json.loads(reply["content"][0]["text"])["stdout"].strip(), self.url)
+        events = S.read_project_log(self.project)
+        self.assertEqual([(e["actor"], e["reason"]) for e in events],
+                         [("l3", "completed"), ("l3", "not-planned")])
 
     def test_operator_http_and_l3_socket_fix_the_actor(self):
         http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
