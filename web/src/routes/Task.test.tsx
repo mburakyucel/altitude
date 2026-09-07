@@ -105,6 +105,7 @@ const transcript = {
 };
 
 interface StubOptions {
+  repository?: string | null;
   overview?: typeof overview;
   message?: () => Response;
   action?: () => Response;
@@ -132,7 +133,7 @@ function stub(task: unknown, options: StubOptions = {}) {
       sent.push(message);
       return jsonResponse({ ok: true, message });
     }
-    if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [] });
+    if (url.includes("/api/project/")) return jsonResponse({ name: "altitude", tasks: [], repository: options.repository ?? null });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -321,6 +322,26 @@ describe("Task on desktop", () => {
     expect(line).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
     expect(line).not.toHaveTextContent("Tried twice");
     expect(line).toHaveClass("text-danger");
+  });
+
+  it.each([390, 1440])("links the PR in a new tab at %i pixels when the repository is known", async (width) => {
+    setViewport(width);
+    stub(done, { repository: "https://github.com/example/project" });
+    renderApp({ route });
+
+    const link = await screen.findByRole("link", { name: "PR #202 merged · main checks passed" });
+    expect(link).toHaveAttribute("href", "https://github.com/example/project/pull/202");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it.each([390, 1440])("keeps the PR as text at %i pixels when the repository is null", async (width) => {
+    setViewport(width);
+    stub(done, { repository: null });
+    renderApp({ route });
+
+    expect(await screen.findByText("PR #202 merged · main checks passed", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /PR #202/ })).toBeNull();
   });
 
   it("reads a done task read-only with its PR in the header", async () => {

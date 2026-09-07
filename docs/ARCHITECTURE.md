@@ -250,6 +250,8 @@ bubble. It never infers a turn indefinitely from `busy` or the last history role
 completion and terminal history rows carry the turn id, so local output stays until history owns it
 and a completed assistant or error row wins over a raced active snapshot.
 
+`GET /api/project/<name>` includes `repository`, the GitHub HTTPS web URL derived from the deployment checkout's SSH or HTTPS `origin`, or `null` without a GitHub origin; the task PR chip links to `<repository>/pull/<n>` in a new tab when present and stays text otherwise.
+
 A message sent while L3 is busy is queued, never refused: the composer stays open, the Send button
 reads Queue, and the message shows in the transcript as queued until its turn starts, when the queue
 row becomes the active thinking bubble. The API snapshots the queue and active record under the same
