@@ -1,9 +1,13 @@
 """I-20260903-075410/I-20260904-062512: L3 reads checkouts; altd owns privileged effects."""
 import io
 import json
+import os
+import shutil
 import socket
 import subprocess
+import sys
 import threading
+import tomllib
 import unittest
 import urllib.request
 from pathlib import Path
@@ -209,7 +213,10 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertTrue(seen["ignore_user_config"], "ambient sandbox settings cannot replace the L3 profile")
         self.assertIn('default_permissions="altitude-l3"', settings)
         self.assertFalse(any(value.startswith("sandbox_mode=") for value in settings))
-        self.assertIn("features.network_proxy=true", settings)
+        self.assertIn("permissions.altitude-l3.network.enabled=false", settings)
+        self.assertIn("mcp_servers.altitude.required=true", settings)
+        self.assertIn('mcp_servers.altitude.tools.coordinator.approval_mode="approve"', settings,
+                      "headless MCP must not require a prompt under approval_policy=never")
         root_write = f'{json.dumps(str(config.ROOT.resolve()))}="write"'
         self.assertFalse(any(root_write in value for value in settings),
                          "Altitude state is writable only through the daemon verb socket")
@@ -218,8 +225,8 @@ class TestL3CheckoutConfinement(AltitudeCase):
                         "Codex cannot reconstruct the user bus and control the service")
         self.assertTrue(any(str(self.repo.resolve()) in value and '="read"' in value
                             for value in settings), "the deployment checkout is explicitly read-only")
-        self.assertTrue(any(str(l3.verb_socket_path(self.project).resolve()) in value and '="allow"' in value
-                            for value in settings), "only altd's role-fenced capability socket is exposed")
+        self.assertFalse(any("network.unix_sockets" in value for value in settings),
+                         "the proxy Unix allowlist cannot permit Linux AF_UNIX sockets")
         self.assertFalse(any("network.domains" in value and '="allow"' in value for value in settings),
                          "direct GitHub and altd HTTP access stay blocked")
 
@@ -242,6 +249,92 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual(status.stdout.strip(), "altitude.service: active/running PID 123")
         self.assertEqual((gh_read.returncode, gh_read.stdout.strip()), (0, "checks are green"))
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", (runtime / "bin" / "systemctl").read_text())
+
+    def test_sept7_coordinator_mcp_uses_real_broker_and_preserves_authority(self):
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        runtime = l3._l3_runtime(self.project, "codex")
+        self.addCleanup(l3._remove_runtime, runtime)
+        # A model-writable module must never shadow the trusted adapter, even on a new launch.
+        (runtime / "altitude.py").write_text("raise RuntimeError('runtime module executed')\n")
+        settings = tomllib.loads("\n".join(engines.codex_l3_permissions(runtime, project=self.project)))
+        adapter = settings["mcp_servers"]["altitude"]
+        slug = "broker-transport-check"
+        body = "Throwaway fixture only\n\nLiteral $(touch forbidden); never shell input.\n"
+        requests = [
+            {"method": "initialize", "params": {"protocolVersion": "2024-11-05"}},
+            {"method": "tools/list"},
+            *[{"method": "tools/call", "params": {"name": "coordinator", "arguments": args}} for args in [
+                {"kind": "alt", "args": ["task", "new", "--title", "Broker transport check", "-"], "stdin": body},
+                {"kind": "alt", "args": ["task", "status", slug, "--json"]},
+                {"kind": "alt", "args": ["task", "show", slug]},
+                {"kind": "alt", "args": ["--project", "elsewhere", "state"]},
+                {"kind": "alt", "args": ["task", "new", "No", "--file", "/etc/passwd"]},
+                {"kind": "alt", "args": ["project", "add", "forbidden"], "actor": "burak"},
+                {"kind": "gh", "args": ["pr", "merge", "1"]},
+                {"kind": "service", "unit": "restart altitude"},
+                {"kind": "shell", "args": ["touch", str(self.repo / "forbidden")]},
+            ]],
+        ]
+        wire = "\n".join(json.dumps({"jsonrpc": "2.0", "id": i, **r}) for i, r in enumerate(requests))
+        result = subprocess.run([adapter["command"], *adapter["args"]], input=wire + "\n", cwd=runtime,
+                                env=os.environ | l3._l3_env(self.project, runtime),
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(len(replies), len(requests))
+        self.assertEqual(replies[1]["result"]["tools"][0]["name"], "coordinator")
+        for reply in replies[2:5]:
+            self.assertFalse(reply["result"]["isError"], reply)
+            response = json.loads(reply["result"]["content"][0]["text"])
+            self.assertEqual(json.loads(response["stdout"])["slug"], slug)
+        for reply in replies[5:]:
+            self.assertTrue(reply["result"]["isError"], reply)
+        self.assertFalse((self.repo / "forbidden").exists())
+        self.assertEqual([t["slug"] for t in S.list_tasks(self.project)], [slug])
+        self.assertEqual((S.task_dir(self.project, slug) / "request.md").read_text(), body)
+
+    @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1",
+                         "opt in on a host with the real Codex Linux sandbox")
+    def test_sept7_real_codex_sandbox_denies_checkout_state_git_and_network(self):
+        binary = shutil.which(config.CODEX_BIN)
+        self.assertIsNotNone(binary, "requested native sandbox verification requires Codex")
+        runtime = l3._l3_runtime(self.project, "codex")
+        self.addCleanup(l3._remove_runtime, runtime)
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        cmd = [binary, "sandbox", "-P", "altitude-l3", "-C", str(runtime)]
+        for setting in engines.codex_l3_permissions(runtime, project=self.project):
+            cmd += ["-c", setting]
+        probe = r'''
+import errno, os, socket, subprocess, sys
+from pathlib import Path
+repo, state, broker, bus = sys.argv[1:]
+assert (Path(repo) / "README.md").read_text() == "readme\n"
+Path("scratch").write_text("allowed")
+def denied(action):
+    try:
+        action()
+    except OSError as exc:
+        assert exc.errno in (errno.EPERM, errno.EACCES, errno.EROFS), exc
+    else:
+        raise AssertionError("unauthorized operation succeeded")
+for parent in (repo, state):
+    denied(lambda: (Path(parent) / "forbidden").write_text("denied"))
+for path in (broker, bus):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        denied(lambda: client.connect(path))
+denied(lambda: socket.create_connection(("127.0.0.1", 8890), timeout=2))
+git = subprocess.run(["/usr/bin/git", "-C", repo, "config", "probe.denied", "true"], capture_output=True)
+assert git.returncode != 0, git
+print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/bus/HTTP writes denied")
+'''
+        cmd += ["--", sys.executable, "-c", probe, str(self.repo), str(config.ROOT),
+                str(l3.verb_socket_path(self.project)), f"/run/user/{os.getuid()}/bus"]
+        result = subprocess.run(cmd, cwd=runtime, env=engines.codex_env(),
+                                capture_output=True, text=True, timeout=45)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("native sandbox:", result.stdout)
 
     def test_i_20260903_075410_runtime_path_cannot_be_retargeted_to_the_checkout(self):
         before = self.checkout_snapshot()

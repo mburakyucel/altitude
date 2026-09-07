@@ -142,16 +142,29 @@ A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its G
 directory and the worktree's own metadata under `.git/worktrees/`), and the Altitude home are its writable roots, the network stays on for pushes, PRs, and tests, and the launch environment
 carries the task identity. A Codex L3 turn uses a dedicated permission profile: it writes only one fresh per-turn
 runtime directory; the deployment checkout and Altitude home are read-only, direct command networking and the
-user-service bus are denied, and only that project's role-fenced altd Unix socket is reachable. A Claude L3 turn has the same runtime cwd and uses
+user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and
+GitHub/service reads, forwarding argument arrays and stdin to the project's fixed altd socket. Every fresh
+and resumed turn receives this configuration and the instruction to use the tool; shell wrappers remain
+unreachable inside the native sandbox. The adapter starts isolated Python from protected source, never
+loads code from the writable runtime, and has no shell execution operation. Its one tool is approved for
+unattended use; altd still applies its project and actor authorization on every request. A Claude L3 turn has the same runtime cwd and uses
 `--restricted`, `dontAsk`, no unattended permission
 prompts, no Edit/Write/NotebookEdit tools, and an exact allowlist. Both can read the checkout with Git
-log/diff-stat/show-stat shims and the altitude journal. Runtime shims send every `alt` invocation and fixed
+log/diff-stat/show-stat shims and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and fixed
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
 write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check. Claude's native Bash
 sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its
 hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
 Claude's confinement, while Codex retains its native filesystem sandbox.
+
+The September 7 coordinator outage is verified with the real Codex Linux sandbox, not profile assertions:
+`ALTITUDE_TEST_CODEX_SANDBOX=1 python3 -m unittest tests.test_l3_privilege` runs the broker transport tests
+and a native sandbox probe for checkout/state/Git writes and direct socket/HTTP access. The opt-in requires
+a working Codex installation and fails if sandbox initialization fails. A live acceptance run additionally
+starts a fresh L3 through the production launcher, observes a successful coordinator tool call and a
+cross-project refusal, and checks repository and user-bus denials from that session's shell. Activation
+uses the normal merged-change quiet point, followed by the same fresh-session acceptance check.
 
 An existing Claude L3 session that predates this confinement policy is rotated before its next turn. Each engine
 keeps its own resumable L3 session after that boundary is established.

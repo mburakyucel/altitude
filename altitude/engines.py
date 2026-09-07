@@ -5,7 +5,9 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -547,26 +549,73 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     """A Codex profile which denies L3 checkout/service writes and direct command networking.
 
     I-20260903-075410: L3 needs broad reads and one disposable writable cwd. ``alt`` plus GitHub/service reads
-    cross altd's fixed Unix-socket protocol; the model cannot write Altitude state, reach mutating HTTP APIs,
+    cross altd's fixed protocol through a stdio MCP adapter; the model cannot write Altitude state, reach mutating HTTP APIs,
     use authenticated GitHub directly, connect to the user bus, or write a checkout.
     """
     profile = "altitude-l3"
     bus = f"/run/user/{os.getuid()}/bus"
     from .l3 import verb_socket_path
-    broker = verb_socket_path(project)
+    broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
-             str(config.project_path(project).resolve()): "read", str(broker.resolve()): "read", bus: "deny"}
+             str(config.project_path(project).resolve()): "read", bus: "deny"}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
-    sockets = "{" + ",".join((f"{json.dumps(str(broker.resolve()))}=\"allow\"",
-                                f"{json.dumps(bus)}=\"deny\"")) + "}"
+    # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
+    # Unix allowlist is macOS-only. MCP stdio is the supported boundary; its adapter has no shell verb.
+    adapter = (f"import sys; sys.path.insert(0, {str(config.REPO.resolve())!r}); "
+               f"from altitude.engines import codex_l3_mcp; codex_l3_mcp({str(broker)!r})")
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":read-only"',
             f"permissions.{profile}.filesystem={filesystem}",
-            "features.network_proxy=true",
-            f"permissions.{profile}.network.enabled=true",
-            f"permissions.{profile}.network.allow_local_binding=false",
-            f"permissions.{profile}.network.allow_upstream_proxy=false",
-            f"permissions.{profile}.network.unix_sockets={sockets}", 'approval_policy="never"']
+            f"permissions.{profile}.network.enabled=false", 'approval_policy="never"',
+            "mcp_servers.altitude.command=" + json.dumps(sys.executable),
+            "mcp_servers.altitude.args=" + json.dumps(["-I", "-c", adapter]),
+            "mcp_servers.altitude.required=true", "mcp_servers.altitude.tool_timeout_sec=150",
+            'mcp_servers.altitude.tools.coordinator.approval_mode="approve"',
+            "developer_instructions=" + json.dumps("Use the altitude coordinator MCP tool for every alt verb "
+                "and gh/service read. Supply argument arrays and stdin text, not shell commands. "
+                "The shell sandbox cannot connect to the broker. Repository and service writes remain denied.")]
+
+
+def codex_l3_mcp(broker: str) -> None:
+    """Stdio MCP transport only: altd's socket fixes project/actor and validates every request.
+
+    Loaded from the protected deployment checkout with isolated Python, never from the writable runtime.
+    """
+    tool = {"name": "coordinator", "description": "Run authorized Altitude coordinator commands here. "
+            "For alt use kind=alt, args excluding alt, stdin for body text; for gh reads use kind=gh, "
+            "args excluding gh; for service status use kind=service, unit=altitude.service. "
+            "Shell alt/gh/systemctl cannot reach the broker from the sandbox.",
+            "inputSchema": {"type": "object", "required": ["kind"], "additionalProperties": False,
+                            "properties": {"kind": {"enum": ["alt", "gh", "service"]},
+                                           "args": {"type": "array", "items": {"type": "string"}},
+                                           "stdin": {"type": "string"}, "unit": {"type": "string"}}}}
+    for line in sys.stdin:
+        request = json.loads(line)
+        if "id" not in request:
+            continue
+        try:
+            method, params = request["method"], request.get("params", {})
+            if method == "initialize":
+                result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
+                          "serverInfo": {"name": "altitude", "version": "1"}}
+            elif method == "tools/list":
+                result = {"tools": [tool]}
+            elif method == "tools/call" and params.get("name") == tool["name"]:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(130)
+                    client.connect(broker)
+                    client.sendall((json.dumps(params["arguments"]) + "\n").encode())
+                    client.shutdown(socket.SHUT_WR)
+                    with client.makefile("rb") as stream:
+                        response = json.load(stream)
+                result = {"content": [{"type": "text", "text": json.dumps(response)}],
+                          "isError": bool(response.get("error") or response.get("returncode"))}
+            else:
+                raise ValueError("unsupported coordinator MCP request")
+            reply = {"result": result}
+        except Exception as exc:
+            reply = {"error": {"code": -32603, "message": str(exc)}}
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], **reply}), flush=True)
 
 
 def _unit_active(unit: str) -> bool:
