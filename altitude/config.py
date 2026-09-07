@@ -184,9 +184,56 @@ def add_project(name: str, *, path=None, approval="default", wip=None, **pins):
             raise
 
 
+class ProjectBusy(ValueError):
+    """An operator lifecycle action must wait for the project's existing work."""
+
+
+@contextmanager
+def project_activity(name: str, *, exclusive: bool = False):
+    """Fence removal against L3 turns and report/timer processing, including CLI processes."""
+    directory = project_dir(name)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / ".activity.lock").open("a") as handle:
+        try:
+            fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def is_managed(name: str) -> bool:
+    return name in load_projects()
+
+
+@contextmanager
+def _idle_project(name: str):
+    from . import dispatch, engines, state as S
+    # Removal previously unregistered running work and stopped altd from monitoring it.
+    with project_activity(name, exclusive=True) as quiet:
+        if not quiet:
+            raise ProjectBusy("Project activity is still finishing. Wait for L3 and task processing, then try again.")
+        with S.project_lock(name):
+            entry = project(name)
+            tasks = S.list_tasks(name, include_archive=True)
+            opened = [t for t in tasks if t["state"] in S.OPEN_STATES]
+            if opened:
+                names = ", ".join(t["slug"] for t in opened[:3])
+                raise ProjectBusy(f"Finish or reject the {len(opened)} unfinished task(s) first: {names}.")
+            for task in tasks:
+                if (task.get("dispatching") or task.get("resume_claim")
+                        or (task.get("daemon_request") or {}).get("status") in ("pending", "executing")
+                        or task.get("agent_id") and engines.worker_live(
+                            dispatch.l2_engine(task), task, job_root=dispatch.l2_job_root(name, task["slug"]))):
+                    raise ProjectBusy(f"The worker or task operation for {task['slug']} is still finishing. Try again after it ends.")
+            yield entry
+
+
 def remove_project(name: str) -> None:
-    from . import state as S
-    with S.project_lock(name):
+    with _idle_project(name):
         _write_project(name, None)
 
 

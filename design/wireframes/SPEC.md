@@ -113,6 +113,22 @@ reports a design URL; opens in a new tab).
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
 
+Removing a project means detaching its L3. The inline confirmation explains: finish or reject
+unfinished tasks and wait for workers, L3 turns and task processing first; the repository,
+remaining worktrees, saved history and queued messages stay on disk. Add the same folder and name
+again to attach L3, restore its sessions and history and deliver waiting messages. No work is
+implicitly stopped or reassigned. **Cancel**, Escape and outside dismissal close a confirmation
+before submission. **Removing…** disables the confirmation and competing actions, with no
+dismissal until the request completes. Errors/refusals appear inside the confirmation with Remove
+and Cancel still available; a work refusal names the unfinished tasks.
+
+Success removes the managed row and cached project views, selects a remaining project, and opens
+Needs you, or First run when the last project leaves. A stale project, task or report URL shows
+"Project not managed" with an Open projects link, or First run when no project remains. The folder
+is still offered under its configured root; the path field supports folders elsewhere.
+`ProjectLifecycleStates.html` illustrates the single removal-and-attachment flow at phone-sized
+content widths. No separate detached-but-managed state exists.
+
 ### 3.3 Conversation
 
 Anatomy: a single column, max 720px, bottom-anchored, newest last. Day dividers ("Today", a date).
@@ -320,6 +336,9 @@ Shown on any project route when no project is managed: a centred card, "Altitude
 under <root>", one row per folder with **Start L3**, and a path field for a folder elsewhere.
 States: scanning; none found (the path field alone); starting ("L3 is starting…", then the project
 page opens on its first reply); failed (one sentence and Retry).
+For a removed project with retained history, `POST /api/project/add` reports `restored: true`.
+First run waits for the registration response, then opens the saved conversation; historical
+replies or errors do not determine the new start's outcome. Its saved queue resumes normally.
 
 ### 3.13 Restart banner
 
@@ -489,5 +508,5 @@ Order matters: each slice leaves the app usable.
 | 4 | **Task page.** §3.10 on desktop and phone, Stop and Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
 | 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Seats, routing and sessions use the shell; Restart appears at the quiet point defined in §3.13. |
 
-Not drawn and not scheduled: settings, a Done view beyond the folded list, project removal beyond
-the overflow menu. They are questions for the operator when they come up.
+Not drawn and not scheduled: settings and a Done view beyond the folded list. They are questions
+for the operator when they come up. Project removal (L3 detachment) uses the overflow menu (§3.2).

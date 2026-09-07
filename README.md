@@ -108,6 +108,15 @@ steps and machine-specific defaults; the shipped service unit needs adaptation f
 Altitude is still being prepared for invited collaborators. No open-source license has been
 selected, and this milestone does not change repository visibility.
 
+## Remove a project
+
+In the project's **More actions** menu, **Remove project** detaches L3 and stops Altitude
+management. Finish or reject unfinished tasks and wait for their workers and any L3 turn first.
+The repository, remaining worktrees, history, provider sessions and queued messages stay on disk.
+Add the same folder and project name again to attach L3, restore its history and resume waiting
+messages. Removing the last project opens First run; otherwise a remaining project is selected.
+`alt project remove <name>` uses the same checks. See [project lifecycle](docs/CLI.md#project-lifecycle).
+
 ## Documentation
 
 | Start here | Go deeper |

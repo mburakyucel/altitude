@@ -344,6 +344,8 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
     hidden: [alert],
   });
   await expect(v.composer).toHaveValue("");
+  // The accepted send invalidates the task query; finish its route before page teardown disposes it.
+  await page.unrouteAll({ behavior: "wait" });
 });
 
 test("loading, a failed read with Retry, and an empty conversation", async ({ page, request }, info) => {

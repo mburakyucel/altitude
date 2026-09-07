@@ -44,7 +44,7 @@ export default function FirstRun({
   const add = useProjectAdd();
   const [path, setPath] = useState("");
   const starting = useStarting();
-  const outcome = useStartOutcome(starting && !starting.failed ? starting.name : null);
+  const outcome = useStartOutcome(starting && !starting.failed && starting.seen !== null ? starting.name : null);
 
   // The overview lists a project as managed as soon as it is added; its row stays here until L3 replies.
   const unmanaged = unmanagedFolders(overview.data);
@@ -56,19 +56,28 @@ export default function FirstRun({
   const roots = overview.data?.roots ?? [];
   const root = roots.join(" and ") || "the configured root";
 
-  const start = (name: string, folder: string) => {
+  const start = async (name: string, folder: string) => {
     const seen = queryClient.getQueryData<ChatView>(outcomeKey(name))?.history.length ?? 0;
-    setStarting({ name, path: folder, failed: null, seen });
-    add.mutate(
-      { name, path: folder },
-      { onError: (error) => setStarting({ name, path: folder, failed: error.message, seen }) },
-    );
+    setStarting({ name, path: folder, failed: null, seen: null });
+    try {
+      const result = await add.mutateAsync({ name, path: folder });
+      if (result.restored) {
+        setSelectedProject(name);
+        setStarting(null);
+        onStarted?.();
+        navigate(`/projects/${name}`);
+      } else {
+        setStarting({ name, path: folder, failed: null, seen });
+      }
+    } catch (error) {
+      setStarting({ name, path: folder, failed: (error as Error).message, seen });
+    }
   };
 
   // The project page opens on L3's first reply; a failed turn leaves an error row instead.
   const history = outcome.data?.history;
   useEffect(() => {
-    if (!starting || starting.failed || !history) return;
+    if (!starting || starting.failed || starting.seen === null || !history) return;
     const reply = history
       .slice(starting.seen)
       .reverse()

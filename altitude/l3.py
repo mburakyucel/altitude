@@ -337,8 +337,8 @@ def chat_state(project: str, limit: int = 60) -> dict:
 
 @contextmanager
 def _active_turn(project: str, trigger: str, claim=None):
-    with config.restart_lock() as ready:
-        if not ready or config.restart_in_progress():
+    with config.project_activity(project) as attached, config.restart_lock() as ready:
+        if not attached or not config.is_managed(project) or not ready or config.restart_in_progress():
             yield None
             return
         with _publish_active_turn(project, trigger, claim) as turn:
@@ -408,6 +408,8 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     path = queue_path(project)
     row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": role, "text": text}
     with S.project_lock(project):
+        if trigger == "chat" and not config.is_managed(project):
+            raise ValueError("This project is not managed. Add its folder again to attach L3.")
         waiting = len(_queue_rows(path))
         with open(path, "a") as stream:
             stream.write(json.dumps(row, sort_keys=True) + "\n")
@@ -432,7 +434,7 @@ def deliver_queued(project: str) -> dict | None:
     same turn so the operator's consecutive messages are read together, each on its own line and in arrival
     order. Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
-    if not path.exists() or not _select(project).get("engine"):
+    if not config.is_managed(project) or not path.exists() or not _select(project).get("engine"):
         return None
     turn_lock = lock(project)
     if not turn_lock.acquire(blocking=False):
@@ -513,6 +515,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
     requested = engine
     with _turn_scope(project, trigger) as active_turn:
         if active_turn is None:
+            if not config.is_managed(project):
+                return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
             row = queue_message(project, prompt, trigger=trigger, role="burak" if trigger == "chat" else "server")
             return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
         turn_id = active_turn["id"]

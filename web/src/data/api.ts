@@ -413,12 +413,12 @@ export function useOverview() {
   });
 }
 
-export function useProject(name: string) {
+export function useProject(name: string, enabled = true) {
   return useQuery({
     queryKey: ["project", name],
     queryFn: async () => ProjectViewSchema.parse(await api(`/api/project/${name}`)),
     refetchInterval: pollInterval,
-    enabled: Boolean(name),
+    enabled: Boolean(name) && enabled,
   });
 }
 
@@ -470,7 +470,7 @@ export function useDigest() {
   });
 }
 
-export function useChat(project: string, limit = 60) {
+export function useChat(project: string, limit = 60, enabled = true) {
   return useQuery({
     queryKey: ["chat", project],
     queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
@@ -478,7 +478,7 @@ export function useChat(project: string, limit = 60) {
       const view = query.state.data;
       return chatStreaming ? false : view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;
     },
-    enabled: Boolean(project),
+    enabled: Boolean(project) && enabled,
   });
 }
 
@@ -536,8 +536,8 @@ export interface ProjectAddInput {
 
 export function useProjectAdd() {
   const queryClient = useQueryClient();
-  return useMutation<unknown, Error, ProjectAddInput>({
-    mutationFn: (input) => post("/api/project/add", input),
+  return useMutation<{ restored?: boolean }, Error, ProjectAddInput>({
+    mutationFn: (input) => post<{ restored?: boolean }>("/api/project/add", input),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["overview"] }),
   });
 }
@@ -555,11 +555,23 @@ export function useL3Start(project: string) {
 }
 
 export function useProjectRemove() {
-  return useOptimisticMutation<{ name: string }, unknown, Overview>({
+  const queryClient = useQueryClient();
+  return useMutation<unknown, Error, { name: string }>({
     mutationFn: (input) => post("/api/project/remove", input),
-    queryKey: ["overview"],
-    update: () => undefined,
-    failureMessage: "Couldn't remove the project.",
+    onSuccess: async (_out, { name }) => {
+      await queryClient.cancelQueries({ queryKey: ["overview"] });
+      queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
+        ...cached,
+        projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
+        queue: cached.queue.filter((row) => row.project !== name),
+      });
+      for (const kind of ["project", "chat", "task", "transcript"]) {
+        await queryClient.cancelQueries({ queryKey: [kind, name] });
+        queryClient.removeQueries({ queryKey: [kind, name] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["monitor"] });
+    },
   });
 }
 

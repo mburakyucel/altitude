@@ -15,7 +15,7 @@ export interface Starting {
    * How many conversation rows existed when Start was pressed. Only rows after them count as the
    * outcome, so a Retry does not read the previous attempt's error row as its own.
    */
-  seen: number;
+  seen: number | null; // null until registration is accepted; retained history is not a start result
 }
 
 let current: Starting | null = null;

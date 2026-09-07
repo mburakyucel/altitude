@@ -315,6 +315,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
     if issue:
         request = request.rstrip() + "\n\n" + issue
     with S.project_lock(project):
+        config.project(project)
         base = S.slugify(title)
         slug, n = base, 1
         while S.task_dir(project, slug).exists():

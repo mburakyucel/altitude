@@ -111,6 +111,61 @@ async function openPanel(user: ReturnType<typeof renderApp>["user"]) {
 }
 
 describe("Project page", () => {
+  it("removal denial keeps the project, selected scope and history intact", async () => {
+    const fetchMock = mockFetch();
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => String(input) === "/api/project/remove"
+      ? Promise.resolve(jsonResponse({ error: "Finish or reject fix-timer before removing this project." }, 409)) : base(input, init));
+    const { router, user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+    expect(screen.getByText(/Removing this project detaches L3/)).toHaveTextContent("remaining worktrees, saved history and queued messages stay on disk");
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Finish or reject fix-timer");
+    expect(router.state.location.pathname).toBe("/projects/altitude");
+    expect(localStorage.getItem("altitude.project")).toBe("altitude");
+    expect(screen.getByText("two tasks running.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("removes the last project from navigation, selection and cached history, leaving First run", async () => {
+    const data = { ...overview, queue: [], projects: [{ name: "altitude", managed: true, path: "/tmp/altitude" }] };
+    const fetchMock = mockFetch({ overview: data, project: { ...project, tasks: [] } });
+    const base = fetchMock.getMockImplementation()!;
+    let finish!: (value: Response) => void;
+    fetchMock.mockImplementation((input, init) => String(input) === "/api/project/remove"
+      ? new Promise<Response>((resolve) => { finish = resolve; }) : base(input, init));
+    const { router, user, queryClient } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    expect(await screen.findByRole("button", { name: "Removing…" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Reset L3 conversation" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    data.projects[0]!.managed = false;
+    finish(jsonResponse({ ok: true }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
+    await screen.findByText("Altitude found 1 folder under ~/Projects");
+    await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
+    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
+    expect(queryClient.getQueryData(["chat", "altitude"])).toBeUndefined();
+    expect(screen.queryByRole("link", { name: "altitude" })).toBeNull();
+  });
+
+  it("a removed project route shows a missing-project state while other projects remain", async () => {
+    mockFetch({ overview: { ...overview, queue: [], projects: [{ name: "sibling", managed: true }] } });
+    localStorage.setItem("altitude.project", "altitude");
+    setViewport(390);
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByRole("heading", { name: "Project not managed" });
+    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("altitude.project")).toBe("sibling"));
+    expect(screen.getByRole("link", { name: "Chat" })).toHaveAttribute("href", "/projects/sibling");
+  });
+
   it("composes the header status line from the chat, the tasks, and the decisions", async () => {
     mockFetch();
     renderApp({ route: "/projects/altitude" });
@@ -365,7 +420,13 @@ describe("Project page", () => {
   });
 
   it("removes the project after an inline confirm and leaves for Needs you", async () => {
-    const fetchMock = mockFetch();
+    const data = { ...overview, projects: [{ name: "altitude", managed: true }, { name: "sibling", managed: true }] };
+    const fetchMock = mockFetch({ overview: data });
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/project/remove") data.projects[0]!.managed = false;
+      return base(input, init);
+    });
     const { router, user } = renderApp({ route: "/projects/altitude" });
 
     await screen.findByRole("heading", { name: "altitude" });

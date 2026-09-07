@@ -65,6 +65,20 @@ The operator CLI uses `POST /api/issue` with
 URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful closure appends an
 `issue-close` project event with actor, number, reason, title, and URL; failed calls record no success.
 
+## Project lifecycle
+
+`alt project remove <name>` is operator-only. Removing a project from Altitude means detaching its
+L3: it unregisters an idle project and stops coordination. Finish or reject queued, running,
+blocked and reported tasks first, and wait for live workers, launch/resume operations, L3 turns
+and task processing to finish. A refusal leaves registration and work intact.
+
+The repository, remaining worktrees, conversations, provider sessions, task archives and queued
+L3 messages stay on disk. `alt project add <name> --path <same-repository>` attaches L3 again and
+restores that history; queued messages become eligible for delivery again. The same removal is in
+the project's **More actions** menu (`POST /api/project/remove` with `{"name":"<name>"}`).
+The existing folder-add flow (`POST /api/project/add`) attaches L3 again. `alt l3-reset` remains a
+separate conversation reset; it marks a session for rotation without disabling coordination.
+
 ## Task lifecycle
 
 ```text

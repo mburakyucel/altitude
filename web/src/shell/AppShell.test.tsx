@@ -130,6 +130,26 @@ describe("Rail", () => {
 });
 
 describe("Routes", () => {
+  it.each(["/projects/removed/tasks/old", "/projects/removed/tasks/old/report"])(
+    "a removed project's stale route %s shows no task actions or history", async (route) => {
+      mockFetch();
+      renderApp({ route });
+      await screen.findByRole("heading", { name: "Project not managed" });
+      expect(screen.getByRole("link", { name: "Open projects" })).toHaveAttribute("href", "/projects");
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    },
+  );
+
+  it("a stale task route after the last project is removed shows First run and clears selection", async () => {
+    mockFetch({ ...overview, queue: [], projects: [{ name: "removed", managed: false, path: "/tmp/removed" }] });
+    localStorage.setItem("altitude.project", "removed");
+    renderApp({ route: "/projects/removed/tasks/old/report" });
+    await screen.findByText("Altitude found 1 folder under ~/Projects");
+    await waitFor(() => expect(localStorage.getItem("altitude.project")).toBeNull());
+    expect(screen.queryByRole("heading", { name: "Report" })).toBeNull();
+  });
+
   it("sends /projects and /chat/:name to the project page", async () => {
     mockFetch();
     const first = renderApp({ route: "/projects" });

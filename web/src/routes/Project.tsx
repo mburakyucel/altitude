@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import type { UseQueryResult } from "@tanstack/react-query";
+import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   useChat,
   useL2Message,
@@ -11,7 +11,7 @@ import {
   useProjectRemove,
   useTaskAction,
 } from "../data/api";
-import type { ChatView, Decision, EngineReadout, ProjectView, TaskRow } from "../data/api";
+import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { age, ageText, agoText, when } from "../data/observed";
 import Composer from "../components/Composer";
 import { DecisionCard } from "../components/DecisionCard";
@@ -256,18 +256,36 @@ export function statusParts(
   return parts;
 }
 
-function HeaderMenu({ name, designViewer }: { name: string; designViewer: string }) {
+function HeaderMenu({ name, designViewer, starting }: {
+  name: string; designViewer: string; starting: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState<"" | "reset" | "remove">("");
+  const [error, setError] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const reset = useL3Reset(name);
   const remove = useProjectRemove();
+  const pending = reset.isPending || remove.isPending || starting;
 
   const close = useCallback(() => {
+    if (pending) return;
     setOpen(false);
     setConfirm("");
-  }, []);
+    setError("");
+  }, [pending]);
+
+  const choose = (action: typeof confirm) => {
+    setError("");
+    setConfirm(action);
+  };
+  const failed = (error: Error) => setError(error.message);
+  const completed = () => {
+    setOpen(false);
+    setConfirm("");
+    setError("");
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -285,14 +303,16 @@ function HeaderMenu({ name, designViewer }: { name: string; designViewer: string
     };
   }, [open, close]);
 
-  const confirmRow = (question: string, label: string, onConfirm: () => void, pending: boolean) => (
+  const confirmRow = (question: string, detail: string, label: string, onConfirm: () => void) => (
     <div className="menu-confirm" role="group" aria-label={question}>
       <span className="text-meta">{question}</span>
+      {detail ? <p className="text-meta text-muted">{detail}</p> : null}
+      {error ? <p className="text-meta text-danger" role="alert">{error}</p> : null}
       <div className="flex gap-2">
-        <button type="button" className="btn btn-primary" disabled={pending} onClick={onConfirm}>
+        <button type="button" className="btn btn-primary" disabled={pending} onClick={() => { setError(""); onConfirm(); }}>
           {label}
         </button>
-        <button type="button" className="btn btn-ghost" onClick={() => setConfirm("")}>
+        <button type="button" className="btn btn-ghost" disabled={pending} onClick={() => choose("")}>
           Cancel
         </button>
       </div>
@@ -307,6 +327,7 @@ function HeaderMenu({ name, designViewer }: { name: string; designViewer: string
         aria-label="More actions"
         aria-haspopup="menu"
         aria-expanded={open}
+        disabled={pending}
         onClick={() => (open ? close() : setOpen(true))}
       >
         <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
@@ -320,33 +341,29 @@ function HeaderMenu({ name, designViewer }: { name: string; designViewer: string
           {confirm === "reset" ? (
             confirmRow(
               "Reset the L3 conversation?",
-              "Reset",
-              () => reset.mutate(undefined, { onSuccess: close }),
-              reset.isPending,
+              "L3 starts a fresh session on its next turn. Saved history stays available.",
+              reset.isPending ? "Resetting…" : "Reset",
+              () => reset.mutate(undefined, { onSuccess: completed, onError: failed }),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" onClick={() => setConfirm("reset")}>
+            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("reset")}>
               Reset L3 conversation
             </button>
           )}
           {confirm === "remove" ? (
             confirmRow(
               `Remove ${name} from Altitude?`,
-              "Remove",
+              "Removing this project detaches L3 and stops Altitude management. The repository, remaining worktrees, saved history and queued messages stay on disk. Add the same folder with the same project name again to attach L3 and restore history and queued messages. Finish or reject existing tasks first; an L3 turn already running must finish.",
+              remove.isPending ? "Removing…" : "Remove",
               () =>
-                remove.mutate(
-                  { name },
-                  {
-                    onSuccess: () => {
-                      close();
-                      navigate("/", { replace: true });
-                    },
-                  },
-                ),
-              remove.isPending,
+                void remove.mutateAsync({ name }).then(() => {
+                  completed();
+                  const remaining = managedProjects(queryClient.getQueryData<Overview>(["overview"]));
+                  navigate(remaining.length ? "/" : "/projects", { replace: true });
+                }).catch(failed),
             )
           ) : (
-            <button type="button" role="menuitem" className="menu-item" onClick={() => setConfirm("remove")}>
+            <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => choose("remove")}>
               Remove project
             </button>
           )}
@@ -399,6 +416,7 @@ function ProjectHeader({
         <p className={`truncate text-meta ${project.isError ? "text-danger" : "text-muted"}`} aria-live="polite">
           {status || " "}
         </p>
+        {start.isError ? <p className="text-meta text-danger" role="alert">{start.error.message}</p> : null}
       </div>
       {neverStarted ? (
         <button
@@ -424,7 +442,7 @@ function ProjectHeader({
           </svg>
         </button>
       ) : null}
-      <HeaderMenu name={name} designViewer={project.data?.design_viewer ?? ""} />
+      <HeaderMenu name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />
     </header>
   );
 }
@@ -439,8 +457,9 @@ function ProjectHeader({
 export default function ProjectPage() {
   const { name = "" } = useParams();
   const overview = useOverview();
-  const project = useProject(name);
-  const chat = useChat(name);
+  const managed = !overview.isSuccess || managedProjects(overview.data).some((row) => row.name === name);
+  const project = useProject(name, managed);
+  const chat = useChat(name, 60, managed);
   const { phone, panelInline } = useViewport();
   const [search] = useSearchParams();
   const tab = search.get("tab") === "work" ? "work" : "chat";
