@@ -94,6 +94,7 @@ class TestRoutingView(AltitudeCase):
         self.patch(monitor, "quota", side_effect=lambda: self.claude)
         self.patch(route, "quota_codex", side_effect=lambda: self.codex)
         self.patch(engines, "usage_hold", return_value=None)
+        self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
 
     def rows(self):
         return {(r["role"], r["project"]): r for r in monitor.routing()}
@@ -101,9 +102,10 @@ class TestRoutingView(AltitudeCase):
     def test_the_l2_row_is_the_engine_a_fresh_task_would_get(self):
         self.claude = {"known": True, "five_hour": 1, "seven_day": 10}
         self.codex = {"known": True, "primary_used": 80, "primary_window_minutes": route.WEEK_MINUTES}
-        row = self.rows()[("l2", None)]
+        row = self.rows()[("l2", self.project)]
         self.assertEqual(row["engine"], "claude")
         self.assertIn("more weekly headroom", row["why"])
+        self.assertTrue(row["why"].startswith(f"Project {self.project}:"))
 
     def test_a_project_pin_shows_as_the_pin_and_an_exhausted_pin_returns_no_engine(self):
         self.register(self.project, l3_engine="codex")
@@ -112,14 +114,15 @@ class TestRoutingView(AltitudeCase):
         row = self.rows()[("l3", self.project)]
         self.assertEqual(row["pin"], "codex")
         self.assertIsNone(row["engine"])
-        self.assertEqual(row["why"], "forced codex is unavailable: weekly window exhausted")
+        self.assertIn("forced codex:default is unavailable", row["why"])
+        self.assertIn("weekly window exhausted", row["why"])
 
     def test_no_engine_available_says_so_for_every_role(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 100}
         self.codex = {"known": True, "primary_used": 100, "primary_window_minutes": route.WEEK_MINUTES}
-        row = self.rows()[("l2", None)]
+        row = self.rows()[("l2", self.project)]
         self.assertIsNone(row["engine"])
-        self.assertTrue(row["why"].startswith("no engine available ("))
+        self.assertIn("no configured option available:", row["why"])
 
     def test_an_auto_l3_stays_on_the_engine_that_ran_its_last_turn(self):
         project_dir = config.project_dir(self.project)

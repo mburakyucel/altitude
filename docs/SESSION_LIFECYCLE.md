@@ -16,11 +16,12 @@ identities on purpose:
 | `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
 | `agent_id` | current unit-owned CLI worker | every physical replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
+| `routing_pinned` | whether this attempt launched with an explicit task, turn or project pin | fresh dispatch; preserves strictness during quota/rejection recovery |
 | `launch_model` | model override passed at launch, or null for the CLI default | fresh dispatch |
 | `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
-For first-run configuration and explicit single-engine pins, see [setup](SETUP.md). The
+For first-run configuration, Auto preferences and explicit pins, see [setup](SETUP.md). The
 [engine integration boundary](ARCHITECTURE.md#engine-integration-boundary) separates the supported
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
@@ -35,7 +36,7 @@ keys the edit-count telemetry across worker replacements.
 queued task
   ├─ self-deploy checkout fast-forwarded to origin/main
   ├─ WIP and Git provenance gates
-  ├─ weekly-first provider decision (or explicit task/project pin)
+  ├─ highest available preference tier, then weekly headroom (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
@@ -59,18 +60,33 @@ the provenance gate reads it, and announces activation pending if the pull carri
 or a tracked web build input. Only a clean checkout on main that is strictly behind moves; every other
 state still refuses the dispatch.
 
-Routing compares only named seven-day Claude data with a Codex window whose reported duration is
-exactly seven days. A five-hour window is an availability signal, not the main preference score.
-Unknown or incomparable weekly data uses the configured default, currently Codex, and records that
-fact. An exhausted short or weekly window rules out only that provider. If both are unavailable,
-the task stays queued. An explicit provider pin never silently falls back. An L3 turn stays on the
-engine that ran the previous one unless that engine is unavailable or the other has fifteen points more
-weekly headroom, so the transcript and its prompt cache stay warm instead of alternating between two
-close quotas.
+L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them with
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`; commas tie
+options, and `>` starts a lower-priority tier. The operator and project's L3 can change or unset this
+operational setting; altd applies it on the next tick and records the reason without a restart.
+The default ties Codex's default model and Claude Fable, with Opus as a lower-tier fallback;
+`ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order.
 
-Altitude does not infer separate Fable and Opus allowances from an account-wide meter. A model pin
-is honored inside the selected provider; model switching requires explicit observable policy rather
-than a guessed quota relationship.
+Auto selects from the highest tier with an eligible option. Within that tier it compares only named
+seven-day Claude data with a Codex window whose reported duration is exactly seven days. A five-hour
+window is an availability signal, not the preference score. Unknown or incomparable weekly data uses
+configured tie order. L3 keeps the preceding engine/model when it remains in the selected tier,
+unless another option has at least fifteen percentage points more weekly headroom; a higher eligible
+tier takes precedence over continuity. Monitor uses this same policy for its project L3 and fresh L2
+explanations.
+
+A missing executable or exhausted short/weekly window excludes only affected options. Unknown
+authentication, model access or quota remains eligible and is described as unverified. Altitude does
+not infer subscription entitlement from a plan name or separate Fable and Opus allowances from an
+account-wide meter. An explicit unavailable-model rejection excludes that model for thirty minutes;
+an authentication rejection excludes the engine for thirty minutes. Retrying configured alternatives
+is bounded and requires confirmation that no response output or tool effects occurred. A rejection
+after work starts cannot silently replay the turn. If no option is eligible, the task stays queued
+with an explanation to install/authenticate an engine, wait for the quota reset or change preferences.
+
+Task or project engine/model pins override Auto and never silently fall back. They remain distinct
+from preferences even when Auto selects the same model. [CLI examples](CLI.md#automatic-routing-preferences)
+include an Opus-only account, omitted Fable and different preference orders.
 
 Codex CLI 0.153.4's JSON stream identifies the thread but carries no model. altd reads the matching
 `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (default home `~/.codex`) and takes
@@ -137,8 +153,10 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
 3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
    worktree and commit provenance are validated, and a worker that is still live is stopped first;
-4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
-   replacement worker is bound atomically; a bind failure stops the unowned worker and files a fault. A genuine
+4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
+   inbox text (or "Continue from your progress file."); changed Auto preferences and project defaults do not
+   alter that attempt. The replacement worker is bound atomically; a bind failure stops the unowned worker
+   and files a fault. A genuine
    provenance or relaunch fault restores the claimed batch, consumes only the generation it tried, and blocks
    normally until another explicit request. A newer message carries a newer generation and stays due. A
    coordinator filesystem restriction never reaches this trusted boundary.
@@ -159,9 +177,10 @@ only an issue at the daemon's configured product target, without waking Altitude
 or moving evidence. The reporting L3 does not repair Altitude or create an Altitude recovery task;
 Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
 to the calling project's origin and accept no repository override. A cross-provider
-continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
-window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
-to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
+continuation is a deliberate, recorded fresh attempt based on saved work: when a worker's window runs
+out and the task has no explicit engine/model pin, an eligible configured alternative can receive a new
+attempt briefed with the task's `progress.md`. No eligible alternative leaves the task waiting for its
+window. Ordinary resume preserves the existing provider conversation and launch model.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
@@ -258,10 +277,13 @@ L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order; a message queued but not started is not a turn in flight, so it neither holds the
-quiet-point restart nor is lost by one. A quota-selected turn resumes only the chosen provider's session. When the other provider handled intervening chat, Altitude supplies the missed
+quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
+choosing another configured model on that provider retains its conversation. When the other provider handled intervening chat, Altitude supplies the missed
 human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
-provider transcript. A Claude limit after text or tool activity never causes the same turn to be
-automatically replayed on Codex because that could duplicate side effects. Provider selection changes
+provider transcript. A limit or access rejection after text or tool activity never causes the same turn
+to be automatically replayed on another option because that could duplicate side effects. A confirmed
+rejection before output or tool effects can try each remaining configured option at most once.
+Provider selection changes
 neither L3's project-level responsibility nor L2's end-to-end task ownership.
 
 Every direct, queued, folded, or server-triggered L3 turn publishes one process-local active record

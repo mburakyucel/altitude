@@ -86,14 +86,15 @@ seams as a ratchet that can only fall.
 
 Altitude coordinates ongoing CLI agent sessions. Codex and Claude Code are the current
 integrations; the project workflow centers on the coordinator, task owner, isolated worktree and
-checked PR, independently of which integration executes a turn. Both roles can be pinned to one
-installed engine. The [setup guide](SETUP.md) describes the current manual configuration.
+checked PR, independently of which integration executes a turn. Both roles use the project's Auto
+preferences or explicit pins and can operate with one installed engine and one available model.
+The [setup guide](SETUP.md) describes the current manual configuration.
 
 | Module | Integration responsibility |
 | --- | --- |
 | [`engines.py`](../altitude/engines.py) | Launch/resume/stop workers; engine arguments, environment and permissions; session identity, output, model/context observations and usage-limit signals. |
-| [`route.py`](../altitude/route.py) | Select an engine from explicit pins and available quota observations; expose engine labels, usage windows and routing reasons to callers. |
-| [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults and context settings, alongside runtime configuration. |
+| [`route.py`](../altitude/route.py) | Select an engine/model from explicit pins or ordered Auto tiers, installation, rejection and quota evidence; expose the same routing reasons to callers and Monitor. |
+| [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults, preference syntax and context settings, alongside runtime configuration. |
 
 The interface is internal and evolves with the integrations. Additional CLI engines such as
 OpenCode are candidates for future support. Provider access is a separate integration concern:
@@ -103,9 +104,20 @@ setup is supported today. A new engine may
 have different session, authentication, capability and usage-reporting models. Adapt the boundary
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 
-Current gaps are concrete: the configured engine list names both engines, Auto routing evaluates
-quota rather than installed/authenticated availability, and engine-specific references remain in
-session, dispatch, transcript and telemetry code outside the seam. The launch environment filters
+Auto uses the highest-priority configured tier with an eligible option. The default ties Codex's
+default model with Claude Fable, followed by Opus; `ALTITUDE_PRIMARY_ENGINE` chooses only the default
+tie order. Named, comparable seven-day account readings select within a tie. Unknown readings use
+configured order, and L3 retains its current engine/model within that tier unless a competitor has
+at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
+Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
+unknown access remains eligible. Authentication rejections exclude the engine and model rejections
+exclude only that model for thirty minutes. The router never derives model allowances from an
+account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
+are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
+attempt's engine, session and launch model. See [routing lifecycle](SESSION_LIFECYCLE.md#fresh-dispatch).
+
+Current gaps are concrete: engine-specific references remain in session, dispatch, transcript and
+telemetry code outside the seam. The launch environment filters
 some engine variables and applies role/model/permission settings, so native access configurations
 are not all passed through unchanged. The Codex coordinator uses `--ignore-user-config`, retaining
 authentication while omitting user model/provider configuration; a project `l3_codex_model` can
@@ -150,8 +162,16 @@ the operator and that project's L3; add and remove remain operator-only. Caps ra
 regardless of task capacity, and records one `project-set` event with project, actor, reason, request
 id and outcome in the project's `events.jsonl`. Identical pending requests and completed retries
 whose WIP receipt still matches reuse the request and event. CLI and HTTP registration, removal,
-engine pins and WIP changes serialize registry writes under the project and registry locks.
+engine pins and operational settings serialize registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
+
+Auto preference tiers use the same reason-bearing operational path:
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`, or
+`--unset-routing --reason "…"` to restore defaults. The operator and that project's L3 can change
+them without a PR, restart or free task slot. Altd applies the request on its next tick and records
+actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
+explicit pin or existing L2 attempt. [CLI examples](CLI.md#automatic-routing-preferences) cover
+single-model accounts and different orders and ties.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
 HTTP and CLI. It unregisters an idle project and ends its coordination. Queued, running, blocked
@@ -256,8 +276,9 @@ contract are described under [faults](#faults); private evidence stays in the ca
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
-with backoff; a usage-window stop starts a fresh attempt on the other engine from the task's
-`progress.md`, or parks a task pinned to one engine until its window reopens; each writes one task
+with backoff; a usage-window stop starts a fresh attempt on an eligible configured alternative from
+the task's `progress.md`, or parks the task until its window reopens when no alternative is eligible
+or it is explicitly pinned; each writes one task
 event. A Claude usage-window stop is recorded once for the machine, because the subscription is
 machine-wide; Codex reports its limits per turn. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
@@ -382,8 +403,8 @@ turn for a managed project whose L3 never ran, from the header's Start L3. The c
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
 under the reply. The composer's engine pill pins the project's L3 to one configured engine, named as
-`engines[]` reports it, until set back to Auto; on Auto the weekly quota decides, and a turn stays on
-the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
+`engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
+within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. The conversation component is keyed by project, like its query cache:
 switching projects discards the draft, pending bubble, stream and composer error state. Composer
@@ -515,8 +536,10 @@ absent rather than zero — each with percent used, a meter with the 70% reserve
 resets in relative and clock terms, the plan where the seat names it, and how old the reading is. A
 seat with no reading at all says so and carries the reading's own `why`, the one line that fixes it;
 a reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One
-routing card answers which engine each project's L3 (its pin, or Auto) and a fresh L2 would get for a
-turn started now, in `pick_engine`'s own words, including the case where no engine is available. The
+routing card answers which engine/model each project's L3 (its pin, or Auto) and a fresh L2 would get
+for a turn started now, in `pick_engine`'s own words. It explains the selected tier, comparable or
+unknown quota, continuity and skipped options; no eligible option gives an actionable installation,
+authentication, reset or configuration explanation. The
 sessions the monitor knows follow, each with its task, its engine and the model when the API reports
 one, its context meter and the age of its snapshot; no session is one muted sentence. Loading is a
 skeleton in the page's shape, and a failed read is one sentence with Retry.

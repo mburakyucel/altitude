@@ -1,9 +1,7 @@
 """Small, auditable engine selection shared by L2 and L3.
 
-Routing is weekly-first because the weekly allowance is the scarce resource. A
-short window is only an availability signal: it can rule an engine out, but it
-never makes an engine with less weekly headroom look preferable. The decision
-persists on the task as one reason string.
+Preference tiers choose eligible engine/model options; named weekly allowance
+chooses within a tied tier. Short windows only rule exhausted seats out.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -118,50 +116,94 @@ def _unavailable(weekly: float | None, short: float | None) -> str | None:
 SWITCH_MARGIN = 15.0  # weekly points of extra headroom the other engine needs before a session moves
 
 
-def pick_engine(role: str, *, forced: str | None = None, current: str | None = None) -> dict:
-    """Return ``{engine, why}``; ``engine`` is None when nothing is available.
+def option_key(option: dict) -> tuple:
+    return option["engine"], option.get("model")
 
-    ``current`` is the engine that ran the previous turn of a long-lived session (L3). Staying keeps that
-    transcript and its prompt cache warm, so the route moves only when ``current`` is unavailable or the other
-    engine has SWITCH_MARGIN more weekly headroom; without it two close quotas would alternate every turn.
+
+def option_label(option: dict) -> str:
+    return option["engine"] + (":" + option["model"] if option.get("model") else ":default")
+
+
+def _rejection_path(option: dict, scope: str):
+    from hashlib import sha256
+    model = option.get("model") if scope == "model" else None
+    # Native defaults can differ by role (one launcher ignores user model configuration).
+    role = option.get("role") if scope == "model" and model is None else None
+    name = sha256(repr((option["engine"], model, role, scope)).encode()).hexdigest()[:24]
+    return config.MONITOR_DIR / f"route-unavailable-{name}.json"
+
+
+def note_rejection(option: dict, rejection: dict) -> None:
+    """A confirmed provider denial is a temporary observation, never a subscription inference."""
+    S.write_json(_rejection_path(option, rejection["scope"]), {**rejection, "at": S.now()})
+
+
+def _rejected(option: dict) -> str | None:
+    for scope in ("engine", "model"):
+        data = S.read_json(_rejection_path(option, scope), {})
+        if data:
+            now = datetime.now(timezone.utc)
+            active = (now < datetime.fromisoformat(data["until"]) if data.get("until") else
+                      (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
+            if active:
+                return data["why"] + ("" if data.get("until") else "; access rechecked after 30 minutes")
+    return None
+
+
+def note_limit(engine: str, until: str) -> None:
+    note_rejection({"engine": engine}, {"scope": "engine", "why": f"quota window exhausted; resets {until}",
+                                       "until": until})
+
+
+def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
+                project: dict | None = None, current: str | None = None,
+                current_model: str | None = None, excluded: tuple = ()) -> dict:
+    """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
+
+    Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
+    known named weekly windows. Continuity retains the current option inside that tier.
     """
-    if forced and forced not in config.ENGINES:
-        raise ValueError(f"engine must be one of {config.ENGINES}, not {forced!r}")
+    from . import engines
+    project = project or {}
+    pin = config.pinned_option(role, project, engine=forced, model=model)
+    tiers = [[pin]] if pin else project.get("routing", config.AUTO_ROUTING)
     usage = _usage()
-    unavailable = {engine: _unavailable(*usage[engine]) for engine in config.ENGINES}
-    if forced:
-        if unavailable[forced]:
-            return {"engine": None, "why": f"forced {forced} is unavailable: {unavailable[forced]}"}
-        return {"engine": forced, "why": "forced by task or project policy"}
-
-    available = [engine for engine in config.ENGINES if unavailable[engine] is None]
-    if not available:
-        why = "; ".join(f"{engine}: {unavailable[engine]}" for engine in config.ENGINES)
-        return {"engine": None, "why": f"no engine available ({why})"}
-    if len(available) == 1:
-        engine = available[0]
-        other = next(item for item in config.ENGINES if item != engine)
-        return {"engine": engine, "why": f"{other} unavailable: {unavailable[other]}"}
-
-    weekly = {engine: usage[engine][0] for engine in available}
-    comparable = [engine for engine in available if weekly[engine] is not None]
-    default = config.PRIMARY_DEFAULT_ENGINE
-    if len(comparable) == 2:
-        engine = min(comparable, key=lambda item: (weekly[item], item != default))
-        why = (f"more weekly headroom: claude 7d {weekly['claude']:.1f}% used vs "
-               f"codex 7d {weekly['codex']:.1f}% used")
-    elif len(comparable) == 1:
-        known = comparable[0]
-        engine = default if default in available else known
-        why = (f"weekly quota is not comparable ({known} {weekly[known]:.1f}% used; "
-               f"other unknown) → default policy {engine}")
-    else:
-        engine = default if default in available else available[0]
-        why = f"weekly quotas unknown or incomparable → default policy {engine}"
-    if current in available and engine != current:
-        lead = weekly[current] - weekly[engine] if current in comparable and engine in comparable else None
-        if lead is None or lead < SWITCH_MARGIN:
-            reason = (f"{engine} has {lead:.1f} points more weekly headroom, under the {SWITCH_MARGIN:.0f}-point switch margin"
-                      if lead is not None else "weekly quotas are not comparable")
-            engine, why = current, f"staying on {current}: {reason}"
-    return {"engine": engine, "why": why}
+    skipped = []
+    for priority, tier in enumerate(tiers, 1):
+        available = []
+        for configured in tier:
+            option = {"engine": configured["engine"],
+                      "model": configured.get("model") or config.default_model(role, configured["engine"]), "role": role}
+            engine = option["engine"]
+            installed = engines.installation(engine)
+            unavailable = ("already tried in this dispatch/turn" if option_key(option) in excluded else
+                           installed["why"] if installed["available"] is False else
+                           _rejected(option) or _unavailable(*usage[engine]))
+            if unavailable:
+                skipped.append(f"{option_label(option)} unavailable: {unavailable}")
+            else:
+                available.append(option)
+        if not available:
+            continue
+        # Shared account readings stay shared: multiple models on a seat do not get fabricated allowances.
+        weekly = {o["engine"]: usage[o["engine"]][0] for o in available}
+        comparable = all(value is not None for value in weekly.values())
+        chosen = min(available, key=lambda o: weekly[o["engine"]]) if comparable else available[0]
+        why = (("more weekly headroom" if len(set(weekly.values())) > 1 else "equal/shared weekly headroom; configured tie order")
+               + " (" + ", ".join(f"{e} 7d {w:.1f}% used" for e, w in weekly.items()) + ")"
+               if comparable else "weekly quotas unknown or not comparable; configured tie order")
+        previous = next((o for o in available if o["engine"] == current and
+                         (current_model is None or o["model"] == current_model)), None)
+        if previous and previous != chosen:
+            lead = weekly[current] - weekly[chosen["engine"]] if comparable else None
+            if lead is None or lead < SWITCH_MARGIN:
+                why = (f"staying on {option_label(previous)}: " +
+                       (f"{lead:.1f} points extra headroom is under the {SWITCH_MARGIN:.0f}-point switch margin"
+                        if lead is not None else "weekly quotas are not comparable"))
+                chosen = previous
+        prefix = "forced by task or project policy" if pin else f"Auto tier {priority}"
+        return {**chosen, "pinned": bool(pin), "why": f"{prefix}: {option_label(chosen)}; {why}; "
+                + "installation found; model access unverified" + ("; skipped " + "; ".join(skipped) if skipped else "")}
+    prefix = f"forced {option_label(pin)} is unavailable" if pin else "no configured option available"
+    return {"engine": None, "model": None, "pinned": bool(pin), "why": prefix + ": " + "; ".join(skipped)
+            + ". Install/authenticate an engine, wait for the reported quota reset, or change alt project set --routing with --reason."}

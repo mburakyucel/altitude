@@ -308,12 +308,12 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None) -> dict:
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
-    if engine and engine not in config.ENGINES:
-        raise TransitionError(f"engine must be one of {config.ENGINES}")
-    if model and engine != "codex" and model not in config.MODEL_ALIASES:
-        raise TransitionError(f"model must be one of {config.MODEL_ALIASES}")
-    if model in config.MODEL_ALIASES and engine is None:
-        engine = "claude"  # a provider-specific model name is itself an explicit provider pin
+    try:
+        pin = config.pinned_option("l2", {}, engine=engine, model=model)
+    except ValueError as exc:
+        raise TransitionError(str(exc)) from exc
+    if pin:
+        engine = pin["engine"]
     config.project(project)
     try:
         issue = github_intake.inline(project, title, request)

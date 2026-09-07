@@ -611,6 +611,20 @@ def _on_l2_finished(project: str, item: dict) -> None:
         T.finalize_completion(project, slug)
         log(f"[{project}/{slug}] no-code completion finalized after the L2 worker exited")
         return
+    if item.get("rejection"):
+        engine = dispatch.l2_engine(t)
+        option = {"engine": engine, "model": t.get("launch_model"), "role": "l2"}
+        route.note_rejection(option, item["rejection"])
+        why = item["rejection"]["why"] + ". Check engine authentication/model access or change Auto routing."
+        block_snapshot(why)
+        pinned = t.get("routing_pinned") or config.pinned_option("l2", config.project(project), engine=t.get("engine"), model=t.get("model"))
+        switch = route.pick_engine("l2", project=config.project(project)) if not pinned else {"engine": None}
+        if switch.get("engine") and item.get("safe_to_retry") and not (item.get("agent") or {}).get("resumed"):
+            engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
+            T.requeue(project, slug, clear_worker=True, reason=why + " Fresh Auto attempt from saved progress.")
+        else:
+            T.fyi(project, slug, why + " The existing attempt and conversation are retained.", actor="altd")
+        return
     if item.get("capacity"):
         # Provider capacity is local to this task/model, unlike an exhausted subscription window or a system fault.
         # Keep its logical L2 identity and retry the same conversation after bounded exponential-ish backoff.
@@ -640,11 +654,13 @@ def _on_l2_finished(project: str, item: dict) -> None:
         except T.TransitionError:
             log(f"[{project}/{slug}] usage-limit result lost a concurrent lifecycle race; ignored")
             return
-        other = "codex" if engine == "claude" else "claude"
-        switch = route.pick_engine("l2", forced=other) if not t.get("engine") else {"engine": None}
+        route.note_limit(engine, until)
+        pinned = t.get("routing_pinned") or config.pinned_option("l2", config.project(project), engine=t.get("engine"), model=t.get("model"))
+        switch = route.pick_engine("l2", project=config.project(project)) if not pinned else {"engine": None}
         if switch.get("engine"):
+            other = switch["engine"]
             engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
-            T.requeue(project, slug, engine=other, clear_worker=True,
+            T.requeue(project, slug, clear_worker=True,
                       reason=f"{engine} window exhausted until {until}; fresh attempt on {other} from saved progress")
             T.fyi(project, slug, f"{engine} usage window hit (resets {until}). {slug} continues as a fresh attempt "
                                  f"on {other} from its progress file.", actor="altd")
@@ -912,7 +928,7 @@ def tick_project(project: str) -> None:
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
     try:
-        dispatch.run_project_wip(project)
+        dispatch.run_project_settings(project)
         if l3.queue_path(project).exists():
             request_l3_drain(project)
         for slug in dispatch.pending_task_operations(project):

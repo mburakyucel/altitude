@@ -8,6 +8,10 @@ from altitude import config, engines, l3
 
 
 class TestL3Sessions(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+
     @staticmethod
     def choice(engine):
         return {"engine": engine, "why": f"test chose {engine}", "quota": {}}
@@ -161,7 +165,8 @@ class TestL3Sessions(AltitudeCase):
     def test_turn_engine_pins_the_turn_over_project_pin_and_quota(self):
         seen = {}
 
-        def pick(role, *, forced=None, current=None):
+        def pick(role, *, forced=None, current=None, project=None, **kwargs):
+            forced = forced or (project or {}).get("l3_engine")
             seen.update({"forced": forced, "current": current})
             return self.choice(forced or "claude")
 
@@ -171,12 +176,13 @@ class TestL3Sessions(AltitudeCase):
             choice = l3._select(self.project, "codex")
         self.assertEqual(seen["forced"], "codex")
         self.assertEqual(choice["engine"], "codex")
-        self.assertEqual(choice["why"], "chosen by Burak for this turn")
+        self.assertEqual(choice["why"], self.choice("codex")["why"])
 
     def test_route_learns_the_engine_that_ran_last_and_the_project_pin(self):
         seen = {}
 
-        def pick(role, *, forced=None, current=None):
+        def pick(role, *, forced=None, current=None, project=None, **kwargs):
+            forced = forced or (project or {}).get("l3_engine")
             seen.update({"forced": forced, "current": current})
             return self.choice(forced or current or "claude")
 

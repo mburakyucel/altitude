@@ -115,13 +115,13 @@ class TestProjectRegistry(AltitudeCase):
             return json.load(response)
 
     def test_sept7_http_registration_and_daemon_set_share_one_project_transaction(self):
-        dispatch.request_project_wip(self.project, 5, "test", actor="l3")
+        dispatch.request_project_setting(self.project, "wip", 5, "test", actor="l3")
         entered, release, set_finished = threading.Event(), threading.Event(), threading.Event()
         def prepare(_project):
             entered.set()
             self.assertTrue(release.wait(3))
         def set_wip():
-            result = dispatch.run_project_wip(self.project)
+            result = dispatch.run_project_settings(self.project)
             set_finished.set()
             return result
         with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=prepare), ThreadPoolExecutor() as pool:
@@ -133,7 +133,7 @@ class TestProjectRegistry(AltitudeCase):
             finally:
                 release.set()
             self.assertNotIn("wip", add.result()["project"])
-            self.assertEqual(setting.result()["status"], "done")
+            self.assertEqual(setting.result()["wip"]["status"], "done")
         self.assertEqual(config.project(self.project)["wip"], 5)
         with mock.patch.object(server, "remove_l3_verb_broker"):
             self.post("remove", name=self.project)

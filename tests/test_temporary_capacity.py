@@ -10,6 +10,8 @@ from altitude import dispatch, engines, incidents, server, state as S
 class TestTemporaryCapacity(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.quiet_engines()
+        self.private_ledgers()
         self.register(self.project, wip=4)
 
     def _task(self, slug: str = "same-model") -> dict:
@@ -64,7 +66,7 @@ class TestTemporaryCapacity(AltitudeCase):
         switched = S.load_task(self.project, task["slug"])
         self.assertEqual(switched["state"], "queued", "a fresh attempt on the other engine, from saved progress")
         self.assertEqual((switched["l2_engine"], switched["engine_model"], switched["agent_id"], switched["session_id"]),
-                         ("claude", None, None, None))
+                         (None, None, None, None))
         self.assertNotIn("resume_after", switched)
         removed.assert_called_once_with("codex", task["agent_id"],
                                         job_root=dispatch.l2_job_root(self.project, task["slug"]))

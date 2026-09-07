@@ -180,6 +180,7 @@ class AltitudeCase(unittest.TestCase):
         """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
         self.patch(engines, "claude_agents", return_value=list(agents or []))
         self.patch(engines, "usage_hold", return_value=None)
+        self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
         self.patch(monitor, "quota", return_value={"known": True})
 
     def private_ledgers(self) -> None:

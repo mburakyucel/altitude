@@ -23,10 +23,10 @@ runtime. See the [walkthrough](WALKTHROUGH.md) for the experience this setup ena
   Linux account that runs Altitude. Authenticate using the engine's native setup and verify a
   small interactive request before launching Altitude. CLI versions must support the headless,
   session and permission features in the [launcher](../altitude/engines.py); there is no tested
-  version matrix yet. Codex task owners use the CLI's configured model by default. Its coordinator
-  runs with user configuration ignored and uses the CLI default unless a project model override
-  is supplied. Claude role/model defaults are in [`config.py`](../altitude/config.py) and must be
-  available to your account.
+  version matrix yet. Codex task owners use the CLI's configured model unless an Auto option or
+  explicit pin supplies one. Its coordinator runs with user configuration ignored and uses the CLI
+  default unless a model override is supplied. Configure Auto with the engine/models you intend to
+  use; access to every default preference is not required.
 
 Clone and build using the [README commands](../README.md#get-started). From that checkout, make
 the CLI available in this terminal:
@@ -48,14 +48,11 @@ clone one. Read its instructions file (`CLAUDE.md`, or `AGENTS.md` for the selec
 record its build/test and delivery expectations there if they are not already documented.
 
 ```sh
-# Choose the engine you installed and authenticated: codex or claude.
-altitude_engine=codex
 cd /absolute/path/to/example-project
 
 # Installs this repository's commit/push guards; project registration alone does not.
 alt install-git-guards
-alt project add example --path "$PWD" \
-  --l2-engine "$altitude_engine" --l3-engine "$altitude_engine"
+alt project add example --path "$PWD"
 alt project list
 
 # Select a free port on your own machine; keep this terminal running.
@@ -64,9 +61,21 @@ ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=18890 ALTITUDE_TLS=0 alt serve
 
 The guards configure that project's `core.hooksPath`. If another hook system is already
 configured, installation refuses; agree how to integrate it before continuing, rather than
-overwriting or disabling it. Explicit engine pins are intentional: Auto routing considers quota
-readings, not whether a CLI is installed or authenticated. The default engine list still contains
-both integrations, so pins keep this example on your chosen engine without a second subscription.
+overwriting or disabling it. Auto skips missing CLIs and known exhausted or rejected options.
+Its default ties Codex's default model and Claude Fable, with Claude Opus in the next tier. One
+installed engine is enough. Availability of a model is unverified until supported evidence says
+otherwise; a subscription's plan name is not evidence of model access.
+
+For an account with only Claude Opus, set that preference from another terminal using the same PATH
+and Altitude home while the server is running:
+
+```sh
+alt project set example --routing 'claude:opus' --reason 'Use the model available on this account'
+```
+
+The daemon applies the setting on its next tick. This reason-bearing command is also available to
+the project's L3; no restart is needed. See [CLI routing examples](CLI.md#automatic-routing-preferences)
+for tied options, fallback tiers, unavailable Fable and strict one-off pins.
 
 Open **http://127.0.0.1:18890/projects/example**. Send:
 
@@ -82,8 +91,8 @@ Register before starting this foreground server when you want to use `alt chat` 
 startup creates the project's coordinator broker. Web conversations also create the broker on
 demand, so a project registered after startup can start from the web app. Its First run / Add
 project flow can register folders and start the
-coordinator while the server is running, but that flow uses default routing; prefer the CLI pins
-above for a single-engine evaluation. A CLI conversation also works from another terminal with
+coordinator while the server is running, using Auto and the project's preferences. A CLI conversation
+also works from another terminal with
 the same PATH and Altitude home while the server is running:
 
 ```sh
@@ -99,14 +108,17 @@ alt --project example chat "Describe this project and suggest one small improvem
 | `ALTITUDE_OPERATOR` | Name shown for the operator; defaults to “Operator”. |
 | `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Bind address, port and TLS switch. Set all three as above for predictable localhost evaluation. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
+| `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. Codex readings come from its app-server integration. For Claude usage readings,
 `alt install-statusline` installs a global CLI statusline hook and an interactive session supplies
 the snapshot; inspect your existing settings before choosing that optional installation. Unknown
-readings do not prevent a pinned engine from running.
+readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
+configured order when weekly readings are unknown or incomparable, retaining a current L3 option
+in that tier. It never invents separate model allowances from a shared account reading.
 
-Single-engine pinning is supported; arbitrary provider/access configurations are not verified.
+Single-engine Auto and explicit pins are supported; arbitrary provider/access configurations are not verified.
 In particular, the launcher filters some engine environment variables and supplies role settings;
 the Codex coordinator ignores user configuration, including custom provider settings in that file.
 Do not assume an interactive API/Bedrock configuration transfers unchanged to a launched session.
@@ -127,6 +139,10 @@ remains available without them. See [operations](OPERATIONS.md) for those steps 
 - **The first conversation fails:** verify the chosen CLI works as this user, its binary path
   and model configuration, and the systemd user manager. For immediate `alt chat` use, register
   before foreground startup; a web conversation can start its coordinator broker on demand.
+- **No configured option is available:** inspect the route explanation. Install or authenticate an
+  intended CLI, wait for a reported quota reset, or set an available preference. Explicit model/access
+  rejections are remembered for thirty minutes; model rejections affect only that model and
+  authentication rejections affect that engine. A strict pin must itself become usable or be changed.
 - **A task cannot start or land:** inspect its reason, the clean `main`/`origin/main` checkout,
   Git guards, GitHub authentication and applicable check results. Do not bypass a guard.
 - **Usage is unknown:** inspect Monitor's explanation and the optional telemetry setup above.

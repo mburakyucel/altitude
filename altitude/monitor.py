@@ -109,18 +109,20 @@ def quota() -> dict:
 def routing() -> list[dict]:
     """Which engine each role would get for a turn started now, with the router's own reason.
 
-    Display only: reading this never routes anything. One row per project L3 (its pin, or Auto with
-    the engine that ran the last turn) and one for a fresh L2. ``engine`` is None when the router
-    would find nothing available, and ``why`` is pick_engine's text verbatim.
+    Display only: one row per project and role, respecting each project's pins and tiers.
+    ``engine`` is None when the router
+    would find nothing available. Fresh-L2 reasons prefix the shared decision with the project name.
     """
     rows = []
-    for name in config.load_projects():
+    for name, project in config.load_projects().items():
         info = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         pin = config.project(name).get("l3_engine")
         pin = pin if pin in config.ENGINES else None
         current = info.get("engine_last")
         rows.append({"role": "l3", "project": name, "pin": pin, "current": current,
-                     **route.pick_engine("l3", forced=pin, current=current)})
-    rows.append({"role": "l2", "project": None, "pin": None, "current": None,
-                 **route.pick_engine("l2")})
+                     **route.pick_engine("l3", project=project, current=current,
+                                         current_model=((info.get("sessions") or {}).get(current) or {}).get("launch_model"))})
+        choice = route.pick_engine("l2", project=project)
+        rows.append({"role": "l2", "project": name, "pin": project.get("l2_engine"), "current": None,
+                     **choice, "why": f"Project {name}: {choice['why']}"})
     return rows

@@ -92,7 +92,15 @@ supplies execution tools, context management and native subagents; repository in
 skills and hooks shape how it works. Execution strategy stays with the owner rather than a
 prescribed sequence of specialist stages.
 
-Both project roles can use one installed engine. Today's single-engine setup uses explicit pins.
+Both project roles can use one installed engine with Auto. Configure project preference tiers with
+`alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`: commas tie options,
+and `>` puts the next tier below them. Auto chooses the highest available tier, compares meaningful
+weekly headroom within a tie, and falls back when an option is missing or exhausted. For a
+Claude-only account with Opus, use `--routing 'claude:opus'`. Unknown access or quota stays unknown;
+it does not mean unavailable or imply a subscription entitlement. Explicit engine/model pins stay
+strict, and routing changes preserve running task attempts and their provider conversations.
+See [routing configuration and examples](docs/CLI.md#automatic-routing-preferences).
+
 Additional engines, including **OpenCode as a candidate**, require integration and verification
 of their session, permission, authentication and usage behavior. The architecture is intended to
 accommodate different model providers and billing/access arrangements too.
@@ -119,7 +127,7 @@ pnpm --dir web build
 ```
 
 Follow [setup: register a project and start a conversation](docs/SETUP.md#register-a-project-and-start-a-conversation)
-for engine pins, project Git guards and a foreground localhost server. The guide distinguishes
+for routing preferences, project Git guards and a foreground localhost server. The guide distinguishes
 source-checked commands from the remaining clean-machine setup verification. No open-source
 license has been selected; public release is a separate milestone.
 
