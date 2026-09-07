@@ -27,6 +27,9 @@ phase deleted.
   refuses changes outside the declared lease.
 - Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
+  Codex model and reasoning effort are read from the running turn's rollout by altd and recorded on
+  the task or L3 session. Explicit model pins remain separate from this observation; otherwise the
+  CLI selects its model. Task status and header chips show the recorded name.
 - L3 is read-only on the deployment checkout on both engines. Its runtime `alt` and narrow external
   reads cross its project's role-fenced altd socket; reason-bearing worker operations become durable requests that altd validates and executes.
 - Resource usage is shown, never acted on: the Monitor page reports both seats' windows, their

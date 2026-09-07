@@ -7,7 +7,7 @@ import time
 import unittest
 
 from tests.support import AltitudeCase
-from altitude import config, engines, monitor, route, server
+from altitude import config, engines, monitor, route, server, state as S, tasks as T
 
 
 def write_snapshot(path, at, five=10, seven=20):
@@ -53,6 +53,22 @@ class TestQuotaAge(AltitudeCase):
         write_snapshot(config.MONITOR_DIR / "statusline-s1.json", at)
         row = next(s for s in monitor.sessions() if s["kind"] == "statusline")
         self.assertEqual(row["at"], at)
+
+    def test_model_observation_reaches_live_session_rows_and_old_tasks_are_readable(self):
+        task = T.new(self.project, "Known model", "request")
+        task.update(state="running", l2_engine="codex", engine_model="actual-model", engine_reasoning_effort="high")
+        S.save_task(self.project, task)
+        S.write_json(config.project_dir(self.project) / "l3.json", {
+            "engine_last": "codex", "engine_model": "l3-model", "engine_reasoning_effort": "medium"})
+        rows = {row["kind"]: row for row in monitor.sessions()}
+        self.assertEqual(rows["l2"]["model"], "actual-model")
+        self.assertEqual(rows["l3"]["model"], "l3-model")
+        self.assertEqual(rows["l3"]["engine_reasoning_effort"], "medium")
+        del task["engine_model"]
+        S.save_task(self.project, task)
+        S.write_json(config.project_dir(self.project) / "l3.json", {"engine_last": "codex", "engine_model": None})
+        for row in monitor.sessions():
+            self.assertNotIn("model", row, "unknown model is absent for consumers of older session records")
 
     def test_an_aged_codex_reading_keeps_its_figures_and_says_stale(self):
         reading = {"known": True, "primary_used": 71.0, "primary_window_minutes": route.WEEK_MINUTES,
@@ -126,7 +142,7 @@ class TestMonitorApi(AltitudeCase):
         self.patch(monitor, "quota", return_value={"known": False})
         self.patch(route, "quota_codex", return_value={"known": False, "why": "Codex binary not found"})
         self.patch(monitor, "routing", return_value=[{"role": "l2", "engine": None, "why": "no engine available (x)"}])
-        self.patch(monitor, "sessions", return_value=[])
+        self.private_ledgers()
         self.patch(engines, "claude_agents", return_value=[])
         server.Handler._seen_clients.clear()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -140,20 +156,37 @@ class TestMonitorApi(AltitudeCase):
         self.httpd.server_close()
         self.thread.join(timeout=2)
 
-    def test_the_payload_names_both_seats_and_the_routing_view(self):
+    def get(self, path):
         host, port = self.httpd.server_address
         with socket.create_connection((host, port), timeout=5) as sock:
-            sock.sendall(f"GET /api/monitor HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+            sock.sendall(f"GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
             raw = b""
             while True:
                 chunk = sock.recv(65536)
                 if not chunk:
                     break
                 raw += chunk
-        body = json.loads(raw.split(b"\r\n\r\n", 1)[1])
+        return json.loads(raw.split(b"\r\n\r\n", 1)[1])
+
+    def test_the_payload_names_both_seats_and_the_routing_view(self):
+        body = self.get("/api/monitor")
         self.assertEqual(set(body), {"quota", "quota_codex", "routing", "sessions", "agents"})
         self.assertEqual(body["quota_codex"]["why"], "Codex binary not found")
         self.assertIsNone(body["routing"][0]["engine"])
+
+    def test_task_and_monitor_apis_expose_model_under_their_public_field_names(self):
+        task = T.new(self.project, "Model API", "request")
+        task.update(state="running", l2_engine="codex", engine_model="actual-model", engine_reasoning_effort="high")
+        S.save_task(self.project, task)
+        live = next(row for row in self.get("/api/monitor")["sessions"] if row["kind"] == "l2")
+        self.assertEqual((live["engine"], live["model"], live["engine_reasoning_effort"]),
+                         ("codex", "actual-model", "high"))
+        detail = self.get(f"/api/task/{self.project}/{task['slug']}")
+        self.assertEqual(detail["engine_model"], "actual-model")
+        self.assertEqual(detail["engine_reasoning_effort"], "high")
+        task["engine_model"] = None
+        S.save_task(self.project, task)
+        self.assertNotIn("model", next(row for row in self.get("/api/monitor")["sessions"] if row["kind"] == "l2"))
 
 
 if __name__ == "__main__":

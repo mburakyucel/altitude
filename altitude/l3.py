@@ -562,6 +562,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 res["turn_id"] = turn_id
                 return res
             pct = engines.context_percent(res.get("context_tokens", 0), "claude")
+            session.update(engine_model=model or proj.get("l3_model") or config.MODELS["l3"],
+                           engine_reasoning_effort=None)
             _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
                           res.get("cost", 0.0), res.get("usage") or {}, choice)
             session["confinement_version"] = L3_CONFINEMENT_VERSION
@@ -584,6 +586,8 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
                     "rotate_reason": f"context {pct}% ≥ act line {int(act)}%" if pct >= act else None,
                     "usage": usage})
     inf.update({"engine_last": engine, "session_id": sid, "context_percent": pct,
+                "engine_model": session.get("engine_model"),
+                "engine_reasoning_effort": session.get("engine_reasoning_effort"),
                 "turns": session["turns"], "last_turn": session["last_turn"], "last_cost": cost,
                 "routing": choice, "rotate_next": session["rotate_next"],
                 "rotate_reason": session["rotate_reason"]})
@@ -600,6 +604,15 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
         body = ((config.PERSONAS / "l3.md").read_text() + "\n\n"
                 + f"[altitude] Engine: Codex — {choice['why']}.\n\n" + body)
     runtime = _l3_runtime(project, "codex")
+
+    def record_session(metadata):
+        if sid and metadata.get("session_id", sid) != sid:
+            return  # a mismatched resume must not replace the recorded conversation
+        session.update(metadata)
+        inf.update(metadata, engine_last=choice["engine"])
+        save_info(project, inf)
+
+    record_session({"engine_model": None, "engine_reasoning_effort": None})
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
         result = engines.codex_exec(
@@ -607,10 +620,13 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
             effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
             extra_env=_l3_env(project, runtime),
             sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
-            ignore_user_config=True)
+            ignore_user_config=True, on_session=record_session)
     finally:
         _remove_runtime(runtime)
     reported_sid = result.get("reported_session_id") or result.get("session_id")
+    if result.get("engine_model"):
+        record_session({"session_id": reported_sid, "engine_model": result["engine_model"],
+                        "engine_reasoning_effort": result.get("engine_reasoning_effort")})
     identity_error = None
     if not reported_sid:
         identity_error = "Codex L3 turn did not report a thread identity"

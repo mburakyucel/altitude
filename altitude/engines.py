@@ -533,6 +533,36 @@ def _codex_usage(events: list[dict]) -> dict:
     return {}
 
 
+def _codex_session_model(session_id: str | None, started_at: str, home: Path) -> dict:
+    """altd reads this turn's rollout context, never the requested/default model (CLI 0.153.4)."""
+    if not session_id or not re.fullmatch(r"[A-Za-z0-9-]+", session_id):
+        return {}
+    try:
+        for path in home.glob(f"sessions/*/*/*/rollout-*-{session_id}.jsonl"):
+            with path.open() as rollout:
+                for line in rollout:
+                    if '"turn_context"' not in line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        if (event.get("type") != "turn_context" or
+                                datetime.fromisoformat(event["timestamp"]) < datetime.fromisoformat(started_at)):
+                            continue
+                        context = event["payload"]
+                        if isinstance(context.get("model"), str) and context["model"]:
+                            return {"engine_model": context["model"],
+                                    "engine_reasoning_effort": context.get("effort")}
+                    except (ValueError, KeyError, TypeError):
+                        continue  # a partially flushed rollout is retried on the next poll
+    except OSError:
+        pass  # optional telemetry must not stop a worker when its rollout is unavailable
+    return {}
+
+
+def _codex_home(env: dict) -> Path:
+    return Path(env.get("CODEX_HOME") or Path(env.get("HOME") or config.HOME) / ".codex")
+
+
 def _git_dirs(cwd: Path) -> list[Path]:
     """The Git directories a worker writes: the common directory (objects, refs) and, for a linked worktree, its
     own metadata under `.git/worktrees/<name>` (HEAD, index, FETCH_HEAD). Codex marks that metadata read-only
@@ -601,6 +631,12 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     if not isinstance(record, dict):
         return None
     events = _codex_events(paths["stdout"])
+    if not record.get("engine_model"):
+        metadata = _codex_session_model(_codex_thread(events), record["started_at"],
+                                       Path(record.get("codex_home") or _codex_home(codex_env())))
+        if metadata:
+            record.update(metadata)
+            S.write_json(paths["record"], record)
     proc = _codex_processes.get(worker_id)
     alive = proc.poll() is None if proc is not None else _unit_active(str(record.get("unit") or ""))
     if proc is not None and not alive:
@@ -626,7 +662,9 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     return {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
             "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
-            "startedAt": record.get("started_at"), "engine": "codex"}
+            "startedAt": record.get("started_at"), "engine": "codex",
+            "engine_model": record.get("engine_model"),
+            "engine_reasoning_effort": record.get("engine_reasoning_effort")}
 
 
 def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
@@ -653,7 +691,8 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
     text = prompt if resume else (
         ((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE + "\n\n" + prompt)
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit,
-              "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "started_at": datetime.now(timezone.utc).isoformat(),
+              "codex_home": str(_codex_home(codex_env(extra_env))),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
     S.write_json(paths["record"], record)
     with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
@@ -791,7 +830,7 @@ def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> boo
 
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
-               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False) -> dict:
+               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
     so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
@@ -807,18 +846,39 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
+    started_at = datetime.now(timezone.utc).isoformat()
     proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
     if on_start:
         on_start(proc.pid)
+    metadata = {}
+    deadline = time.monotonic() + timeout
+    def observe(stdout):
+        nonlocal metadata
+        thread = _codex_thread(_codex_parse(stdout or ""))
+        metadata = _codex_session_model(thread, started_at, _codex_home(codex_env(extra_env)))
+        if metadata and on_session:
+            on_session({"session_id": thread, **metadata})
     try:
-        stdout, stderr = proc.communicate(prompt, timeout=timeout)
+        pending_input = prompt
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                stdout, stderr = proc.communicate(pending_input, timeout=remaining if metadata else min(0.5, remaining))
+                break
+            except subprocess.TimeoutExpired as exc:
+                if time.monotonic() >= deadline:
+                    raise
+                pending_input = None
+                observe((exc.output or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
         subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
         proc.kill()
         proc.communicate()
         raise
+    if not metadata:
+        observe(stdout)
     events = _codex_parse(stdout or "")
     messages = [str((event.get("item") or {}).get("text") or "") for event in events
                 if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
@@ -828,7 +888,7 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     thread = _codex_thread(events)
     return {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
             "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
-            "tools": tools,
+            "tools": tools, **metadata,
             "error": None if proc.returncode == 0 else (stderr or "").strip()[:500],
             "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}

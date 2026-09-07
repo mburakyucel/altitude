@@ -58,6 +58,21 @@ class TestTaskStatus(AltitudeCase):
     def calls(self):
         return self.gh_log()
 
+    def test_brief_displays_observed_model_and_old_records_still_render(self):
+        task = S.load_task("demo", "task-one")
+        task.update(l2_engine="codex", engine_model="actual-model", engine_reasoning_effort="high")
+        S.save_task("demo", task)
+        result = self.alt("task", "status", "task-one", "--brief")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("engine/model: codex/actual-model", result.stdout)
+        self.assertEqual(task_status.status("demo", "task-one")["engine_reasoning_effort"], "high")
+        del task["engine_model"]
+        del task["engine_reasoning_effort"]
+        S.save_task("demo", task)
+        result = self.alt("task", "status", "task-one", "--brief")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("engine/model: codex/default", result.stdout)
+
     def test_happy_path_is_complete_and_compact(self):
         result = task_status.status("demo", "task-one")
 

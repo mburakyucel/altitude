@@ -55,6 +55,16 @@ L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provide
 that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
 [Session lifecycle](SESSION_LIFECYCLE.md) for identity, routing, messages, containment, and context.
 
+Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
+reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
+for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
+rollouts leave the observation unknown and are retried while the turn runs. The launch model pin is
+kept separately, so recording a default does not turn it into an override on resume. Status, task
+header chips, and the Monitor API expose the observation; old records remain readable.
+`GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
+`GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+when available. An unknown Monitor model is an absent key rather than null.
+
 Both roles read two layers of rules. The personas in `personas/` are the global layer: how anyone
 works under Altitude on any project, carrying nothing project-specific. The repository's own
 instructions file — `CLAUDE.md`, or `AGENTS.md` where an engine reads that instead — is the project

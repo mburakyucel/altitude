@@ -10,6 +10,9 @@ identities on purpose:
 | `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
 | `agent_id` | current Claude job or Codex OS worker | every physical replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
+| `launch_model` | model override passed at launch, or null for the CLI default | fresh dispatch |
+| `engine_model` | observed model for Codex; selected alias for Claude | each worker/turn records its selection |
+| `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
 a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
@@ -49,6 +52,18 @@ close quotas.
 Altitude does not infer separate Fable and Opus allowances from an account-wide meter. A model pin
 is honored inside the selected provider; model switching requires explicit observable policy rather
 than a guessed quota relationship.
+
+Codex CLI 0.153.4's JSON stream identifies the thread but carries no model. altd reads the matching
+`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl` (default home `~/.codex`) and takes
+`model` and `effort` from the first `turn_context` timestamped at or after this worker's launch.
+This distinguishes a resumed turn from earlier turns in the same rollout. The worker record caches
+the observation; daemon polling copies it into the task and live monitor snapshot. L3 records it
+while its synchronous turn is running and keeps it in that engine's session record. The sandboxed
+worker does not read the rollout for telemetry. Unavailable or incompletely flushed metadata remains
+unknown and is retried; older tasks render without the fields. The observed model is never used to
+pin a later launch: only the separately recorded launch override controls that choice.
+Task details expose `engine_model` and `engine_reasoning_effort`; Monitor session rows
+expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
