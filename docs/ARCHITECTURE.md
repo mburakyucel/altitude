@@ -325,14 +325,16 @@ overflow menu turns it into Design boards, opening in a new tab. Any project wit
 route knows nothing about this repository's own.
 
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
-work is derived from it. It sits in the shell's page container and shows one seat card per configured
-engine, in the seam's order and under the display name the overview's `engines[]` rows give, so the
-page spells no provider: Claude's five-hour and seven-day windows from the statusline snapshot, and
-the Codex seat's windows named by the length the provider reports, a window the provider does not
-report shown as absent rather than zero — each with percent used, a meter with the 70% reserve line
-drawn, when it resets in relative and clock terms, the plan where the provider names it, and how old
-the reading is. A seat with no reading at all says so and carries the one line that fixes it; a
-reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One
+work is derived from it. `/api/monitor` answers with `seats`: one row per configured engine, in the
+seam's order, as `{engine, label, quota}`, where the label is the seam's display name and the quota is
+that seat's reading whole. Only the engine seam knows which reading belongs to which engine, so the
+page ties no reading to an engine key and spells no provider. It sits in the shell's page container
+and shows one seat card per row: either the five-hour and seven-day windows a statusline snapshot
+names, or windows named by the length the seat reports, a window the seat does not report shown as
+absent rather than zero — each with percent used, a meter with the 70% reserve line drawn, when it
+resets in relative and clock terms, the plan where the seat names it, and how old the reading is. A
+seat with no reading at all says so and carries the reading's own `why`, the one line that fixes it;
+a reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One
 routing card answers which engine each project's L3 (its pin, or Auto) and a fresh L2 would get for a
 turn started now, in `pick_engine`'s own words, including the case where no engine is available. The
 sessions the monitor knows follow, each with its task, its engine and the model when the API reports

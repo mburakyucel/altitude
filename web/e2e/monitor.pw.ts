@@ -7,6 +7,12 @@ import { walkthrough } from "./walkthrough";
  * real response with the one field changed, and its name says so with "-overlay". Nothing is written.
  */
 type Json = Record<string, unknown>;
+type Seat = { engine: string; label: string; quota: Json };
+
+/** The same rows the API sent, with one patch applied to every seat's reading. */
+function seatsWith(body: Json, patch: (quota: Json) => Json): Seat[] {
+  return ((body.seats ?? []) as Seat[]).map((seat) => ({ ...seat, quota: patch(seat.quota) }));
+}
 
 async function overlay(page: Page, path: string, patch: (body: Json) => Json) {
   await page.route(`**${path}*`, async (route) => {
@@ -38,11 +44,11 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   // Eight reloads and one read that fails three retries first: longer than Playwright's default 30s.
   test.setTimeout(120_000);
   const walk = walkthrough(page, info);
-  const overview = (await (await request.get("/api/overview")).json()) as { engines: Array<{ engine: string; label: string }> };
-  expect(overview.engines.length, "the seam reports at least one configured engine").toBeGreaterThan(0);
+  const seats = (await (await request.get("/api/monitor")).json()).seats as Seat[];
+  expect(seats.length, "the seam reports at least one configured engine").toBeGreaterThan(0);
   const loading = page.getByLabel("Loading", { exact: true });
   const routing = page.getByRole("heading", { name: "Routing now", exact: true });
-  const seats = page.getByRole("heading", { name: "Seats", exact: true });
+  const seatsHead = page.getByRole("heading", { name: "Seats", exact: true });
   const sessions = page.getByRole("heading", { name: /^Sessions \(\d+\)$/ });
   // The sentence and its Retry share one paragraph: match the start, not the whole text.
   const error = page.getByText(/^Could not read the monitor\./);
@@ -54,9 +60,9 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   await page.route("**/api/monitor*", async (route) => { await held; await route.continue(); });
   await walk.open("/monitor");
   await walk.state("01-loading", { visible: [loading, page.getByRole("heading", { name: "Monitor", exact: true })], hidden: [routing, error] });
-  await walk.state("02-ready", { action: async () => { release(); }, visible: [seats, routing, sessions], hidden: [loading, error] });
+  await walk.state("02-ready", { action: async () => { release(); }, visible: [seatsHead, routing, sessions], hidden: [loading, error] });
   await page.unroute("**/api/monitor*");
-  for (const row of overview.engines) await expect(page.getByRole("region", { name: row.label, exact: true })).toBeVisible();
+  for (const seat of seats) await expect(page.getByRole("region", { name: seat.label, exact: true })).toBeVisible();
   await fitsInViewport(page);
 
   // Error: every read fails until Retry is pressed; the app retries three times first.
@@ -67,18 +73,17 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   });
   await walk.open("/monitor");
   await error.waitFor({ timeout: 30_000 });
-  await walk.state("03-error", { visible: [error, retry], hidden: [loading, routing, seats] });
+  await walk.state("03-error", { visible: [error, retry], hidden: [loading, routing, seatsHead] });
   await walk.state("04-retry", {
     action: async () => { failing = false; await retry.click(); },
-    visible: [seats, routing, sessions], hidden: [error, retry, loading],
+    visible: [seatsHead, routing, sessions], hidden: [error, retry, loading],
   });
   await page.unroute("**/api/monitor*");
 
-  // No reading: neither seat has ever been read.
+  // No reading: no seat has ever been read.
   await overlay(page, "/api/monitor", (body) => ({
     ...body,
-    quota: { known: false },
-    quota_codex: { known: false, why: "the seat has not been read yet" },
+    seats: seatsWith(body, () => ({ known: false, why: "the seat has not been read yet" })),
   }));
   await walk.open("/monitor");
   await walk.state("05-no-reading-overlay", {
@@ -90,8 +95,10 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   // Stale: the figures stay, dimmed, with their age and the label.
   await overlay(page, "/api/monitor", (body) => ({
     ...body,
-    quota: { ...(body.quota as Json), known: false, stale: true, at: Math.floor(hoursAgo(2).getTime() / 1000) },
-    quota_codex: { ...(body.quota_codex as Json), known: false, stale: true, read_at: hoursAgo(2).toISOString() },
+    seats: seatsWith(body, (quota) => ({
+      ...quota, known: false, stale: true,
+      ...("read_at" in quota ? { read_at: hoursAgo(2).toISOString() } : { at: Math.floor(hoursAgo(2).getTime() / 1000) }),
+    })),
   }));
   await walk.open("/monitor");
   await walk.state("06-stale-overlay", {
@@ -102,15 +109,15 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   await page.unroute("**/api/monitor*");
 
   // One engine configured: one gauge, no empty second column.
-  const [first, ...rest] = overview.engines;
-  await overlay(page, "/api/overview", (body) => ({ ...body, engines: [first] }));
+  const [first, ...rest] = seats;
+  await overlay(page, "/api/monitor", (body) => ({ ...body, seats: [first] }));
   await walk.open("/monitor");
   await walk.state("07-one-engine-overlay", {
     visible: [page.getByRole("region", { name: first!.label, exact: true })],
-    hidden: rest.map((row) => page.getByRole("region", { name: row.label, exact: true })),
+    hidden: rest.map((seat) => page.getByRole("region", { name: seat.label, exact: true })),
   });
   await expect(page.locator(".monitor-seat")).toHaveCount(1);
-  await page.unroute("**/api/overview*");
+  await page.unroute("**/api/monitor*");
 
   // No live sessions: one muted sentence.
   await overlay(page, "/api/monitor", (body) => ({ ...body, sessions: [] }));

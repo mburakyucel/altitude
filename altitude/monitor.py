@@ -86,7 +86,7 @@ def quota() -> dict:
     ``known`` is the routing contract and stays exactly as strict: true only while the newest
     statusline snapshot is younger than route.FRESH_SECONDS. An older snapshot is not nothing, so it
     still returns its figures marked ``stale`` and the reader decides; no snapshot at all is the
-    only unknown.
+    only unknown, and it carries ``why`` so a page can say what produces a reading.
     """
     best = None
     for p in config.MONITOR_DIR.glob("statusline-*.json"):
@@ -98,7 +98,8 @@ def quota() -> dict:
         if best is None or ts > best[0]:
             best = (ts, rl)
     if not best:
-        return {"known": False}
+        return {"known": False,
+                "why": "needs the statusline wrapper (alt install-statusline) and one interactive session"}
     at, rl = best
     five, seven = rl.get("five_hour") or {}, rl.get("seven_day") or {}
     fresh = time.time() - at <= route.FRESH_SECONDS
