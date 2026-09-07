@@ -192,6 +192,7 @@ export default function Composer({
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
   const stopRequested = useRef(false);
+  const sendAfterTranscribing = useRef(false);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -268,6 +269,9 @@ export default function Composer({
     },
     [disabled, focusField, onChange, onSubmit],
   );
+  // A recording can outlive the render that supplied its submit callback or disabled state.
+  const currentSubmit = useRef(submit);
+  currentSubmit.current = submit;
 
   // ---- voice: listening, transcribing, landed; every failure is one hint and an unchanged draft ----
   const finish = useCallback(
@@ -305,7 +309,8 @@ export default function Composer({
         const next = combineDraft(draft.current, text);
         onChange(next);
         setPhase("idle");
-        focusField(next.length);
+        if (sendAfterTranscribing.current && text.trim()) void currentSubmit.current(next);
+        else focusField(next.length);
       } catch {
         if (!mounted.current || cancelled.current) return;
         setPhase("idle");
@@ -319,10 +324,12 @@ export default function Composer({
     [focusField, onChange, releaseStream],
   );
 
-  const stop = useCallback(() => {
+  const stop = useCallback((send = false) => {
     const active = recorder.current;
     if (!active || stopRequested.current) return;
     stopRequested.current = true;
+    sendAfterTranscribing.current = send;
+    setPhase("transcribing");
     try {
       if (active.state !== "inactive") active.stop();
       else void finish(active, stream);
@@ -338,6 +345,7 @@ export default function Composer({
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
+    sendAfterTranscribing.current = false;
     chunks.current = [];
     setPhase("starting");
     audioSession("play-and-record");
@@ -418,7 +426,7 @@ export default function Composer({
     else if (phase === "idle") void start();
   }, [phase, start, stop]);
 
-  /** Ctrl/⌘+M and Esc work from anywhere in the composer, the field or a control. */
+  /** Recording shortcuts work from anywhere in the composer, the field or a control. */
   const onComposerKeyDown = (event: ReactKeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && (event.key === "m" || event.key === "M")) {
       event.preventDefault();
@@ -426,22 +434,24 @@ export default function Composer({
     } else if (event.key === "Escape" && phase !== "idle") {
       event.preventDefault();
       cancel();
+    } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && phase === "listening") {
+      event.preventDefault();
+      stop(true);
     }
   };
 
-  /** Enter in the field sends, or stops the recording; Shift+Enter is the newline the field keeps. */
+  /** Enter in the field sends; Shift+Enter is the newline the field keeps. */
   const onFieldKeyDown = (event: ReactKeyboardEvent) => {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    if (phase === "listening") stop();
-    else if (phase === "idle") void submit(value);
+    if (phase === "idle") void submit(value);
   };
 
   // ---- what is on screen ----------------------------------------------------------------------------
   const listening = phase === "listening" || phase === "starting";
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
-  const canSend = value.trim().length > 0 && !disabled && !listening;
+  const canSend = !disabled && (phase === "listening" || (phase === "idle" && value.trim().length > 0));
   const micShown = !unavailable;
   const micDisabled = denied || disabled || transcribing;
 
@@ -528,7 +538,7 @@ export default function Composer({
               {listening ? <StopIcon /> : <MicIcon />}
             </button>
           ) : null}
-          {busy ? (
+          {busy && !listening ? (
             <button type="button" className="composer-queue" disabled={!canSend} onClick={() => void submit(value)}>
               Queue
             </button>
@@ -538,7 +548,7 @@ export default function Composer({
               className="composer-icon composer-send"
               aria-label="Send"
               disabled={!canSend}
-              onClick={() => void submit(value)}
+              onClick={() => phase === "listening" ? stop(true) : void submit(value)}
             >
               <SendIcon />
             </button>
