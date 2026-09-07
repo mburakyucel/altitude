@@ -267,6 +267,10 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                or arg.startswith("-p") and not arg.startswith("--") for arg in args):
             raise ValueError("the L3 socket fixes the project and accepts input only on stdin")
         _validate_l3_alt_args(args)
+        if args[:2] == ["task", "hold-merge"] and any(arg.split("=", 1)[0] == "--approval" for arg in args[3:]):
+            options = merge_approval_parser().parse_args(args[2:])
+            receipt = apply_recorded_merge_approval(project, **vars(options))
+            return {"returncode": 0, "stdout": json.dumps(receipt) + "\n", "stderr": ""}
         if args[:1] == ["issue"]:
             options = vars(issue_parser().parse_args(args[1:]))
             options.pop("text", None)
@@ -347,6 +351,43 @@ def _validate_l3_alt_args(args: list[str]) -> None:
         tasks += [arg.split("=", 1)[1] for arg in args if arg.startswith("--task=")]
         for slug in tasks:
             S.require_task_slug(slug)
+
+
+def merge_approval_parser() -> argparse.ArgumentParser:
+    """Exact coordinator-only grammar; this mode executes in altd, never a CLI subprocess."""
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            raise ValueError(f"alt task hold-merge: {message}")
+    parser = Parser(allow_abbrev=False, add_help=False)
+    parser.add_argument("slug")
+    parser.add_argument("--approval", required=True)
+    parser.add_argument("--pr-number", dest="pr", required=True, type=int)
+    parser.add_argument("--head", required=True)
+    parser.add_argument("--reason", required=True)
+    return parser
+
+
+def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: int, head: str, reason: str) -> dict:
+    """I-20260907-205556: bind durable operator approval to the checkout-origin PR before releasing a hold."""
+    S.require_task_slug(slug)
+    if (pr < 1 or not re.fullmatch(r"[0-9a-f]{32}", approval)
+            or not re.fullmatch(r"[0-9a-f]{40}", head) or not reason.strip()):
+        raise ValueError("approval requires a message id, positive PR number, full head SHA, and reason")
+    from . import github_intake
+    owner, repository = github_intake.project_repo(project)
+    url = f"https://github.com/{owner}/{repository}/pull/{pr}"
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)
+    result = subprocess.run(["gh", "pr", "view", str(pr), "--repo", f"{owner}/{repository}", "--json",
+                             "number,url,state,isDraft,isCrossRepository,baseRefName,headRefName,headRefOid,updatedAt"],
+                            cwd=config.project_path(project), env=env, capture_output=True, text=True, timeout=30)
+    pull = json.loads(result.stdout) if result.returncode == 0 else None
+    if not isinstance(pull, dict) or pull.get("number") != pr or pull.get("url") != url:
+        raise ValueError("approval PR could not be read from the project origin")
+    try:
+        return T.apply_merge_approval(project, slug, approval, pull, head=head, reason=reason, actor="l3")
+    except T.TransitionError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _l3_bounded(value: str) -> str:
