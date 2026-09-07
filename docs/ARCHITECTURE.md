@@ -73,12 +73,47 @@ the project file of the project being built.
 
 Everything that encodes the operator, their providers, or their hardware sits behind a named seam.
 The operator seam is one configured name and role, so personas, docs, and UI text say "the operator"
-or read the configured name. The engine seam is `engines.py`, `route.py`, and `config.py`: engine-specific
-code lives there and nowhere else, Altitude runs with any single engine alone, and adding or removing an
-engine touches only those three modules. The capability seam is the local services — the speech socket,
+or read the configured name. The intended engine seam is `engines.py`, `route.py`, and `config.py`:
+new engine-specific behavior belongs there; existing references outside it migrate when touched.
+The capability seam is the local services — the speech socket,
 `ffmpeg`, a GPU — each optional, detected, and degrading to an explicit unavailable state.
 `tests/test_project_layers.py` holds the per-file counts of provider and operator names outside the
 seams as a ratchet that can only fall.
+
+## Engine integration boundary
+
+Altitude coordinates ongoing CLI agent sessions. Codex and Claude Code are the current
+integrations; the project workflow centers on the coordinator, task owner, isolated worktree and
+checked PR, independently of which integration executes a turn. Both roles can be pinned to one
+installed engine. The [setup guide](SETUP.md) describes the current manual configuration.
+
+| Module | Integration responsibility |
+| --- | --- |
+| [`engines.py`](../altitude/engines.py) | Launch/resume/stop workers; engine arguments, environment and permissions; session identity, output, model/context observations and usage-limit signals. |
+| [`route.py`](../altitude/route.py) | Select an engine from explicit pins and available quota observations; expose engine labels, usage windows and routing reasons to callers. |
+| [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults and context settings, alongside runtime configuration. |
+
+The interface is internal and evolves with the integrations. The intended extensibility includes
+other CLI engines such as OpenCode, and access through subscriptions, direct API billing or services
+such as Bedrock. These are integration candidates, not supported paths today. A new engine may
+have different session, authentication, capability and usage-reporting models. Adapt the boundary
+to preserve its native behavior rather than treating today's two launchers as a universal contract.
+
+Current gaps are concrete: the configured engine list names both engines, Auto routing evaluates
+quota rather than installed/authenticated availability, and engine-specific references remain in
+session, dispatch, transcript and telemetry code outside the seam. The launch environment filters
+some engine variables and applies role/model/permission settings, so native access configurations
+are not all passed through unchanged. The Codex coordinator uses `--ignore-user-config`, retaining
+authentication while omitting user model/provider configuration; a project `l3_codex_model` can
+supply a model override. Adding an engine still needs implementation and end-to-end
+verification; it is not a registration-only plug-in operation. The [roadmap](ROADMAP.md#early-user-onboarding-and-public-release)
+records these follow-up candidates without expanding this documentation milestone into a rewrite.
+
+Engines retain responsibility for their execution tools, context management and native helpers.
+Altitude supplies focused [role instructions](../personas/), repository context and delivery
+boundaries. Execution strategy stays adaptable because a fixed sequence of stages and specialist
+roles can outlive the model/tool assumptions behind it. Customization belongs in repository
+instructions and the engines' native skills, hooks and agent facilities where appropriate.
 
 ## Task lifecycle
 
@@ -236,8 +271,9 @@ headlessly with a temporary profile and its browser sandbox disabled inside the 
 `pnpm ui` sets `PLAYWRIGHT_BROWSERS_PATH` to the Altitude home's shared `browsers/` directory unless
 overridden; one install serves every worktree using that browser version. Installed Chrome is the
 fallback only when the bundle is absent (its host profile denies networking in incident
-I-20260907-041446). README documents setup,
-target overrides and the human's headed mode. The UI rule stays in the project instructions file,
+I-20260907-041446). [Development and checks](DEVELOPMENT.md) documents browser setup,
+target overrides and the human's headed mode; [operations](OPERATIONS.md) covers service activation
+and mobile access. The UI rule stays in the project instructions file,
 which both worker personas direct the task owner to read first.
 
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
