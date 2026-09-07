@@ -363,6 +363,19 @@ too. Phone anatomy: header with back and the title; a dot-separated state line a
 end, confirmation below it; a two-tab row **Conversation | Live session** (the `live` route selects
 the second); content; the composer pinned above the tab bar on the Conversation tab.
 
+Navigation states: Conversation and Live session are local views of the same task. Phone tab
+switches replace its current history entry, keep the originating shell tab, and update the URL;
+the desktop panel button adds no history. A `/live` deep link and reload select Live session on
+phone and open the desktop panel. Back in the phone header and the desktop crumb both return to
+the actual preceding in-app page, including its query string. With no in-app predecessor they
+replace the task entry with the owning project's L3 conversation. Browser/system Back remains
+native; Forward restores the task's latest URL, and other pages/tasks keep ordinary history.
+On phone, Live session removes the conversation and composer; Conversation removes the live
+panel. On desktop, closing the panel leaves the conversation visible. Navigation itself has no
+loading, listening, denied or error state; destination reads and composers retain their states
+specified here and in §3.6. `web/e2e/task-navigation.pw.ts` walks entry from L3 and Work, repeated
+toggles, reload, Back, Forward and direct-live fallback on phone and desktop.
+
 The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
 Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, NavLink, useMatch, useParams } from "react-router";
+import { NavLink, useLocation, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
@@ -9,6 +9,7 @@ import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { DecisionCard } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
+import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import LiveSession from "./LiveSession";
@@ -400,6 +401,8 @@ function TaskPage({
   liveRoute: boolean;
 }) {
   const { phone, panelInline } = useViewport();
+  const location = useLocation();
+  const back = useTaskBack(project);
   const projectQuery = useProject(project);
   const facts = taskFacts(task, overview, project, projectQuery.data?.repository);
   const decision = overview?.queue.find((d) => d.project === project && d.slug === task.slug);
@@ -442,10 +445,10 @@ function TaskPage({
           <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
         </div>
         <nav className="task-tabs" aria-label="Task views">
-          <NavLink className="task-tab" to={base} end>
+          <NavLink className="task-tab" to={base} replace state={location.state} end>
             Conversation
           </NavLink>
-          <NavLink className="task-tab" to={`${base}/live`}>
+          <NavLink className="task-tab" to={`${base}/live`} replace state={location.state}>
             Live session
           </NavLink>
         </nav>
@@ -458,9 +461,9 @@ function TaskPage({
     <div className="task-page">
       <header className="task-header">
         <div className="task-crumb-row">
-          <Link className="task-crumb" to={`/projects/${project}`}>
+          <button type="button" className="task-crumb" aria-label="Back" onClick={back}>
             ‹ {project}
-          </Link>
+          </button>
           <div className="task-actions">
             <ActionButtons facts={facts} actions={actions} />
             <button

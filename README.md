@@ -125,6 +125,11 @@ license has been selected; public release is a separate milestone.
 
 ## Project conversations
 
+Within an L2 task, Conversation and Live session are local views. Switching between them adds no
+browser history entries. Browser Back and the task's Back control return to the preceding page;
+on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
+opens the live session, including after reload.
+
 Project conversations keep their own history and waiting messages. Switching projects clears the
 unsent draft and local reply state; a turn already sent finishes in its original project. Returning
 to that project shows its saved history and any active turn. Retry sends to the displayed project.

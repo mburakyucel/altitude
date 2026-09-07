@@ -1,5 +1,10 @@
-import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createBrowserRouter, RouterProvider } from "react-router";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { ToastProvider } from "../data/Toast";
+import { routes } from "../routes";
 import { renderApp, setViewport } from "../test/render";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -61,6 +66,26 @@ function mockFetch(data: unknown = overview) {
 
 function dotOf(link: HTMLElement): string | undefined {
   return link.querySelector(".dot")?.getAttribute("data-state") ?? undefined;
+}
+
+/** Back uses the browser router's entry index; MemoryRouter has no browser history. */
+function renderBrowserApp(route: string) {
+  const previous = { url: window.location.href, state: window.history.state };
+  window.history.replaceState(null, "", route);
+  const router = createBrowserRouter(routes);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(
+    <QueryClientProvider client={client}>
+      <ToastProvider><RouterProvider router={router} /></ToastProvider>
+    </QueryClientProvider>,
+  );
+  onTestFinished(() => {
+    view.unmount();
+    router.dispose();
+    client.clear();
+    window.history.replaceState(previous.state, "", previous.url);
+  });
+  return { router, user: userEvent.setup() };
 }
 
 describe("Rail", () => {
@@ -224,9 +249,9 @@ describe("Phone", () => {
   it("pushes a task page over its tab with a back control and keeps the tab bar", async () => {
     mockFetch();
     setViewport(390);
-    const { router, user } = renderApp({ route: "/projects/tutor?tab=work" });
+    const { router, user } = renderBrowserApp("/projects/tutor?tab=work");
 
-    await router.navigate("/projects/tutor/tasks/fix-audio");
+    await act(() => router.navigate("/projects/tutor/tasks/fix-audio"));
     expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "fix-audio", level: 1 })).toBeInTheDocument();
     const bar = screen.getByRole("navigation", { name: "Primary" });
@@ -238,5 +263,31 @@ describe("Phone", () => {
     await user.click(screen.getByRole("button", { name: "Back" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
     expect(router.state.location.search).toBe("?tab=work");
+  });
+
+  it.each(["", "/live"])("direct task entry %s falls back to its owning L3 after local switches", async (suffix) => {
+    mockFetch();
+    setViewport(390);
+    localStorage.setItem("altitude.project", "altitude");
+    const { router, user } = renderBrowserApp(`/projects/tutor/tasks/fix-audio${suffix}`);
+    const tabs = await screen.findByRole("navigation", { name: "Task views" });
+    await user.click(within(tabs).getByRole("link", { name: "Live session" }));
+    await user.click(within(tabs).getByRole("link", { name: "Conversation" }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
+    expect(router.state.location.search).toBe("");
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(screen.getByRole("textbox", { name: "Message L3 about tutor" })).toBeInTheDocument();
+  });
+
+  it.each(["/live/", "/LIVE"])("direct live route variant %s uses the same app Back fallback", async (suffix) => {
+    mockFetch();
+    setViewport(390);
+    const { router, user } = renderBrowserApp(`/projects/tutor/tasks/fix-audio${suffix}`);
+    await screen.findByRole("region", { name: "Live session" });
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
+    expect(router.state.location.search).toBe("");
+    expect(router.state.historyAction).toBe("REPLACE");
   });
 });
