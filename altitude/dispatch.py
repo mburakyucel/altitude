@@ -351,21 +351,9 @@ def _git_branch(worktree: str | Path) -> str | None:
     return b if r.returncode == 0 and b and b != "HEAD" else None
 
 
-def worktree_branch(slug: str, worktree: str | Path | None = None, agent_id: str | None = None) -> str:
-    """The branch `claude --bg -w <slug>` really checks out — `worktree-<slug>`, never the bare slug.
-
-    The harness records the real name in `~/.claude/jobs/<agent_id>/state.json` (`worktreeBranch`); before an agent id
-    exists the name is derived and confirmed against the worktree itself. Every failure degrades to the derived name:
-    a wrong branch in the brief is bad, a dispatch that dies reading a state file is worse."""
+def worktree_branch(slug: str, worktree: str | Path | None = None) -> str:
+    """The task owns its checkout; Git supplies its branch, or the task name derives it."""
     derived = f"worktree-{slug}"
-    if agent_id:
-        try:
-            st = json.loads((engines.JOBS_DIR / str(agent_id) / "state.json").read_text())
-            b = (st.get("worktreeBranch") or "").strip() if isinstance(st, dict) else ""
-            if b:
-                return b
-        except (OSError, ValueError, AttributeError):
-            pass
     return (_git_branch(worktree) or derived) if worktree else derived
 
 
@@ -583,7 +571,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             raise RuntimeError(f"{engine} L2 returned without a concrete worker id and session id")
         worktree = str(worktree_path)
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
-                   worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]),
+                   worktree=worktree, branch=worktree_branch(slug, worktree),
                    l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"])
     except T.TransitionError as exc:
         if agent.get("id"):
@@ -966,8 +954,6 @@ def wip_hold(project: str, task: dict | None = None) -> str | None:
 def poll(project: str) -> list[dict]:
     """Return L2 turns that exited, using each task's persisted engine adapter."""
     task_rows = S.list_tasks(project)
-    needs_claude = any(t["state"] == "running" and l2_engine(t) == "claude" for t in task_rows)
-    claude_rows = engines.claude_agents() if needs_claude else []
     finished = []
     for t in task_rows:
         report = S.task_dir(project, t["slug"]) / "report.json"
@@ -986,7 +972,7 @@ def poll(project: str) -> list[dict]:
         if t["state"] != "running":
             continue
         engine = l2_engine(t)
-        a = engines.worker(engine, t, rows=claude_rows, job_root=l2_job_root(project, t["slug"]))
+        a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
         metadata = {key: a[key] for key in ("engine_model", "engine_reasoning_effort") if a and key in a}
         if metadata and any(t.get(key) != value for key, value in metadata.items()):
             with S.project_lock(project):
@@ -1018,7 +1004,7 @@ def poll(project: str) -> list[dict]:
             idle_since = prev.get("idle_since") or S.now()
         died = (a is None or a.get("state") in ("done", "failed", "stopped") or a.get("status") == "exited") and not has_report
         if died:  # worker gone before a report: raised as a system fault by the server, never read as "still running"
-            finished.append({"task": t, "agent": a, "died": True})
+            finished.append({"task": t, "agent": a, "died": True, "detail": detail})
         elif a is None or a.get("state") in ("done", "failed") or a.get("status") == "exited" or (has_report and a.get("status") == "idle"):
             finished.append({"task": t, "agent": a})
         elif idle_since and _seconds_since(idle_since) > IDLE_NEEDS_INPUT_SECONDS:

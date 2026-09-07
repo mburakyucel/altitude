@@ -35,7 +35,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
         S.save_task(self.project, task)
         return task
 
-    def test_decision_11_running_jobs_are_adopted_after_restart_and_finish_normally(self):
+    def test_incident_171446_decision_11_owned_jobs_are_adopted_after_restart_and_finish_normally(self):
         make_repo(self.repo)
         self.private_ledgers()
         tasks = [self.task(engine) for engine in ("claude", "codex")]
@@ -43,21 +43,26 @@ class TestDecision11WorkerContinuity(AltitudeCase):
             worktree = add_worktree(self.repo, task["slug"])
             task.update({"worktree": str(worktree), "branch": f"worktree-{task['slug']}"})
             S.save_task(self.project, task)
-        claude, codex = tasks
-        registry = [{"id": claude["agent_id"], "sessionId": claude["session_id"],
-                     "state": "working", "status": "busy", "pid": 1001}]
-        paths = engines._codex_paths(dispatch.l2_job_root(self.project, codex["slug"]), codex["agent_id"])
-        S.write_json(paths["record"], {"id": codex["agent_id"], "session_id": codex["session_id"],
-                                      "name": codex["slug"], "pid": 1002, "unit": "test-worker.service",
-                                      "started_at": S.now(), "engine_model": "test-model"})
-        paths["stdout"].write_text(json.dumps({"type": "thread.started", "thread_id": codex["session_id"]}) + "\n")
-        paths["stderr"].write_text("")
-        # A replacement daemon has no process handles. The external registry and unit still own the workers.
+        outputs = {}
+        for task in tasks:
+            engine = task["l2_engine"]
+            paths = engines._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), task["agent_id"])
+            S.write_json(paths["record"], {"id": task["agent_id"], "session_id": task["session_id"],
+                                          "engine": engine, "name": task["slug"], "pid": 1002,
+                                          "unit": f"test-{engine}.service", "started_at": S.now(),
+                                          "engine_model": "test-model"})
+            initialized = ({"type": "system", "subtype": "init", "session_id": task["session_id"]}
+                           if engine == "claude" else {"type": "thread.started", "thread_id": task["session_id"]})
+            paths["stdout"].write_text(json.dumps(initialized) + "\n")
+            paths["stderr"].write_text("")
+            outputs[engine] = paths["stdout"]
+        # I-20260907-171446: replacement altd adopts both engines from records and units, without registry polling.
         with mock.patch.dict(engines._codex_processes, {}, clear=True), \
-             mock.patch.object(engines, "claude_agents", return_value=registry), \
+             mock.patch.object(engines, "claude_agents", side_effect=AssertionError("unexpected registry polling")), \
              mock.patch.object(engines, "_unit_active", return_value=True) as unit_active:
             self.assertEqual(dispatch.poll(self.project), [])
-            unit_active.assert_called_once_with("test-worker.service")
+            self.assertCountEqual([call.args[0] for call in unit_active.call_args_list],
+                                  ["test-claude.service", "test-codex.service"])
             for task in tasks:
                 saved = S.load_task(self.project, task["slug"])
                 self.assertEqual((saved["state"], saved["agent_id"], saved["session_id"]),
@@ -65,9 +70,10 @@ class TestDecision11WorkerContinuity(AltitudeCase):
                 live = S.read_json(config.MONITOR_DIR / f"live-{self.project}--{task['slug']}.json")
                 self.assertEqual(live["agent"]["state"], "working")
                 T.done(self.project, task["slug"], actor="l2", digest="Proposal complete.", expected_attempt=1)
-            registry[0].update({"state": "done", "status": "exited"})
-            with paths["stdout"].open("a") as out:
-                out.write('{"type":"turn.completed"}\n')
+            for engine, output in outputs.items():
+                with output.open("a") as out:
+                    out.write(json.dumps({"type": "result", "is_error": False} if engine == "claude"
+                                         else {"type": "turn.completed"}) + "\n")
             unit_active.return_value = False
             finished = dispatch.poll(self.project)
             self.assertEqual({item["task"]["slug"] for item in finished}, {task["slug"] for task in tasks})

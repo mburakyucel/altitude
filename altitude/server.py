@@ -605,7 +605,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return
         incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} (attempt {t.get('attempt')}) ended without a fresh report: "
-                               f"{engine} worker state={a.get('state', 'absent')}", project=project, task=slug)
+                               f"{engine} worker state={a.get('state', 'absent')}; {item.get('detail') or a.get('detail') or ''}",
+                               project=project, task=slug)  # I-20260907-171446: preserve the worker's failure reason.
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)
@@ -1099,7 +1100,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "transcript unavailable for this task generation"}, 404)
             if api == "monitor":
                 return self._json({"seats": route.seats(), "routing": monitor.routing(),
-                                   "sessions": monitor.sessions(), "agents": engines.claude_agents()})
+                                   "sessions": monitor.sessions()})
             if api == "digest":
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:

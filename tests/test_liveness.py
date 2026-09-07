@@ -38,6 +38,28 @@ class TestDeadWorker(AltitudeCase):
                 self.assertEqual(saved["state"], "blocked")
                 self.assertIn("fresh report", saved["blocked_reason"])
 
+    def test_incident_171446_owned_worker_error_reaches_fault_detail(self):
+        task = T.new(self.project, "owned-error", "Repair worker lifecycle")
+        task.update(state="running", attempt=1, l2_engine="claude", agent_id="owned", session_id="session")
+        S.save_task(self.project, task)
+        paths = engines._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "owned")
+        for stream in ("result", "stderr", "stdout"):
+            with self.subTest(stream=stream):
+                S.save_task(self.project, task)
+                S.write_json(paths["record"], {"engine": "claude", "session_id": "session", "unit": "owned.service"})
+                paths["stdout"].write_text(json.dumps({"type": "result", "is_error": True,
+                    "errors": ["provider rejected the request"]}) if stream == "result" else
+                    '{"type":"assistant","message":{"content":"last provider output before exit"}}' if stream == "stdout" else "")
+                paths["stderr"].write_text("launcher could not open settings" if stream == "stderr" else "")
+                with mock.patch.object(engines, "_unit_active", return_value=False), \
+                     mock.patch.object(server.incidents, "system_fault") as fault:
+                    item = dispatch.poll(self.project)[0]
+                    self.assertTrue(item["died"])
+                    server.on_l2_finished(self.project, item)
+                self.assertEqual(fault.call_args.args[0], "l2-died")
+                self.assertIn({"result": "provider rejected", "stderr": "could not open settings",
+                               "stdout": "last provider output before exit"}[stream], fault.call_args.args[1])
+
     def test_fresh_report_after_resume_and_existing_resume_timestamp(self):
         task = T.new(self.project, "resumed-report", "Repair worker lifecycle")
         task.update(state="running", agent_id="worker", session_id="session", dispatched="2026-09-07T10:00:00+00:00")
@@ -50,7 +72,8 @@ class TestDeadWorker(AltitudeCase):
         self.assertTrue(self._poll(rows, [task])[0].get("died"))
 
     def _poll(self, rows, tasks):
-        self.patch(engines, "claude_agents", return_value=rows)
+        self.patch(engines, "worker", side_effect=lambda engine, task, **kw: next(
+            (row for row in rows if row.get("id") == task.get("agent_id")), None))
         self.patch(S, "list_tasks", return_value=tasks)
         return dispatch.poll(self.project)
 
@@ -99,15 +122,15 @@ class TestResumeRebinds(AltitudeCase):
                                    "state": "blocked", "session_id": "old-sid", "agent_id": "old",
                                    "attempt": 1, "worktree": str(wt)})
         seen = {}
-        def fake_resume(name, sid, prompt, *, cwd, **kw):
+        def fake_resume(engine, name, sid, prompt, *, cwd, **kw):
             seen.update(name=name, sid=sid, cwd=str(cwd), env=kw.get("extra_env") or {})
             return {"stdout": "", "stderr": "", "returncode": 0, "agent": {"id": "new", "sessionId": "new-sid", "state": "working"}}
         rows = [{"id": "old", "name": f"{self.project}/resume-me-1", "sessionId": "old-sid", "state": "working",
                  "status": "idle", "pid": 1, "startedAt": 1, "cwd": str(wt)}]
         before_resume = time.time()
-        with mock.patch.object(engines, "claude_resume_bg", fake_resume), \
-             mock.patch.object(engines, "claude_agents", return_value=rows), \
-             mock.patch.object(engines, "claude_stop", side_effect=lambda _id: rows.clear() or "stopped") as stop, \
+        with mock.patch.object(engines, "resume_l2", fake_resume), \
+             mock.patch.object(engines, "worker_live", side_effect=lambda *a, **kw: bool(rows)), \
+             mock.patch.object(engines, "stop_l2_worker", side_effect=lambda *a, **kw: rows.clear() or "stopped") as stop, \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree") as validate:
@@ -120,7 +143,7 @@ class TestResumeRebinds(AltitudeCase):
         self.assertEqual((t["state"], t["agent_id"], t["session_id"], t["attempt"]), ("running", "new", "new-sid", 1),
                          "the attempt survives a physical worker replacement")
         self.assertEqual(res["agent"]["id"], "new")
-        stop.assert_called_once_with("old")
+        stop.assert_called_once_with("claude", "old", job_root=dispatch.l2_job_root(self.project, "resume-me"))
 
     def test_resume_without_worktree_is_a_dispatch_again(self):
         S.task_dir(self.project, "no-wt").mkdir(parents=True, exist_ok=True)
@@ -138,9 +161,9 @@ class TestResumeRebinds(AltitudeCase):
                     "state": "blocked", "session_id": "old-sid", "agent_id": "old-agent",
                     "attempt": 1, "worktree": str(wt)}
         S.save_task(self.project, original)
-        with mock.patch.object(engines, "claude_resume_bg", return_value={
+        with mock.patch.object(engines, "resume_l2", return_value={
                  "stdout": "started", "stderr": "", "returncode": 0,
-             }), mock.patch.object(engines, "claude_agents", return_value=[]), \
+             }), mock.patch.object(engines, "worker_live", return_value=False), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
@@ -169,7 +192,7 @@ class TestResumeRebinds(AltitudeCase):
                  dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")
              ), \
              mock.patch("altitude.incidents.system_fault") as fault, \
-             mock.patch.object(engines, "claude_resume_bg") as launch:
+             mock.patch.object(engines, "resume_l2") as launch:
             with self.assertRaisesRegex(T.TransitionError, "foreign commit"):
                 dispatch.resume(self.project, "refused-resume")
 
