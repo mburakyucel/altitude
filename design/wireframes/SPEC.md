@@ -197,8 +197,8 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 | Recipient pill | To L3 (default when L3 asked), To the L2 (default when the L2 flagged the operator) | changes where the follow-up goes (§4.3) |
 | Engine pin | Auto, or an engine name | `POST /api/chat` carries the pin; it covers chat and system turns alike and stays until changed |
 
-Voice is capped at ten minutes; the timer turns `--danger` in the last minute and Stop happens
-automatically at the cap. Audio never becomes part of task or chat state.
+Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
+The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
 
 ### 3.7 Work panel
 
