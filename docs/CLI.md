@@ -31,7 +31,35 @@ to Git log/diff-stat/show-stat and the altitude user journal. Runtime shims carr
 `gh pr` view/list/diff/checks, GitHub issue/run inspection, and altitude service status over that project's
 same-user altd Unix socket. The socket fixes the project independently of request data. The broker re-applies the
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
-repository; source editing, Git writes, GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
+repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
+
+## GitHub issues
+
+```text
+alt issue new --title <title> [--label <label>] -
+alt issue comment <number> -
+alt issue close <number> --reason completed|not-planned
+```
+
+L3 and the operator use these verbs through altd; L2 cannot mutate issues. L3 files requested backlog
+and closes an issue only when the operator asks for that closure, never as autonomous backlog cleanup.
+The repository comes from the selected project's checkout origin; issue numbers must be positive
+integers, and URLs or repository overrides are refused. The L3 socket fixes the project.
+
+New and comment read their public body from stdin; titles, labels, and bodies must exclude home paths
+and private incident evidence. Close requires `--reason completed` for finished work or
+`--reason not-planned` for work the operator decides not to pursue. Altd maps the latter to GitHub's
+`not planned` reason. Close accepts no stdin body, title, labels, or comment option; a separately
+requested public explanation uses `alt issue comment` and its existing evidence check. No other issue
+mutations or direct `gh` writes are enabled.
+
+The coordinator MCP tool takes, for example,
+`{"kind":"alt","args":["issue","close","42","--reason","completed"]}`.
+The operator CLI uses `POST /api/issue` with
+`{"project":"<name>","operation":"close","number":42,"reason":"completed"}`;
+`body` may be omitted or empty. Both paths apply the same operation validation and return the issue
+URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful closure appends an
+`issue-close` project event with actor, number, reason, title, and URL; failed calls record no success.
 
 ## Task lifecycle
 

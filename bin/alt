@@ -17,7 +17,7 @@ L3_COMMANDS = {
     ("project", "set"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("repo", None), ("pr", None), ("l3", "tools"),
-    ("issue", "new"), ("issue", "comment"),
+    ("issue", "new"), ("issue", "comment"), ("issue", "close"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "list")),
@@ -249,8 +249,9 @@ def main(argv=None) -> None:
         import ssl
         import urllib.error
         import urllib.request
-        payload = {"project": _project(args), "operation": args.operation, "body": sys.stdin.read(),
-                   **{key: getattr(args, key) for key in ("title", "labels", "number") if hasattr(args, key)}}
+        body = "" if args.operation == "close" and sys.stdin.isatty() else sys.stdin.read()
+        payload = {"project": _project(args), "operation": args.operation, "body": body,
+                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
         if ACTOR == "l3":
             sys.exit("alt issue: L3 must use its project-bound runtime alt socket")

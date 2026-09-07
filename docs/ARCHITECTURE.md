@@ -164,6 +164,13 @@ re-applies the L3 command door, accepts only flat task identifiers and stdin, an
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
 `alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the CLAUDE.md boundary, and record one project event with actor, title, and URL.
+`alt issue close <number> --reason completed|not-planned` uses the same boundary for operator-requested
+closure; L3 does not close backlog autonomously. The CLI and coordinator share an exact parser; the
+operator's `/api/issue` endpoint and coordinator share operation and field validation. Close requires a
+positive issue number and an explicit reason, accepts no body or publishing options, and passes
+`not-planned` to GitHub as `not planned`. After GitHub succeeds, altd returns the checkout-origin issue
+URL and appends an `issue-close` project event with actor, number, reason, title, and URL. L2 issue
+permissions and the read-only `gh` broker remain unchanged.
 
 ## Faults
 

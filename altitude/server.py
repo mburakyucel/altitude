@@ -262,7 +262,7 @@ def l3_verb_request(project: str, request: dict) -> dict:
         _validate_l3_alt_args(args)
         if args[:1] == ["issue"]:
             options = vars(issue_parser().parse_args(args[1:]))
-            options.pop("text")
+            options.pop("text", None)
             url = issue_write(project, body=stdin, actor="l3", **options)
             return {"returncode": 0, "stdout": url + "\n", "stderr": ""}
         env = engines.clean_env()
@@ -1132,8 +1132,11 @@ class Handler(BaseHTTPRequestHandler):
             o = self._body()
             if api == "issue":
                 try:
-                    url = issue_write(o["project"], o["operation"], o["body"], actor="operator",
-                                      title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"))
+                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor"}:
+                        raise ValueError("alt issue: unsupported fields")
+                    url = issue_write(o["project"], o.get("operation"), o.get("body", ""), actor="operator",
+                                      title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"),
+                                      reason=o.get("reason"))
                     return self._json({"url": url})
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
@@ -1402,6 +1405,9 @@ def repository_url(origin: str) -> str | None:
     return f"https://github.com/{match[1]}/{match[2]}" if match else None
 
 
+ISSUE_CLOSE_REASONS = ("completed", "not-planned")
+
+
 def issue_parser() -> argparse.ArgumentParser:
     """One exact grammar for the operator CLI and the project-bound L3 socket."""
     class Parser(argparse.ArgumentParser):
@@ -1412,7 +1418,7 @@ def issue_parser() -> argparse.ArgumentParser:
             raise ValueError(f"alt issue: {message}")
 
         def exit(self, status=0, message=None):
-            raise ValueError(message or "use alt issue new --title TITLE - or alt issue comment NUMBER -")
+            raise ValueError(message or "use alt issue new --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
 
     parser = Parser(prog="alt issue", add_help=False)
     commands = parser.add_subparsers(dest="operation", required=True)
@@ -1423,23 +1429,32 @@ def issue_parser() -> argparse.ArgumentParser:
     comment.add_argument("number", type=int)
     for command in (new, comment):
         command.add_argument("text", choices=["-"])
+    close = commands.add_parser("close")
+    close.add_argument("number", type=int)
+    close.add_argument("--reason", required=True, choices=ISSUE_CLOSE_REASONS)
     return parser
 
 
 def issue_write(project: str, operation: str, body: str, *, actor: str,
-                title: str = "", labels: list[str] | None = None, number: int | None = None) -> str:
-    """Decision 7: altd publishes only the requested issue or follow-up, using its gh login."""
+                title: str = "", labels: list[str] | None = None, number: int | None = None,
+                reason: str | None = None) -> str:
+    """Altd handles requested backlog and operator-requested closure using its gh login."""
     if actor not in ("l3", "operator"):
         raise ValueError("alt issue: not available to an L2 worker")
-    if operation not in ("new", "comment"):
-        raise ValueError("alt issue: only new and comment are available")
+    if operation not in ("new", "comment", "close"):
+        raise ValueError("alt issue: only new, comment, and close are available")
     if (not isinstance(body, str) or not isinstance(title, str)
             or labels is not None and (not isinstance(labels, list) or any(not isinstance(x, str) for x in labels))):
         raise ValueError("alt issue: body, title, and labels must be text")
     if operation == "new" and not title.strip():
         raise ValueError("alt issue new: title is required")
-    if operation == "comment" and (not isinstance(number, int) or number < 1):
-        raise ValueError("alt issue comment: a positive issue number is required")
+    if operation in ("comment", "close") and (type(number) is not int or number < 1):
+        raise ValueError(f"alt issue {operation}: a positive issue number is required")
+    if (operation != "new" and (title or labels) or operation == "new" and number is not None
+            or operation != "close" and reason is not None):
+        raise ValueError("alt issue: fields do not match the operation")
+    if operation == "close" and (reason not in ISSUE_CLOSE_REASONS or body):
+        raise ValueError("alt issue close: --reason completed|not-planned is required; no body is accepted")
     # Private incident evidence boundary: local evidence never leaves the machine in a public issue.
     public_text = unquote("\n".join([body, title, *(labels or [])]))
     home = str(Path.home()) + "/"
@@ -1454,22 +1469,24 @@ def issue_write(project: str, operation: str, body: str, *, actor: str,
     repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt issue: checkout origin must identify a GitHub repository")
-    args = ["gh", "issue", "create" if operation == "new" else "comment"]
+    args = ["gh", "issue", "create" if operation == "new" else operation]
     if operation == "new":
         args += [f"--title={title}", *(f"--label={label}" for label in labels or [])]
     else:
         args.append(str(number))
-    args += ["--repo", repository, "--body-file", "-"]
+    args += ["--repo", repository]
+    args += ["--reason", reason.replace("-", " ")] if operation == "close" else ["--body-file", "-"]
     env = engines.clean_env()
     env.pop("GH_REPO", None)
     result = subprocess.run(args, input=body, cwd=checkout, env=env,
                             capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
-    url = result.stdout.strip()
+    url = f"{repository}/issues/{number}" if operation == "close" else result.stdout.strip()
     with S.project_lock(project):
         S.project_log(project, f"issue-{operation}", actor=actor,
-                      title=title if operation == "new" else f"Issue #{number}", url=url)
+                      title=title if operation == "new" else f"Issue #{number}", url=url,
+                      **({"number": number, "reason": reason} if operation == "close" else {}))
     return url
 
 
