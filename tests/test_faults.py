@@ -1,12 +1,12 @@
-"""A system fault blocks its task, files one incident per kind, and leaves one message for L3."""
+"""Fault evidence and notifications stay with the owning project, including repeated kinds."""
 import json
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import config, state as S, incidents, l3, verify, engines, dispatch, tasks as T
 
-#: system_fault files against the project that owns Altitude's code whenever it is registered.
 PROJECT = "altitude"
 
 
@@ -16,12 +16,12 @@ class TestSystemFault(AltitudeCase):
         self.private_ledgers()
         self.register(PROJECT)
 
-    def inbox_texts(self) -> list[str]:
-        p = config.project_dir(PROJECT) / "inbox.jsonl"
+    def inbox_texts(self, project=PROJECT) -> list[str]:
+        p = config.project_dir(project) / "inbox.jsonl"
         return [json.loads(line)["text"] for line in p.read_text().splitlines()] if p.exists() else []
 
-    def queued(self) -> list[dict]:
-        p = l3.queue_path(PROJECT)
+    def queued(self, project=PROJECT) -> list[dict]:
+        p = l3.queue_path(project)
         return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
 
     def test_fault_blocks_its_task_files_one_incident_and_queues_one_l3_message(self):
@@ -36,8 +36,8 @@ class TestSystemFault(AltitudeCase):
         again = incidents.system_fault("test-kind", "something broke again", project=PROJECT)
         self.assertIsNone(again, "same kind within 24h must not file a second incident")
         faults = S.read_json(incidents.FAULTS)
-        self.assertEqual(faults["test-kind"]["count"], 2)
-        self.assertEqual(faults["test-kind"]["incident"], first["incident"])
+        self.assertEqual(faults[json.dumps([PROJECT, "test-kind"])]["count"], 2)
+        self.assertEqual(faults[json.dumps([PROJECT, "test-kind"])]["incident"], first["incident"])
         self.assertEqual(sum("SYSTEM FAULT [test-kind]" in text for text in self.inbox_texts()), 1)
         self.assertEqual(len(self.queued()), 1, "a repeated kind must not queue a second L3 message")
         other = incidents.system_fault("other-kind", "different mechanism")
@@ -54,10 +54,132 @@ class TestSystemFault(AltitudeCase):
         rows = self.queued()
         self.assertEqual([row["trigger"] for row in rows], ["incident", "incident"])
         self.assertIn(second_task["slug"], rows[1]["text"]); self.assertIn(first["incident"], rows[1]["text"])
-        self.assertEqual(S.read_json(incidents.FAULTS)["test-kind"]["incident"], first["incident"])
+        self.assertEqual(S.read_json(incidents.FAULTS)[json.dumps([PROJECT, "test-kind"])]["incident"], first["incident"])
         # the same fault on the task that is already blocked by it adds nothing
         self.assertIsNone(incidents.system_fault("test-kind", "main behind origin", project=PROJECT, task=second_task["slug"]))
         self.assertEqual(len(self.queued()), 2)
+
+    def test_identical_faults_and_task_slugs_stay_in_each_project(self):
+        self.register("demo")
+        first = {}
+        # IDs are reserved per project: even equal incident IDs must refer to the right evidence.
+        with mock.patch.object(incidents, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 7, 20, 51, 28, tzinfo=timezone.utc)
+            for project in ("demo", PROJECT):
+                task = T.new(project, "first victim", "request")
+                untouched = T.new(project, "unaffected task", "request")
+                first[project] = incidents.system_fault("main-unpushed", f"{project} checkout refused",
+                                                        project=project, task=task["slug"])
+                blocked = S.load_task(project, task["slug"])
+                self.assertEqual((blocked["state"], blocked["waiting_on"], blocked["fault"]),
+                                 ("blocked", "l3", "main-unpushed"))
+                self.assertEqual(S.load_task(project, untouched["slug"])["state"], "queued")
+                self.assertEqual(T.decisions(project), [])
+                if project == "demo":
+                    self.assertEqual(self.queued(), [])
+                    self.assertEqual(self.inbox_texts(), [])
+                    self.assertFalse(S.task_dir(PROJECT, task["slug"]).exists())
+        self.assertEqual(first["demo"]["incident"], first[PROJECT]["incident"])
+        for project in (PROJECT, "demo"):
+            with self.subTest(project=project):
+                other = "demo" if project == PROJECT else PROJECT
+                iid = first[project]["incident"]
+                task = T.new(project, "second victim", "request")
+                repeat = incidents.system_fault("main-unpushed", f"{project} still refused",
+                                                project=project, task=task["slug"])
+                self.assertEqual((repeat["repeat"], repeat["incident"]), (True, iid))
+                self.assertIsNone(incidents.system_fault("main-unpushed", "same blocked task",
+                                                        project=project, task=task["slug"]))
+                self.assertIsNone(incidents.system_fault("main-unpushed", "same project", project=project))
+                rows = self.queued(project)
+                self.assertEqual([r["trigger"] for r in rows], ["incident", "incident"])
+                for text in [r["text"] for r in rows] + self.inbox_texts(project):
+                    self.assertIn(f"{project}/{iid}", text)
+                    self.assertNotIn(f"{other}/{iid}", text)
+                self.assertEqual(len(self.inbox_texts(project)), 2)
+                evidence = (config.project_dir(project) / "incidents" / f"{iid}.md").read_text()
+                self.assertIn(f"{project} checkout refused", evidence)
+                self.assertNotIn(f"{other} checkout refused", evidence)
+                key = json.dumps([project, "main-unpushed"])
+                self.assertIn(f"monitor/faults.json key {key}", evidence)
+                ledger = S.read_json(incidents.FAULTS)[key]
+                self.assertEqual((ledger["project"], ledger["count"], ledger["incident"]), (project, 4, iid))
+        self.assertCountEqual([r["project"] for r in incidents.index()], [PROJECT, "demo"])
+
+    def test_project_and_kind_delimiters_cannot_share_a_fault_record(self):
+        self.register("demo")
+        self.register("demo/child")
+        for project, kind in (("demo", "child/tick"), ("demo/child", "tick")):
+            filed = incidents.system_fault(kind, "checkout refused", project=project)
+            self.assertIsNotNone(filed)
+            self.assertEqual(len(self.queued(project)), 1)
+            self.assertIsNone(incidents.system_fault(kind, "checkout still refused", project=project))
+        self.assertEqual(len(S.read_json(incidents.FAULTS)), 2)
+
+    def test_unscoped_misrouted_record_never_supplies_another_projects_evidence(self):
+        self.register("demo")
+        old = incidents.new_incident(PROJECT, title="old misrouted fault", task=None, what="demo failed",
+                                     evidence="original evidence", cause="unknown", tags=["system-fault"])
+        old_path = config.project_dir(PROJECT) / "incidents" / f"{old['id']}.md"
+        evidence = old_path.read_text()
+        legacy = {"first": S.now(), "last": S.now(), "count": 7, "project": "demo", "incident": old["id"]}
+        S.write_json(incidents.FAULTS, {"main-unpushed": legacy})
+        for project in ("demo", PROJECT):
+            filed = incidents.system_fault("main-unpushed", f"{project} failed", project=project)
+            self.assertIsNotNone(filed)
+            self.assertNotIn("repeat", filed)
+            self.assertEqual(len(self.queued(project)), 1)
+            self.assertTrue((config.project_dir(project) / "incidents" / f"{filed['incident']}.md").exists())
+        self.assertEqual(S.read_json(incidents.FAULTS)["main-unpushed"], legacy)
+        self.assertEqual(old_path.read_text(), evidence)
+
+    def test_projectless_fault_uses_registered_altitude_without_sharing_project_dedupe(self):
+        self.register("demo")
+        machine = incidents.system_fault("tick", "machine fault")
+        project = incidents.system_fault("tick", "project fault", project=PROJECT)
+        self.assertNotEqual(machine["incident"], project["incident"])
+        self.assertIsNone(incidents.system_fault("tick", "machine fault again"))
+        self.assertIsNone(incidents.system_fault("tick", "project fault again", project=PROJECT))
+        self.assertEqual(len(self.queued()), 2)
+        self.assertEqual(self.queued("demo"), [])
+        faults = S.read_json(incidents.FAULTS)
+        for source in (None, PROJECT):
+            self.assertEqual((faults[json.dumps([source, "tick"])]["project"],
+                              faults[json.dumps([source, "tick"])]["count"]), (source, 2))
+
+    def test_projectless_fault_without_altitude_only_records_machine_ledger(self):
+        self._forget(PROJECT)
+        self.register("demo")
+        self.assertIsNone(incidents.system_fault("tick", "machine fault"))
+        self.assertIsNone(incidents.system_fault("tick", "machine fault again"))
+        rec = S.read_json(incidents.FAULTS)[json.dumps([None, "tick"])]
+        self.assertEqual((rec["count"], rec["incident"], rec["project"]), (2, None, None))
+        self.assertEqual(incidents.index(), [])
+        self.assertEqual(self.queued("demo"), [])
+        self.assertEqual(self.inbox_texts("demo"), [])
+
+    def test_repair_faults_in_another_project_never_wake_either_l3(self):
+        self.register("demo")
+        for title in ("first repair", "second repair"):
+            task = T.new("demo", title, "request", source="recovery")
+            incidents.system_fault("repair-kind", title, project="demo", task=task["slug"])
+            self.assertIsNone(incidents.system_fault("repair-kind", "same repair", project="demo", task=task["slug"]))
+            blocked = S.load_task("demo", task["slug"])
+            self.assertEqual((blocked["state"], blocked["waiting_on"], blocked["fault"]),
+                             ("blocked", "l3", "repair-kind"))
+            self.assertFalse(S.task_dir(PROJECT, task["slug"]).exists())
+        self.assertEqual(self.queued(), [])
+        self.assertEqual(self.queued("demo"), [])
+        self.assertEqual(self.inbox_texts(), [])
+        self.assertEqual(len(self.inbox_texts("demo")), 1)
+        self.assertIn("not woken", self.inbox_texts("demo")[0])
+        self.assertEqual([r["project"] for r in incidents.index()], ["demo"])
+        # A real project task sharing the repair's kind still gets its own blocked-task notification.
+        ordinary = T.new("demo", "ordinary task", "request")
+        again = incidents.system_fault("repair-kind", "ordinary failed", project="demo", task=ordinary["slug"])
+        self.assertTrue(again["repeat"])
+        self.assertEqual(len(self.queued("demo")), 1)
+        self.assertEqual(self.queued(), [])
 
     def test_l2_reports_an_environment_fault_through_its_block_door(self):
         # The first Codex task after the rebuild blocked on a read-only worktree gitdir with a plain block, so the
@@ -168,7 +290,7 @@ class TestSystemFault(AltitudeCase):
         v = verify.verify(PROJECT, task["slug"])
         self.assertEqual(v["verdict"], "fault")
         self.assertIn("verifier fault", v["problems"][0])
-        self.assertIn("verifier", S.read_json(incidents.FAULTS))
+        self.assertIn(json.dumps([PROJECT, "verifier"]), S.read_json(incidents.FAULTS))
         self.assertEqual(S.load_task(PROJECT, task["slug"])["state"], "blocked")
 
 
