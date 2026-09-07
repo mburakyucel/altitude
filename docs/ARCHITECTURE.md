@@ -142,10 +142,11 @@ unchanged and untouched.
 
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
-project lock. Claude Code runs as a background job with Altitude's hooks for inbox delivery and
-telemetry. Codex keeps its native workspace-write sandbox as containment and uses the same door;
-Altitude reads its thread and usage from the worker's stdout JSONL. A turn that ends without a
-report, a block, or a completion blocks the task as ended without a report, on either engine. A
+project lock. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
+hooks for inbox delivery and telemetry. Codex keeps its native workspace-write sandbox inside the same
+unit boundary and uses the same door; private worker records and output identify both engines' sessions
+after restart. A turn that ends without a
+report, a block, or a completion blocks the task with its result error or stderr tail, on either engine. A
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
 and only that project's role-fenced altd Unix socket is reachable. A Claude L3 turn uses an equivalent runtime cwd,

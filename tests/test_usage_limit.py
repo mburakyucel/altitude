@@ -47,12 +47,11 @@ class TestHold(AltitudeCase):
 
 class TestPollAndResume(AltitudeCase):
     def test_idle_worker_at_the_limit_is_limited_not_needs_input(self):
-        self.patch(engines, "claude_agents",
-                   return_value=[{"id": "w1", "sessionId": "s1", "status": "idle", "state": "blocked"}])
+        self.patch(engines, "worker", return_value={
+            "id": "w1", "sessionId": "s1", "status": "exited", "state": "failed", "detail": LIMIT,
+            "detail_at": datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc).timestamp()})
         self.patch(S, "list_tasks",
                    return_value=[{"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"}])
-        self.patch(engines, "claude_job_detail",
-                   return_value=(LIMIT, datetime(2026, 8, 30, 2, 40, tzinfo=timezone.utc)))
         out = dispatch.poll(self.project)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")

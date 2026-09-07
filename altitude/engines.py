@@ -170,13 +170,15 @@ def usage_hold() -> str | None:
 
 
 def claude_stop(agent_id: str) -> str:
-    row = next((a for a in claude_agents() if a.get("id") == agent_id), {})
-    if row.get("name"):
-        unit = _claude_unit(row["name"])
-        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
-        if _unit_active(unit):  # I-20260907-165145: Stop owns every descendant, including detached children.
-            raise RuntimeError(f"worker {agent_id} is still running after stop")
     p = subprocess.run([config.CLAUDE_BIN, "stop", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
+    if p.returncode:  # I-20260907-171446: never start a copy while an orphan owns the session.
+        raise RuntimeError((p.stderr or p.stdout).strip())
+    deadline = time.monotonic() + 5
+    while any(row.get("id") == agent_id and row.get("state") not in ("done", "failed", "stopped")
+              for row in claude_agents()):
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"daemon job {agent_id} is still running after stop")
+        time.sleep(0.05)
     return (p.stdout or p.stderr).strip()
 
 
@@ -390,38 +392,6 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     return out
 
 
-def _run_cli(cmd: list[str], *, name: str, cwd: Path, env: dict) -> subprocess.CompletedProcess:
-    """Start a forking background job in the shared transient-unit boundary."""
-    unit = _claude_unit(name)
-    try:
-        return subprocess.run(_codex_service_command(unit, cmd, env, background=True), cwd=str(cwd),
-                              capture_output=True, text=True, timeout=120,
-                              env=codex_env(retain_user_bus=True))
-    except BaseException:
-        subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, timeout=120)
-        raise
-
-
-def claude_bg(name: str, prompt: str, *, cwd: Path, worktree: str | None = None, persona: Path | None = None,
-              permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
-              settings: Path | None = None, extra_env: dict | None = None) -> dict:
-    """Start a background session (verified shape). Returns what `claude --bg` printed + the agent row."""
-    before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
-    cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--permission-mode", permission_mode]
-    if worktree:
-        cmd += ["-w", worktree]
-    if persona:
-        cmd += ["--append-system-prompt-file", str(persona)]
-    if max_turns:
-        cmd += ["--max-turns", str(max_turns)]
-    if model:
-        cmd += ["--model", model]
-    cmd += ["--settings", str(settings or claude_settings())]
-    p = _run_cli(cmd + [prompt], name=name, cwd=cwd, env=codex_env(extra_env))
-    row = _new_claude_agent(name, before)
-    return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode, "agent": row}
-
-
 def claude_agents() -> list[dict]:
     try:
         p = subprocess.run([config.CLAUDE_BIN, "agents", "--json", "--all"], capture_output=True, text=True,
@@ -437,40 +407,6 @@ def claude_agents() -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def _new_claude_agent(name: str, before: set[str]) -> dict | None:
-    """Resolve only the concrete worker created after this launch, never an old same-name job."""
-    rows = [row for row in claude_agents()
-            if row.get("name") == name and row.get("id") and row.get("id") not in before]
-    live = [row for row in rows
-            if row.get("state") not in ("failed", "done", "stopped") and row.get("status") != "exited"]
-    candidates = live or rows
-    return max(candidates, key=lambda row: str(row.get("startedAt") or ""), default=None)
-
-
-def claude_resume_bg(name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path | None = None,
-                     permission_mode: str = "auto", max_turns: int | None = None, model: str | None = None,
-                     settings: Path | None = None,
-                     extra_env: dict | None = None) -> dict:
-    before = {row.get("id") for row in claude_agents() if row.get("name") == name and row.get("id")}
-    cmd = [config.CLAUDE_BIN, "--bg", "--name", name, "--resume", session_id, "--permission-mode", permission_mode]
-    if persona:
-        cmd += ["--append-system-prompt-file", str(persona)]
-    if max_turns:
-        cmd += ["--max-turns", str(max_turns)]
-    if model:
-        cmd += ["--model", model]
-    cmd += ["--settings", str(settings or claude_settings())]
-    p = _run_cli(cmd + [prompt], name=name, cwd=cwd, env=codex_env(extra_env))
-    return {"stdout": p.stdout.strip(), "stderr": p.stderr.strip(), "returncode": p.returncode,
-            "agent": _new_claude_agent(name, before)}
-
-
-def claude_rm(agent_id: str) -> str:
-    claude_stop(agent_id)
-    p = subprocess.run([config.CLAUDE_BIN, "rm", agent_id], capture_output=True, text=True, timeout=60, env=clean_env())
-    return (p.stdout + p.stderr).strip()
-
-
 def _codex_unit(worker_id: str) -> str:
     """A systemd-safe, collision-resistant transient service name."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", str(worker_id))
@@ -481,7 +417,7 @@ def _claude_unit(name: str) -> str:
     return f"altitude-claude-{uuid.uuid5(uuid.NAMESPACE_URL, name).hex}.service"
 
 
-def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str], *, background: bool = False) -> list[str]:
+def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str]) -> list[str]:
     """Run a turn in a user-manager-created transient service with its own cgroup.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
@@ -493,9 +429,7 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
     # and reconstruct only the already-sanitized child environment so task identity survives without ambient manager
     # credentials or control sockets crossing the boundary.
     scrub = [ENV_BIN, "-i", *(f"{key}={child_env[key]}" for key in sorted(child_env))]
-    # I-20260907-165145: --bg forks; startup waits for its launcher, lifetime follows all descendants.
-    lifecycle = (["--service-type=forking", "--property=ExitType=cgroup"] if background else ["--wait", "--pipe"])
-    return [SYSTEMD_RUN_BIN, "--user", *lifecycle, f"--unit={unit}", "--quiet", "--collect",
+    return [SYSTEMD_RUN_BIN, "--user", "--wait", "--pipe", f"--unit={unit}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
 
@@ -638,20 +572,34 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
 def _unit_active(unit: str) -> bool:
     if not unit:
         return False
-    p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30)
+    p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30,
+                       env=codex_env(retain_user_bus=True))
     return (p.stdout or "").strip() in ("active", "activating", "deactivating")
 
 
+def _worker_events(path: Path, engine: str) -> list[dict]:
+    events = _codex_events(path)
+    if engine == "codex":
+        return events
+    # I-20260907-171446: read the owned CLI's actual result/error, not the shared daemon registry.
+    return [{"type": "thread.started", "thread_id": e["session_id"], "model": e.get("model")}
+            if e.get("type") == "system" and e.get("subtype") == "init" else
+            {"type": "turn.failed" if e.get("is_error") else "turn.completed",
+             "message": e.get("errors") or e.get("result") or e.get("subtype"), "usage": e.get("usage")}
+            if e.get("type") == "result" else e for e in events]
+
+
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
-    """One Codex worker in the row shape Claude workers use. It is alive while its transient unit runs."""
+    """Read an owned CLI turn; the persisted engine selects its output format."""
     if not worker_id:
         return None
     paths = _codex_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
     if not isinstance(record, dict):
         return None
-    events = _codex_events(paths["stdout"])
-    if not record.get("engine_model"):
+    engine = record.get("engine", "codex")
+    events = _worker_events(paths["stdout"], engine)
+    if engine == "codex" and not record.get("engine_model"):
         metadata = _codex_session_model(_codex_thread(events), record["started_at"],
                                        Path(record.get("codex_home") or _codex_home(codex_env())))
         if metadata:
@@ -676,75 +624,104 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
         detail = str(failed.get("message") or failed.get("error") or failed)[:500]
     elif not alive and not completed:
         try:
-            detail = paths["stderr"].read_text(errors="replace")[-500:]
+            detail = (paths["stderr"].read_text(errors="replace")[-500:]
+                      or paths["stdout"].read_text(errors="replace")[-500:] or "Worker exited without a result")
         except OSError:
-            detail = "Codex worker exited without turn.completed"
+            detail = "Worker exited without a result"
     return {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
             "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
-            "startedAt": record.get("started_at"), "engine": "codex",
-            "engine_model": record.get("engine_model"),
+            "detail_at": max((paths[k].stat().st_mtime for k in ("stdout", "stderr") if paths[k].exists()),
+                             default=paths["record"].stat().st_mtime),
+            "startedAt": record.get("started_at"), "engine": engine,
+            "engine_model": next((e["model"] for e in events if e.get("model")), record.get("engine_model")),
             "engine_reasoning_effort": record.get("engine_reasoning_effort")}
 
 
 def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
              persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
              start_timeout: float = 15.0) -> dict:
-    """Start one detached Codex turn in the task worktree and wait boundedly for its thread identity.
+    return _start_worker("codex", name, prompt, cwd=cwd, job_root=job_root, resume=resume,
+                         persona=persona, model=model, extra_env=extra_env, start_timeout=start_timeout)
 
-    `codex exec resume <thread> -` continues the same thread with the prompt on stdin (verified with codex 0.152).
-    A fresh turn gets the persona and the host patch note in front of the brief. The turn runs in a transient user
-    unit because altd's own `NoNewPrivileges` hardening would stop Codex's nested bwrap sandbox from starting.
-    """
+
+def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
+                  persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
+                  settings: Path | None = None, start_timeout: float = 15.0) -> dict:
+    """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
+    if engine == "claude":
+        # I-20260907-171446: retire daemon jobs bound to this name before launch or resume.
+        for row in claude_agents():
+            if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
+                claude_stop(row["id"])
     worker_id = uuid.uuid4().hex
-    unit = _codex_unit(worker_id)
+    unit = _codex_unit(worker_id) if engine == "codex" else _claude_unit(worker_id)
     root = Path(job_root)
     root.mkdir(parents=True, exist_ok=True)
     paths = _codex_paths(root, worker_id)
-    cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), "--json", "--strict-config",
-           "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
-    if model:
-        cmd += ["-m", model]
-    for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
-        cmd += ["-c", setting]
-    cmd += [resume, "-"] if resume else ["-"]
-    text = prompt if resume else (
-        ((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE + "\n\n" + prompt)
-    record = {"id": worker_id, "name": name, "pid": None, "unit": unit,
+    if engine == "claude":
+        cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--verbose", "--name", name,
+               "--permission-mode", "auto", "--settings", str(settings or claude_settings())]
+        if persona:
+            cmd += ["--append-system-prompt-file", str(persona)]
+        if model:
+            cmd += ["--model", model]
+        if resume:
+            cmd += ["--resume", resume]
+        text = prompt
+    elif engine == "codex":
+        cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), "--json", "--strict-config",
+               "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
+        if model:
+            cmd += ["-m", model]
+        for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
+            cmd += ["-c", setting]
+        cmd += [resume, "-"] if resume else ["-"]
+        text = prompt if resume else (
+            ((Path(persona).read_text() + "\n\n") if persona else "") + CODEX_PATCH_NOTE + "\n\n" + prompt)
+    else:
+        raise ValueError(f"unknown L2 engine {engine!r}")
+    record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
               "started_at": datetime.now(timezone.utc).isoformat(),
               "codex_home": str(_codex_home(codex_env(extra_env))),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
     S.write_json(paths["record"], record)
-    with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
-        proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
-                                stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
     try:
-        proc.stdin.write(text.encode("utf-8"))
-        proc.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
-    _codex_processes[worker_id] = proc
-    record["pid"] = proc.pid
-    S.write_json(paths["record"], record)
-    deadline = time.monotonic() + start_timeout
-    thread_id = None
-    while not thread_id and time.monotonic() < deadline and proc.poll() is None:
-        thread_id = _codex_thread(_codex_events(paths["stdout"]))
-        if not thread_id:
-            time.sleep(0.05)
-    thread_id = thread_id or _codex_thread(_codex_events(paths["stdout"]))
-    if not thread_id or (resume and thread_id != resume):
+        with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
+            proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
+                                    stdin=subprocess.PIPE, stdout=out, stderr=err,
+                                    env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+        try:
+            proc.stdin.write(text.encode("utf-8"))
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        _codex_processes[worker_id] = proc
+        record["pid"] = proc.pid
+        S.write_json(paths["record"], record)
+        deadline = time.monotonic() + start_timeout
+        thread_id = None
+        while not thread_id and time.monotonic() < deadline and proc.poll() is None:
+            thread_id = _codex_thread(_worker_events(paths["stdout"], engine))
+            if not thread_id:
+                time.sleep(0.05)
+        thread_id = thread_id or _codex_thread(_worker_events(paths["stdout"], engine))
+        if not thread_id or (resume and thread_id != resume):
+            codex_stop(worker_id, job_root=root)
+            row = codex_worker(worker_id, job_root=root) or {}
+            detail = (f"resumed a different {engine.title()} thread" if thread_id else
+                      row.get("detail") or "no session initialization event")
+            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
+        record["session_id"] = thread_id
+        S.write_json(paths["record"], record)
+        return {"stdout": "", "stderr": "", "returncode": 0, "agent": codex_worker(worker_id, job_root=root)}
+    except BaseException as exc:
+        # I-20260907-171446: startup must not leave an unbound worker that a retry duplicates.
         try:
             codex_stop(worker_id, job_root=root)
-        except RuntimeError:
-            pass  # report the identity failure, not a secondary stop failure
-        row = codex_worker(worker_id, job_root=root) or {}
-        detail = row.get("detail") or ("resumed a different Codex thread" if thread_id else "no thread.started event")
-        return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
-    record["session_id"] = thread_id
-    S.write_json(paths["record"], record)
-    return {"stdout": "", "stderr": "", "returncode": 0, "agent": codex_worker(worker_id, job_root=root)}
+        except Exception as stop_error:
+            raise RuntimeError(f"worker {worker_id}: {exc}; stop failed: {stop_error}") from exc
+        raise
 
 
 def codex_stop(worker_id: str, *, job_root: Path) -> str:
@@ -754,7 +731,8 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
     if not isinstance(record, dict):
         return "Codex worker record already absent"
     unit = str(record.get("unit") or "")
-    subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120)
+    subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120,
+                   env=codex_env(retain_user_bus=True))
     proc = _codex_processes.pop(worker_id, None)
     if proc is not None:
         try:
@@ -770,34 +748,24 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
 
 def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
              model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
-    if engine == "claude":
-        return claude_bg(name, prompt, cwd=cwd, persona=persona, permission_mode="auto", model=model,
-                         settings=settings, extra_env=extra_env)
-    if engine == "codex":
-        return codex_bg(name, prompt, cwd=cwd, persona=persona, model=model, extra_env=extra_env,
-                        job_root=job_root)
-    raise ValueError(f"unknown L2 engine {engine!r}")
+    return _start_worker(engine, name, prompt, cwd=cwd, persona=persona, model=model, settings=settings,
+                         extra_env=extra_env, job_root=job_root)
 
 
 def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
               model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
-    if engine == "claude":
-        return claude_resume_bg(name, session_id, prompt, cwd=cwd, persona=persona, settings=settings,
-                                model=model, extra_env=extra_env)
-    if engine == "codex":
-        return codex_bg(name, prompt, cwd=cwd, resume=session_id, model=model, extra_env=extra_env,
-                        job_root=job_root)
-    raise ValueError(f"unknown L2 engine {engine!r}")
+    return _start_worker(engine, name, prompt, cwd=cwd, resume=session_id, persona=persona, model=model,
+                         settings=settings, extra_env=extra_env, job_root=job_root)
 
 
 def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
-    return claude_stop(worker_id) if engine == "claude" else codex_stop(worker_id, job_root=job_root)
+    if engine == "claude" and not _codex_paths(job_root, worker_id)["record"].exists():
+        return claude_stop(worker_id)  # I-20260907-171446: never stop an adopted job's shared daemon.
+    return codex_stop(worker_id, job_root=job_root)
 
 
 def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
-    if engine == "claude":
-        return claude_rm(worker_id)
-    return codex_stop(worker_id, job_root=job_root)
+    return stop_l2_worker(engine, worker_id, job_root=job_root)
 
 
 JOBS_DIR = config.HOME / ".claude" / "jobs"   # the Claude harness's background-job state, keyed by agent id
@@ -811,7 +779,7 @@ def claude_job_detail(agent_id: str | None) -> tuple[str, datetime | None]:
     p = JOBS_DIR / str(agent_id) / "state.json"
     try:
         st = json.loads(p.read_text())
-        return (str(st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
+        return (str(st.get("error") or st.get("detail") or "") if isinstance(st, dict) else ""), datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
     except (OSError, ValueError):
         return "", None
 
@@ -821,35 +789,35 @@ def window_hold(engine: str) -> str | None:
     return usage_hold() if engine == "claude" else None
 
 
-def worker(engine: str, task: dict, *, rows: list[dict] | None = None, job_root: Path | None = None) -> dict | None:
-    """The task's current worker row, if the provider still knows it."""
-    if engine == "codex":
-        return codex_worker(task.get("agent_id"), job_root=job_root)
-    rows = claude_agents() if rows is None else rows
-    row = next((a for a in rows if a.get("id") == task.get("agent_id")), None)
-    if (row and row.get("name") and row.get("state") not in ("done", "failed", "stopped")
-            and not _unit_active(_claude_unit(row["name"]))):
-        row = {**row, "state": "failed", "status": "exited"}  # I-20260907-165145: registry may outlive its unit.
-    return row
+def worker(engine: str, task: dict, *, job_root: Path) -> dict | None:
+    """Adopt owned turns from their unit record, or existing jobs from unit plus transcript."""
+    row = codex_worker(task.get("agent_id"), job_root=job_root)
+    if row or engine != "claude":
+        return row
+    # I-20260907-171446: pre-activation jobs keep their transcript; no daemon launch path remains.
+    job = S.read_json(JOBS_DIR / str(task.get("agent_id")) / "state.json", {})
+    if not job:
+        return None
+    unit = _claude_unit(job["name"])
+    transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
+    alive = _unit_active(unit) and transcript is not None
+    state = job.get("state") if job.get("state") in ("done", "failed", "stopped") else "working" if alive else "failed"
+    detail, at = claude_job_detail(task["agent_id"])
+    return {"id": task["agent_id"], "sessionId": task["session_id"], "unit": unit,
+            "state": state, "status": "busy" if state == "working" else "exited",
+            "detail": detail, "detail_at": at.timestamp() if at else None}
 
 
 def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
-    """The worker's last words and when it said them, for the capacity and usage-limit detectors."""
-    if not row:
-        return "", None
-    if engine == "codex":
-        return str(row.get("detail") or ""), datetime.now(timezone.utc)
-    return claude_job_detail(row.get("id"))
+    """The worker's last words and when it said them, for capacity and usage-limit detection."""
+    # I-20260907-171446: relative reset times belong to the output, including after adoption.
+    at = (row or {}).get("detail_at")
+    return str((row or {}).get("detail") or ""), datetime.fromtimestamp(at, timezone.utc) if at else datetime.now(timezone.utc)
 
 
-def worker_live(engine: str, task: dict, *, job_root: Path | None = None) -> bool:
-    """Whether something still runs for this task: a Claude session in its worktree, or a Codex unit."""
-    if engine == "codex":
-        row = codex_worker(task.get("agent_id"), job_root=job_root)
-        return bool(row and row.get("state") == "working")
-    wt = task.get("worktree")
-    return any(a.get("cwd") == wt and (a.get("state") not in ("failed", "done", "stopped")
-               or (a.get("name") and _unit_active(_claude_unit(a["name"])))) for a in claude_agents())
+def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
+    row = worker(engine, task, job_root=job_root)
+    return bool(row and row.get("state") == "working")
 
 
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,

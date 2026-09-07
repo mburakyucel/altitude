@@ -163,7 +163,6 @@ class TestMonitorApi(AltitudeCase):
         self.patch(route, "quota_codex", return_value={"known": False, "why": "Codex binary not found"})
         self.patch(monitor, "routing", return_value=[{"role": "l2", "engine": None, "why": "no engine available (x)"}])
         self.private_ledgers()
-        self.patch(engines, "claude_agents", return_value=[])
         server.Handler._seen_clients.clear()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
@@ -190,7 +189,7 @@ class TestMonitorApi(AltitudeCase):
 
     def test_the_payload_names_the_seats_by_engine_and_the_routing_view(self):
         body = self.get("/api/monitor")
-        self.assertEqual(set(body), {"seats", "routing", "sessions", "agents"})
+        self.assertEqual(set(body), {"seats", "routing", "sessions"})
         self.assertEqual([row["engine"] for row in body["seats"]], list(config.ENGINES))
         seat = next(row for row in body["seats"] if row["engine"] == "codex")
         self.assertEqual((seat["label"], seat["quota"]["why"]), ("Codex", "Codex binary not found"))

@@ -152,8 +152,10 @@ class TestSystemFault(AltitudeCase):
         S.task_dir(PROJECT, "poll-probe").mkdir(parents=True, exist_ok=True)
         S.save_task(PROJECT, {"slug": "poll-probe", "title": "poll-probe", "state": "running",
                               "l2_engine": "claude", "created": S.now(), "updated": S.now()})
-        with self.assertRaises(RuntimeError):
-            dispatch.poll(PROJECT)  # must propagate, never report "all L2s gone"
+        # I-20260907-171446: polling reads owned units, while launch still fails closed on registry errors.
+        with mock.patch.object(engines, "worker", side_effect=RuntimeError("unit inspection failed")):
+            with self.assertRaisesRegex(RuntimeError, "unit inspection failed"):
+                dispatch.poll(PROJECT)
 
     def test_verifier_tooling_failure_is_a_fault_verdict(self):
         self.patch(verify, "gh", new=lambda *a, **k: (_ for _ in ()).throw(verify.VerifierFault("gh: network down")))

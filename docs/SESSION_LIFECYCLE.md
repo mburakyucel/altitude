@@ -8,10 +8,10 @@ identities on purpose:
 | `attempt` | one L2 attempt, counted from 1 | the task is dispatched again from the queue |
 | `l2_engine` | provider for that attempt | only on a fresh attempt, never a transparent resume |
 | `session_id` | provider conversation/thread | Codex keeps it across turns; Claude may return a replacement on resume |
-| `agent_id` | current Claude job or Codex OS worker | every physical replacement |
+| `agent_id` | current unit-owned CLI worker | every physical replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
 | `launch_model` | model override passed at launch, or null for the CLI default | fresh dispatch |
-| `engine_model` | observed model for Codex; selected alias for Claude | each worker/turn records its selection |
+| `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
@@ -157,15 +157,16 @@ An existing Claude L3 session that predates this confinement policy is rotated b
 keeps its own resumable L3 session after that boundary is established.
 
 Both engines launch L2 workers through the same transient user-unit command builder, outside altd's
-cgroup. Claude's `--bg` launcher uses `Type=forking` and `ExitType=cgroup`: startup waits for the launcher
-to return, and the unit remains alive while any descendant runs. Resume stops a previous worker's
-remaining descendants before reusing its task/attempt unit. Each Codex turn also uses this boundary,
+cgroup. Claude runs foreground `-p --output-format stream-json` inside its own unit, with its settings,
+hooks, model pin and resumable session; launch and resume stop any daemon job still bound to the task name.
+Each turn has a private worker record and output log, and Stop removes the unit's descendants.
+Each Codex turn also uses this boundary,
 because altd's own `NoNewPrivileges` hardening would stop its nested bwrap from starting.
 The outer launcher alone receives the user-session bus;
 the child starts from Altitude's clean environment plus the actor identity; stopping the unit stops the whole
 process tree. Codex stdout JSONL is private task evidence: `thread.started.thread_id` is the session identity and
 `turn.completed.usage` the latest reported usage. A turn that ends without a report, a block, or a completion
-blocks the task with a system fault and incident, exactly like a Claude session that exits early.
+blocks the task with a system fault and incident carrying the engine's result error or stderr tail.
 
 ## L3 sessions and provider changes
 
@@ -208,8 +209,9 @@ and report verification wait only from the restart unit request until the replac
 ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
 script itself.
 After an
-`altd` restart, Claude is rediscovered through its job registry and checked against its transient unit;
-Codex uses its private task record and transient unit. Both engines' units survive the service restart.
+`altd` restart, both engines are adopted from their private worker records, provider output and active units;
+existing daemon jobs are observed through their active unit and session transcript until they finish or resume.
+Both engines' units survive the service restart.
 An ended or missing worker's report is current only when its mtime is at or after the latest launch
 or resume timestamp, persisted on the task before the provider starts. A missing or stale report
 without an explicit completion is a system fault

@@ -41,12 +41,12 @@ class ChatCase(AltitudeCase):
         self.quiet_engines()
 
     def resume(self, seen, worker="agent-new", session="session-new"):
-        def fake(name, session_id, prompt, *, cwd, **kw):
+        def fake(engine, name, session_id, prompt, *, cwd, **kw):
             seen.update(name=name, session_id=session_id, prompt=prompt, cwd=str(cwd), env=kw.get("extra_env") or {})
             return {"returncode": 0, "stdout": "", "stderr": "",
                     "agent": {"id": worker, "sessionId": session, "state": "working"}}
         self.quiet_launch()
-        self.patch(engines, "claude_resume_bg", side_effect=fake)
+        self.patch(engines, "resume_l2", side_effect=fake)
         return dispatch.resume(self.project, self.slug)
 
 
@@ -237,13 +237,13 @@ class TestResumeBinding(ChatCase):
                     "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
 
         self.quiet_launch()
-        self.patch(engines, "claude_resume_bg", side_effect=launch)
-        self.patch(engines, "claude_rm", return_value="removed")
-        stop = self.patch(engines, "claude_stop", return_value="stopped")
+        self.patch(engines, "resume_l2", side_effect=launch)
+        self.patch(engines, "remove_l2_worker", return_value="removed")
+        stop = self.patch(engines, "stop_l2_worker", return_value="stopped")
         with self.assertRaises(T.TransitionError):
             dispatch.resume(self.project, self.slug)
 
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-new"])
+        self.assertEqual([call.args[1] for call in stop.call_args_list], ["agent-new"])
         self.assertEqual(S.load_task(self.project, self.slug)["state"], "rejected")
 
     def test_bind_failure_stops_the_unowned_replacement_and_records_the_fault(self):
@@ -251,14 +251,14 @@ class TestResumeBinding(ChatCase):
         launched = {"returncode": 0, "stdout": "", "stderr": "",
                     "agent": {"id": "agent-new", "sessionId": "session-new", "state": "working"}}
         self.quiet_launch()
-        self.patch(engines, "claude_resume_bg", return_value=launched)
-        stop = self.patch(engines, "claude_stop", return_value="stopped")
+        self.patch(engines, "resume_l2", return_value=launched)
+        stop = self.patch(engines, "stop_l2_worker", return_value="stopped")
         fault = self.patch(incidents, "system_fault")
         with mock.patch.object(S, "save_task", side_effect=OSError("state disk unavailable")):
             with self.assertRaisesRegex(RuntimeError, "state disk unavailable"):
                 dispatch.resume(self.project, self.slug)
 
-        self.assertEqual([call.args[0] for call in stop.call_args_list], ["agent-new"])
+        self.assertEqual([call.args[1] for call in stop.call_args_list], ["agent-new"])
         current = S.load_task(self.project, self.slug)
         self.assertEqual((current["state"], current["agent_id"], current["session_id"]),
                          ("blocked", "agent-old", "session-old"))

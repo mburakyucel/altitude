@@ -66,7 +66,7 @@ class TestDispatchBoundaryOrdering(AltitudeCase):
              mock.patch.object(dispatch.S, "save_task") as save, \
              mock.patch.object(dispatch.S, "write_json") as write_json, \
              mock.patch.object(dispatch.T, "brief") as brief, \
-             mock.patch.object(dispatch.engines, "claude_bg") as launch:
+             mock.patch.object(dispatch.engines, "start_l2") as launch:
             with self.assertRaisesRegex(T.TransitionError, "main is ahead"):
                 dispatch.run("demo", "blocked")
 
