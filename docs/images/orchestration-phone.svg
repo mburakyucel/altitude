@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="594" viewBox="0 0 390 594" role="img" aria-labelledby="title desc">
+  <title id="title">Project direction and directly reachable task owners</title>
+  <desc id="desc">You talk to L3 about project direction and to any L2 about its task. L3 dispatches owners, answers questions and receives results. Each code task has its own worktree, checks and PR.</desc>
+  <rect width="390" height="594" rx="16" fill="#111a2c"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="22" y="34" fill="#a5b4fc" font-size="12" font-weight="600" letter-spacing="1.5">ONE PROJECT, ONGOING DIRECTION</text>
+    <rect x="22" y="53" width="346" height="71" rx="10" fill="#243149" stroke="#445570"/>
+    <text x="40" y="83" fill="#ffffff" font-size="21" font-weight="600">You</text>
+    <text x="40" y="106" fill="#c8d3e5" font-size="16">Direction + decisions</text>
+    <text x="148" y="151" fill="#a5b4fc" font-size="16">↕ conversation</text>
+    <rect x="22" y="170" width="346" height="85" rx="10" fill="#293660" stroke="#818cf8"/>
+    <text x="40" y="204" fill="#ffffff" font-size="21" font-weight="600">L3 · Project orchestrator</text>
+    <text x="40" y="232" fill="#e0e7ff" font-size="15">Architecture, priorities, coordination</text>
+    <text x="38" y="284" fill="#e0e7ff" font-size="15">↓ Briefs</text>
+    <text x="148" y="284" fill="#e0e7ff" font-size="15">↑ Questions + results</text>
+    <path d="M13 89H6V491H22" fill="none" stroke="#8d9db8" stroke-width="1.5" stroke-dasharray="4 5"/>
+    <g fill="#1c2940" stroke="#445570">
+      <rect x="22" y="305" width="346" height="64" rx="10"/>
+      <rect x="22" y="382" width="346" height="64" rx="10"/>
+      <rect x="22" y="459" width="346" height="64" rx="10"/>
+    </g>
+    <g fill="#ffffff" font-size="18" font-weight="600">
+      <text x="40" y="330">L2 · Task owner</text><text x="40" y="407">L2 · Task owner</text><text x="40" y="484">L2 · Task owner</text>
+    </g>
+    <g fill="#c8d3e5" font-size="15">
+      <text x="40" y="353">Worktree → checks → PR</text><text x="40" y="430">Worktree → checks → PR</text><text x="40" y="507">Worktree → checks → PR</text>
+    </g>
+    <text x="22" y="552" fill="#c8d3e5" font-size="15">Steer any L2 directly. Work can run in parallel.</text>
+    <text x="22" y="577" fill="#c8d3e5" font-size="15">L3 answers first; your calls come to you.</text>
+  </g>
+</svg>

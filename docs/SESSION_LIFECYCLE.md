@@ -1,5 +1,11 @@
 # Engine and session lifecycle
 
+The persistent L3 conversation coordinates the project across task lifetimes. Each L2 owns one
+task, with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
+first unless explicitly flagged for the operator; reports needing judgment return to L3.
+Mechanically clean deliveries can close automatically after verification without an L3 turn.
+The operator can also steer an L2 directly while other tasks continue.
+
 Altitude has one logical owner per task and replaceable physical workers. These are different
 identities on purpose:
 
@@ -102,12 +108,11 @@ changing worker or block state. A later operator message, renewed hold, changed 
 preserves the hold. L3 checks the release receipt before resuming a blocked owner; the owner rechecks
 and uses `alt land --merge`. A repeated application with no active hold is refused without another release.
 
-Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it
-records, uploads the bounded clip for transcription, and appends the returned text to the local
-editable draft; nothing else appears. The explicit **Send** action then calls the same chat or
-L2-message endpoint as typed text, so a busy L3 durably queues that combined text at the same turn
-boundary and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial, and
-transcription failure create no conversation or queue record.
+Voice capture does not add a lifecycle state. **Stop** transcribes the bounded recording into
+the editable draft; the send arrow transcribes, appends and sends at once. Both sending paths use
+the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
+and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
+transcription failure create no conversation or queue record and preserve the typed draft.
 
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
@@ -146,8 +151,9 @@ continuation is a deliberate new attempt based on saved work, not a fake transcr
 window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
 to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
 
-Claude resume uses `claude --bg --resume`; Codex resume uses `codex exec resume <thread-id> -` with the inbox on
-stdin from the same task worktree. Both engines have one contract: the persona may invoke the scoped Altitude
+Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
+uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
+Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, staging-scope, provenance, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.

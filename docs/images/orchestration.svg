@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="436" viewBox="0 0 960 436" role="img" aria-labelledby="title desc">
+  <title id="title">One project conversation. Several task owners.</title>
+  <desc id="desc">You discuss direction with L3, the persistent project orchestrator. L3 dispatches L2 owners and receives questions and results. You can steer each owner directly. Every code task has an isolated worktree, checks and a PR.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6" fill="none" stroke="#a5b4fc" stroke-width="1.4"/></marker>
+  </defs>
+  <rect width="960" height="436" rx="20" fill="#111a2c"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="32" y="38" fill="#a5b4fc" font-size="13" font-weight="600" letter-spacing="2">THE PROJECT CONTINUES ACROSS TASKS</text>
+    <rect x="32" y="65" width="196" height="99" rx="12" fill="#243149" stroke="#445570"/>
+    <text x="52" y="102" fill="#ffffff" font-size="24" font-weight="600">You</text>
+    <text x="52" y="133" fill="#c8d3e5" font-size="17">Direction + decisions</text>
+    <path d="M244 114H377" fill="none" stroke="#a5b4fc" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="309" y="94" fill="#c8d3e5" font-size="14" text-anchor="middle">conversation</text>
+    <rect x="398" y="65" width="530" height="99" rx="12" fill="#293660" stroke="#818cf8"/>
+    <text x="420" y="102" fill="#ffffff" font-size="24" font-weight="600">L3 · Project orchestrator</text>
+    <text x="420" y="133" fill="#e0e7ff" font-size="17">Architecture, priorities, coordination</text>
+    <path d="M130 164V207H32V291H48" fill="none" stroke="#8d9db8" stroke-width="1.5" stroke-dasharray="4 5"/>
+    <text x="49" y="196" fill="#c8d3e5" font-size="14">Steer any L2 directly</text>
+    <path d="M663 164V218M192 218H768" fill="none" stroke="#a5b4fc" stroke-width="2"/>
+    <path d="M192 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M480 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M768 218V256" stroke="#a5b4fc" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="422" y="195" fill="#e0e7ff" font-size="15">Briefs ↓</text>
+    <text x="708" y="195" fill="#e0e7ff" font-size="15">↑ Questions + results</text>
+    <path d="M886 256V183H854V169" fill="none" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <g fill="#1c2940" stroke="#445570">
+      <rect x="56" y="269" width="272" height="96" rx="12"/>
+      <rect x="344" y="269" width="272" height="96" rx="12"/>
+      <rect x="632" y="269" width="272" height="96" rx="12"/>
+    </g>
+    <g fill="#ffffff" font-size="21" font-weight="600">
+      <text x="76" y="303">L2 · Task owner</text><text x="364" y="303">L2 · Task owner</text><text x="652" y="303">L2 · Task owner</text>
+    </g>
+    <g fill="#c8d3e5" font-size="16">
+      <text x="76" y="336">Worktree → checks → PR</text><text x="364" y="336">Worktree → checks → PR</text><text x="652" y="336">Worktree → checks → PR</text>
+    </g>
+    <circle cx="62" cy="402" r="4" fill="#a5b4fc"/>
+    <text x="76" y="407" fill="#c8d3e5" font-size="16">Independent work in parallel. Questions go to L3 first; your calls come to you.</text>
+  </g>
+</svg>

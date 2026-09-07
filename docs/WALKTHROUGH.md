@@ -1,84 +1,106 @@
-# A short walkthrough
+# A project through several fronts of work
 
-This is an illustrated text walkthrough with fictional data, not a live transcript or screenshot.
-It uses the current project's conversation/work panel, task conversation/live session, and
-Needs you views. The example's replies and decisions describe one possible run; the owner
-chooses the execution approach for each task.
+**Illustrative scenario, actual interface.** Atlas is a fictional search service moving to a
+versioned index; Harbor is a second fictional project. Every message, task, usage reading and
+tool result below is fixture data rendered by the real web application. The captures demonstrate
+the interface, not a migration that an agent actually delivered.
 
-## 1. Discuss a change and see its work
+## Keep the project direction in one conversation
 
-Open the **field-notes** project. The project conversation sits beside its work panel on a
-desktop; on a phone, use Chat and Work to move between them.
+In **Atlas**, discuss the migration with L3, the project's persistent orchestrator. Preserve the
+v1 API and pagination contract, make backfill retries safe, and keep p95 latency below 200 ms.
+After agreeing those constraints, ask L3 to dispatch three independent tasks:
 
-```text
-field-notes · Project conversation
+| L2 owner | Its scope | Why it can proceed now |
+| --- | --- | --- |
+| Client compatibility | API responses, generation-bound cursors and contract tests | Implements against the agreed interface. |
+| Resumable backfill | Revision-aware upserts, checkpoints and retry tests | Uses the agreed document/revision contract. |
+| Performance baseline | Replay harness and current-index latency measurements | Establishes a baseline before the implementation changes land. |
 
-You: Our researchers need CSV exports of their notes. Keep the existing
-     column names and avoid adding a dependency.
+L3 creates concrete briefs; Altitude dispatches the tasks subject to capacity and engine
+availability. Each L2 investigates and owns its work end to end, choosing its implementation
+and any native helpers. Coordination of dependencies is L3/owner judgment; this example does
+not imply an automatic dependency scheduler. Rollout waits for the results.
 
-Coordinator: I'll create a task for CSV export with those constraints.
+<picture>
+  <source media="(max-width: 600px)" srcset="images/project-phone.png">
+  <img src="images/project-desktop.png" alt="Atlas: agreed migration constraints in the L3 conversation alongside three active tasks." width="1440">
+</picture>
 
-Work
-  Add CSV export    running    [Open]
-```
+[Full-size desktop](images/project-desktop.png) · [Phone conversation](images/project-phone.png)
 
-The coordinator may answer a question directly. When it creates work, one task owner receives
-the brief and an isolated worktree/branch. Opening the task takes you to that owner's conversation.
+On desktop the work panel sits beside the project conversation. On phone, **Chat** and **Work**
+show the same project in separate tabs. [Open the phone Work capture](images/work-phone.png).
 
-## 2. Steer the owner and inspect the live session
+## Steer a task without going through L3
 
-```text
-Add CSV export · Task
+Open **Preserve client compatibility** and tell its L2:
 
-Conversation                          Live session
-You: Keep the date column in UTC.      Prompt: Add CSV export…
-Owner: I'll preserve UTC and cover     Owner: I'm checking the existing
-       the export format in tests.           export helpers.
-                                      $ git status       [output folded]
-                                      Read export code   [output folded]
-```
+> Keep pagination tokens valid across the cutover. Clients must not restart an in-flight search.
 
-The desktop task page puts the conversation beside the session panel at wide widths; on a
-phone it has **Conversation** and **Live session** tabs. The live panel shows the engine's
-observed replies and tool activity. The task conversation is the durable place to direct the
-owner. Messages reach the worker at its engine's next checkpoint, so a reply need not be instant.
+The owner describes its generation-bound cursor design in the task conversation. The adjacent
+**Live session** shows its observed replies and tool activity, with command output folded.
+Messages sent here are durable and reach the worker at its engine's next checkpoint; the
+conversation remains available separately from the engine transcript.
 
-## 3. Handle a decision across projects
+<picture>
+  <source media="(max-width: 600px)" srcset="images/task-phone.png">
+  <img src="images/task-desktop.png" alt="The compatibility task: direct steering and the owner's response beside the live session, which shows cursor inspection and contract-test commands." width="1440">
+</picture>
 
-Suppose the owner needs a product call about export scope and another project needs a rollout
-decision. Questions the coordinator can answer from the record go there first. Questions needing
-your judgment appear in **Needs you**, grouped by project, with links to more context:
+[Full-size desktop](images/task-desktop.png) · [Phone conversation](images/task-phone.png)
 
-```text
-Needs you
+On phone, use **Conversation** and **Live session** to switch panes.
+[Open the phone session capture](images/session-phone.png). The capture script also sends a
+fixture-only follow-up, checks that its bubble appears, and verifies that the composer clears.
 
-field-notes
-  Should CSV include archived notes?
-  [Resume]  [Reject]  [More context]
+## Let L3 answer what the project already knows
 
-release-board
-  Is the preview ready for the pilot group?
-  [Resume]  [Reject]  [More context]
-```
+The backfill owner asks whether a retried batch may rewrite a document. L3 answers from the
+agreed contract: upsert by document ID and source revision, preserving any newer revision.
+Its message requests the blocked owner's resume. You do not need to repeat that decision.
 
-Use **More context** to open the task and answer in its conversation, for example:
-“Export active notes only; archived notes can wait.” Messaging a blocked owner requests its
-resume with that answer. The card's current actions are **Resume** (continue from existing
-context) and **Reject** (end the task); these are not custom product-choice buttons. A successful
-action leaves the queue; a failed submission stays visible with Retry. The task page also shows
-its waiting decision.
+Later the owner needs a retention policy: keep the old index for seven or thirty days. L3 can
+recommend seven days for the pilot, but the storage cost and rollback window need your judgment.
+It escalates that question. The other task owners can continue while this one waits.
 
-## 4. Follow the change to completion
+**Needs you** gathers operator questions across projects, including Harbor's pilot-access call:
 
-The owner implements the export, runs the project's checks and appropriate review, and opens a
-PR. The task links to the PR and reports its delivery status. With no merge hold, the owner can
-merge after the required checks and review. With a hold, the PR stays for your review.
+<picture>
+  <source media="(max-width: 600px)" srcset="images/decisions-phone.png">
+  <img src="images/decisions-desktop.png" alt="Needs you groups Atlas's index-retention decision and Harbor's pilot-access decision, with Resume, Reject and More context controls." width="1440">
+</picture>
 
-After successful verification, the task is archived with its conversation and report available.
-You can return to the project conversation to discuss the next change.
+[Full-size desktop](images/decisions-desktop.png) · [Phone decisions](images/decisions-phone.png)
 
-This example is deliberately small enough to keep current by checking
-[Project](../web/src/routes/Project.tsx), [Task](../web/src/routes/Task.tsx),
-[Live session](../web/src/routes/LiveSession.tsx), and
-[Needs you](../web/src/routes/NeedsYou.tsx) when these views change. It contains no real project
-data, provider logs or screenshots. See [setup](SETUP.md) to try your own project.
+Use **More context** to open the task and answer in its conversation, for example: “Keep the old
+index for seven days; include that limit in the rollout notes.” Messaging a blocked L2 requests
+its resume with that answer. **Resume** continues from the existing context; **Reject** ends the
+task. They are lifecycle actions, not buttons for choosing a retention period.
+
+These captures use the implemented task/context route. The approved design's richer decision
+page and custom choice/follow-up controls belong to its work-and-decisions slice; they are not
+shown as shipped behavior here.
+
+## Bring delivery back to the project
+
+Each owner runs the project's checks and appropriate review, and delivers through its own PR.
+A merge hold leaves a checked PR for your review; otherwise the owner can merge when ready.
+Verification retains the report and conversation in the archive. Reports needing judgment go
+to L3; a mechanically clean delivery can close automatically without another L3 turn.
+Back in the project conversation, discuss whether the compatibility, backfill and performance
+results justify a rollout task, or whether one needs further work first.
+
+The scope and ordering here are an example of engineering judgment, not a prescribed pipeline.
+For session identity and engine-specific message timing, see [lifecycle](SESSION_LIFECYCLE.md).
+To try a project, follow [setup](SETUP.md).
+
+## Capture source and maintenance
+
+[Fixture data and capture instructions](../design/readme/README.md) explain how to reproduce the
+images. The script builds on [Project](../web/src/routes/Project.tsx),
+[Task](../web/src/routes/Task.tsx), [Live session](../web/src/routes/LiveSession.tsx) and
+[Needs you](../web/src/routes/NeedsYou.tsx), with no app styling overrides or private service data.
+Desktop images are 1440×900 and phone images 390×844, rendered at 2× for readable enlargement.
+Open any image for its full resolution. Responsive picture sources keep phone text readable
+when this page is viewed at narrow widths.

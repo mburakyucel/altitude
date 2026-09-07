@@ -78,8 +78,10 @@ to its owner (L2), and follow its session and PR. You can ask for a merge hold w
 review the result before merge. Engine calls use your authenticated account and can consume its
 allowance or incur its normal charges.
 
-Register before starting this foreground server so it creates the project's coordinator broker
-at startup. The web app's First run / Add project flow can register folders and start the
+Register before starting this foreground server when you want to use `alt chat` immediately:
+startup creates the project's coordinator broker. Web conversations also create the broker on
+demand, so a project registered after startup can start from the web app. Its First run / Add
+project flow can register folders and start the
 coordinator while the server is running, but that flow uses default routing; prefer the CLI pins
 above for a single-engine evaluation. A CLI conversation also works from another terminal with
 the same PATH and Altitude home while the server is running:
@@ -123,8 +125,8 @@ remains available without them. See [operations](OPERATIONS.md) for those steps 
 - **The page does not load:** check the foreground server output, selected port and URL scheme;
   `ALTITUDE_TLS=0` makes the example HTTP. Verify `web/dist/index.html` exists from the build.
 - **The first conversation fails:** verify the chosen CLI works as this user, its binary path
-  and model configuration, and the systemd user manager. CLI registration needs to precede
-  foreground startup; the UI's registration path starts its broker itself.
+  and model configuration, and the systemd user manager. For immediate `alt chat` use, register
+  before foreground startup; a web conversation can start its coordinator broker on demand.
 - **A task cannot start or land:** inspect its reason, the clean `main`/`origin/main` checkout,
   Git guards, GitHub authentication and applicable check results. Do not bypass a guard.
 - **Usage is unknown:** inspect Monitor's explanation and the optional telemetry setup above.
