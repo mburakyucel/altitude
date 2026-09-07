@@ -1,5 +1,6 @@
 """altd — the Altitude web/API server and task timers."""
 from __future__ import annotations
+import argparse
 import json
 import mimetypes
 import os
@@ -259,6 +260,11 @@ def l3_verb_request(project: str, request: dict) -> dict:
                or arg.startswith("-p") and not arg.startswith("--") for arg in args):
             raise ValueError("the L3 socket fixes the project and accepts input only on stdin")
         _validate_l3_alt_args(args)
+        if args[:1] == ["issue"]:
+            options = vars(issue_parser().parse_args(args[1:]))
+            options.pop("text")
+            url = issue_write(project, body=stdin, actor="l3", **options)
+            return {"returncode": 0, "stdout": url + "\n", "stderr": ""}
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
         try:
@@ -1124,6 +1130,13 @@ class Handler(BaseHTTPRequestHandler):
             if api == "transcribe":
                 return self._transcribe_voice()
             o = self._body()
+            if api == "issue":
+                try:
+                    url = issue_write(o["project"], o["operation"], o["body"], actor="operator",
+                                      title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"))
+                    return self._json({"url": url})
+                except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
                 try:
@@ -1387,6 +1400,77 @@ def repository_url(origin: str) -> str | None:
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                          r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", origin.strip(), re.I)
     return f"https://github.com/{match[1]}/{match[2]}" if match else None
+
+
+def issue_parser() -> argparse.ArgumentParser:
+    """One exact grammar for the operator CLI and the project-bound L3 socket."""
+    class Parser(argparse.ArgumentParser):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **{**kwargs, "allow_abbrev": False})
+
+        def error(self, message):
+            raise ValueError(f"alt issue: {message}")
+
+        def exit(self, status=0, message=None):
+            raise ValueError(message or "use alt issue new --title TITLE - or alt issue comment NUMBER -")
+
+    parser = Parser(prog="alt issue", add_help=False)
+    commands = parser.add_subparsers(dest="operation", required=True)
+    new = commands.add_parser("new")
+    new.add_argument("--title", required=True)
+    new.add_argument("--label", action="append", dest="labels")
+    comment = commands.add_parser("comment")
+    comment.add_argument("number", type=int)
+    for command in (new, comment):
+        command.add_argument("text", choices=["-"])
+    return parser
+
+
+def issue_write(project: str, operation: str, body: str, *, actor: str,
+                title: str = "", labels: list[str] | None = None, number: int | None = None) -> str:
+    """Decision 7: altd publishes only the requested issue or follow-up, using its gh login."""
+    if actor not in ("l3", "operator"):
+        raise ValueError("alt issue: not available to an L2 worker")
+    if operation not in ("new", "comment"):
+        raise ValueError("alt issue: only new and comment are available")
+    if (not isinstance(body, str) or not isinstance(title, str)
+            or labels is not None and (not isinstance(labels, list) or any(not isinstance(x, str) for x in labels))):
+        raise ValueError("alt issue: body, title, and labels must be text")
+    if operation == "new" and not title.strip():
+        raise ValueError("alt issue new: title is required")
+    if operation == "comment" and (not isinstance(number, int) or number < 1):
+        raise ValueError("alt issue comment: a positive issue number is required")
+    # Private incident evidence boundary: local evidence never leaves the machine in a public issue.
+    public_text = unquote("\n".join([body, title, *(labels or [])]))
+    home = str(Path.home()) + "/"
+    absolute_paths = re.findall(r"/[^\s`'\"<>\[\]{}()]+", public_text)
+    if (home in public_text
+            or any((os.path.normpath("/" + path.lstrip("/")) + "/").startswith(home) for path in absolute_paths)
+            or re.search(r"\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)", public_text, re.I)):
+        raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
+    checkout = config.project_path(project)
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                            capture_output=True, text=True, timeout=10)
+    repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+    if not repository:
+        raise ValueError("alt issue: checkout origin must identify a GitHub repository")
+    args = ["gh", "issue", "create" if operation == "new" else "comment"]
+    if operation == "new":
+        args += [f"--title={title}", *(f"--label={label}" for label in labels or [])]
+    else:
+        args.append(str(number))
+    args += ["--repo", repository, "--body-file", "-"]
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)
+    result = subprocess.run(args, input=body, cwd=checkout, env=env,
+                            capture_output=True, text=True, timeout=120)
+    if result.returncode:
+        raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
+    url = result.stdout.strip()
+    with S.project_lock(project):
+        S.project_log(project, f"issue-{operation}", actor=actor,
+                      title=title if operation == "new" else f"Issue #{number}", url=url)
+    return url
 
 
 def project_view(name: str) -> dict:

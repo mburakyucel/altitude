@@ -4,6 +4,7 @@ import io
 import json
 import runpy
 import unittest
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -40,6 +41,21 @@ class TestInspectionCLI(AltitudeCase):
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "status.json", row)
         return row
+
+    def test_operator_issue_cli_sends_stdin_and_options_to_daemon(self):
+        for args, operation in ((["new", "--title", "Backlog", "--label", "later", "-"], "new"),
+                                (["comment", "42", "-"], "comment")):
+            with self.subTest(operation=operation), mock.patch.object(config, "TLS", False), \
+                 mock.patch("sys.stdin", io.StringIO("Body\nfrom stdin\n")), \
+                 mock.patch.object(urllib.request, "urlopen", return_value=io.BytesIO(
+                     b'{"url":"https://github.com/team/project/issues/42"}')) as send:
+                self.assertEqual(cli("issue", *args), "https://github.com/team/project/issues/42")
+            request = send.call_args.args[0]
+            payload = json.loads(request.data)
+            self.assertTrue(request.full_url.endswith("/api/issue"))
+            self.assertEqual((payload["operation"], payload["project"], payload["body"]),
+                             (operation, self.project, "Body\nfrom stdin\n"))
+            self.assertNotIn("actor", payload)
 
     def test_task_report_text_and_json_include_all_sections_and_done_digest(self):
         self.task(state="done", verified={"verdict": "ok"})

@@ -3,6 +3,7 @@ import io
 import json
 import socket
 import subprocess
+import threading
 import unittest
 import urllib.request
 from pathlib import Path
@@ -10,6 +11,115 @@ from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
 from altitude import config, dispatch, engines, l3, server, state as S, tasks as T
+
+
+class TestIssueVerbs(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        git("remote", "set-url", "origin", "git@github.com:team/project.git", cwd=self.repo)
+        self.url = "https://github.com/team/project/issues/42"
+        real_run = subprocess.run
+
+        def run(args, **kwargs):
+            if args[0] == "gh":
+                return subprocess.CompletedProcess(args, 0, self.url + "\n", "")
+            return real_run(args, **kwargs)
+
+        self.run = self.enterContext(mock.patch.object(server.subprocess, "run", side_effect=run))
+
+    def request(self, *args, body="Keep this requested backlog."):
+        return server.l3_verb_request(self.project, {"kind": "alt", "args": ["issue", *args],
+                                                    "stdin": body, "actor": "burak"})
+
+    def test_l3_new_and_comment_publish_stdin_to_origin_and_record_one_event_each(self):
+        self.setenv("GH_REPO", "other/private")
+        body = "First line\n\nSecond line: $(never executed).\n"
+        result = self.request("new", "--title=--requested", "--label=backlog", "--label=triage", "-", body=body)
+        self.assertEqual(result, {"returncode": 0, "stdout": self.url + "\n", "stderr": ""})
+        call = self.run.call_args
+        self.assertEqual(call.args[0], ["gh", "issue", "create", "--title=--requested", "--label=backlog",
+                                       "--label=triage", "--repo", "https://github.com/team/project", "--body-file", "-"])
+        self.assertEqual(call.kwargs["input"], body)
+        self.assertNotIn("GH_REPO", call.kwargs["env"])
+        self.url += "#issuecomment-99"
+        self.request("comment", "42", "-", body="Follow up")
+        self.assertEqual(self.run.call_args.args[0], ["gh", "issue", "comment", "42", "--repo",
+                                                    "https://github.com/team/project", "--body-file", "-"])
+        events = S.read_project_log(self.project)
+        self.assertEqual([(e["kind"], e["actor"], e["title"], e["url"]) for e in events],
+                         [("issue-new", "l3", "--requested", self.url.split("#")[0]),
+                          ("issue-comment", "l3", "Issue #42", self.url)])
+        self.assertNotIn(body, json.dumps(events))
+        self.assertIn("Bash(alt issue new *)", l3.ALLOWED_TOOLS)
+        self.assertIn("Bash(alt issue comment *)", l3.ALLOWED_TOOLS)
+
+    def test_claude_boundary_refuses_private_paths_and_incident_files_before_gh(self):
+        private = [f"Read {Path.home()}/private.txt", f"[evidence](file://{Path.home()}/private.txt)",
+                   str(Path.home()).replace("/", "//") + "/private.txt",
+                   str(Path.home()).replace("/", "/./") + "/private.txt",
+                   "/tmp/../" + str(Path.home()).lstrip("/") + "/private.txt",
+                   str(Path.home()).replace("/", "%2F") + "%2Fprivate.txt",
+                   "See I-20260907-123456.md", "See I-20260907-123456-2.md#evidence",
+                   "[evidence](incidents/custom.log)", "See incidents.jsonl"]
+        for operation in (["new", "--title", "Backlog", "-"], ["comment", "42", "-"]):
+            for body in private:
+                with self.subTest(operation=operation, body=body), self.assertRaisesRegex(ValueError, "Private incident evidence boundary") as error:
+                    self.request(*operation, body=body)
+                self.assertNotIn("\n", str(error.exception))
+        self.run.assert_not_called()
+        self.assertEqual(S.read_project_log(self.project), [])
+        # An incident identifier without an evidence file is safe to discuss publicly.
+        self.request("new", "--title", "Backlog", "-", body="I-20260907-123456; docs/ARCHITECTURE.md")
+
+    def test_issue_grammar_and_l2_refusal_have_no_external_effect(self):
+        for args in (["list"], ["close", "42"], ["edit", "42"], ["new", "-"],
+                     ["new", "--title", "", "-"], ["new", "--title", "X", "body-file.md"],
+                     ["comment", "0", "-"], ["comment", "https://github.com/other/repo/issues/1", "-"],
+                     ["comment", "42", "--repo", "other/repo", "-"], ["new", "--tit", "X", "-"]):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                self.request(*args)
+        self.run.assert_not_called()
+        for args in (["new", "--title", "X", "-"], ["comment", "42", "-"]):
+            result = self.alt("issue", *args, env={"ALTITUDE_ACTOR": "l2"})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not available to an L2", result.stderr)
+        with self.assertRaisesRegex(ValueError, "L2"):
+            server.issue_write(self.project, "new", "body", actor="l2", title="X")
+
+    def test_failed_gh_and_non_github_origin_do_not_record_success(self):
+        with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "no origin")):
+            with self.assertRaisesRegex(ValueError, "origin"):
+                self.request("new", "--title", "X", "-")
+        with mock.patch.object(server.subprocess, "run", side_effect=[
+                subprocess.CompletedProcess([], 0, "https://github.com/team/project.git", ""),
+                subprocess.CompletedProcess([], 1, "", "failure\nsecond line")]):
+            with self.assertRaisesRegex(ValueError, "failure second line"):
+                self.request("comment", "42", "-")
+        self.assertEqual(S.read_project_log(self.project), [])
+
+    def test_operator_http_and_l3_socket_fix_the_actor(self):
+        http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        self.addCleanup(http.server_close)
+        self.addCleanup(http.shutdown)
+        request = urllib.request.Request(f"http://127.0.0.1:{http.server_port}/api/issue",
+                                         data=json.dumps({"project": self.project, "operation": "new",
+                                                          "body": "Requested backlog", "title": "Keep", "actor": "l3"}).encode(),
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(json.load(response), {"url": self.url})
+        self.assertEqual(S.read_project_log(self.project)[0]["actor"], "operator")
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(l3.verb_socket_path(self.project)))
+            client.sendall((json.dumps({"kind": "alt", "args": ["issue", "comment", "42", "-"],
+                                       "stdin": "Follow-up", "actor": "burak"}) + "\n").encode())
+            client.shutdown(socket.SHUT_WR)
+            result = json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
+        self.assertEqual(result["stdout"].strip(), self.url)
+        self.assertEqual(S.read_project_log(self.project)[1]["actor"], "l3")
 
 
 def _claude_result(session="claude-l3"):
