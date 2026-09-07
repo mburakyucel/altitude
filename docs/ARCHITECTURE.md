@@ -1,7 +1,9 @@
 # Altitude architecture
 
-Altitude turns a project-level conversation into isolated, reviewable work. It has a small
-coordination layer, one owner per task, and mechanical safety rails: model judgment chooses how much
+Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
+discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
+and receives their questions and reports needing follow-up. Several tasks can proceed in isolated
+worktrees while that conversation continues. Model judgment chooses how much
 decomposition a request needs; code enforces task ownership, isolation, launch holds, and the PR
 boundary.
 
@@ -9,7 +11,7 @@ boundary.
 Burak
   ├─ project direction and roadmap ───────────────► L3
   │                                                  │
-  │                                                  └─ coordinates one task
+  │                                                  └─ dispatches L2 task owners
   └─ task questions and steering ◄───────────────► L2 owner
                                                      ├─ may implement directly
                                                      └─ may delegate to its engine's own subagents
@@ -93,9 +95,11 @@ installed engine. The [setup guide](SETUP.md) describes the current manual confi
 | [`route.py`](../altitude/route.py) | Select an engine from explicit pins and available quota observations; expose engine labels, usage windows and routing reasons to callers. |
 | [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults and context settings, alongside runtime configuration. |
 
-The interface is internal and evolves with the integrations. The intended extensibility includes
-other CLI engines such as OpenCode, and access through subscriptions, direct API billing or services
-such as Bedrock. These are integration candidates, not supported paths today. A new engine may
+The interface is internal and evolves with the integrations. Additional CLI engines such as
+OpenCode are candidates for future support. Provider access is a separate integration concern:
+subscriptions, direct API billing and services such as Bedrock are intended to fit the same
+project workflow. Bedrock is an access service, not a CLI engine; neither OpenCode nor a Bedrock
+setup is supported today. A new engine may
 have different session, authentication, capability and usage-reporting models. Adapt the boundary
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 

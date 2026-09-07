@@ -18,20 +18,29 @@ Remaining repository-presentation work under #219:
 - Validate the documented path on a second clean machine, including engine authentication,
   sandbox/user-service support, Git guards, first conversation and one checked task delivery.
 - Apply repository metadata through an authorized maintainer operation. Recommended description:
-  **“An AI development workspace for coordinating coding agents across projects, from conversation
-  to checked PRs.”** Recommended topics: `ai-development`, `coding-agents`, `developer-tools`,
+  **“Persistent project orchestration for coding agents: project direction, directly reachable task
+  owners, isolated worktrees and checked PRs.”** Recommended topics: `ai-development`, `coding-agents`, `developer-tools`,
   `developer-workspace`, `git-worktrees`. These are recommendations, not applied settings.
 
-Related implementation gaps to evaluate separately, without expanding the docs milestone:
+## Engines, platforms and distribution
 
-- A portable installer/service template and clearer onboarding for existing Git hook systems.
-- Configured installed-engine selection and readiness reporting; Auto currently reasons from
-  quota, not binary/authentication availability. Single-engine use requires explicit project pins.
-- An engine/access compatibility matrix, including role-model defaults, launch environment
-  filtering and optional usage telemetry. Direct API and service-mediated access need verification.
-- Additional CLI integrations and gradual removal of remaining engine assumptions outside the
-  [integration boundary](ARCHITECTURE.md#engine-integration-boundary). OpenCode and Bedrock are
-  candidates, not supported integrations or promised delivery dates.
+The direction is the same project and task workflow across CLI engines and supported machines.
+These are intended capabilities, with no promised dates; the current setup remains the Linux
+source installation documented in [SETUP.md](SETUP.md).
+
+| Work | Intended outcome | Current boundary |
+| --- | --- | --- |
+| Additional CLI engines | Integrate candidates such as **OpenCode**, preserving native tools, sessions, context and helpers. | Codex and Claude Code work today. Each added engine needs launch/resume/stop, permissions, authentication and optional usage observations implemented and verified through task delivery. |
+| Engine readiness and access | Select from installed, authenticated engines; document verified model-provider, subscription and API/access configurations. | Auto reasons from quota, so single-engine use requires explicit pins. Launch environment and role-model settings constrain configuration inheritance. **Bedrock is a provider-access service**, to evaluate separately from CLI engines. |
+| [macOS runtime · #225](https://github.com/mburakyucel/altitude/issues/225) | Native OS/service integration with verified start, task execution, stop/resume, restart/adoption and shutdown. | Current service units and process/sandbox facilities assume Linux. |
+| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Users currently clone source, build the app and adapt configuration. The packaging/update architecture still needs an operator decision. |
+
+Engine work belongs at the [integration boundary](ARCHITECTURE.md#engine-integration-boundary),
+with remaining assumptions outside it moved as those files are touched. Platform support and
+distribution are related but distinct: the installer depends on working lifecycle semantics on
+each OS. Clean-machine checks must cover authentication, existing Git hooks, first conversation
+and a checked task delivery. These projects are backlog, not prerequisites for reading the product
+walkthrough or claims of support already shipped.
 
 ## Simplification (complete)
 
@@ -43,9 +52,9 @@ stays separate from ordinary source work and requires explicit authorization.
 
 The product redesign, approved on 2026-09-05, replaced the 2026-09-03 wireframes under
 `design/wireframes/`; its `SPEC.md` governs the UI and lists the implementation slices, each one
-task. The durable backlog is GitHub issues selected by Burak. The current priorities are:
+task. The durable backlog is GitHub issues selected by the operator. The current priorities are:
 
-- expose a clear project overview of active work and items that need Burak;
+- expose a clear project overview of active work and items that need the operator;
 - make direct task conversation with the owning L2 simple and readable;
 - keep incident evidence and operational recovery visible without turning them into recursive
   workflows;

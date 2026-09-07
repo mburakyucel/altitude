@@ -1,96 +1,77 @@
 # Altitude
 
-**An AI development workspace — a control center for your AI development team.**
+**Persistent project orchestration for coding agents.**
 
-Altitude is a workspace for running AI coding agents across your software projects. Discuss what
-you want to build, coordinate work through review and merge, and stay directly involved wherever
-your judgment is needed. Project conversations, task ownership, live agent sessions, and decisions
-come together in one place.
+Altitude gives each software project an ongoing conversation with **L3, its project
+orchestrator**. Discuss architecture, priorities and what should happen next. L3 dispatches
+**L2 task owners**, each responsible for concrete work from its brief through checks and a PR.
+You can talk directly to any owner while the work runs.
 
-It is built for software engineers who already use coding agents and care about architecture,
-code quality, and what lands in their repositories. As work spans tasks and projects, Altitude
-helps you keep track of direction, ongoing changes, and decisions without juggling every session
-yourself. The current focus is **one operator managing projects on one Linux machine**.
+Several tasks can move forward in isolated worktrees while L3 keeps the project direction in
+view. Questions go to L3 first: it answers from the brief, repository docs and recorded decisions,
+and brings you the calls that need your judgment. Task reports preserve delivery outcomes;
+reports needing follow-up return to the project conversation, where you decide what comes next.
 
-**Early private preview.** Setup is still manual in places. Start with the
-[setup guide](docs/SETUP.md) or the [short walkthrough](docs/WALKTHROUGH.md).
+**Engine-agnostic by design.** Codex and Claude Code are supported today; further CLI engines are
+part of the [roadmap](docs/ROADMAP.md#engines-platforms-and-distribution). Each integration connects
+the engine's native sessions and tools to the same project and task workflow.
 
-## What working with Altitude feels like
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/images/orchestration-phone.svg">
+  <img src="docs/images/orchestration.svg" alt="You discuss direction with L3 and can steer each L2 directly. L3 dispatches task owners in separate worktrees. Owners return questions and results to L3; only decisions needing you are escalated. Each code task delivers through checks and a PR." width="960">
+</picture>
 
-For example, you want to add CSV export to a project:
+## One project, several fronts of work
 
-1. **Discuss the change in the project conversation.** Explain the user need and constraints to
-   the project's coordinator. It can answer directly or create a task when there is work to do.
-2. **A task gets one owner and an isolated workspace.** The owner investigates the repository
-   and chooses how to implement the change, including whether helpers or a proposal would help.
-3. **Follow or steer the work.** Open the task to message its owner directly and inspect its
-   live session. “Keep the existing column names” stays with the task as durable conversation.
-4. **Find the decision that needs you.** **Needs you** gathers questions across projects. Open
-   the task for context and give a product answer in its conversation; the card also offers
-   Resume or Reject when that is the action you need.
-5. **Follow delivery through a PR.** The owner runs the project's checks and appropriate review,
-   then lands through the guarded PR path. A merge hold keeps it for your review; otherwise the
-   owner can merge when ready. The verified report and conversation preserve the outcome.
+You are moving **Atlas**, a search service, to a versioned index. Existing clients must keep
+working, backfills must resume safely, and search latency must stay within budget.
+
+In the project conversation, agree the API contract and rollout constraints with L3. Then ask it
+to dispatch the independent work: **client compatibility**, **resumable backfill**, and a
+**performance baseline**. Each gets its own L2, brief, file scope and worktree. The performance
+owner can measure the current system while the other two implement against the agreed contract.
+L3 uses the results to coordinate the next rollout task.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/images/project-phone.png">
+  <img src="docs/images/project-desktop.png" alt="Atlas project conversation: the operator sets index-migration constraints, L3 describes three independent tasks, and the desktop work panel shows their active work." width="1440">
+</picture>
+
+*The actual web app, rendered with fictional projects, messages and session data. This is an
+illustrative engineering scenario, not a recorded delivery. [Open the captures and walkthrough](docs/WALKTHROUGH.md).*
+
+[Full-size desktop](docs/images/project-desktop.png) · [Phone](docs/images/project-phone.png)
+
+Open the compatibility task and tell its L2, “Keep pagination tokens valid across the cutover.”
+Its durable conversation sits beside the live engine session. Meanwhile, the backfill owner's
+retry question goes to L3, which answers from the agreed idempotency rule. A different question
+— whether to retain the old index for seven or thirty days — needs your cost and rollback
+judgment, so L3 escalates it to **Needs you**. The other work can continue.
+
+The owners deliver separate, checked PRs. A merge hold leaves a PR for your review; otherwise an
+owner can merge after the applicable checks and review. L3 can inspect the reports and handle
+follow-up, so the next discussion can address rollout readiness with the work in view.
 
 When the operator replies exactly **Good to merge** directly after an owner's PR presentation,
 the coordinator can apply that recorded approval through the daemon's
 [`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). The daemon checks the message,
 current hold and unchanged PR before recording the release. The owner then rechecks and lands normally.
 
-This is one example, with the execution approach chosen for the work. The
-[illustrated text walkthrough](docs/WALKTHROUGH.md) follows fictional projects through the
-project conversation, direct task conversation/live session, and cross-project decisions view.
-The UI and technical docs call the project coordinator **L3** and the task owner **L2**.
+## How the work stays coherent
 
-## Why the coordination stays small
-
-- **Clear responsibility, flexible execution.** One coordinator per project and one owner per
-  task keep it clear who to talk to. The owner chooses investigation, decomposition, delegation,
-  and implementation strategy. A fixed sequence of stages and specialist roles would encode
-  assumptions that age as agents improve.
-- **Engineering judgment stays close to the work.** Set direction at the project level, steer
-  an individual task, or respond to decisions across projects. Isolated worktrees, declared file
-  scope, applicable checks, and the PR boundary make changes reviewable.
-- **Build on the agents' capabilities.** CLI engines supply their tools, sessions, context
-  management, and native helper facilities. Altitude adds focused coordinator/owner instructions
-  and delivery boundaries. Repository instructions, native skills, hooks, and agent facilities
-  are the place to customize how work gets done within those boundaries.
-- **Keep engine and access choices separate from the workflow.** The organizing idea is ongoing
-  CLI sessions behind replaceable integrations. Improvements in an engine should improve the
-  workspace without requiring another coordination mechanism for each new capability.
-
-## Engines today and the integration direction
-
-**Codex and Claude Code are the current integrations.** You can pin both project roles to one
-installed, authenticated engine; two subscriptions are not a prerequisite. Auto routing uses
-reported quota windows, so single-engine setup needs explicit pins today.
-
-The [engine boundary](docs/ARCHITECTURE.md#engine-integration-boundary) centers on
-[`altitude/engines.py`](altitude/engines.py) for launching, resuming, stopping and observing
-sessions, [`altitude/route.py`](altitude/route.py) for selection and usage windows, and
-[`altitude/config.py`](altitude/config.py) for engine settings. It is an internal integration
-boundary, not a plug-in API that accepts any CLI unchanged.
-
-The intended design lets your choice of agent, model provider, subscription, direct API billing,
-or access service vary independently of the project workflow. **OpenCode and access through
-services such as Bedrock are future integration candidates, not supported setup paths.** Each
-integration may need different session, authentication, capability and usage models; it should
-preserve the engine's native behavior rather than force every engine into today's interface.
-[Current gaps and release prerequisites](docs/ROADMAP.md#early-user-onboarding-and-public-release)
-are tracked separately from this documentation milestone.
-
-## Available now
-
-| Capability | What you can do |
-| --- | --- |
-| Multiple projects | Keep project conversations and active work together; move between repositories in one workspace. |
-| Direct conversations | Talk to the coordinator or a task owner; queued messages reach ongoing sessions at engine-specific checkpoints. |
-| Parallel work | Run tasks in separate Git worktrees and branches with one accountable owner each; shared-file changes still need reconciliation. |
-| Delivery visibility | Follow PRs, check outcomes, merge holds, reports and archived task conversations. |
-| Cross-project decisions | Use Needs you to find questions escalated for your judgment, with links back to the task. |
-| Routing and usage | Inspect engine selection reasons, reported usage windows and sessions; missing or stale telemetry is shown explicitly. |
-| Task tokens | Follow cumulative locally observed input/output tokens, expand engine and owner/helper breakdowns, and retain the final observation with the archived task. |
-| Desktop and mobile web | Use the desktop conversation/work panels or phone tabs. Remote access needs a configured private network; voice also needs browser support and a local transcription service. |
+- **Project continuity.** One persistent L3 conversation holds direction across tasks. Discuss
+  tradeoffs, change priorities, or return after delivery; follow-up and escalations feed back
+  into that conversation.
+- **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
+  session, and follow its PR and report. Messages queue for the engine's next checkpoint.
+- **Independent execution.** Owners choose how to investigate, implement and use native helpers.
+  Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
+  Shared-file changes still need rebasing and reconciliation by their owners.
+- **Selective attention.** Needs you collects escalated questions across projects. L3 handles
+  questions the record settles and receives faults for recovery. Monitor shows engine routing,
+  usage windows and observed sessions, including missing or stale readings.
+- **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
+  owner/helper breakdowns, and retain the final observation with the archived task.
 
 Task token accounting reads existing local engine records without model calls. Input includes cache
 reads and writes once; output includes any reported reasoning subset. These are observed token
@@ -99,14 +80,31 @@ show coverage and freshness: missing records stay unknown or partial, and native
 only when local parentage supports attribution. Provider aggregates that cannot split helper usage
 say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
 
+## Engines that can evolve with the work
+
+Altitude supplies project coordination, task ownership and delivery boundaries. The CLI engine
+supplies execution tools, context management and native subagents; repository instructions,
+skills and hooks shape how it works. Execution strategy stays with the owner rather than a
+prescribed sequence of specialist stages.
+
+Both project roles can use one installed engine. Today's single-engine setup uses explicit pins.
+Additional engines, including **OpenCode as a candidate**, require integration and verification
+of their session, permission, authentication and usage behavior. The architecture is intended to
+accommodate different model providers and billing/access arrangements too.
+See the [engine boundary](docs/ARCHITECTURE.md#engine-integration-boundary) for current integration
+limits, and the [roadmap](docs/ROADMAP.md#engines-platforms-and-distribution) for engines, macOS
+support and installable distribution.
+
 ## Get started
 
-The current runtime targets Linux with a working **systemd user manager**, Git and authenticated
-GitHub CLI, Python (3.12 in CI), Node 22.22.2+ (22.x) or 24.15+ (24.x), pnpm, and at least one compatible authenticated coding
-CLI. Managed projects use a clean primary `main` checkout, `origin/main`, and GitHub PR delivery.
-There is no packaged installer or verified native macOS/Windows runtime yet.
+**Early private preview for invited engineers.** Altitude currently runs for one operator on a
+Linux machine with a systemd user manager. Setup uses a source checkout and manual configuration;
+native macOS support and packaged installation are planned. Desktop and phone layouts are
+available; remote phone access needs your private network and HTTPS setup.
 
-With repository access:
+You need Git, authenticated GitHub CLI, Python 3.12, Node 22.22.2+ (22.x) or 24.15+ (24.x), pnpm,
+and one supported, authenticated coding CLI. Managed projects use `main`, `origin/main` and
+GitHub PR delivery. With repository access:
 
 ```sh
 git clone git@github.com:mburakyucel/altitude.git
@@ -115,11 +113,10 @@ pnpm --dir web install --frozen-lockfile
 pnpm --dir web build
 ```
 
-Then follow [setup: register a project and start a conversation](docs/SETUP.md#register-a-project-and-start-a-conversation)
-for engine pins, Git guards and the foreground localhost command. That guide names the manual
-steps and machine-specific defaults; the shipped service unit needs adaptation for another host.
-Altitude is still being prepared for invited collaborators. No open-source license has been
-selected, and this milestone does not change repository visibility.
+Follow [setup: register a project and start a conversation](docs/SETUP.md#register-a-project-and-start-a-conversation)
+for engine pins, project Git guards and a foreground localhost server. The guide distinguishes
+source-checked commands from the remaining clean-machine setup verification. No open-source
+license has been selected; public release is a separate milestone.
 
 ## Project faults
 
@@ -143,7 +140,7 @@ messages. Removing the last project opens First run; otherwise a remaining proje
 | Start here | Go deeper |
 | --- | --- |
 | [Setup](docs/SETUP.md) | [Architecture and engine boundary](docs/ARCHITECTURE.md) |
-| [Example walkthrough](docs/WALKTHROUGH.md) | [Engine and session lifecycle](docs/SESSION_LIFECYCLE.md) |
+| [Rendered walkthrough](docs/WALKTHROUGH.md) | [Engine and session lifecycle](docs/SESSION_LIFECYCLE.md) |
 | [Contributing](CONTRIBUTING.md) | [Development and checks](docs/DEVELOPMENT.md) |
 | [CLI usage](docs/CLI.md) | [Service operations and mobile access](docs/OPERATIONS.md) |
 | [Roadmap and release prerequisites](docs/ROADMAP.md) | [Design boards and UI specification](design/wireframes/README.md) |
