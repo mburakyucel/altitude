@@ -1255,18 +1255,6 @@
 .shell[data-phone] .convo-dock {
   padding: 4px 12px 12px;
 }
-/* A landscape phone has no room for a bounded transcript between the header and the tab bar: the
- * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
-@media (orientation: landscape) {
-  .shell[data-phone] .convo {
-    overflow-y: auto;
-  }
-  .shell[data-phone] .convo-scroll {
-    min-height: max-content;
-    flex: none;
-    overflow: visible;
-  }
-}
 .convo-empty,
 .convo-error {
   margin: 0;

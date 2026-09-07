@@ -50,7 +50,8 @@ task: today one blocked task carries one open question, and the route follows th
   panel is 340px: inline as a third column at ≥ 1280, otherwise an overlay from the right opened by
   the header's panel button (same content, scrim behind, Esc or the scrim closes it).
 - **Phone, width < 1024.** Header 54px, content, composer where the page has one, tab bar 84px
-  (Chat, Work, Needs you, Monitor). Chat and Work are the selected project's; Needs you and Monitor
+  (Chat, Work, Needs you, Monitor). The phone is specified at portrait 390 wide; landscape is
+  unsupported and has no rules of its own. Chat and Work are the selected project's; Needs you and Monitor
   are global. The header shows the project name with a chevron on project tabs and "Altitude" on
   global tabs, so scope is always readable. The project name opens the switcher sheet (§3.11).
 - A decision page or a task page opened from a phone tab pushes over that tab with a back control
@@ -115,7 +116,7 @@ Operator messages are right-aligned bubbles (`--bubble`, radius `--radius-bubble
 are left-aligned prose with no bubble (15px, line-height 1.65): paragraphs, lists, inline code,
 links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task.
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
-phone a long-press shows it.
+phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 
 Data: `GET /api/chat/<project>` → `history[]` rows `{at, role, text, trigger, engine, turn_id}`,
 `active {id, started_at, trigger}`, `queued[]`. Rows with `trigger == "chat"` are the conversation;
