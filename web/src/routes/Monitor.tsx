@@ -1,23 +1,23 @@
 import { useMonitor, useOverview } from "../data/api";
-import type { MonitorView, RoutingRow, Session } from "../data/api";
+import type { MonitorSeat, RoutingRow, Session } from "../data/api";
 import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
- * Monitor (SPEC.md §3.14): one seat card per configured engine with both windows, their reset times
+ * Monitor (SPEC.md §3.14): one seat card per configured engine with its windows, their reset times
  * in human terms, the 70% reserve line and the age of the reading; where each role would go right now
  * and why; the sessions the monitor knows, each with its task. Everything here is display: nothing on
  * this page decides anything, and it reads `/api/monitor` and the shared overview only.
  *
- * Engine names come from the overview's `engines[]` rows, the seam's own labels. `/api/monitor` names
- * its two readings by seat rather than by engine row, so SEAT_FIELDS is the one place the page ties a
- * reading to an engine key; nothing here spells a display name.
+ * `/api/monitor` sends one seat row per configured engine, in the seam's order and under the seam's
+ * own label, so the page ties no reading to an engine key and spells no provider: a seat reports
+ * either the two windows a statusline snapshot names or windows that name their own length, and the
+ * card renders whichever it is given.
  *
- * Age is the point of the page. A figure with no data at all says "No reading" and how to get one; a
- * figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed, labelled.
- * `/api/monitor` session rows are passthrough, so the fields only some kinds carry (cwd, edits, agent,
- * model, rotate_next) arrive typed `unknown` and are narrowed here rather than in api.ts.
+ * Age is the point of the page. A figure with no data at all says "No reading" and what produces one;
+ * a figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed,
+ * labelled. `/api/monitor` session rows are passthrough, so the fields only some kinds carry (cwd,
+ * edits, agent, model, rotate_next) arrive typed `unknown` and are narrowed here rather than in api.ts.
  */
-const SEAT_FIELDS: Record<string, "quota" | "quota_codex"> = { claude: "quota", codex: "quota_codex" };
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -78,62 +78,48 @@ interface SeatWindow {
 }
 
 interface Seat {
-  engine: string;
   plan: string;
   at: unknown;
   stale: boolean;
   /** Null when the seat has never been read; then `fix` says what produces a reading. */
   windows: SeatWindow[] | null;
   fix: string;
-  /** The provider reports one window and no second one: absent, never zero. */
+  /** The seat reports one window and no second one: absent, never zero. */
   secondAbsent: boolean;
 }
 
-/** The monitor's reading for one configured engine, in one shape whichever seat it comes from. */
-export function seatFor(engine: string, data: MonitorView): Seat {
-  const field = SEAT_FIELDS[engine];
-  if (field === "quota") {
-    const quota = data.quota;
-    const five = num(quota.five_hour);
-    const seven = num(quota.seven_day);
-    const missing = five == null || seven == null;
-    return {
-      engine,
-      plan: "",
-      at: quota.at,
-      stale: !missing && !quota.known,
-      windows: missing
-        ? null
-        : [
-            { name: "5-hour", percent: five, resets: resetText(quota.five_hour_resets) },
-            { name: "7-day", percent: seven, resets: resetText(quota.seven_day_resets) },
-          ],
-      fix: "Needs the statusline wrapper (alt install-statusline) and one interactive session.",
-      secondAbsent: false,
-    };
+/** The windows a reading names, in the order it names them; null when it carries no figure at all. */
+function windowsOf(quota: MonitorSeat["quota"]): SeatWindow[] | null {
+  const five = num(quota.five_hour);
+  const seven = num(quota.seven_day);
+  if (five != null && seven != null) {
+    return [
+      { name: "5-hour", percent: five, resets: resetText(quota.five_hour_resets) },
+      { name: "7-day", percent: seven, resets: resetText(quota.seven_day_resets) },
+    ];
   }
-  if (field === "quota_codex") {
-    const quota = data.quota_codex;
-    const primary = num(quota?.primary_used);
-    const secondary = num(quota?.secondary_used);
-    const windows: SeatWindow[] = [];
-    if (primary != null) {
-      windows.push({ name: windowName(quota?.primary_window_minutes), percent: primary, resets: resetText(quota?.primary_resets) });
-      if (secondary != null) {
-        windows.push({ name: windowName(quota?.secondary_window_minutes), percent: secondary, resets: resetText(quota?.secondary_resets) });
-      }
-    }
-    return {
-      engine,
-      plan: str(quota?.plan_type),
-      at: quota?.read_at,
-      stale: primary != null && !quota?.known,
-      windows: primary == null ? null : windows,
-      fix: capitalize(str(quota?.why)) || "The seat has not been read yet.",
-      secondAbsent: primary != null && secondary == null,
-    };
+  const primary = num(quota.primary_used);
+  if (primary == null) return null;
+  const windows = [{ name: windowName(quota.primary_window_minutes), percent: primary, resets: resetText(quota.primary_resets) }];
+  const secondary = num(quota.secondary_used);
+  if (secondary != null) {
+    windows.push({ name: windowName(quota.secondary_window_minutes), percent: secondary, resets: resetText(quota.secondary_resets) });
   }
-  return { engine, plan: "", at: null, stale: false, windows: null, fix: "", secondAbsent: false };
+  return windows;
+}
+
+/** One seat row as the card shows it, whichever seat sent it. */
+function seatFor(row: MonitorSeat): Seat {
+  const quota = row.quota;
+  const windows = windowsOf(quota);
+  return {
+    plan: str(quota.plan_type),
+    at: quota.at ?? quota.read_at,
+    stale: windows != null && !quota.known,
+    windows,
+    fix: capitalize(str(quota.why)) || "The seat has not been read yet.",
+    secondAbsent: windows != null && windows.length === 1,
+  };
 }
 
 /** A meter with the reserve line drawn; past the line the fill turns danger, a stale figure is dimmed. */
@@ -286,8 +272,6 @@ export default function Monitor() {
   const engines = overview.data?.engines ?? [];
   const labels = new Map(engines.map((row) => [row.engine, row.label]));
   const label = (engine: unknown) => labels.get(str(engine)) ?? str(engine);
-  // The seam's configured engines, in its order; the monitor's own seats when the overview is not here.
-  const seatEngines = engines.length > 0 ? engines.map((row) => row.engine) : Object.keys(SEAT_FIELDS);
 
   return (
     <div className="page">
@@ -308,8 +292,8 @@ export default function Monitor() {
               Seats
             </h2>
             <div className="monitor-seats">
-              {seatEngines.map((engine) => (
-                <SeatCard key={engine} seat={seatFor(engine, monitor.data)} label={label(engine)} />
+              {(monitor.data.seats ?? []).map((row) => (
+                <SeatCard key={row.engine} seat={seatFor(row)} label={row.label} />
               ))}
             </div>
             <p className="monitor-muted">The mark on each meter is the {RESERVE_PERCENT}% reserve line.</p>

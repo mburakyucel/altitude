@@ -58,14 +58,30 @@ def _codex_window(data: dict, minutes: int) -> float | None:
     return None
 
 
+def _readings() -> dict[str, dict]:
+    """Each configured engine's seat reading, whole. This mapping of engine to reading is the seam:
+    it is written here once and nowhere else, so adding or dropping an engine edits this module."""
+    from .monitor import quota
+    return {"claude": quota() or {}, "codex": quota_codex()}
+
+
+def seats() -> list[dict]:
+    """One seat per configured engine, in the seam's order: ``{engine, label, quota}`` with the seat's
+    reading passed through as the seat reports it. The Monitor renders these rows without knowing
+    which reading belongs to which provider."""
+    readings = _readings()
+    return [{"engine": engine, "label": config.ENGINE_LABELS[engine], "quota": readings[engine]}
+            for engine in config.ENGINES]
+
+
 def engine_readouts() -> list[dict]:
     """One row per configured engine for the shell's engine readout: display name, weekly percent used,
     whether the reading is current, and when it was taken (ISO). ``week`` is None with no reading at all;
     ``stale`` keeps an old figure and says so. The rail renders these rows without knowing which is which."""
-    from .monitor import quota
-    claude, codex = quota() or {}, quota_codex()
+    readings = _readings()
+    claude, codex = readings["claude"], readings["codex"]
     at = claude.get("at")
-    readings = {
+    weeks = {
         "claude": (_number(claude.get("seven_day")),
                    datetime.fromtimestamp(at, timezone.utc).isoformat() if isinstance(at, (int, float)) else None,
                    claude),
@@ -73,7 +89,7 @@ def engine_readouts() -> list[dict]:
     }
     rows = []
     for engine in config.ENGINES:
-        week, observed, data = readings[engine]
+        week, observed, data = weeks[engine]
         rows.append({"engine": engine, "label": config.ENGINE_LABELS[engine], "week": week,
                      "known": bool(data.get("known")), "stale": bool(data.get("stale")), "at": observed})
     return rows
@@ -82,8 +98,8 @@ def engine_readouts() -> list[dict]:
 def _usage() -> dict[str, tuple[float | None, float | None]]:
     """Per engine: (weekly % used, short-window % used); None when unknown."""
     from . import engines
-    from .monitor import quota
-    claude, codex = quota() or {}, quota_codex()
+    readings = _readings()
+    claude, codex = readings["claude"], readings["codex"]
     claude_week = _number(claude.get("seven_day")) if claude.get("known") else None
     claude_short = 100.0 if engines.usage_hold() else (_number(claude.get("five_hour")) if claude.get("known") else None)
     codex_week = _codex_window(codex, WEEK_MINUTES) if codex.get("known") else None

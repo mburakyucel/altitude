@@ -69,29 +69,19 @@ const pollInterval = () => (chatStreaming ? false : 20_000);
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
 /**
- * monitor.quota(): the Claude seat's two windows. `known` is the routing contract — false once the
- * newest statusline snapshot passes its freshness age. `stale` then says the figures are still
- * here, only old; a quota with neither figure is genuinely unknown. Reset times are epoch seconds.
+ * One seat's reading, as that seat reports it. A seat names either the two windows a statusline
+ * snapshot carries or windows that name their own length in minutes; a window the seat does not
+ * report is absent, never zero. `known` is the routing contract — false once the snapshot behind it
+ * passes its freshness age; `stale` then says the figures are still here, only old, and a reading
+ * with no figure at all is genuinely unknown, with `why` saying what would produce one.
  */
-export const QuotaSchema = z
+export const SeatQuotaSchema = z
   .object({
     known: z.boolean(),
     five_hour: z.number().nullish(),
     seven_day: z.number().nullish(),
     five_hour_resets: z.number().nullish(),
     seven_day_resets: z.number().nullish(),
-    stale: z.boolean().nullish(),
-    at: z.number().nullish(),
-  })
-  .passthrough();
-
-/**
- * route.quota_codex(): the Codex seat's account-wide windows. Each window names its own length in
- * minutes; a window the provider does not report is absent, never zero. Resets are ISO strings.
- */
-export const CodexQuotaSchema = z
-  .object({
-    known: z.boolean(),
     primary_used: z.number().nullish(),
     primary_window_minutes: z.number().nullish(),
     primary_resets: z.string().nullish(),
@@ -99,9 +89,19 @@ export const CodexQuotaSchema = z
     secondary_window_minutes: z.number().nullish(),
     secondary_resets: z.string().nullish(),
     plan_type: z.string().nullish(),
+    at: z.number().nullish(),
     read_at: z.string().nullish(),
     stale: z.boolean().nullish(),
     why: z.string().nullish(),
+  })
+  .passthrough();
+
+/** route.seats(): one seat per configured engine, in the seam's order, under the seam's own label. */
+export const MonitorSeatSchema = z
+  .object({
+    engine: z.string(),
+    label: z.string(),
+    quota: SeatQuotaSchema,
   })
   .passthrough();
 
@@ -200,7 +200,7 @@ export const OverviewSchema = z
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
     wip: WipSchema,
-    quota: QuotaSchema,
+    quota: SeatQuotaSchema,
     engines: z.array(EngineReadoutSchema).default([]),
     /** The folders First run scans, named relative to home. */
     roots: z.array(z.string()).default([]),
@@ -300,8 +300,7 @@ export const SessionSchema = z
 
 export const MonitorSchema = z
   .object({
-    quota: QuotaSchema,
-    quota_codex: CodexQuotaSchema.nullish(),
+    seats: z.array(MonitorSeatSchema).nullish(),
     routing: z.array(RoutingRowSchema).nullish(),
     sessions: z.array(SessionSchema),
     agents: z.unknown().nullish(),
@@ -368,8 +367,7 @@ export const ChatViewSchema = z
 
 export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough();
 
-export type Quota = z.infer<typeof QuotaSchema>;
-export type CodexQuota = z.infer<typeof CodexQuotaSchema>;
+export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;

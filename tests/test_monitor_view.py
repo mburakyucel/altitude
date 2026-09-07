@@ -28,8 +28,10 @@ class TestQuotaAge(AltitudeCase):
         super().setUp()
         self.private_ledgers()
 
-    def test_no_snapshot_at_all_is_unknown(self):
-        self.assertEqual(monitor.quota(), {"known": False})
+    def test_no_snapshot_at_all_is_unknown_and_says_what_produces_a_reading(self):
+        quota = monitor.quota()
+        self.assertFalse(quota["known"])
+        self.assertIn("alt install-statusline", quota["why"])
 
     def test_a_fresh_snapshot_reports_its_reset_times_and_when_it_was_taken(self):
         at = int(time.time())
@@ -132,8 +134,26 @@ class TestRoutingView(AltitudeCase):
         self.assertIn("staying on codex", row["why"])
 
 
+class TestSeats(AltitudeCase):
+    """Only the engine seam knows which reading belongs to which engine."""
+
+    def setUp(self):
+        super().setUp()
+        self.private_ledgers()
+
+    def test_one_seat_per_configured_engine_in_the_seams_order_carries_that_seats_reading(self):
+        write_snapshot(config.MONITOR_DIR / "statusline-s1.json", int(time.time()))
+        (config.MONITOR_DIR / route.QUOTA_CODEX).write_text(json.dumps({"known": False, "why": "Codex binary not found"}))
+        seats = route.seats()
+        self.assertEqual([row["engine"] for row in seats], list(config.ENGINES))
+        self.assertEqual([row["label"] for row in seats], [config.ENGINE_LABELS[e] for e in config.ENGINES])
+        by_engine = {row["engine"]: row["quota"] for row in seats}
+        self.assertEqual(by_engine["claude"], monitor.quota())
+        self.assertEqual(by_engine["codex"]["why"], "Codex binary not found")
+
+
 class TestMonitorApi(AltitudeCase):
-    """/api/monitor carries both seats and the routing view under their own keys."""
+    """/api/monitor carries the seats and the routing view under their own keys."""
 
     def setUp(self):
         super().setUp()
@@ -168,10 +188,12 @@ class TestMonitorApi(AltitudeCase):
                 raw += chunk
         return json.loads(raw.split(b"\r\n\r\n", 1)[1])
 
-    def test_the_payload_names_both_seats_and_the_routing_view(self):
+    def test_the_payload_names_the_seats_by_engine_and_the_routing_view(self):
         body = self.get("/api/monitor")
-        self.assertEqual(set(body), {"quota", "quota_codex", "routing", "sessions", "agents"})
-        self.assertEqual(body["quota_codex"]["why"], "Codex binary not found")
+        self.assertEqual(set(body), {"seats", "routing", "sessions", "agents"})
+        self.assertEqual([row["engine"] for row in body["seats"]], list(config.ENGINES))
+        seat = next(row for row in body["seats"] if row["engine"] == "codex")
+        self.assertEqual((seat["label"], seat["quota"]["why"]), ("Codex", "Codex binary not found"))
         self.assertIsNone(body["routing"][0]["engine"])
 
     def test_task_and_monitor_apis_expose_model_under_their_public_field_names(self):

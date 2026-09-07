@@ -29,7 +29,10 @@ function overviewWith(rows = engines) {
   };
 }
 
-const monitor = {
+// The seat rows the seam sends: engine, the seam's label, and that seat's reading whole.
+const claudeSeat = {
+  engine: "claude",
+  label: "Claude",
   quota: {
     known: true,
     five_hour: 12,
@@ -38,8 +41,12 @@ const monitor = {
     seven_day_resets: inHours(30),
     at: agoEpoch(3),
   },
-  // The live seat reports one weekly window and no second one: absent, never zero.
-  quota_codex: {
+};
+// The live seat reports one weekly window and no second one: absent, never zero.
+const codexSeat = {
+  engine: "codex",
+  label: "Codex",
+  quota: {
     known: true,
     primary_used: 71,
     primary_window_minutes: 10_080,
@@ -49,6 +56,10 @@ const monitor = {
     plan_type: "pro",
     read_at: ago(6),
   },
+};
+
+const monitor = {
+  seats: [claudeSeat, codexSeat],
   routing: [
     { role: "l3", project: "altitude", pin: null, current: "claude", engine: "claude",
       why: "staying on claude: codex has 4.0 points more weekly headroom, under the 15-point switch margin" },
@@ -175,8 +186,10 @@ describe("Monitor", () => {
   it("keeps an aged figure visible and labels it stale", async () => {
     mockFetch({
       ...monitor,
-      quota: { ...monitor.quota, known: false, stale: true, at: agoEpoch(200) },
-      quota_codex: { ...monitor.quota_codex, known: false, stale: true, read_at: ago(200) },
+      seats: [
+        { ...claudeSeat, quota: { ...claudeSeat.quota, known: false, stale: true, at: agoEpoch(200) } },
+        { ...codexSeat, quota: { ...codexSeat.quota, known: false, stale: true, read_at: ago(200) } },
+      ],
       sessions: [{ ...monitor.sessions[0], at: ago(12) }],
     });
     renderApp({ route: "/monitor" });
@@ -203,8 +216,10 @@ describe("Monitor", () => {
 
   it("explains a seat with no reading, a role with no engine, and an empty session list", async () => {
     mockFetch({
-      quota: { known: false },
-      quota_codex: { known: false, why: "Codex binary not found" },
+      seats: [
+        { ...claudeSeat, quota: { known: false, why: "needs the statusline wrapper (alt install-statusline) and one interactive session" } },
+        { ...codexSeat, quota: { known: false, why: "Codex binary not found" } },
+      ],
       routing: [
         { role: "l3", project: "altitude", pin: "codex", current: null, engine: null,
           why: "forced codex is unavailable: weekly window exhausted" },
@@ -225,7 +240,7 @@ describe("Monitor", () => {
   });
 
   it("shows one gauge when one engine is configured, with no empty second column", async () => {
-    mockFetch(monitor, overviewWith([claudeRow]));
+    mockFetch({ ...monitor, seats: [claudeSeat] }, overviewWith([claudeRow]));
     renderApp({ route: "/monitor" });
 
     expect(await screen.findByRole("region", { name: "Claude" })).toBeInTheDocument();
@@ -234,7 +249,10 @@ describe("Monitor", () => {
   });
 
   it("takes every engine name from the seam's rows and spells none itself (decision 8)", async () => {
-    mockFetch(monitor, overviewWith([
+    mockFetch({
+      ...monitor,
+      seats: [{ ...claudeSeat, label: "Seat one" }, { ...codexSeat, label: "Seat two" }],
+    }, overviewWith([
       { ...claudeRow, label: "Seat one" },
       { ...codexRow, label: "Seat two" },
     ]));
