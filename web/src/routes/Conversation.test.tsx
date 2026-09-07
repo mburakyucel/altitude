@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { ChatView } from "../data/api";
+import { FakeMediaRecorder, installVoiceBrowser } from "../components/voiceTest";
 
 /*
  * The project conversation (SPEC.md §3.3, §3.4, §4.1, §4.2): rows, system lines and groups, the states
@@ -134,6 +135,25 @@ function liveReply() {
 
 describe.each([390, 1440])("project switching at %ipx", (width) => {
   const field = (name: string) => screen.getByRole("textbox", { name: `Message L3 about ${name}-project` });
+
+  it("releases the source microphone on switching without sending or transcribing its recording", async () => {
+    const { fetchMock } = projectChats(() => { throw new Error("No recording should be submitted"); });
+    const { track } = installVoiceBrowser();
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    expect(track.stop).not.toHaveBeenCalled();
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    expect(FakeMediaRecorder.instances[0]?.state).toBe("inactive");
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    expect(field("beta")).toHaveValue("");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+  });
 
   it("discards unsent drafts on switching either direction while retaining only the project's history", async () => {
     projectChats(() => { throw new Error("No draft should be submitted"); });

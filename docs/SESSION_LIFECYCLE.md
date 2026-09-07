@@ -239,6 +239,8 @@ leaves mid-stream. Switching projects mounts a separate conversation: draft, pen
 streamed text and local errors leave the screen. Concurrent sends and late responses retain their
 original project; returning reads that project's history, queue and active turn. A stored failed
 turn offers Retry only in its owning conversation. Unsent drafts are not saved across switches.
+Leaving a voice composer stops its recorder, releases microphone tracks and cancels transcription;
+an outstanding microphone permission or transcription result cannot populate the new conversation.
 L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in

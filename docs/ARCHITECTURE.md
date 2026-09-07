@@ -373,7 +373,9 @@ under the reply. The composer's engine pill pins the project's L3 to one configu
 the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. The conversation component is keyed by project, like its query cache:
-switching projects discards the draft, pending bubble, stream and composer error state. Outstanding
+switching projects discards the draft, pending bubble, stream and composer error state. Composer
+unmount stops the recorder and releases its microphone tracks through the recorder's own stream;
+pending transcription is cancelled and cannot update the destination draft. Outstanding
 callbacks and cache updates retain the source project. The destination renders its own history,
 queue and active turn; switching back reconstructs those server records, including Retry for a
 failed turn, without restoring an unsent draft. `GET /api/chat` reports the server-owned active turn as a stable id, start time,

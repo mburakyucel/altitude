@@ -9,12 +9,14 @@ export class FakeMediaRecorder {
 
   state: RecordingState = "inactive";
   mimeType: string;
+  readonly stream: MediaStream;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   onerror: (() => void) | null = null;
   stopCalls = 0;
 
-  constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+  constructor(stream: MediaStream, options?: MediaRecorderOptions) {
+    this.stream = stream;
     this.mimeType = options?.mimeType ?? "audio/mp4";
     FakeMediaRecorder.instances.push(this);
   }

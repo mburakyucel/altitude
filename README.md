@@ -123,6 +123,8 @@ license has been selected; public release is a separate milestone.
 Project conversations keep their own history and waiting messages. Switching projects clears the
 unsent draft and local reply state; a turn already sent finishes in its original project. Returning
 to that project shows its saved history and any active turn. Retry sends to the displayed project.
+Switching also stops voice recording and releases the microphone; a late transcription cannot fill
+the destination draft.
 
 ## Project faults
 

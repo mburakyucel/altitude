@@ -167,7 +167,7 @@ on both, including switching back before or after a response finishes:
 | Both projects have sent a turn | Each conversation shows only its own turn. Either completion order preserves the other project's draft and reply. |
 | Late HTTP refusal or stream error | Beta's draft and send state stay its own; no Alpha error or Retry appears there. An unaccepted draft is not saved after leaving. |
 | Switch back to a failed accepted turn | Alpha's stored prompt and failed-turn Retry appear only in Alpha; Retry resends that prompt to Alpha. |
-| Listening, transcribing or microphone denied | Capture is cancelled on leaving; late transcription cannot fill Beta's draft. The new composer has its own microphone state. |
+| Listening, transcribing or microphone denied | Leaving stops recording, releases microphone tracks and cancels transcription; late results cannot fill Beta's draft. The new composer has its own microphone state. |
 
 `web/e2e/project-isolation.pw.ts` walks these transitions with fictional projects and a disposable
 file-backed service; delayed refusals and microphone results are controlled browser overlays.
