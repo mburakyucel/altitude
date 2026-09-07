@@ -149,9 +149,14 @@ after restart. A turn that ends without a
 report, a block, or a completion blocks the task with its result error or stderr tail, on either engine. A
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
-and only that project's role-fenced altd Unix socket is reachable. A Claude L3 turn uses an equivalent runtime cwd,
+and a required stdio MCP coordinator tool forwards structured requests to that project's role-fenced altd Unix socket.
+The adapter runs isolated Python from the protected deployment checkout, outside the command sandbox; it
+executes no shell commands and grants no filesystem or service authority to the model. Only this tool is
+approved for unattended use; altd continues to authorize each verb. Linux Codex proxy mode denies creation
+of AF_UNIX sockets, and its proxy Unix allowlist is macOS-only, so a filesystem read rule cannot enable the
+shell wrappers. The command sandbox keeps networking disabled. A Claude L3 turn uses an equivalent runtime cwd,
 `dontAsk` with unattended prompts denied, restricted settings, only Read/Grep/Glob/Bash, no editing
-tools, and exact read/`alt` command rules. Runtime shims send every `alt` invocation plus authenticated GitHub
+tools, and exact read/`alt` command rules. Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
