@@ -166,8 +166,11 @@ starts a fresh L3 through the production launcher, observes a successful coordin
 cross-project refusal, and checks repository and user-bus denials from that session's shell. Activation
 uses the normal merged-change quiet point, followed by the same fresh-session acceptance check.
 
-An existing Claude L3 session that predates this confinement policy is rotated before its next turn. Each engine
-keeps its own resumable L3 session after that boundary is established.
+An L3 session on either engine that predates this confinement policy is rotated before its next turn.
+The common session save records the version, so each engine then resumes its own current conversation.
+This also migrates legacy Codex conversations onto the MCP transport: changing launch configuration alone
+does not replace their persisted developer instructions on resume. The next ordinary Altitude turn owns
+this one-time rotation; activation needs no manual session reset or task action.
 
 Both engines launch L2 workers through the same transient user-unit command builder, outside altd's
 cgroup. Claude runs foreground `-p --output-format stream-json` inside its own unit, with its settings,

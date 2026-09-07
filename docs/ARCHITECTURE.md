@@ -154,7 +154,9 @@ The adapter runs isolated Python from the protected deployment checkout, outside
 executes no shell commands and grants no filesystem or service authority to the model. Only this tool is
 approved for unattended use; altd continues to authorize each verb. Linux Codex proxy mode denies creation
 of AF_UNIX sockets, and its proxy Unix allowlist is macOS-only, so a filesystem read rule cannot enable the
-shell wrappers. The command sandbox keeps networking disabled. A Claude L3 turn uses an equivalent runtime cwd,
+shell wrappers. The command sandbox keeps networking disabled. The common session confinement version rotates
+legacy conversations once before their next turn, so a resumed conversation cannot retain the old transport
+instructions after activation; current conversations then resume normally. A Claude L3 turn uses an equivalent runtime cwd,
 `dontAsk` with unattended prompts denied, restricted settings, only Read/Grep/Glob/Bash, no editing
 tools, and exact read/`alt` command rules. Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
