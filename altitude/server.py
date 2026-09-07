@@ -245,6 +245,13 @@ def request_daemon_task_operation(project: str, slug: str, operation: str, reaso
 
 def l3_verb_request(project: str, request: dict) -> dict:
     """Execute one role-fenced ``alt`` verb or fixed read for a confined L3."""
+    with config.project_activity(project) as ready:
+        if not ready or not config.is_managed(project):
+            raise ValueError("This project is not managed. Add its folder again to attach L3.")
+        return _l3_verb_request(project, request)
+
+
+def _l3_verb_request(project: str, request: dict) -> dict:
     config.project(project)  # the per-project socket binds the authority; request JSON cannot select it
     kind = request.get("kind")
     if kind == "alt":
@@ -423,6 +430,8 @@ def stop_l3_verb_broker(broker: _L3VerbServer) -> None:
 def ensure_l3_verb_broker(project: str) -> _L3VerbServer:
     """Create the project's broker once, including for a project registered after altd started."""
     with _l3_verb_broker_guard:
+        if not config.is_managed(project):
+            raise ValueError("This project is not managed. Add its folder again to attach L3.")
         broker = _l3_verb_brokers.get(project)
         if broker is None:
             broker = start_l3_verb_broker(project)
@@ -431,10 +440,14 @@ def ensure_l3_verb_broker(project: str) -> _L3VerbServer:
 
 
 def remove_l3_verb_broker(project: str) -> None:
-    with _l3_verb_broker_guard:
-        broker = _l3_verb_brokers.pop(project, None)
-    if broker is not None:
-        stop_l3_verb_broker(broker)
+    # A delayed removal must not close the broker a concurrent re-registration has reused.
+    with S.project_lock(project):
+        if config.is_managed(project):
+            return
+        with _l3_verb_broker_guard:
+            broker = _l3_verb_brokers.pop(project, None)
+            if broker is not None:
+                stop_l3_verb_broker(broker)
 
 
 def stop_l3_verb_brokers() -> None:
@@ -448,6 +461,8 @@ def stop_l3_verb_brokers() -> None:
 def request_l3_drain(project: str) -> bool:
     """Ask the project's one drain loop to run. A request that arrives while the loop is finishing
     is remembered, so a turn boundary cannot miss a message queued at the same instant."""
+    if not config.is_managed(project):
+        return False
     key = f"l3-queue:{project}"
     with _bg_guard:
         _l3_drain_requested.add(project)
@@ -463,12 +478,17 @@ def drain_l3_queue(project: str) -> None:
     boundary rather than at the next tick. Requests coalesce into this keyed loop instead of nesting
     another; if another turn owns L3, that turn's completion makes the next request."""
     key = f"l3-queue:{project}"
-    ensure_l3_verb_broker(project)
     while True:
         with _bg_guard:
             _l3_drain_requested.discard(project)
-        while l3.deliver_queued(project):
-            pass
+        while True:
+            with config.project_activity(project) as ready:
+                if not ready or not config.is_managed(project):
+                    break
+                ensure_l3_verb_broker(project)
+                delivered = l3.deliver_queued(project)
+            if not delivered:
+                break
         with _bg_guard:
             if project in _l3_drain_requested and not l3.busy(project):
                 continue
@@ -481,13 +501,19 @@ def drain_l3_queue(project: str) -> None:
 def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
     """Run one server-owned turn and request its queue drain at the turn boundary, success or error."""
     try:
-        ensure_l3_verb_broker(project)
-        return l3.turn(project, prompt, **kwargs)
+        with config.project_activity(project) as ready:
+            if not ready or not config.is_managed(project):
+                return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
+            ensure_l3_verb_broker(project)
+            return l3.turn(project, prompt, **kwargs)
     finally:
         request_l3_drain(project)
 
 
 def start_l3(project: str) -> None:
+    if l3.queued(project):
+        request_l3_drain(project)
+        return
     # The start reply is a conversation with Burak, not a turn log.
     server_l3_turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
                             "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
@@ -498,6 +524,8 @@ def start_l3(project: str) -> None:
 def restart_notice() -> None:
     """One message per project with active tasks: L3 resumes what a fault had stopped and leaves Burak's to him."""
     for project in config.load_projects():
+        if not config.is_managed(project):
+            continue
         active = [t for t in S.list_tasks(project) if t["state"] in ("running", "blocked", "reported")]
         if not active:
             continue
@@ -515,8 +543,8 @@ def restart_notice() -> None:
 
 
 def on_l2_finished(project: str, item: dict) -> None:
-    with config.restart_lock() as ready:
-        if ready and not config.restart_in_progress():
+    with config.project_activity(project) as attached, config.restart_lock() as ready:
+        if attached and config.is_managed(project) and ready and not config.restart_in_progress():
             _on_l2_finished(project, item)
 
 
@@ -648,8 +676,8 @@ def report_fields(slug: str, v: dict) -> str:
 
 
 def report_turn(project: str, t: dict, v: dict) -> None:
-    with config.restart_lock() as ready:
-        if ready and not config.restart_in_progress():
+    with config.project_activity(project) as attached, config.restart_lock() as ready:
+        if attached and config.is_managed(project) and ready and not config.restart_in_progress():
             _report_turn(project, t, v)
 
 
@@ -821,42 +849,51 @@ def tick() -> None:
     except Exception as e:  # noqa: BLE001
         log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
+    for project in list(_l3_verb_brokers):
+        if not config.is_managed(project):
+            remove_l3_verb_broker(project)
     for project in list(config.load_projects()):
-        # Decision 11: a sole running worker's merge must activate without another dispatch or report.
-        try:
-            with dispatch.publication_settlement(project):
-                dispatch.self_deploy_fast_forward(project)
-        except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
-            incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
-        try:
-            dispatch.run_project_wip(project)
-            if l3.queue_path(project).exists():
-                request_l3_drain(project)
-            for slug in dispatch.pending_task_operations(project):
-                spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
-            for item in dispatch.poll(project):
-                spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
-            resume_stranded_reports(project)
-            for slug in dispatch.resume_due(project):
-                request_task_resume(project, slug)
-            dispatch_waiting(project)
-            for t in S.list_tasks(project, include_archive=True):
-                if t["state"] == "done" and not t.get("cleaned"):
-                    notes = dispatch.cleanup_after_done(project, t)
-                    deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
-                    if not deferred:
-                        with S.project_lock(project):
-                            t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
-                    S.append_event(project, t["slug"], "cleanup", notes=notes)
-                    log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
-        except Exception as e:  # noqa: BLE001
-            log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
-            incidents.system_fault("tick", f"{project}: {e}", project=project)
+        with config.project_activity(project) as ready:
+            if ready and config.is_managed(project):
+                tick_project(project)
     try:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
     morning_digest()
+
+
+def tick_project(project: str) -> None:
+    # Decision 11: a sole running worker's merge must activate without another dispatch or report.
+    try:
+        with dispatch.publication_settlement(project):
+            dispatch.self_deploy_fast_forward(project)
+    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
+    try:
+        dispatch.run_project_wip(project)
+        if l3.queue_path(project).exists():
+            request_l3_drain(project)
+        for slug in dispatch.pending_task_operations(project):
+            spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+        for item in dispatch.poll(project):
+            spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
+        resume_stranded_reports(project)
+        for slug in dispatch.resume_due(project):
+            request_task_resume(project, slug)
+        dispatch_waiting(project)
+        for t in S.list_tasks(project, include_archive=True):
+            if t["state"] == "done" and not t.get("cleaned"):
+                notes = dispatch.cleanup_after_done(project, t)
+                deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
+                if not deferred:
+                    with S.project_lock(project):
+                        t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
+                S.append_event(project, t["slug"], "cleanup", notes=notes)
+                log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
+    except Exception as e:  # noqa: BLE001
+        log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
+        incidents.system_fault("tick", f"{project}: {e}", project=project)
 
 
 _last_digest_day = [None]
@@ -1142,6 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
+                restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                 try:
                     with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default",
                                             wip=o.get("wip")) as entry:
@@ -1152,9 +1190,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": f"cannot establish the L3 verb boundary: {exc}"}, 500)
                 S.regen_state_md(name)
                 spawn(f"start:{name}", start_l3, name)
-                return self._json({"ok": True, "project": entry})
+                return self._json({"ok": True, "project": entry, "restored": restoring})
             if api == "project" and len(parts) > 2 and parts[2] == "remove":
-                config.remove_project(o["name"])
+                try:
+                    config.remove_project(o["name"])
+                except config.ProjectBusy as exc:
+                    return self._json({"error": str(exc)}, 409)
                 remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
             if api == "decide":
@@ -1205,7 +1246,6 @@ class Handler(BaseHTTPRequestHandler):
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
             if api == "l3" and len(parts) > 2 and parts[2] == "start":
-                # The project header's Start L3 for a managed project whose L3 never ran (SPEC.md §3.2).
                 name = config.project(o["project"]) and o["project"]
                 return self._json({"ok": True, "started": spawn(f"start:{name}", start_l3, name)})
             if api == "l3" and len(parts) > 2 and parts[2] == "engine":
@@ -1221,12 +1261,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "queued": l3.queued(project)})
             if api == "chat":
                 project, text = o["project"], (o.get("text") or "").strip()
+                if not config.is_managed(project):
+                    return self._json({"error": "This project is not managed. Add its folder again to attach L3."}, 409)
                 if not text:
                     return self._json({"error": "empty"}, 400)
                 if l3.busy(project) or config.restart_in_progress():
                     # Burak types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
-                    row = l3.queue_message(project, text, trigger="chat", role="burak")
+                    try:
+                        row = l3.queue_message(project, text, trigger="chat", role="burak")
+                    except ValueError as exc:
+                        return self._json({"error": str(exc)}, 409)
                     request_l3_drain(project)
                     return self._json({"queued": row})
                 self._stream_open()
@@ -1555,7 +1600,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
     srv.daemon_threads = True
     try:
         for project in config.load_projects():
-            ensure_l3_verb_broker(project)
+            if config.is_managed(project):
+                ensure_l3_verb_broker(project)
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()

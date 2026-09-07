@@ -16,10 +16,11 @@ export function readSelectedProject(): string | null {
   }
 }
 
-export function setSelectedProject(name: string): void {
+export function setSelectedProject(name: string | null): void {
   if (readSelectedProject() === name) return;
   try {
-    localStorage.setItem(PROJECT_KEY, name);
+    if (name === null) localStorage.removeItem(PROJECT_KEY);
+    else localStorage.setItem(PROJECT_KEY, name);
   } catch {
     // no persistence: the route still carries the project for this page
   }

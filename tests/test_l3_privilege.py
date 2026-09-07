@@ -616,7 +616,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         name = f"{self.project}-added"
         repo = self.tmp / "added-repo"; repo.mkdir()
         self.addCleanup(self._forget, name)
-        self.addCleanup(server.remove_l3_verb_broker, name)
+        self.addCleanup(server.stop_l3_verb_brokers)
         server.Handler._seen_clients.clear()
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         thread = server.threading.Thread(target=httpd.serve_forever, daemon=True); thread.start()
@@ -639,7 +639,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         name = f"{self.project}-cli-added"
         repo = self.tmp / "cli-added-repo"; repo.mkdir()
         self.addCleanup(self._forget, name)
-        self.addCleanup(server.remove_l3_verb_broker, name)
+        self.addCleanup(server.stop_l3_verb_brokers)
         added = self.alt("project", "add", name, "--path", str(repo), env={"ALTITUDE_ACTOR": "burak"})
         self.assertEqual(added.returncode, 0, added.stderr)
         self.assertFalse(l3.verb_socket_path(name).exists())

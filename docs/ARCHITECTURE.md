@@ -149,6 +149,23 @@ whose WIP receipt still matches reuse the request and event. CLI and HTTP regist
 engine pins and WIP changes serialize registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
 
+Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
+HTTP and CLI. It unregisters an idle project and ends its coordination. Queued, running, blocked
+and reported tasks must finish or be rejected first, including blocked tasks with stopped workers.
+Archived records are also inspected for live workers, dispatch/resume claims and unfinished task
+operations. A project activity file lock fences removal against L3 turns, broker calls, report
+handling and timer processing across processes. Task creation and operator queue admission
+recheck registration under the project state lock, so removal cannot abandon racing work.
+
+Removed projects leave the managed list; their broker is closed (CLI removal is noticed by the
+next tick, with broker calls refused immediately). Repository files, remaining worktrees and the
+project's Altitude directory stay on disk. Registration with the same project name and repository
+attaches L3 again and restores saved conversations, task archives, provider sessions and queued
+messages. The startup path drains the saved FIFO before any introductory turn. Registration
+reports restored conversation history so First run waits for successful registration and opens
+that history without interpreting its old replies or errors as a fresh startup result. Reset
+remains a separate session rotation within a managed project.
+
 `STATE.md` is regenerated from active task records and contains only work relevant to the next L3
 turn. Archived tasks and incident history remain available as audit evidence without being loaded
 into L3 context.
@@ -266,6 +283,8 @@ checks rendered content, console/uncaught errors, API failures and viewport hori
 The same specs run at 390×844 with mobile user agent and touch and at 1440×900. Component specs use
 `walkthrough.ts` for actions, visible text/role assertions for appearances and removals, and named
 screenshots; `project-menu.pw.ts` demonstrates confirmation and cancellation without mutating state.
+`project-lifecycle.pw.ts` uses an isolated file-backed service and a simulated provider reply to walk
+removal and attachment again through First run, including pending, refused and failed actions.
 Screenshots, traces and the HTML report live in ignored `web/ui-artifacts/`. Bundled Chromium runs
 headlessly with a temporary profile and its browser sandbox disabled inside the worker sandbox.
 `pnpm ui` sets `PLAYWRIGHT_BROWSERS_PATH` to the Altitude home's shared `browsers/` directory unless

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Outlet, useParams } from "react-router";
+import { Link, Outlet, useParams } from "react-router";
 import { ToastViewport } from "../data/Toast";
 import { useOverview } from "../data/api";
 import FirstRun from "../routes/FirstRun";
@@ -9,7 +9,7 @@ import { PhoneHeader } from "./PhoneHeader";
 import { managedProjects } from "./projects";
 import { Rail } from "./Rail";
 import { RestartBanner } from "./RestartBanner";
-import { setSelectedProject } from "./scope";
+import { setSelectedProject, useSelectedProject } from "./scope";
 import { TabBar } from "./TabBar";
 
 /** Layout route: rail beside the main pane on desktop; header, content, tab bar on the phone (SPEC.md §2.2). */
@@ -45,10 +45,16 @@ export default function AppShell() {
 
   // The scope rule: a project route selects its project (SPEC.md §2.3).
   const routeProject = params.name ?? "";
-  const managedNames = managedProjects(overview.data).map((p) => p.name).join("\n");
+  const selected = useSelectedProject();
+  const projects = managedProjects(overview.data);
+  const managedNames = projects.map((p) => p.name).join("\n");
+  const missingProject = overview.isSuccess && routeProject && !projects.some((row) => row.name === routeProject);
   useEffect(() => {
-    if (routeProject && managedNames.split("\n").includes(routeProject)) setSelectedProject(routeProject);
-  }, [routeProject, managedNames]);
+    if (!overview.isSuccess) return;
+    const names = managedNames.split("\n").filter(Boolean);
+    if (routeProject && names.includes(routeProject)) setSelectedProject(routeProject);
+    else if (selected && !names.includes(selected)) setSelectedProject(names[0] ?? null);
+  }, [routeProject, managedNames, selected, overview.isSuccess]);
 
   return (
     <div className="shell" ref={shell} data-phone={phone || undefined} style={LAYOUT_SIZES}>
@@ -64,7 +70,15 @@ export default function AppShell() {
       )}
       <main className="shell-main">
         {phone ? null : <RestartBanner restart={overview.data?.restart} />}
-        <Outlet />
+        {missingProject ? (
+          <div className="page first-run-page">
+            {projects.length ? <>
+              <h1 className="text-card-title font-semibold">Project not managed</h1>
+              <p className="text-muted">{routeProject} is not managed by Altitude. Select a project or add its folder again.</p>
+              <Link className="link" to="/projects">Open projects</Link>
+            </> : <FirstRun overview={overview} />}
+          </div>
+        ) : <Outlet />}
       </main>
       {phone ? <TabBar overview={overview.data} /> : null}
       {addingFolder ? (

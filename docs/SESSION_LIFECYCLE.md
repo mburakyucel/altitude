@@ -195,6 +195,19 @@ blocks the task with a system fault and incident carrying the engine's result er
 
 ## L3 sessions and provider changes
 
+The project header's **Remove project** action and `alt project remove <name>` detach L3 by
+unregistering the project. Removal is permitted only after all tasks finish or are rejected and
+their workers and operations have ended. An active L3 turn or report/timer operation must finish
+first. The cross-process project activity lock applies to CLI and server turns alike; queued L3
+messages remain saved and do not themselves prevent removal. No task is reassigned or stopped.
+
+The app leaves the removed project and reconciles its selection; stale project/task/report routes
+show an unmanaged state, or First run when nothing remains managed. The repository, remaining
+worktrees, provider sessions, conversations, task archives and queue stay on disk. Adding the same
+project name and repository attaches L3 again, restores history and delivers the waiting FIFO.
+Normal provider selection and context rotation still apply. Reset rotates a session on its next
+turn and does not remove a project from management.
+
 L3 stores separate Claude and Codex session records. The conversation composer's engine pill pins
 the project's L3 to one engine, for chat and server-triggered turns alike, until it is set back to
 Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never

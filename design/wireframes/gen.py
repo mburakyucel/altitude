@@ -871,6 +871,18 @@ state_sheet("TaskStates", "Task page states", [
     ("Message refused", "bubble removed; editable draft returned", composer("Message the L2", engine=False, draft="Check the phone header too.", hint='<span class="danger">Not sent. Retry.</span>')),
 ], 1480)
 
+state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
+    ("Project actions", "one flow on phone and desktop", '<p>Reset L3 conversation</p><p>Remove project</p>'),
+    ("Removal confirmation", "detaches L3; retains files and history", '<p>Remove example from Altitude?</p><p class="muted">This detaches L3. The repository, remaining worktrees, saved history and queued messages stay on disk. Add the same folder and name again to attach L3 and restore history. Finish or reject existing tasks first.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
+    ("Cancelled", "Escape and outside click dismiss before submission", '<p>Reset L3 conversation</p><p>Remove project</p><p class="muted">The project and its conversation remain available.</p>'),
+    ("Pending", "all competing actions disabled; no dismissal", '<span class="btn primary" aria-disabled="true">Removing…</span> <span class="btn" aria-disabled="true">Cancel</span>'),
+    ("Denied", "keep confirmation with an actionable reason", '<p class="danger">Finish or reject the 1 unfinished task(s) first: existing-work.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
+    ("Failed", "retry remains in the confirmation", '<p class="danger">Could not remove the project. Try again.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
+    ("Removed", "managed row and old views leave", '<h3>Needs you</h3><p class="muted">A remaining project is selected. With none managed, First run offers the retained folder.</p><h3>Project not managed</h3><p class="muted">Select a project or add its folder again.</p>'),
+    ("Attach L3 again", "existing folder-add flow restores history", '<p>example <span class="btn primary">Start L3</span></p><p class="muted">L3 is starting…</p><p class="danger">Registration unavailable. Try again.</p><span class="btn">Retry</span>'),
+    ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
+], 1400)
+
 state_sheet("ConversationStates", "Conversation and report states", [
     ("L3 never ran", "header offers Start L3", '<span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p>'),
     ("Conversation empty", "L3 has run before", '<p class="muted">Say what you want done. L3 answers or creates one task.</p>'),
@@ -965,6 +977,7 @@ ROUTES = [
     ("Decision card states", "DecisionStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
+    ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 sizes = {name: (w, h) for name, w, h in BOARDS}
 listed = {n for _, d, m in ROUTES for n in (d, m) if n}

@@ -36,6 +36,7 @@ Phone headers, composers and tab bars stay docked while content scrolls inside t
 | Decision card states | `DecisionStates.html` | Waiting, follow-up sent, answer arrived, asked by an L2, deciding, decided, failed. |
 | System turns in chat | `SystemTurnStates.html` | A landed report, a fault, a restart, or an FYI is one folded line in the conversation: one turn, several grouped, expanded, in progress, fault, FYI. |
 | Conversation and report states | `ConversationStates.html` | L3 never started, empty conversation, loading and cached-error rows, report loading, empty and error. |
+| Project lifecycle states | `ProjectLifecycleStates.html` | The removal confirmation that detaches L3, cancellation, pending, denial/error, navigation, and attachment again with saved history. The same controls fit phone and desktop. |
 
 The restart banner follows `SPEC.md` §3.13: running workers can remain while dispatch, L3 and
 verification reach the quiet point. Monitor readings and session snapshots show their age.
