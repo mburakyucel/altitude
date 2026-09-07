@@ -165,8 +165,8 @@ Auto or an engine name; recipient pill "To L3 / To the L2" on the decision page;
 conversation); microphone button; Send button (accent circle, arrow). A hint line under the field,
 12px muted. Phone fields are 16px so iOS does not zoom.
 
-Keyboard: Enter sends, Shift+Enter inserts a newline, Ctrl/⌘+M starts or stops the microphone,
-Esc cancels a recording.
+Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
+a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a recording.
 
 | State | What is on screen | What changes |
 | --- | --- | --- |
@@ -174,8 +174,8 @@ Esc cancels a recording.
 | Typing | draft text, Send enabled | Enter or Send: the draft becomes a bubble at once, the field clears |
 | Sending | the bubble shows at 60% until the server accepts it | accepted: full opacity; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
 | Busy (L3 mid-turn) | Send reads **Queue**; hint reads "L3 is mid-turn · runs next" | Queue appends to `queued[]`; a queued row appears under the conversation in muted text with **Remove** (`POST /api/chat/remove`) |
-| Listening | mic turns into a stop control, a live waveform and a timer replace the placeholder, the draft stays as it was | Stop or Enter: Transcribing; Esc: back to the previous state, nothing added |
-| Transcribing | the waveform freezes, "Transcribing…" in the hint, the field stays editable | success: Landed; failure: hint reads "Could not transcribe. Typing works." and the draft is unchanged |
+| Listening | Cancel, Stop, and Send (accent circle, arrow), live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; Send or Enter: transcribe and send at once |
+| Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and Send/Queue disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
 | Landed | the transcript is appended to the draft, cursor at the end, Send enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
 | Denied | mic shows disabled; hint reads "Microphone blocked in the browser. Typing works." | stays until the page reloads with permission |
 | Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, or nothing when the browser lacks recording | typing unaffected |

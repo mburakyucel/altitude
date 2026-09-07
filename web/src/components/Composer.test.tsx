@@ -100,7 +100,7 @@ describe("Composer", () => {
     expect(screen.getByText("L3 answers or creates one task.")).toBeInTheDocument();
   });
 
-  it("Listening: the mic is a stop control with a timer and a cancel; Esc goes back with nothing added", async () => {
+  it.each(["Escape", "Cancel"])("Listening: Cancel, Stop, Send; %s goes back with nothing added", async (action) => {
     const { getUserMedia, track } = installVoiceBrowser();
     stubTranscribe("never used");
     const { user, field } = mount({ initial: "Keep this" });
@@ -109,12 +109,14 @@ describe("Composer", () => {
     const stop = await screen.findByRole("button", { name: "Stop voice input" });
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(screen.getByRole("button", { name: "Cancel voice input" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
     expect(screen.getByLabelText("Recording time")).toHaveTextContent("0:00");
     expect(field).toHaveAttribute("placeholder", "");
     expect(field).toHaveValue("Keep this");
 
     stop.focus();
-    await user.keyboard("{Escape}");
+    if (action === "Escape") await user.keyboard("{Escape}");
+    else await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeInTheDocument());
     expect(field).toHaveValue("Keep this");
     expect(track.stop).toHaveBeenCalled();
@@ -129,14 +131,12 @@ describe("Composer", () => {
     const onSubmit = vi.fn();
     const { user, field } = mount({ initial: "Fix the timer", onSubmit });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await screen.findByRole("button", { name: "Stop voice input" });
-    field.focus();
-    await user.keyboard("{Enter}");
-    // Enter in the field stops the recording (SPEC.md §3.6 Listening) and nothing was sent.
+    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
     expect(onSubmit).not.toHaveBeenCalled();
     expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(field).toBeEnabled();
 
     release();
@@ -150,14 +150,83 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 
-  it("failure: the hint reads Could not transcribe. Typing works. and the draft is unchanged", async () => {
+  it.each(["Send", "Enter", "Busy"])("Send at once (%s): transcribes then submits the combined draft through the normal path", async (action) => {
+    installVoiceBrowser();
+    let release: () => void = () => {};
+    stubTranscribe("and the tests", new Promise<void>((resolve) => (release = resolve)));
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Fix the timer", onSubmit, busy: action === "Busy" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    const stop = await screen.findByRole("button", { name: "Stop voice input" });
+    if (action === "Enter") {
+      stop.focus();
+      await user.keyboard("{Enter}");
+    } else await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Transcribing…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: action === "Busy" ? "Queue" : "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    // Enter during transcription cannot submit the old draft or schedule a second send.
+    field.focus();
+    await user.keyboard("{Enter}");
+    expect(onSubmit).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith("Fix the timer and the tests"));
+    expect(field).toHaveValue("");
+    expect(screen.queryByText("Transcribing…")).toBeNull();
+  });
+
+  it.each(["", "Keep this"])("Send at once: an empty transcript sends nothing and keeps draft '%s'", async (initial) => {
+    installVoiceBrowser();
+    stubTranscribe("  ");
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial, onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    field.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled());
+    expect(field).toHaveValue(initial);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(!initial);
+  });
+
+  it.each([false, true])("Send at once uses the current submit callback and disabled=%s after transcription", async (disabled) => {
+    installVoiceBrowser();
+    let release: () => void = () => {};
+    stubTranscribe("the transcript", new Promise<void>((resolve) => (release = resolve)));
+    const original = vi.fn();
+    const latest = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<Harness initial="Keep" onSubmit={original} />);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Transcribing…");
+    rerender(<Harness onSubmit={latest} disabled={disabled} />);
+    release();
+    await waitFor(() => expect(screen.queryByText("Transcribing…")).toBeNull());
+    expect(original).not.toHaveBeenCalled();
+    if (disabled) {
+      expect(latest).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveValue("Keep the transcript");
+    } else {
+      expect(latest).toHaveBeenCalledExactlyOnceWith("Keep the transcript");
+      expect(screen.getByRole("textbox")).toHaveValue("");
+    }
+  });
+
+  it.each(["Stop voice input", "Send"])("failure after %s: the hint reports it, the draft is unchanged, nothing sends", async (control) => {
     installVoiceBrowser();
     stubTranscribe(null);
-    const { user, field } = mount({ initial: "Draft stays" });
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Draft stays", onSubmit });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    await user.click(screen.getByRole("button", { name: control }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
     expect(field).toHaveValue("Draft stays");
+    expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
   });
 

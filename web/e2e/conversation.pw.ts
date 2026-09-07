@@ -19,6 +19,11 @@ type ChatView = Record<string, unknown> & { history: Row[]; active: unknown; bus
 const now = () => new Date().toISOString();
 const chatApi = (name: string) => `/api/chat/${name}`;
 
+test.afterEach(async ({ page }) => {
+  // Send/pin invalidations can still be reading an overlay when the browser context is disposed.
+  await page.unrouteAll({ behavior: "wait" });
+});
+
 function reportPrompt(slug: string): string {
   return [
     `Report landed for ${slug}.`,
@@ -497,8 +502,8 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   const project = await liveProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
-  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false }));
   await page.addInitScript(FAKE_MIC);
+  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
   let answer: "ok" | "fail" = "ok";
   let release: () => void = () => {};
   let gate = new Promise<void>((resolve) => (release = resolve));
@@ -514,16 +519,26 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
 
   await walk.open(project.path);
   await v.field.fill("Keep the draft");
-  await walk.state("01-listening", {
+  await walk.state("01-listening-three-controls-overlay", {
     action: () => v.mic.click(),
-    visible: [v.stop, v.cancel, wave, timer],
+    visible: [v.stop, v.cancel, v.send, wave, timer],
     hidden: [v.mic, transcribing],
   });
   await expect(v.field).toHaveValue("Keep the draft");
   await expect(v.field).toHaveAttribute("placeholder", "");
   await expect(timer).toHaveText(/^0:0\d$/);
-  await expect(v.send).toBeDisabled();
-  await walk.state("02-cancelled-with-esc", {
+  await expect(v.send).toBeEnabled();
+  const row = await v.main.locator(".composer-row").boundingBox();
+  expect(row).not.toBeNull();
+  for (const item of [v.cancel, wave, timer, v.stop, v.send]) {
+    const box = await item.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(0);
+    expect(box!.x).toBeGreaterThanOrEqual(row!.x);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(row!.x + row!.width + 1);
+    expect(Math.abs(box!.y + box!.height / 2 - (row!.y + row!.height / 2))).toBeLessThan(1);
+  }
+  await walk.state("02-cancelled-with-esc-overlay", {
     action: () => page.keyboard.press("Escape"),
     visible: [v.mic],
     hidden: [v.stop, v.cancel, wave, timer, transcribing],
@@ -534,15 +549,16 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await v.mic.click();
   await expect(v.stop).toBeVisible();
   await page.waitForTimeout(700);
-  await walk.state("03-transcribing", {
+  await walk.state("03-transcribing-overlay", {
     action: () => v.stop.click(),
     visible: [transcribing, wave],
     hidden: [v.stop, v.cancel],
   });
   await expect(v.mic).toBeDisabled();
+  await expect(v.send).toBeDisabled();
   await expect(v.field).toBeEnabled();
   release();
-  await walk.state("04-landed", {
+  await walk.state("04-landed-overlay", {
     action: () => expect(v.field).toHaveValue("Keep the draft and walk every state"),
     visible: [v.mic, v.send],
     hidden: [transcribing, wave, timer, v.main.getByText("and walk every state", { exact: true }), v.main.getByRole("region", { name: /transcript/i })],
@@ -559,13 +575,67 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await expect(v.stop).toBeVisible();
   await page.waitForTimeout(500);
   const failure = v.main.getByRole("alert").filter({ hasText: "Could not transcribe. Typing works." });
-  await walk.state("05-transcription-failed", {
-    action: () => v.stop.click(),
+  await walk.state("05-transcription-failed-overlay", {
+    action: () => v.send.click(),
     visible: [failure, v.mic],
     hidden: [transcribing, v.stop],
   });
   await expect(v.field).toHaveValue("Keep the draft and walk every state");
   await expect(v.mic).toBeEnabled();
+});
+
+test("voice: Send at once transcribes the draft into the normal pending bubble", async ({ page, request }, info) => {
+  const project = await liveProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await page.addInitScript(FAKE_MIC);
+  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
+  let releaseTranscript: () => void = () => {};
+  let releaseSend: () => void = () => {};
+  const transcriptGate = new Promise<void>((resolve) => (releaseTranscript = resolve));
+  const sendGate = new Promise<void>((resolve) => (releaseSend = resolve));
+  const posts: string[] = [];
+  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
+    await transcriptGate;
+    return route.fulfill({ json: { text: "and send this now" } });
+  });
+  await page.route((url) => url.pathname === "/api/chat", async (route) => {
+    posts.push((route.request().postDataJSON() as { text: string }).text);
+    await sendGate;
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: `${JSON.stringify({ t: "Received the voice message." })}\n${JSON.stringify({ done: { turn_id: "ui-voice" } })}\n`,
+    });
+  });
+  await walk.open(project.path);
+  await v.field.fill("Keep the draft");
+  await v.mic.click();
+  await expect(v.stop).toBeVisible();
+  await page.waitForTimeout(700);
+  const transcribing = v.main.getByText("Transcribing…", { exact: true });
+  await walk.state("01-send-at-once-transcribing-overlay", {
+    action: () => v.send.click(),
+    visible: [transcribing, v.main.locator(".composer-wave")],
+    hidden: [v.stop, v.cancel],
+  });
+  await expect(v.send).toBeDisabled();
+  await expect(v.mic).toBeDisabled();
+  await expect(v.field).toHaveValue("Keep the draft");
+  expect(posts).toEqual([]);
+  const pending = v.convo.locator(".msg-row[data-pending]");
+  releaseTranscript();
+  await walk.state("02-send-at-once-bubble-at-60-overlay", {
+    visible: [pending, v.bubble("Keep the draft and send this now")],
+    hidden: [transcribing, v.main.locator(".composer-wave")],
+  });
+  await expect(pending).toHaveCSS("opacity", "0.6");
+  await expect(v.field).toHaveValue("");
+  expect(posts).toEqual(["Keep the draft and send this now"]);
+  releaseSend();
+  await walk.state("03-send-at-once-accepted-overlay", {
+    visible: [v.convo.getByText("Received the voice message.", { exact: true })],
+    hidden: [pending, transcribing],
+  });
 });
 
 test("voice: denied and unavailable", async ({ page, request }, info) => {
@@ -581,7 +651,7 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   `);
   await walk.open(project.path);
   await v.field.fill("Typing still works");
-  await walk.state("01-denied", {
+  await walk.state("01-denied-overlay", {
     action: () => v.mic.click(),
     visible: [v.main.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.mic],
     hidden: [v.stop],
@@ -596,7 +666,7 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   const w = views(insecure, info);
   const insecureWalk = walkthrough(insecure, info);
   await insecureWalk.open(project.path);
-  await insecureWalk.state("02-unavailable-voice-needs-https", {
+  await insecureWalk.state("02-unavailable-voice-needs-https-overlay", {
     visible: [w.main.getByText("Voice needs HTTPS", { exact: true }), w.field, w.send],
     hidden: [w.mic, w.stop],
   });
