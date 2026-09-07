@@ -102,6 +102,18 @@ for the operator or an escalation is a Needs you card. After a restart L3 receiv
 the ones a fault had stopped. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
+Project registration stores `wip` only when explicitly supplied; the gate reads that override or
+`config.WIP_PER_PROJECT`. On the first registry load, a one-time migration removes stored caps equal
+to the legacy default of 3 and logs the affected projects, preserving approval and engine pins.
+`alt project set <name> --wip N --reason "…"` and `--unset-wip --reason "…"` are available to
+the operator and that project's L3; add and remove remain operator-only. Caps range from 1 to
+`WIP_PER_MACHINE`. Altd applies the durable `wip-request.json` before task dispatch on its next tick,
+regardless of task capacity, and records one `project-set` event with project, actor, reason, request
+id and outcome in the project's `events.jsonl`. Identical pending requests and completed retries
+whose WIP receipt still matches reuse the request and event. CLI and HTTP registration, removal,
+engine pins and WIP changes serialize registry writes under the project and registry locks.
+Re-registering a project is the operator's deliberate act, and the last registry write wins.
+
 `STATE.md` is regenerated from active task records and contains only work relevant to the next L3
 turn. Archived tasks and incident history remain available as audit evidence without being loaded
 into L3 context.

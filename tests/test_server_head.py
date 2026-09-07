@@ -1,11 +1,15 @@
 """HEAD responses match GET metadata without sending an entity body."""
 import socket
+import json
 import sys
 import threading
 import unittest
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, server
+from altitude import config, dispatch, server
 
 
 class _RecordingHTTPServer(server.ThreadingHTTPServer):
@@ -92,6 +96,63 @@ class TestHead(AltitudeCase):
         self.assertEqual(status, 501)
         self.assertEqual(self.httpd.errors, [])
         self.assertNotIn("Traceback", "\n".join(self.logs))
+
+
+class TestProjectRegistry(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.patch(server, "spawn", return_value=True)
+
+    def post(self, verb, **body):
+        request = urllib.request.Request(f"http://127.0.0.1:{self.httpd.server_port}/api/project/{verb}",
+                                         data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.load(response)
+
+    def test_sept7_http_registration_and_daemon_set_share_one_project_transaction(self):
+        dispatch.request_project_wip(self.project, 5, "test", actor="l3")
+        entered, release, set_finished = threading.Event(), threading.Event(), threading.Event()
+        def prepare(_project):
+            entered.set()
+            self.assertTrue(release.wait(3))
+        def set_wip():
+            result = dispatch.run_project_wip(self.project)
+            set_finished.set()
+            return result
+        with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=prepare), ThreadPoolExecutor() as pool:
+            add = pool.submit(self.post, "add", name=self.project, path=str(self.repo))
+            self.assertTrue(entered.wait(3))
+            setting = pool.submit(set_wip)
+            try:
+                self.assertFalse(set_finished.wait(.05), "the set waits for registration's project lock")
+            finally:
+                release.set()
+            self.assertNotIn("wip", add.result()["project"])
+            self.assertEqual(setting.result()["status"], "done")
+        self.assertEqual(config.project(self.project)["wip"], 5)
+        with mock.patch.object(server, "remove_l3_verb_broker"):
+            self.post("remove", name=self.project)
+        self.assertNotIn(self.project, config.load_projects())
+
+    def test_sept7_registration_rollback_preserves_other_projects_and_engine_pins(self):
+        original = config.project(self.project)
+        other = self.project + "-other"
+        self.register(other, wip=5)
+        def failed_setup(_project):
+            config.set_l3_engine(other, config.ENGINES[0])
+            raise RuntimeError("test broker unavailable")
+        with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=failed_setup):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post("add", name=self.project, path=str(self.repo), wip=4)
+        self.assertEqual(error.exception.code, 500)
+        self.assertEqual(config.project(self.project), original)
+        self.assertEqual(config.project(other)["wip"], 5)
+        self.assertEqual(config.project(other)["l3_engine"], config.ENGINES[0])
 
 
 if __name__ == "__main__":

@@ -153,6 +153,23 @@ class TestL3CheckoutConfinement(AltitudeCase):
                 server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "merge", "7"]})
         run.assert_not_called()
 
+    def test_sept7_l3_sets_wip_through_broker_but_cannot_register_or_cross_projects(self):
+        self.assertIn("Bash(alt project set *)", engines.L3_ALLOWED_TOOLS)
+        self.assertNotIn("Bash(alt project add *)", engines.L3_ALLOWED_TOOLS)
+        for options, expected in ((["--wip", "5"], 5), (["--unset-wip"], None)):
+            result = server.l3_verb_request(self.project, {
+                "kind": "alt", "args": ["project", "set", self.project, *options, "--reason", "test"]})
+            self.assertEqual(result["returncode"], 0, result["stderr"])
+            dispatch.run_project_wip(self.project)
+            self.assertEqual(config.project(self.project).get("wip"), expected)
+        events = [json.loads(line) for line in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
+        self.assertEqual([(e["actor"], e["reason"]) for e in events], [("l3", "test")] * 2)
+        for args in (["project", "add", "forbidden"], ["project", "remove", self.project],
+                     ["project", "set", "other", "--wip", "5", "--reason", "test"]):
+            result = server.l3_verb_request(self.project, {"kind": "alt", "args": args})
+            self.assertNotEqual(result["returncode"], 0)
+        self.assertNotIn("forbidden", config.load_projects())
+
     def test_i_20260903_075410_project_socket_ignores_a_forged_project(self):
         other = f"{self.project}-other"
         other_repo = self.tmp / "other-repo"; other_repo.mkdir()

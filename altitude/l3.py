@@ -25,22 +25,7 @@ _turn_local = threading.local()
 
 L3_CONFINEMENT_VERSION = 1
 L3_TOOLS = "Read,Grep,Glob,Bash"
-ALLOWED_TOOLS = ",".join((
-    "Read", "Grep", "Glob",
-    "Bash(alt state *)", "Bash(alt task new *)", "Bash(alt task reject *)",
-    "Bash(alt task report *)", "Bash(alt task messages *)", "Bash(alt task events *)",
-    "Bash(alt task status *)", "Bash(alt task show *)", "Bash(alt task list *)", "Bash(alt task message *)",
-    "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)",
-    "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
-    "Bash(alt fyi *)", "Bash(alt decisions *)", "Bash(alt monitor *)", "Bash(alt queue *)",
-    "Bash(alt repo *)", "Bash(alt pr *)", "Bash(alt l3 tools *)",
-    "Bash(alt incident new *)", "Bash(alt incident amend *)", "Bash(alt incident list *)",
-    "Bash(git log *)", "Bash(git diff --stat *)", "Bash(git show --stat *)",
-    "Bash(gh pr view *)", "Bash(gh pr list *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)",
-    "Bash(gh issue list *)", "Bash(gh issue view *)", "Bash(gh run list *)", "Bash(gh run view *)",
-    "Bash(gh run watch *)",
-    "Bash(journalctl --user -u altitude*)", "Bash(systemctl --user status altitude*)",
-))
+ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS
 
 
 def _write_executable(path: Path, text: str) -> None:
