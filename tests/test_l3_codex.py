@@ -12,6 +12,22 @@ class TestL3Sessions(AltitudeCase):
     def choice(engine):
         return {"engine": engine, "why": f"test chose {engine}", "quota": {}}
 
+    def test_live_model_is_saved_before_turn_finishes_and_replaced_on_resume(self):
+        def fake_codex(prompt, **kwargs):
+            model = "second-model" if kwargs["resume"] else "first-model"
+            metadata = {"session_id": "cx-1", "engine_model": model, "engine_reasoning_effort": "high"}
+            kwargs["on_session"](metadata)
+            live = l3.info(self.project)
+            self.assertEqual(live["engine_model"], model)
+            self.assertEqual(live["sessions"]["codex"]["engine_reasoning_effort"], "high")
+            return {"text": "answer", "reported_session_id": "cx-1", **metadata}
+
+        with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
+             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+            l3.turn(self.project, "first")
+            l3.turn(self.project, "second")
+        self.assertEqual(l3.info(self.project)["sessions"]["codex"]["engine_model"], "second-model")
+
     def test_codex_second_turn_resumes_the_same_thread(self):
         calls = []
 

@@ -21,6 +21,7 @@ def sessions() -> list[dict]:
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
             out.append({"kind": "l3", "project": name, "session_id": inf.get("session_id"), "context_percent": inf.get("context_percent"),
+                    "model": inf.get("engine_model"), "engine_reasoning_effort": inf.get("engine_reasoning_effort"),
                     "engine": inf.get("engine_last") or "claude", "context_state": engines.context_state(
                         inf.get("context_percent"), inf.get("engine_last") or "claude"),
                         "at": inf.get("last_turn"), "turns": inf.get("turns"), "rotate_next": inf.get("rotate_next")})
@@ -41,7 +42,11 @@ def sessions() -> list[dict]:
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
                             "at": live.get("at"), "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
+                            "model": t.get("engine_model"), "engine_reasoning_effort": t.get("engine_reasoning_effort"),
                             "context_state": engines.context_state(cp, engine)})
+    for row in out:
+        if not row.get("model"):
+            row.pop("model", None)
     return out
 
 

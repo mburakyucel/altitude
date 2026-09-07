@@ -494,6 +494,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
                           if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
         task.update({"dispatching": S.now(), "l2_engine": engine, "engine_model": selected_model,
+                     "launch_model": selected_model, "engine_reasoning_effort": None,
                      "routing": choice["why"]})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
@@ -517,7 +518,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
         worktree = str(worktree_path)
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree, agent["id"]),
-                   l2_engine=engine, engine_model=selected_model, routing=choice["why"])
+                   l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"])
     except T.TransitionError as exc:
         if agent.get("id"):
             try:
@@ -635,7 +636,8 @@ def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> 
         T.update_resume_claim(project, slug, claim["id"], phase="launching")
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
-            persona=config.PERSONAS / "l2.md", model=task.get("engine_model"), settings=S.task_dir(project, slug) / "settings.json",
+            persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
+            settings=S.task_dir(project, slug) / "settings.json",
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root)
         worker = res.get("agent") or {}
         if res.get("returncode") != 0:
@@ -899,10 +901,19 @@ def poll(project: str) -> list[dict]:
             continue
         engine = l2_engine(t)
         a = engines.worker(engine, t, rows=claude_rows, job_root=l2_job_root(project, t["slug"]))
+        metadata = {key: a[key] for key in ("engine_model", "engine_reasoning_effort") if a and key in a}
+        if metadata and any(t.get(key) != value for key, value in metadata.items()):
+            with S.project_lock(project):
+                current = S.load_task(project, t["slug"])
+                if current.get("agent_id") == a.get("id"):
+                    current.setdefault("launch_model", current.get("engine_model"))
+                    current.update(metadata)
+                    S.save_task(project, current)
+                    t.update(metadata)
         live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         prev = S.read_json(live_p, {}) or {}
         live = ({"status": a.get("status"), "state": a.get("state"), "engine": engine,
-                 "pid": a.get("pid"), "usage": a.get("usage")} if a else None)
+                 "pid": a.get("pid"), "usage": a.get("usage"), **metadata} if a else None)
         idle_since = None
         detail, at = engines.worker_detail(engine, a)
         settled = a and (a.get("state") in ("blocked", "done", "failed", "stopped")
