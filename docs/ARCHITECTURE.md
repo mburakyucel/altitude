@@ -248,6 +248,9 @@ positive issue number and an explicit reason, accepts no body or publishing opti
 `not-planned` to GitHub as `not planned`. After GitHub succeeds, altd returns the checkout-origin issue
 URL and appends an `issue-close` project event with actor, number, reason, title, and URL. L2 issue
 permissions and the read-only `gh` broker remain unchanged.
+These verbs publish only to the selected project's checkout origin. Another project's L3 has no
+upstream repository override; the operator reports Altitude defects through its GitHub feedback
+route, with a fictional or redacted reproduction and private incident evidence kept locally.
 
 ## Faults
 
@@ -269,6 +272,10 @@ is available; L3 records the learning on the incident and fixes the cause direct
 ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
+Repairs remain owned by the affected project. Upstream Altitude implementation defects are tracked
+through the operator's [GitHub feedback route](../README.md#feedback); they do not inject messages
+into Altitude's L3 or create another project's recovery task there. Reporting an issue does not
+automatically turn it into an Altitude task.
 
 A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle
@@ -365,7 +372,11 @@ under the reply. The composer's engine pill pins the project's L3 to one configu
 `engines[]` reports it, until set back to Auto; on Auto the weekly quota decides, and a turn stays on
 the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
+lands in the history. The conversation component is keyed by project, like its query cache:
+switching projects discards the draft, pending bubble, stream and composer error state. Outstanding
+callbacks and cache updates retain the source project. The destination renders its own history,
+queue and active turn; switching back reconstructs those server records, including Retry for a
+failed turn, without restoring an unsent draft. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
 and trigger without copying its prompt, and it is the conversation's only authority: the page polls
 it and never infers a turn from `busy` or the last history row. A fresh mount or reconnect renders
 the record as the typing indicator for a chat turn, or as the line "L3 is handling <what>" for a

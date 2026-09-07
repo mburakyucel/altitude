@@ -486,7 +486,7 @@ export default function ProjectPage() {
   }
 
   const panel = <WorkPanel name={name} project={project} decisions={decisions} />;
-  const conversation = <Conversation name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
+  const conversation = <Conversation key={name} name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
   return (
     <div className="project-page">
       <ProjectHeader

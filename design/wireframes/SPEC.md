@@ -69,6 +69,10 @@ The selected project is a UI state persisted per browser (localStorage), set by 
 switcher, or a project route. Needs you cards and rail badges are the only cross-project data on
 screen. Opening a card selects its project.
 
+Switching projects opens that project's conversation and discards the unsent draft and transient
+composer/response state. Accepted turns and waiting messages remain owned by the source project;
+switching back reads its saved history, queue and active turn (§3.3). No draft is saved on leaving.
+
 ## 3. Components
 
 Each component lists its anatomy, its data, and its states. "Loading" is a skeleton in the
@@ -151,6 +155,22 @@ otherwise "Say what you want done. L3 answers or creates one task."); error ("Co
 conversation." and Retry, cached rows still shown); a turn in progress (§4.2); a queued message
 (§4.2); a reply that failed ("L3 could not answer this turn." in muted text under the prompt, with
 Retry that resends the same prompt).
+
+Project switching uses the rail on desktop and the header switcher on phone. These states apply
+on both, including switching back before or after a response finishes:
+
+| State when leaving Alpha for Beta | What appears and disappears |
+| --- | --- |
+| Empty, loading or reading history | Beta loads or shows only its cached rows, queue and active turn; Alpha's rows leave. |
+| Typing an unsent draft | Beta's composer is empty. Returning to Alpha does not restore its unsent draft. |
+| Send pending or reply streaming | Alpha's local prompt, typing indicator and streamed text leave. The accepted turn finishes in Alpha; Beta can send independently. |
+| Both projects have sent a turn | Each conversation shows only its own turn. Either completion order preserves the other project's draft and reply. |
+| Late HTTP refusal or stream error | Beta's draft and send state stay its own; no Alpha error or Retry appears there. An unaccepted draft is not saved after leaving. |
+| Switch back to a failed accepted turn | Alpha's stored prompt and failed-turn Retry appear only in Alpha; Retry resends that prompt to Alpha. |
+| Listening, transcribing or microphone denied | Capture is cancelled on leaving; late transcription cannot fill Beta's draft. The new composer has its own microphone state. |
+
+`web/e2e/project-isolation.pw.ts` walks these transitions with fictional projects and a disposable
+file-backed service; delayed refusals and microphone results are controlled browser overlays.
 
 ### 3.4 System line
 
