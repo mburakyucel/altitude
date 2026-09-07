@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import uuid
+from datetime import datetime
 
 from . import config, github_intake, state as S, usage
 
@@ -27,6 +28,7 @@ class TransitionError(Exception):
 
 
 TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
+OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
 
 
@@ -618,6 +620,70 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     with S.project_lock(project):
         t = S.load_task(project, slug)
         t["hold_merge"] = why
+        t["hold_merge_id"] = uuid.uuid4().hex
         S.save_task(project, t)
-    S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor)
+        S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor,
+                       hold_id=t["hold_merge_id"])
     return t
+
+
+def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
+                         reason: str, actor: str) -> dict:
+    """Apply recorded operator authority; altd supplies the origin-bound GitHub observation.
+
+    I-20260907-205556: no caller prose grants approval. The exact operator reply must follow the
+    current hold and an unambiguous PR presentation, with no later operator message or PR update.
+    """
+    if actor != "l3" or not reason.strip():
+        raise TransitionError("recorded approval requires the coordinator daemon and a reason")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        try:
+            if not task.get("hold_merge") or task["state"] not in ("running", "blocked", "reported"):
+                raise ValueError("task has no active merge hold")
+            rows = task_messages(project, slug)
+            operator = next((r for r in reversed(rows) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
+            if (operator.get("id") != approval or operator.get("by") != OPERATOR_MESSAGE_ROLE
+                    or operator.get("text") != "Good to merge"):
+                raise ValueError("approval must name the latest operator message, exactly 'Good to merge'")
+            previous = rows[:rows.index(operator)]
+            presentation = previous[-1] if previous else {}
+            urls = re.findall(r"https://github\.com/[\w.-]+/[\w.-]+/pull/[1-9][0-9]*\b",
+                              presentation.get("text", ""))
+            if presentation.get("role") != "l2" or set(urls) != {pull["url"]}:
+                raise ValueError("approval must directly follow the owner's presentation of this PR alone")
+            events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
+                      if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
+            generation = next((i for i in range(len(events) - 1, -1, -1)
+                               if events[i]["kind"] in ("new", "hold-merge", "release-merge")), None)
+            hold = events[generation] if generation is not None else {}
+            if (hold.get("kind") not in ("new", "hold-merge")
+                    or task.get("hold_merge_id") != hold.get("hold_id")
+                    or hold["kind"] == "hold-merge" and hold.get("why") != task["hold_merge"]):
+                raise ValueError("current hold has no matching recorded generation")
+            def timestamp(value):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("approval evidence needs timezone-aware timestamps")
+                return parsed
+            if not (timestamp(hold["at"]) < timestamp(presentation["at"]) < timestamp(operator["at"])
+                    and timestamp(pull["updatedAt"]) < timestamp(presentation["at"])):
+                raise ValueError("approval is stale: hold or PR changed since its presentation")
+            if (pull.get("state") != "OPEN" or pull.get("isDraft") is not False
+                    or pull.get("isCrossRepository") is not False or pull.get("baseRefName") != "main"
+                    or pull.get("headRefName") != task.get("branch") or pull.get("headRefOid") != head):
+                raise ValueError("approval PR must be open, ready, and match the task branch and observed head")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            S.append_event(project, slug, "merge-approval-refused", actor=actor, approval=approval,
+                           reason=reason, error=str(exc))
+            raise TransitionError(f"recorded merge approval refused: {exc}") from exc
+        receipt = {"actor": actor, "authorized_by": operator["role"], "reason": reason,
+                   "approval": approval, "approved_at": operator["at"],
+                   "hold": task["hold_merge"], "hold_event": generation, "hold_at": hold["at"],
+                   "hold_id": task.get("hold_merge_id"),
+                   "presentation": presentation["id"], "pr": pull["number"], "url": pull["url"],
+                   "head": head, "pr_updated_at": pull["updatedAt"], "at": S.now()}
+        task.update(hold_merge=None, merge_approval=receipt)
+        S.save_task(project, task)
+        S.append_event(project, slug, "release-merge", **receipt)
+        return receipt

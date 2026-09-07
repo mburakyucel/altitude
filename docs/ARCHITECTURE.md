@@ -184,6 +184,27 @@ their own sections. If main moves, the owner runs `git rebase origin/main` in th
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
 
+Operator authority also travels through a recorded task reply. L3's project-bound
+`alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <sha> --reason <reason>`
+executes directly in altd. The daemon reads the checkout-origin PR, then validates and releases the
+hold under the project lock. The latest operator conversation message must be exactly `Good to merge`,
+directly following an L2 message containing that PR's canonical URL and no other PR URL. Worker and
+coordinator text cannot supply operator authority. The current hold generation must precede that
+presentation; GitHub's PR update timestamp must also precede it. A renewed hold, later operator
+message, missing evidence, or any later PR update refuses release. GitHub must report an open,
+non-draft, same-repository PR targeting main, with the task's branch and the caller's observed head.
+
+The hold generation is its latest `hold-merge` event, or the creation event for an initial hold;
+hold changes and their events serialize under the same lock. Each hold change stores a fresh
+`hold_merge_id` with its state and event; a write interrupted before its matching event refuses
+approval even when the reason repeats. Approval validation reads events
+strictly, so corrupt evidence cannot hide a later hold. One atomic task write clears `hold_merge`
+and stores `merge_approval`, recording the actual coordinator actor, operator message, presentation,
+prior hold generation, PR URL/head and reason. A `release-merge` event carries the same receipt;
+local evidence refusals record `merge-approval-refused`. The operation releases the observed hold;
+it does not resume the task or merge the PR. Head binding is checked at release, and the owner
+continues through the ordinary landing checks. Direct `--off` remains operator-only.
+
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
 daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged
 while it was still running no longer refuses every launch in the window until that task's report

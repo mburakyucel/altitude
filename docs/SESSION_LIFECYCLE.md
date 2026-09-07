@@ -93,6 +93,15 @@ for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
 On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
+Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
+Sending a message does not automatically clear a merge hold. For the exact operator reply
+`Good to merge` directly following the owner's single-PR presentation, L3 explicitly invokes
+[`hold-merge --approval`](CLI.md#recorded-merge-approval) through its daemon connection. Altd validates
+the durable message, current hold generation and unchanged PR, then records a release receipt without
+changing worker or block state. A later operator message, renewed hold, changed PR or missing evidence
+preserves the hold. L3 checks the release receipt before resuming a blocked owner; the owner rechecks
+and uses `alt land --merge`. A repeated application with no active hold is refused without another release.
+
 Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it
 records, uploads the bounded clip for transcription, and appends the returned text to the local
 editable draft; nothing else appears. The explicit **Send** action then calls the same chat or

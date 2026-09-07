@@ -32,6 +32,11 @@ For example, you want to add CSV export to a project:
    then lands through the guarded PR path. A merge hold keeps it for your review; otherwise the
    owner can merge when ready. The verified report and conversation preserve the outcome.
 
+When the operator replies exactly **Good to merge** directly after an owner's PR presentation,
+the coordinator can apply that recorded approval through the daemon's
+[`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). The daemon checks the message,
+current hold and unchanged PR before recording the release. The owner then rechecks and lands normally.
+
 This is one example, with the execution approach chosen for the work. The
 [illustrated text walkthrough](docs/WALKTHROUGH.md) follows fictional projects through the
 project conversation, direct task conversation/live session, and cross-project decisions view.

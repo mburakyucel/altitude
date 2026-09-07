@@ -111,3 +111,29 @@ A repeated reason after a genuine later lifecycle creates a new request against 
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
 worker in the caller. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
+
+### Recorded merge approval
+
+L3 can apply an existing operator authorization through its project-bound daemon connection:
+
+```text
+alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <full-sha> --reason <reason>
+```
+
+Read `alt task messages <slug> --json` for the durable message id and `alt pr <number> --json`
+for the current PR head. The latest operator message must be exactly `Good to merge`, directly
+after the owner's message containing the canonical GitHub PR URL and no other PR URL. The daemon
+checks the current hold generation and reads the PR from the project's origin repository. It
+requires an open, non-draft, same-repository PR targeting main on the task branch at the supplied
+head, with GitHub's `updatedAt` strictly before the presentation and the presentation after the hold.
+Missing or corrupt evidence, a later operator message, a renewed hold, or a later PR update refuses
+release. This is deliberately conservative: even a later PR comment or description edit invalidates
+this evidence path. Arbitrary approval wording is not interpreted.
+
+Success returns a receipt with the approval message id/time, presentation id, prior hold/event,
+PR URL/head and actual actor `l3`. The receipt is stored as `merge_approval` on the task and in a
+`release-merge` event. Inspect `alt task show <slug>` and `alt task events <slug> --json` to confirm
+the release before resuming a blocked owner. The operation neither resumes nor merges; the owner
+rechecks and runs `alt land --merge`. With no active hold a repeated call refuses without another
+release. Ordinary `--off` remains operator-only, and `--approval` cannot be combined with it or
+`--why`. Standalone CLI execution of approval mode is refused; L3 uses its existing daemon transport.
