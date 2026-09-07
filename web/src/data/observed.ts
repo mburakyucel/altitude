@@ -56,3 +56,30 @@ export function modelName(model: string): string {
   const family = model.replace(/^claude-/, "").replace(/-\d.*$/, "");
   return MODEL_NAMES[model] ?? MODEL_NAMES[family] ?? model;
 }
+
+/** The reserve line every quota meter draws: past this share of the window the meter turns danger. */
+export const RESERVE_PERCENT = 70;
+
+/** An age the way the shell says it (SPEC.md §4.5): "just now", "5 min ago", "2h", "yesterday", "3d". */
+export function ageText(value: unknown): string {
+  const then = when(value);
+  if (then == null) return "";
+  const seconds = (Date.now() - then) / 1000;
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 2 * 86_400) return "yesterday";
+  return `${Math.floor(seconds / 86_400)}d`;
+}
+
+/** ageText phrased after a verb ("L3 answered 2h ago"): hours and days gain "ago". */
+export function agoText(value: unknown): string {
+  const age = ageText(value);
+  return /^\d+[hd]$/.test(age) ? `${age} ago` : age;
+}
+
+/** The exact time for a hover title, in the browser's locale; empty when there is none. */
+export function exactTime(value: unknown): string {
+  const then = when(value);
+  return then == null ? "" : new Date(then).toLocaleString();
+}

@@ -58,6 +58,27 @@ def _codex_window(data: dict, minutes: int) -> float | None:
     return None
 
 
+def engine_readouts() -> list[dict]:
+    """One row per configured engine for the shell's engine readout: display name, weekly percent used,
+    whether the reading is current, and when it was taken (ISO). ``week`` is None with no reading at all;
+    ``stale`` keeps an old figure and says so. The rail renders these rows without knowing which is which."""
+    from .monitor import quota
+    claude, codex = quota() or {}, quota_codex()
+    at = claude.get("at")
+    readings = {
+        "claude": (_number(claude.get("seven_day")),
+                   datetime.fromtimestamp(at, timezone.utc).isoformat() if isinstance(at, (int, float)) else None,
+                   claude),
+        "codex": (_codex_window(codex, WEEK_MINUTES), codex.get("read_at"), codex),
+    }
+    rows = []
+    for engine in config.ENGINES:
+        week, observed, data = readings[engine]
+        rows.append({"engine": engine, "label": config.ENGINE_LABELS[engine], "week": week,
+                     "known": bool(data.get("known")), "stale": bool(data.get("stale")), "at": observed})
+    return rows
+
+
 def _usage() -> dict[str, tuple[float | None, float | None]]:
     """Per engine: (weekly % used, short-window % used); None when unknown."""
     from . import engines

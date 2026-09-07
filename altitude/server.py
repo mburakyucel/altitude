@@ -1154,6 +1154,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
+            if api == "l3" and len(parts) > 2 and parts[2] == "start":
+                # The project header's Start L3 for a managed project whose L3 never ran (SPEC.md §3.2).
+                name = config.project(o["project"]) and o["project"]
+                return self._json({"ok": True, "started": spawn(f"start:{name}", start_l3, name)})
             if api == "l3" and len(parts) > 2 and parts[2] == "engine":
                 engine = o.get("engine") or None
                 if engine and engine not in config.ENGINES:
@@ -1285,10 +1289,20 @@ def overview() -> dict:
         if p["managed"]:
             ts = S.list_tasks(p["name"])
             p["counts"] = {s: sum(1 for t in ts if t["state"] == s) for s in S.STATES}
+            p["counts"]["fault"] = sum(1 for t in ts if t.get("fault"))  # the rail's danger dot
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "fyis": digest.fyis(30), "wip": digest.wip(), "quota": monitor.quota(),
-            "restart": restart_status(), "now": S.now()}
+            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.PROJECT_ROOTS],
+            "operator": config.OPERATOR, "restart": restart_status(), "now": S.now()}
+
+
+def home_relative(path: Path) -> str:
+    """A folder as First run names it: `~/Projects`, never the whole home path."""
+    try:
+        return "~/" + path.expanduser().relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def project_view(name: str) -> dict:

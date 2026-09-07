@@ -26,13 +26,20 @@ phase deleted.
   reads cross its project's role-fenced altd socket; reason-bearing worker operations become durable requests that altd validates and executes.
 - Resource usage is shown, never acted on: the Monitor page reports both seats' windows, their
   reset times and how old each reading is, and which engine each role would get right now and why.
+- The web UI is one shell. On a desktop a rail carries Needs you with its count, one row per
+  managed project with a state dot and its count of waiting decisions, the folders not yet managed,
+  one readout row per configured engine, Monitor, and the operator row with the theme toggle. On a
+  phone a 54px header and a four-tab bar (Chat, Work, Needs you, Monitor) replace it. `/` is Needs
+  you, every decision across projects as cards; `/projects/<name>` is the project's L3 conversation
+  with its work panel; with no managed project every project route shows First run, which starts L3
+  for a folder. The selected project persists per browser, and every badge counts decisions only.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
 - An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;
   Burak sees only what L3 escalates or what the L2 flags for him.
 - A system fault blocks only its own task, records private incident evidence, and leaves one
   message for the project's L3, which records the learning and fixes the cause directly or creates
-  one ordinary task. An incident raised by that repair task goes to the Inbox instead of waking L3
+  one ordinary task. An incident raised by that repair task goes to Needs you instead of waking L3
   again.
 - Every conversational composer has the same optional microphone control. Stopping a recording
   produces a transcript review without changing the draft; **Edit / insert** appends it to the
@@ -49,8 +56,8 @@ workspace-write sandbox and uses the same door. Claude and Codex L3 turns both r
 runtime directories with the deployment checkout and Altitude state read-only. Codex's L3 profile denies direct
 command networking and the user-service bus, exposing only that project's role-fenced Unix socket. `web/` is the React UI built into
 `web/dist/` for the Python server to serve. That server also serves any project's wireframe
-boards read-only from the project's own checkout at `/design/<project>`, which the project page
-links to when the boards exist.
+boards read-only from the project's own checkout at `/design/<project>`, which the project header's
+overflow menu offers as Design boards when the boards exist.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
 tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private

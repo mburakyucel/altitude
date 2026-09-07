@@ -275,7 +275,7 @@ export default function Chat() {
           {switchable.map((p) => (
             <NavLink
               key={p.name}
-              to={`/chat/${p.name}`}
+              to={`/projects/${p.name}`}
               className="pill min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere] hover:text-ink aria-[current=page]:border-accent-tint-border aria-[current=page]:bg-accent-tint aria-[current=page]:text-accent-ink"
             >
               {p.name}

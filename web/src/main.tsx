@@ -4,11 +4,11 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import { ToastProvider } from "./data/Toast";
 import { routes } from "./routes";
-import { applyTheme, readTheme, watchSystemTheme } from "./shell/theme";
+import { readTheme, setTheme } from "./shell/theme";
 import "./styles.css";
 
-applyTheme(readTheme());
-watchSystemTheme();
+// Applies the stored theme and stores the light default, so index.html's pre-paint agrees next time.
+setTheme(readTheme());
 
 const queryClient = new QueryClient();
 const router = createBrowserRouter(routes);

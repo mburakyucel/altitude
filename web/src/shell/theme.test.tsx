@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
-import { ThemeToggle, applyTheme } from "./theme";
+import { ThemeToggle, applyTheme, readTheme } from "./theme";
 
 afterEach(() => {
   delete document.documentElement.dataset.theme;
@@ -10,39 +10,32 @@ afterEach(() => {
 });
 
 describe("ThemeToggle", () => {
-  it("switches to dark: sets data-theme, persists, marks the button pressed", async () => {
+  it("is light by default and switches to dark: sets data-theme, persists, reads pressed", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
-    await user.click(screen.getByRole("button", { name: "Dark" }));
+    expect(readTheme()).toBe("light");
+    const toggle = screen.getByRole("button", { name: "Dark theme" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await user.click(toggle);
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("altitude.theme")).toBe("dark");
-    expect(screen.getByRole("button", { name: "Dark" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Light" })).toHaveAttribute("aria-pressed", "false");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
   });
 
   it("switches back to light: clears data-theme and persists", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
-    await user.click(screen.getByRole("button", { name: "Dark" }));
-    await user.click(screen.getByRole("button", { name: "Light" }));
+    await user.click(screen.getByRole("button", { name: "Dark theme" }));
+    await user.click(screen.getByRole("button", { name: "Dark theme" }));
     expect(document.documentElement.dataset.theme).toBeUndefined();
     expect(localStorage.getItem("altitude.theme")).toBe("light");
   });
 
-  it("system follows the OS preference (light in jsdom)", async () => {
-    const user = userEvent.setup();
-    render(<ThemeToggle />);
-    await user.click(screen.getByRole("button", { name: "Dark" }));
-    await user.click(screen.getByRole("button", { name: "System" }));
-    expect(localStorage.getItem("altitude.theme")).toBe("system");
-    // jsdom's matchMedia never matches (prefers-color-scheme: dark) → light
-    expect(document.documentElement.dataset.theme).toBeUndefined();
-  });
-
-  it("applyTheme respects a stored dark preference at boot", () => {
+  it("reads a stored dark preference at boot and anything else as light", () => {
     localStorage.setItem("altitude.theme", "dark");
-    applyTheme("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(readTheme()).toBe("dark");
+    localStorage.setItem("altitude.theme", "system");
+    expect(readTheme()).toBe("light");
   });
 
   it("updates the browser theme color for dark and light", () => {
@@ -68,13 +61,11 @@ describe("ThemeToggle", () => {
     );
   });
 
-  it("renders theme controls in both shell locations", () => {
+  it("sits once in the rail's operator row", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 
     renderApp();
 
-    const themeControls = screen.getAllByRole("group", { name: "Theme" });
-    expect(themeControls).toHaveLength(2);
-    themeControls.forEach((control) => expect(control).toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: "Dark theme" })).toHaveLength(1);
   });
 });

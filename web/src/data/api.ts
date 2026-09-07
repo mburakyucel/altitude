@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
@@ -134,20 +134,11 @@ export const DecisionSchema = z
   .passthrough();
 
 /**
- * /api/project's `decisions` are the same rows as the Inbox queue (altitude/tasks.py decisions()),
+ * /api/project's `decisions` are the same rows as the overview queue (altitude/tasks.py decisions()),
  * but the project page has always read them defensively — every field stays optional here so a
  * thin row still parses, while the card fields keep their types instead of arriving as `unknown`.
  */
 export const ProjectDecisionSchema = DecisionSchema.partial().passthrough();
-
-export const FyiSchema = z
-  .object({
-    project: z.string(),
-    at: z.string().nullish(),
-    text: z.string(),
-    slug: z.string().nullish(),
-  })
-  .passthrough();
 
 export const WipSchema = z
   .object({
@@ -187,13 +178,34 @@ export const RestartSchema = z
   })
   .passthrough();
 
+/**
+ * route.engine_readouts(): one row per configured engine, in the seam's order, for the rail's engine
+ * readout. `label` is the display name the seam gives; `week` is the share of the weekly window used,
+ * null when there has never been a reading; `stale` keeps an old figure and says so; `at` is when the
+ * reading was taken. The rail renders the rows without knowing which engine is which.
+ */
+export const EngineReadoutSchema = z
+  .object({
+    engine: z.string(),
+    label: z.string(),
+    week: z.number().nullish(),
+    known: z.boolean(),
+    stale: z.boolean().nullish(),
+    at: z.string().nullish(),
+  })
+  .passthrough();
+
 export const OverviewSchema = z
   .object({
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
-    fyis: z.array(FyiSchema),
     wip: WipSchema,
     quota: QuotaSchema,
+    engines: z.array(EngineReadoutSchema).default([]),
+    /** The folders First run scans, named relative to home. */
+    roots: z.array(z.string()).default([]),
+    /** The operator's configured name, shown in the rail's operator row. */
+    operator: z.string().nullish(),
     restart: RestartSchema.nullish(),
     now: z.string().nullish(),
   })
@@ -228,6 +240,8 @@ export const ProjectViewSchema = z
     incidents: z.array(z.record(z.string(), z.unknown())).nullish(),
     hold: z.unknown().nullish(),
     state_md: z.string().nullish(),
+    /** The wireframe viewer's URL when the checkout has boards; absent otherwise. */
+    design_viewer: z.string().nullish(),
   })
   .passthrough();
 
@@ -304,6 +318,8 @@ export const ChatMessageSchema = z
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    trigger: z.string().nullish(),
+    engine: z.string().nullish(),
   })
   .passthrough();
 
@@ -349,9 +365,9 @@ export type CodexQuota = z.infer<typeof CodexQuotaSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
-export type Fyi = z.infer<typeof FyiSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
+export type EngineReadout = z.infer<typeof EngineReadoutSchema>;
 export type Restart = z.infer<typeof RestartSchema>;
 export type Overview = z.infer<typeof OverviewSchema>;
 export type TaskRow = z.infer<typeof TaskRowSchema>;
@@ -457,15 +473,14 @@ export interface DecideInput {
 }
 
 export function useDecide() {
-  return useOptimisticMutation<DecideInput, unknown, Overview>({
+  const queryClient = useQueryClient();
+  return useMutation<unknown, Error, DecideInput>({
     mutationFn: (input) => post("/api/decide", input),
-    queryKey: ["overview"],
-    update: (cached, input) =>
-      cached && {
-        ...cached,
-        queue: cached.queue.filter((d) => d.project !== input.project || d.slug !== input.slug),
-      },
-    failureMessage: "Couldn't record the decision — it was put back.",
+    // The card collapses first (200ms), then the next read drops the row and moves the task.
+    onSettled: (_out, _error, input) => {
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["project", input.project] });
+    },
   });
 }
 
@@ -479,8 +494,8 @@ export interface TaskActionInput {
 export function useTaskAction(project: string) {
   const queryClient = useQueryClient();
   return useOptimisticMutation<TaskActionInput, unknown, ProjectView>({
-    // Every action moves a task's state, which the Inbox badge and the Projects counts read from
-    // ["overview"] — invalidate it too or both sit stale for a full 20s poll.
+    // Every action moves a task's state, which the rail's badges and dots read from ["overview"];
+    // invalidate it too or they sit stale for a full 20s poll.
     mutationFn: async (input) => {
       const out = await post("/api/task/action", input);
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
@@ -500,11 +515,22 @@ export interface ProjectAddInput {
 }
 
 export function useProjectAdd() {
-  return useOptimisticMutation<ProjectAddInput, unknown, Overview>({
+  const queryClient = useQueryClient();
+  return useMutation<unknown, Error, ProjectAddInput>({
     mutationFn: (input) => post("/api/project/add", input),
-    queryKey: ["overview"],
-    update: () => undefined,
-    failureMessage: "Couldn't add the project.",
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["overview"] }),
+  });
+}
+
+/** The project header's Start L3 for a managed project whose L3 never ran (SPEC.md §3.2). */
+export function useL3Start(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation<unknown, Error, void>({
+    mutationFn: () => post("/api/l3/start", { project }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["chat", project] });
+      void queryClient.invalidateQueries({ queryKey: ["project", project] });
+    },
   });
 }
 

@@ -49,6 +49,10 @@ CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 2
 # Default Claude models. Codex uses the Codex CLI's configured model unless the task overrides it.
 MODELS = {"l3": "fable", "l2": "opus"}
 ENGINES = ("claude", "codex")
+#: Display names, the way the shell shows an engine; nothing outside the seam spells one.
+ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
+#: The operator seam: the one configured name the UI shows where a name is shown.
+OPERATOR = os.environ.get("ALTITUDE_OPERATOR") or "Operator"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # Reasoning effort per Codex role (`-c model_reasoning_effort=`); None = the Codex CLI's configured default
 # (~/.codex/config.toml: gpt-5.6-sol, xhigh as of 2026-08-30). Claude effort comes from ~/.claude/settings.json

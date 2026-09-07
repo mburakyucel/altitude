@@ -1,32 +1,59 @@
-import { Navigate } from "react-router";
+import { Navigate, redirect } from "react-router";
 import type { RouteObject } from "react-router";
 import AppShell from "./shell/AppShell";
 import { useOverview } from "./data/api";
-import Inbox from "./routes/Inbox";
-import Projects from "./routes/Projects";
-import Project from "./routes/Project";
+import { managedProjects } from "./shell/projects";
+import { useStarting } from "./shell/starting";
+import FirstRun from "./routes/FirstRun";
+import NeedsYou from "./routes/NeedsYou";
+import ProjectPage from "./routes/Project";
 import Task, { TaskConversation } from "./routes/Task";
-import Chat from "./routes/Chat";
 import Monitor from "./routes/Monitor";
 import LiveSession from "./routes/LiveSession";
 
-/** /chat with no project: redirect to the first managed project's chat. */
-function ChatRedirect() {
+/** /projects: the first managed project, or First run when nothing is managed or a start is under way
+ * (SPEC.md §2.1, §3.12). */
+function ProjectIndex() {
   const overview = useOverview();
-  if (overview.isPending) return <p className="text-muted">Loading…</p>;
-  if (overview.isError) return <p className="text-danger">{overview.error.message}</p>;
-  const first = overview.data.projects.find((p) => p.managed);
-  if (!first) return <p className="text-muted">No managed projects yet.</p>;
-  return <Navigate to={`/chat/${first.name}`} replace />;
+  const starting = useStarting();
+  if (overview.isPending) {
+    return (
+      <div className="page" aria-label="Loading">
+        <div className="skeleton h-6 w-48" />
+      </div>
+    );
+  }
+  if (overview.isError) {
+    return (
+      <div className="page">
+        <p className="text-danger">
+          Could not read the projects.{" "}
+          <button type="button" className="link" onClick={() => overview.refetch()}>
+            Retry
+          </button>
+        </p>
+      </div>
+    );
+  }
+  const first = managedProjects(overview.data)[0];
+  if (!first || starting) {
+    return (
+      <div className="page first-run-page">
+        <FirstRun overview={overview} />
+      </div>
+    );
+  }
+  return <Navigate to={`/projects/${first.name}`} replace />;
 }
 
 export const routes: RouteObject[] = [
   {
     element: <AppShell />,
     children: [
-      { path: "/", element: <Inbox /> },
-      { path: "/projects", element: <Projects /> },
-      { path: "/projects/:name", element: <Project /> },
+      { path: "/", element: <NeedsYou /> },
+      { path: "/projects", element: <ProjectIndex /> },
+      { path: "/projects/:name", element: <ProjectPage /> },
+      // /projects/:name/decisions/:slug is reserved for the decision page (slice 3).
       {
         path: "/projects/:name/tasks/:slug",
         element: <Task />,
@@ -35,11 +62,11 @@ export const routes: RouteObject[] = [
           { path: "live", element: <LiveSession /> },
         ],
       },
-      { path: "/chat", element: <ChatRedirect /> },
-      { path: "/chat/:name", element: <Chat /> },
+      { path: "/chat", loader: () => redirect("/projects") },
+      { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },
       { path: "/monitor", element: <Monitor /> },
-      // Last: a typo'd deep link lands on the Inbox inside the shell, not on react-router's
-      // bare error page outside it.
+      // Last: a typo'd deep link lands on Needs you inside the shell, not on react-router's bare
+      // error page outside it.
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
