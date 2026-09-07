@@ -4,7 +4,7 @@ import string
 import unittest
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, tasks
+from altitude import config, dispatch, state as S, tasks
 
 EXPECTED_FIELDS = {
     "branch",
@@ -64,6 +64,26 @@ class TestBriefRender(AltitudeCase):
     def test_real_render_is_nonempty_and_fully_formatted(self):
         self.assertTrue(self.default_rendered.strip())
         self.assert_no_unformatted_field(self.default_rendered)
+
+    def test_overlap_names_shared_scope_and_rebase_guidance(self):
+        other = tasks.new(self.project, "Other worker", "request", paths=["docs/", "README.md"])
+        other["state"] = "running"
+        S.save_task(self.project, other)
+        task = tasks.new(self.project, "Shared docs", "request",
+                         paths=["docs/ARCHITECTURE.md", "README.md", "altitude/config.py"])
+        rendered = dispatch.build_brief(self.project, task["slug"])
+        self.assertIn("Shared paths with `other-worker` on README.md, docs/ARCHITECTURE.md: "
+                      "expect to rebase onto main before landing and keep edits in shared docs "
+                      "to your own sections.", rendered)
+        self.assertIsNone(dispatch.wip_hold(self.project, task))
+        self.assertNotIn("Blocked: lease", rendered)
+        self.assertNotIn("Shared paths with", self.default_rendered)
+
+    def test_shared_scope_uses_directory_boundaries_and_literal_paths(self):
+        self.assertEqual(dispatch.shared_paths(["./docs/", "my dir/file.py"],
+                                               ["docs/ARCHITECTURE.md", "my dir/file.py"]),
+                         ["docs/ARCHITECTURE.md", "my dir/file.py"])
+        self.assertEqual(dispatch.shared_paths(["docs/"], ["docs-extra/file.md"]), [])
 
     def test_both_merge_policy_branches_render(self):
         self.assertNotIn("Held for Burak", self.default_rendered)

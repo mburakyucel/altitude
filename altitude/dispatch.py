@@ -403,6 +403,17 @@ def build_brief(project: str, slug: str) -> str:
         "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
         "`--merge` only when allowed. Read the live `hold_merge` value and never merge around it."
     )
+    other_leases = leases(project, exclude=slug)
+    overlaps = []
+    for other in other_leases:
+        shared = shared_paths(task_paths(project, task), other["paths"])
+        if shared:
+            overlaps.append(f"`{other['slug']}` on {', '.join(shared)}")
+    if overlaps:
+        publication_contract += (
+            f" Shared paths with {'; '.join(overlaps)}: expect to rebase onto main before landing "
+            "and keep edits in shared docs to your own sections."
+        )
     progress = d / "progress.md"
     if task.get("attempt") and progress.exists():
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
@@ -411,7 +422,7 @@ def build_brief(project: str, slug: str) -> str:
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
         model=task.get("engine_model") or task.get("model") or "provider default",
-        leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in leases(project, exclude=slug)) or "none"),
+        leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in other_leases) or "none"),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
         task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
         repo=config.project_path(project),
@@ -548,7 +559,7 @@ def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> 
 
     This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
     worker exited or sits idle without a report (that worker is stopped first). A task blocked before any launch goes
-    back to the queue. A file lease or an exhausted usage window keeps the task blocked with `resume_after` set, and
+    back to the queue. A WIP cap or an exhausted usage window keeps the task blocked with `resume_after` set, and
     the next tick tries again."""
     task = S.load_task(project, slug)
     active_request = task.get("daemon_request") or {}
@@ -700,13 +711,13 @@ def stop(project: str, slug: str, *, by: str = "burak", reason: str | None = Non
 
 
 def resume_due(project: str) -> list[str]:
-    """Blocked tasks with a due daemon request or a turn-boundary inbox, oldest first.
+    """Blocked tasks with a due daemon request or a turn-boundary inbox.
 
-    A request survives a coordinator exit or daemon restart. An exhausted usage window or a file lease keeps the
+    A request survives a coordinator exit or daemon restart. An exhausted usage window or a WIP cap keeps the
     task waiting; a task blocked before its first launch is included so the daemon can requeue it.
     """
     now, due = S.now(), []
-    for t in sorted(S.list_tasks(project), key=_resume_order):
+    for t in S.list_tasks(project):
         if t["state"] != "blocked":
             continue
         if (t.get("daemon_request") or {}).get("status") in ("pending", "executing"):
@@ -715,7 +726,7 @@ def resume_due(project: str) -> list[str]:
         if claim:
             if not _claim_owner_live(claim):
                 due.append(t["slug"])
-            continue  # a stale claim is recovered before ordinary due times, leases, WIP or usage holds
+            continue  # a stale claim is recovered before ordinary due times, WIP or usage holds
         after = t.get("resume_after") or ""
         inbox_due = (not after and not t.get("fault") and not t.get("resume_failed")
                      and bool(T.pending(project, t["slug"])))
@@ -727,14 +738,9 @@ def resume_due(project: str) -> list[str]:
         if engines.window_hold(l2_engine(t)):
             continue
         if wip_hold(project, t):
-            continue  # a lease holds this one; a younger unrelated task may still go
+            continue
         due.append(t["slug"])
     return due
-
-
-def _resume_order(task: dict) -> tuple[str, str]:
-    """The deterministic oldest-first order shared by due resumes and pending-resume leases."""
-    return (task.get("created") or "", task.get("slug") or "")
 
 
 def _norm(p: str) -> str:
@@ -751,37 +757,9 @@ def inside_lease(path: str, lease: list[str]) -> bool:
                for item in (_norm(entry).lstrip("/") for entry in lease))
 
 
-def paths_overlap(a: list[str], b: list[str]) -> list[str]:
-    """Paths collide when equal or when one is a directory prefix of the other."""
-    out = []
-    for x in map(_norm, a):
-        for y in map(_norm, b):
-            if x == y or x.startswith(y + "/") or y.startswith(x + "/"):
-                out.append(x if len(x) >= len(y) else y)
-    return sorted(set(out))
-
-
-BROAD_CLAIMS = ("tests", "docs", "altitude", "web", "hooks", "bin", "personas", "schemas", "templates", "src", "lib", "app")
-
-
-def narrow(paths: list[str]) -> list[str]:
-    """Drop whole top-level directory claims because they are too broad to be useful leases.
-
-    Files and deeper directories still lease, and briefs still show the original declared scope.
-    """
-    return [p for p in paths if p.strip("/").split("/")[0] != p.strip("/") or p.strip("/") not in BROAD_CLAIMS]
-
-
-def hold_conflict(mine: list[str], others: list[dict]) -> str | None:
-    """Return the first narrowed file-lease conflict with ``others``, if any."""
-    mine = narrow(mine)
-    for other in others:
-        hit = paths_overlap(mine, narrow(other.get("paths", [])))
-        if hit:
-            activity = other.get("activity") or (
-                "blocked with a pending resume" if other.get("pending_resume") else "running")
-            return f"file lease: `{other['slug']}` is {activity} on {', '.join(hit[:4])}"
-    return None
+def shared_paths(a: list[str], b: list[str]) -> list[str]:
+    """Informational shared scope for briefs and status, using the staging lease semantics."""
+    return sorted({p for p in map(_norm, a + b) if inside_lease(p, a) and inside_lease(p, b)})
 
 
 def _split_top_level(value: str) -> list[str]:
@@ -875,7 +853,7 @@ def task_paths(project: str, task: dict) -> list[str]:
 
 
 def _lease_tasks(project: str, exclude: str | None = None) -> list[dict]:
-    """Tasks that currently hold file leases, including blocked tasks queued to resume."""
+    """Tasks whose declared scope is shown, including blocked tasks queued to resume."""
     return [t for t in S.list_tasks(project)
             if t["slug"] != exclude
             and (t["state"] == "running"
@@ -885,7 +863,7 @@ def _lease_tasks(project: str, exclude: str | None = None) -> list[dict]:
 
 
 def leases(project: str, exclude: str | None = None) -> list[dict]:
-    """Running and pending-resume tasks and the paths they hold, for status and briefs."""
+    """Running and pending-resume tasks and their declared scope, for status and briefs."""
     out = []
     for task in _lease_tasks(project, exclude):
         lease = {"slug": task["slug"], "paths": task_paths(project, task)}
@@ -895,32 +873,9 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
     return out
 
 
-PER_TASK_HOLDS = ("file lease",)  # a lease holds one task; the queue behind it keeps moving
-
-
-def per_task_hold(hold: str | None) -> bool:
-    return bool(hold) and str(hold).startswith(PER_TASK_HOLDS)
-
-
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
     proj = config.project(project)
-    if task:
-        mine = task_paths(project, task)
-        mine_pending = (task.get("state") == "blocked" and bool(
-            task.get("resume_after") or task.get("resume_claim")
-            or (not task.get("fault") and not task.get("resume_failed")
-                and T.pending(project, task["slug"]))))
-        holders = []
-        for other in _lease_tasks(project, exclude=task["slug"]):
-            pending_resume = other["state"] == "blocked"
-            if pending_resume and mine_pending and _resume_order(other) >= _resume_order(task):
-                continue  # among overlapping queued resumes, the deterministic oldest task proceeds first
-            holders.append({"slug": other["slug"], "paths": task_paths(project, other),
-                            "pending_resume": pending_resume})
-        held = hold_conflict(mine, holders)
-        if held:
-            return held
     if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
         return f"WIP limit: {len(running)} running in {project}"
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")

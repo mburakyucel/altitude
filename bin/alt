@@ -99,7 +99,7 @@ def _brief_text(record: dict) -> str:
                                          if isinstance(record.get("hold"), dict) else record.get("hold"))
     overlaps = []
     for other in record["other_leases"]:
-        hits = dispatch.paths_overlap(dispatch.narrow(record["lease"]), other.get("hold_paths") or [])
+        hits = dispatch.shared_paths(record["lease"], other["paths"])
         if hits:
             overlaps.append(f"{other['slug']} ({', '.join(hits)})")
     engine_name = record.get("l2_engine") or record.get("engine")

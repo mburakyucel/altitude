@@ -21,8 +21,7 @@ required.
 **Hard boundaries:** {never_list}
 
 **Ownership and isolation:** repository `{repo}`; task folder `{task_dir}`; worktree branch `{branch}`;
-lease `{paths}`. Other current task leases: {leases}. Stay within your lease. If an active task owns an
-overlapping narrowed path, stop with `Blocked: lease` rather than racing it. Never restart or stop the
+lease `{paths}`. Other current task leases: {leases}. Stay within your lease. Never restart or stop the
 `altitude` or `tutor` services and never bind their reserved ports. {publication_contract}
 
 **Request:**

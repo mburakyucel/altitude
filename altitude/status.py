@@ -1,8 +1,4 @@
-"""Compact, fault-tolerant, read-only task orientation.
-
-``wip_hold`` reports only the file-lease reason: it is a read-only subset of
-``dispatch.wip_hold``, which is the dispatcher's state-advancing check.
-"""
+"""Compact, fault-tolerant, read-only task orientation."""
 from __future__ import annotations
 
 from . import config, dispatch, engines, git_policy, incidents, state as S, verify
@@ -182,9 +178,7 @@ def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
 def status(project: str, slug: str) -> dict:
     """Return read-only orientation signals; faults never escape.
 
-    ``wip_hold`` is only the file-lease reason, a read-only subset of the
-    dispatcher's state-advancing ``dispatch.wip_hold`` check.
-    ``paths`` is a raw staging lease; ``hold_paths`` is its narrowed hold lease.
+    ``wip_hold`` reports capacity; leases describe staging scope and informational overlaps.
     """
     errors: list[str] = []
     out = {
@@ -230,11 +224,7 @@ def status(project: str, slug: str) -> dict:
             _error(errors, "lease", e)
 
     try:
-        other_leases = []
-        for other in dispatch.leases(project, exclude=out["slug"]):
-            other["hold_paths"] = dispatch.narrow(other["paths"])
-            other_leases.append(other)
-        out["other_leases"] = other_leases
+        out["other_leases"] = dispatch.leases(project, exclude=out["slug"])
     except Exception as e:
         _error(errors, "other_leases", e)
 
@@ -251,7 +241,7 @@ def status(project: str, slug: str) -> dict:
 
     if task:
         try:
-            out["wip_hold"] = dispatch.hold_conflict(out["lease"], out["other_leases"])
+            out["wip_hold"] = dispatch.wip_hold(project, task)
         except Exception as e:
             _error(errors, "wip_hold", e)
 
