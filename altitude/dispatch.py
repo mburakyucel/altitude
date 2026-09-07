@@ -112,6 +112,7 @@ DAEMON_TASK_OPERATIONS = {
     "stop": {"from": ("running",), "done": ("blocked",)},
     "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
 }
+DAEMON_REQUEST_ACTORS = ("l3", "burak")
 
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:
@@ -125,7 +126,7 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         raise T.TransitionError(f"unknown daemon task operation {operation!r}")
     if not reason:
         raise T.TransitionError(f"task {operation} requires a reason")
-    if actor not in ("l3", "burak"):
+    if actor not in DAEMON_REQUEST_ACTORS:
         raise T.TransitionError(f"task {operation} is available only to L3 or Burak")
     contract = DAEMON_TASK_OPERATIONS[operation]
     with S.project_lock(project):
@@ -162,6 +163,62 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
                        operation=operation, reason=reason, by=actor)
         S.regen_state_md(project)
         return {"queued": True, "idempotent": False, "request": request}
+
+
+def request_project_wip(project: str, wip: int | None, reason: str, *, actor: str) -> dict:
+    """2026-09-07 WIP incident: persist an operational change without needing a free task slot."""
+    reason = str(reason or "").strip()
+    if actor not in DAEMON_REQUEST_ACTORS or not reason:
+        raise T.TransitionError("project set requires L3 or the operator and a nonempty reason")
+    if wip is not None and (type(wip) is not int or not 1 <= wip <= config.WIP_PER_MACHINE):
+        raise T.TransitionError(f"WIP must be between 1 and {config.WIP_PER_MACHINE}")
+    with S.project_lock(project):
+        entry = config.project(project)
+        path = config.project_dir(project) / "wip-request.json"
+        previous = S.read_json(path, {})
+        same = (previous.get("wip"), previous.get("reason"), previous.get("actor")) == (wip, reason, actor)
+        if same and (previous.get("status") == "pending" or previous.get("result_wip") == entry.get("wip")):
+            return {"idempotent": True, "request": previous}
+        if previous.get("status") == "pending":
+            raise T.TransitionError("project set already pending in altd")
+        request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": "project-set", "project": project,
+                   "actor": actor, "reason": reason, "wip": wip, "status": "pending"}
+        S.write_json(path, request)
+        return {"idempotent": False, "request": request}
+
+
+def run_project_wip(project: str) -> dict:
+    """Altd drains this before task requests, independent of WIP and restart dispatch holds.
+
+    D7/I-20260904-062512: preserve the receipt and deduplicate the project event across a crash.
+    Re-registration is deliberate: the last registry write wins, with no registration identity fence.
+    """
+    with S.project_lock(project), config.projects_lock():
+        path = config.project_dir(project) / "wip-request.json"
+        request = S.read_json(path, {})
+        if request.get("status") != "pending":
+            return request
+        projects = config._load_projects()
+        entry = projects.get(project)
+        if entry is None:
+            request.update(status="refused", note="project is not registered")
+        else:
+            if request["wip"] is None:
+                entry.pop("wip", None)
+            else:
+                entry["wip"] = request["wip"]
+            config.save_projects(projects)
+            request["status"] = "done"
+        events = config.project_dir(project) / "events.jsonl"
+        rows = events.read_text().splitlines() if events.exists() else []
+        if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
+            event = {"at": S.now(), "kind": "project-set", "project": project, "request_id": request["id"],
+                     "actor": request["actor"], "reason": request["reason"], "wip": request["wip"],
+                     "status": request["status"], "note": request.get("note")}
+            S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
+        request.update(result_wip=entry.get("wip") if entry else None, completed_at=S.now())
+        S.write_json(path, request)
+        return request
 
 
 def pending_task_operations(project: str) -> list[str]:

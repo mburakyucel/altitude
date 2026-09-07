@@ -93,6 +93,14 @@ bin/alt --project <name> l3 tools --days 7
 [`docs/CLI.md`](docs/CLI.md) is the inspection and task-lifecycle reference. `alt monitor` remains the separate
 quota and live-session view.
 
+Project verbs are `alt project add <name> [--path PATH] [--wip N]`, `list`, `discover`,
+`remove <name>`, and `set <name> --wip N --reason "…"` (or `--unset-wip --reason "…"`).
+Registration stores WIP only when supplied; otherwise the project inherits the default of 8.
+L3 can set its own project's cap from 1 to the machine cap of 10 or unset it; add and remove are
+operator-only. A set persists a reason-bearing request that altd applies on its next tick, without
+a PR, restart, or free task slot. The first registry load removes stored legacy caps of 3 once and
+logs the migration; approval and engine pins are preserved, and subsequent explicit caps of 3 persist.
+
 The UI suite uses Playwright from a plain shell on every engine. With Node 22+ and pnpm available,
 install once with `pnpm --dir web install --frozen-lockfile` (in a restricted worktree, add
 `--store-dir /tmp/altitude-ui-pnpm-store` to keep the package store writable). `make ui` runs route

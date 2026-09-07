@@ -1,8 +1,11 @@
 """Paths and settings. Everything runtime lives under ALTITUDE_HOME (default ~/.altitude)."""
 from __future__ import annotations
 import json
+import fcntl
+import logging
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 HOME = Path.home()
@@ -77,16 +80,88 @@ def ensure_root() -> None:
 
 
 def load_projects() -> dict:
+    with projects_lock():
+        return _load_projects()
+
+
+@contextmanager
+def projects_lock():
+    """Serialize registry edits across projects: simultaneous cap changes must not lose either edit."""
     ensure_root()
+    with open(ROOT / ".projects.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _load_projects() -> dict:
+    """Read under projects_lock; retire baked-in 3s once, preserving later explicit choices."""
     try:
-        return json.loads(PROJECTS_FILE.read_text() or "{}")
+        projects = json.loads(PROJECTS_FILE.read_text() or "{}")
     except ValueError:
         return {}
+    marker = ROOT / ".project-wip-default-migrated"
+    if not marker.exists():
+        migrated = [name for name, entry in projects.items() if entry.get("wip") == 3]
+        for name in migrated:
+            projects[name].pop("wip")
+        if migrated:
+            save_projects(projects)
+            logging.getLogger(__name__).warning("Removed legacy project WIP 3 override: %s", ", ".join(migrated))
+        from .state import atomic_write
+        atomic_write(marker, "Legacy WIP defaults migrated; explicit overrides now persist.\n")
+    return projects
 
 
 def save_projects(projects: dict) -> None:
     from .state import atomic_write
     atomic_write(PROJECTS_FILE, json.dumps(projects, indent=2, sort_keys=True) + "\n")
+
+
+@contextmanager
+def edit_projects():
+    with projects_lock():
+        projects = _load_projects()
+        yield projects
+        save_projects(projects)
+
+
+def _write_project(name: str, entry: dict | None) -> None:
+    """Caller holds the project lock; reload the shared registry so other projects' edits survive."""
+    with edit_projects() as projects:
+        if entry is None:
+            projects.pop(name, None)
+        else:
+            projects[name] = entry
+
+
+@contextmanager
+def add_project(name: str, *, path=None, approval="default", wip=None, **pins):
+    """CLI/HTTP registration, including rollback if the caller's setup fails."""
+    from . import state as S
+    path = Path(path or (PROJECT_ROOTS[0] / name)).expanduser()
+    if not path.is_dir():
+        raise ValueError(f"{path} is not a directory")
+    if wip is not None and (type(wip) is not int or not 1 <= wip <= WIP_PER_MACHINE):
+        raise ValueError(f"WIP must be between 1 and {WIP_PER_MACHINE}")
+    entry = {"path": str(path), "approval": approval, **({"wip": wip} if wip is not None else {}),
+             **{key: value for key, value in pins.items() if value}}
+    with S.project_lock(name):
+        previous = load_projects().get(name)
+        _write_project(name, entry)
+        try:
+            yield entry
+        except Exception:
+            _write_project(name, previous)
+            raise
+
+
+def remove_project(name: str) -> None:
+    from . import state as S
+    with S.project_lock(name):
+        _write_project(name, None)
 
 
 def project(name: str) -> dict:
@@ -100,15 +175,15 @@ def set_l3_engine(name: str, engine: str | None) -> dict:
     """Pin the project's L3 to one engine, or clear the pin with None; the next L3 turn follows it."""
     if engine and engine not in ENGINES:
         raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
-    projects = load_projects()
-    if name not in projects:
-        raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
-    if engine:
-        projects[name]["l3_engine"] = engine
-    else:
-        projects[name].pop("l3_engine", None)
-    save_projects(projects)
-    return projects[name]
+    from . import state as S
+    with S.project_lock(name), edit_projects() as projects:
+        if name not in projects:
+            raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
+        if engine:
+            projects[name]["l3_engine"] = engine
+        else:
+            projects[name].pop("l3_engine", None)
+        return projects[name]
 
 
 def project_path(name: str) -> Path:

@@ -776,6 +776,7 @@ def tick() -> None:
     drain_hook_faults()
     for project in list(config.load_projects()):
         try:
+            dispatch.run_project_wip(project)
             if l3.queue_path(project).exists():
                 request_l3_drain(project)
             for slug in dispatch.pending_task_operations(project):
@@ -1079,30 +1080,19 @@ class Handler(BaseHTTPRequestHandler):
             o = self._body()
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
-                P = config.load_projects()
-                previous = P.get(name)
-                path = Path(o.get("path") or (config.PROJECT_ROOTS[0] / name))
-                if not path.is_dir():
-                    return self._json({"error": f"{path} is not a directory"}, 400)
-                P[name] = {"path": str(path), "approval": o.get("approval") or "default",
-                           "wip": int(o.get("wip") or config.WIP_PER_PROJECT)}
-                config.save_projects(P)
-                config.project_dir(name).mkdir(parents=True, exist_ok=True)
                 try:
-                    ensure_l3_verb_broker(name)
+                    with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default",
+                                            wip=o.get("wip")) as entry:
+                        ensure_l3_verb_broker(name)
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
                 except (OSError, RuntimeError) as exc:
-                    P = config.load_projects()
-                    if previous is None:
-                        P.pop(name, None)
-                    else:
-                        P[name] = previous
-                    config.save_projects(P)
                     return self._json({"error": f"cannot establish the L3 verb boundary: {exc}"}, 500)
                 S.regen_state_md(name)
                 spawn(f"start:{name}", start_l3, name)
-                return self._json({"ok": True, "project": P[name]})
+                return self._json({"ok": True, "project": entry})
             if api == "project" and len(parts) > 2 and parts[2] == "remove":
-                P = config.load_projects(); P.pop(o["name"], None); config.save_projects(P)
+                config.remove_project(o["name"])
                 remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
             if api == "decide":

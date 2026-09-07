@@ -35,6 +35,14 @@ hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto
 landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
 informational overlaps; the lease remains the staging boundary enforced by `alt land`.
 
+A project stores a WIP cap only when explicitly configured. The first registry load removes legacy
+stored caps of 3 once and logs the migration, preserving approval and engine pins; later explicit
+caps, including 3, persist. L3 can use `alt project set <name> --wip N --reason "…"` or
+`--unset-wip --reason "…"` for its own project, with N from 1 to the machine cap. The CLI persists
+the request and altd applies it on the next tick before capacity gates, with no task slot or restart
+needed. One project-level event records actor, reason and outcome; retries reuse the receipt and
+event while the configured WIP still matches. Project add and remove remain operator-only.
+
 When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
 the provenance gate reads it, and announces activation pending if the pull carried loaded backend code
 or a tracked web build input. Only a clean checkout on main that is strictly behind moves; every other
