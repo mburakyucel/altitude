@@ -32,8 +32,10 @@ phase deleted.
   CLI selects its model. Task status and header chips show the recorded name.
 - L3 is read-only on the deployment checkout on both engines. Its runtime `alt` and narrow external
   reads cross its project's role-fenced altd socket; reason-bearing worker operations become durable requests that altd validates and executes.
-- Resource usage is shown, never acted on: the Monitor page reports both seats' windows, their
-  reset times and how old each reading is, and which engine each role would get right now and why.
+- Resource usage is shown, never acted on: the Monitor page shows one seat card per configured
+  engine with its windows, their reset times, the 70% reserve line and how old each reading is;
+  which engine each role would get right now and why; and the sessions the monitor knows with their
+  tasks, each with its engine and the model when the API reports one.
 - The web UI is one shell. On a desktop a rail carries Needs you with its count, one row per
   managed project with a state dot and its count of waiting decisions, the folders not yet managed,
   one readout row per configured engine, Monitor, and the operator row with the theme toggle. On a
@@ -138,8 +140,9 @@ dispatches hold, and once no L2 is running, no report is waiting and no L3 turn 
 runs the guarded restart script below as a transient user unit. A restart that has not happened ten
 minutes after it was requested is a system fault for L3 and the hold lifts.
 
-To restart sooner by hand, press Restart on the web app's restart-pending banner (shown
-once nothing is running) or run `make restart` from the deployed primary checkout. The
+To restart sooner by hand, press Restart on the web app's restart banner (the button shows only
+while nothing is running and goes once the restart is under way) or run `make restart` from the
+deployed primary checkout. The
 command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work; a
 blocked task whose Claude job sits idle does not hold it, since that job survives the restart and is
 re-attached on resume.

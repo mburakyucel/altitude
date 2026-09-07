@@ -152,17 +152,6 @@
     border-bottom-color: var(--accent);
     color: var(--accent-text);
   }
-  .bar {
-    height: 6px;
-    border-radius: var(--radius-pill);
-    background: var(--hairline);
-    overflow: hidden;
-  }
-  .bar-fill {
-    height: 100%;
-    border-radius: var(--radius-pill);
-    background: var(--accent);
-  }
   .toast {
     position: relative;
     display: flex;
@@ -532,12 +521,6 @@
   overflow: auto;
   overflow-x: hidden;
 }
-.shell-main > [role="status"] {
-  margin: 16px 24px 0;
-}
-.shell[data-phone] .shell-main > [role="status"] {
-  margin: 12px 12px 0;
-}
 .page {
   display: flex;
   flex-direction: column;
@@ -549,6 +532,12 @@
 }
 .shell[data-phone] .page {
   padding: 16px 16px 32px;
+}
+.page-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 24px;
 }
 .link {
   padding: 0;
@@ -1054,6 +1043,194 @@
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+/* The restart banner (§3.13): a strip above the header on every route, in the accent tint. */
+.restart-banner {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--accent-tint-border);
+  background: var(--accent-tint);
+  font-size: var(--text-meta);
+}
+.shell[data-phone] .restart-banner {
+  padding: 10px 16px;
+}
+.restart-banner-text {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 320px;
+  flex-direction: column;
+  gap: 2px;
+}
+.restart-banner p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.restart-banner-what {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.restart-banner-meta {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.restart-banner-rule {
+  color: var(--text-secondary);
+}
+.restart-banner-button {
+  margin-left: auto;
+}
+
+/* Monitor (§3.14). The page container gives the padding; every line wraps or is cut inside its own
+ * box, so nothing pushes the viewport sideways (slice 1 reported the phone page clipping). */
+.monitor-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+.monitor-head {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.monitor-card {
+  min-width: 0;
+  padding: 16px 18px;
+  background: var(--card);
+}
+.monitor-seats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+.monitor-seat,
+.monitor-session {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.monitor-session {
+  gap: 6px;
+  padding: 12px 16px;
+}
+.monitor-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.monitor-seat-name {
+  margin: 0;
+  flex: 1;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.monitor-age {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.monitor-muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+.monitor-window {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.monitor-window-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+.monitor-window[data-stale] .monitor-window-row {
+  color: var(--text-muted);
+}
+.monitor-window-reset {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.monitor-meter {
+  position: relative;
+  height: 6px;
+  margin-top: 0;
+}
+.monitor-meter[data-stale] {
+  opacity: 0.5;
+}
+.meter-reserve {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-secondary);
+}
+.monitor-routes,
+.monitor-sessions {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.monitor-routes {
+  gap: 12px;
+}
+.monitor-sessions {
+  gap: 8px;
+}
+.monitor-route {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.monitor-route-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.monitor-route-role {
+  color: var(--text-secondary);
+}
+.monitor-route-engine {
+  font-weight: 600;
+}
+.monitor-route-why {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+.monitor-session-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-stale {
+  border: 1px solid var(--chip-claimed-border);
+  background: var(--chip-claimed-bg);
+  color: var(--chip-claimed-text);
 }
 
 @keyframes skeleton-pulse {

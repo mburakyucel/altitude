@@ -169,13 +169,17 @@ backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served 
 next dispatch. Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Hooks, personas, and templates are read per use and deploy with the pull itself.
 
-The web app's banner names backend changes, web changes, or both. New dispatches hold, and once no L2
-is running, no report is waiting and no L3 turn is in flight, altd runs the one guarded restart script
-as a transient user unit outside its own cgroup. It installs the pnpm-locked dependencies, builds and
-validates the latest bundle in staging, rechecks the checkout and quiet point, swaps the bundle,
-restarts safely, and verifies both API and UI; verification failure restores the prior bundle. The
-banner's Restart button runs the same path sooner by hand. A restart that has not happened ten minutes
-after it was requested is a system fault for L3, and the hold lifts. Ordinary source changes never
+The web app's restart banner sits above the header on every route while activation is pending: it
+says in words whether the backend, the web app, or both changed, how many files landed and when, and
+that Altitude restarts at the next quiet moment; while something runs it names what it waits for. New
+dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, altd runs
+the one guarded restart script as a transient user unit outside its own cgroup. It installs the
+pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
+quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
+restores the prior bundle. The banner's Restart button runs the same path sooner by hand: it appears
+only while nothing is running, disappears once the restart is under way (the banner then says so), and
+the banner leaves when the new process answers with nothing pending. A restart that has not happened
+ten minutes after it was requested is a system fault for L3, and the hold lifts. Ordinary source changes never
 start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
 authorization and post-change health verification.
 
@@ -275,14 +279,19 @@ overflow menu turns it into Design boards, opening in a new tab. Any project wit
 route knows nothing about this repository's own.
 
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
-work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day
-windows from the statusline snapshot, and the Codex seat's windows named by the length the provider
-reports, a window the provider does not report shown as absent rather than zero — each with percent
-used, when it resets in relative and clock terms, the plan where the provider names it, and how old
-the reading is. A figure with no reading at all is unknown and carries the one line that fixes it; a
+work is derived from it. It sits in the shell's page container and shows one seat card per configured
+engine, in the seam's order and under the display name the overview's `engines[]` rows give, so the
+page spells no provider: Claude's five-hour and seven-day windows from the statusline snapshot, and
+the Codex seat's windows named by the length the provider reports, a window the provider does not
+report shown as absent rather than zero — each with percent used, a meter with the 70% reserve line
+drawn, when it resets in relative and clock terms, the plan where the provider names it, and how old
+the reading is. A seat with no reading at all says so and carries the one line that fixes it; a
 reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One
-routing card answers which engine each project's L3 (its pin, or Auto) and a fresh L2 would get for
-a turn started now, in `pick_engine`'s own words, including the case where no engine is available.
+routing card answers which engine each project's L3 (its pin, or Auto) and a fresh L2 would get for a
+turn started now, in `pick_engine`'s own words, including the case where no engine is available. The
+sessions the monitor knows follow, each with its task, its engine and the model when the API reports
+one, its context meter and the age of its snapshot; no session is one muted sentence. Loading is a
+skeleton in the page's shape, and a failed read is one sentence with Retry.
 
 A task has two views. Its header keeps the task's own state (slug, attempt, worktree, branch) and
 its worker's (engine, model, session, context percent with its state and observation age, turns,
