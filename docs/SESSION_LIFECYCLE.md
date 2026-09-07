@@ -152,10 +152,13 @@ notification all stay in its project. Fault deduplication uses the source projec
 with the same project's incident reference. Repair-task faults (`--source recovery`) never wake L3
 again. Faults without a project notify registered `altitude`, or only update the machine fault
 ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
-conversation to its project's L3. An upstream Altitude defect goes through the operator's
-[GitHub feedback route](../README.md#feedback) with a fictional or redacted reproduction; local
-incidents and recovery work stay with the affected project. The project-bound issue verbs target
-only their own repository and provide no upstream publication override. A cross-provider
+conversation to its project's L3. A project's L3 reports an upstream Altitude defect through
+[`alt issue upstream`](CLI.md#upstream-altitude-defects) with a fictional or redacted reproduction;
+local incidents and project-local recovery work stay with the affected project. Reporting creates
+only an issue at the daemon's configured product target, without waking Altitude L3, creating tasks,
+or moving evidence. The reporting L3 does not repair Altitude or create an Altitude recovery task;
+Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
+to the calling project's origin and accept no repository override. A cross-provider
 continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
 window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
 to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
@@ -188,6 +191,10 @@ log/diff-stat/show-stat shims and the altitude journal. Claude's runtime shims a
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
 write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check.
+`alt issue upstream --title "…" -` uses that same broker/MCP boundary on either engine, with a
+create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
+write tool or cross-project task authority is granted. Altd validates the public fields and returns
+an issue URL or an actionable failure; the successful receipt stays in the calling project's log.
 L3 may use `alt issue close <number> --reason completed|not-planned` only for operator-requested closure,
 never autonomous backlog cleanup. It follows the same coordinator/socket boundary, publishes no text,
 and records the actor, issue number, closure reason, and URL in the project log after GitHub succeeds.
