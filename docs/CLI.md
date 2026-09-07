@@ -4,6 +4,10 @@
 `ALTITUDE_PROJECT=<name>` selects a project. Commands that change task state are validated against the
 task record and current attempt under the project lock.
 
+Start with [setup](SETUP.md) to build the app, install project Git guards, register a project
+with explicit engine pins, and start a conversation. `alt project add` registers state; it does
+not install Git guards. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
+
 ## Inspection
 
 These commands are read-only. They print compact text unless `--json` is present:

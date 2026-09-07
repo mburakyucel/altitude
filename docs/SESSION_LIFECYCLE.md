@@ -14,6 +14,11 @@ identities on purpose:
 | `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
+For first-run configuration and explicit single-engine pins, see [setup](SETUP.md). The
+[engine integration boundary](ARCHITECTURE.md#engine-integration-boundary) separates the supported
+launchers from the broader extensibility direction; this page describes their current lifecycle.
+[Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
+
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
 a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
 keys the edit-count telemetry across worker replacements.

@@ -1,203 +1,136 @@
 # Altitude
 
-Altitude turns a project-level conversation into isolated, reviewable work without making Burak
-manage agent plumbing. L3 is the project coordinator. Each active task has one directly reachable
-L2 owner, and that L2 may work alone or delegate bounded slices to its engine's own subagents.
+**An AI development workspace — a control center for your AI development team.**
 
-Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current system and
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the remaining product work.
-The product design, boards plus the spec that governs them, is in
-[`design/wireframes/README.md`](design/wireframes/README.md).
+Altitude is a workspace for running AI coding agents across your software projects. Discuss what
+you want to build, coordinate work through review and merge, and stay directly involved wherever
+your judgment is needed. Project conversations, task ownership, live agent sessions, and decisions
+come together in one place.
 
-The 2026-09 module-by-module simplification is complete. [`docs/SIMPLIFICATION.md`](docs/SIMPLIFICATION.md)
-records Burak's paradigm decisions, the working rules that still apply to every PR, and what each
-phase deleted.
+It is built for software engineers who already use coding agents and care about architecture,
+code quality, and what lands in their repositories. As work spans tasks and projects, Altitude
+helps you keep track of direction, ongoing changes, and decisions without juggling every session
+yourself. The current focus is **one operator managing projects on one Linux machine**.
 
-## Current operating model
+**Early private preview.** Setup is still manual in places. Start with the
+[setup guide](docs/SETUP.md) or the [short walkthrough](docs/WALKTHROUGH.md).
 
-- L3 answers directly or creates one queued task, owned end-to-end by one L2, when concrete execution is warranted.
-- Burak discusses roadmap and project direction with L3, and task-specific choices directly with
-  the task's L2. Messages sent while L3 is busy queue and run at the next turn boundary, in order.
-- Every code change uses an isolated worktree and branch, then a PR. The L2 may merge after the
-  applicable checks and review unless an explicit merge hold says otherwise.
-- Tasks dispatch up to 8 running per project by default and 10 across the machine, subject to
-  engine availability. Leases declare staging scope; overlapping tasks may run together. Briefs
-  name shared paths and ask owners to rebase onto main before landing and edit only their own
-  sections in shared docs. `alt task status --brief` shows informational overlaps; `alt land`
-  refuses changes outside the declared lease.
-- Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
-  preserve separate provider sessions; one provider's short-window limit does not freeze the other.
-  Codex model and reasoning effort are read from the running turn's rollout by altd and recorded on
-  the task or L3 session. Explicit model pins remain separate from this observation; otherwise the
-  CLI selects its model. Task status and header chips show the recorded name.
-- L3 is read-only on the deployment checkout on both engines. Its runtime `alt` and narrow external
-  reads cross its project's role-fenced altd socket; reason-bearing worker operations become durable requests that altd validates and executes.
-- Resource usage is shown, never acted on: the Monitor page shows one seat card per configured
-  engine with its windows, their reset times, the 70% reserve line and how old each reading is;
-  which engine each role would get right now and why; and the sessions the monitor knows with their
-  tasks, each with its engine and the model when the API reports one.
-- The web UI is one shell. On a desktop a rail carries Needs you with its count, one row per
-  managed project with a state dot and its count of waiting decisions, the folders not yet managed,
-  one readout row per configured engine, Monitor, and the operator row with the theme toggle. On a
-  phone a 54px header and a four-tab bar (Chat, Work, Needs you, Monitor) replace it. `/` is Needs
-  you, every decision across projects as cards; `/projects/<name>` is the project's L3 conversation
-  with its work panel; `/projects/<name>/tasks/<slug>` is the task page, the operator's conversation
-  with the L2 beside the worker's live session read as a transcript, Stop and Reject behind an inline
-  confirm, and on a phone the Conversation and Live session tabs;
-  `/projects/<name>/tasks/<slug>/report` is the task's report view, linked from a landed report's
-  card in the conversation; with no managed project every project route shows First run, which
-  starts L3 for a folder. The selected project persists per
-  browser, and every badge counts decisions only.
-- Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
-  rejected tasks are archived immediately.
-- L3 and the operator file requested backlog through altd with `alt issue new --title "…" [--label …] -` or `alt issue comment <number> -` (body on stdin); L2 is refused, and public issues exclude home paths and private incident evidence.
-  L3 closes an issue only when the operator requests it, using `alt issue close <number> --reason completed|not-planned`;
-  closure publishes no comment and records the actor, issue, reason, and URL. L3 does not clean up the backlog autonomously.
-- An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;
-  Burak sees only what L3 escalates or what the L2 flags for him.
-- A system fault blocks only its own task, records private incident evidence, and leaves one
-  message for the project's L3, which records the learning and fixes the cause directly or creates
-  one ordinary task. An incident raised by that repair task goes to Needs you instead of waking L3
-  again.
-- The project conversation shows the operator's messages as bubbles and L3's replies as prose under
-  day dividers. A turn altd triggered (a landed report, a block, an incident, a recovery, a restart)
-  folds to one muted line, red-dotted for an incident, a recovery, or a fault, with **Show** opening
-  what altd sent L3, L3's reply, and links to the task, its full report, and its digest; a run of
-  them between two operator messages folds to one line that expands to the list.
-- Every conversation uses one composer with the same optional microphone control and an arrow in
-  an accent circle for sending in every state, with no visible Send or Queue label. While listening,
-  **Cancel** discards the recording, **Stop** transcribes into the editable draft, and the arrow
-  transcribes, appends to the draft, and sends at once through the normal path. While L3 is busy the
-  arrow queues, and the hint reads "L3 is mid-turn · runs next". Cancel, denial, and transcription
-  failure leave typing and the draft available.
+## What working with Altitude feels like
 
-## Repository and runtime
+For example, you want to add CSV export to a project:
 
-`altitude/` is a standard-library Python package. `bin/alt` is the CLI and the only door a worker
-has into Altitude: the backend validates every command against the task record under the project
-lock. `personas/` contains the L2 and L3 roles, and `schemas/` defines code-delivery reports. `hooks/` holds the Git hooks installed into every managed
-repository, the Claude inbox hook, and the statusline monitor. A Codex L2 runs in Codex's own
-workspace-write sandbox and uses the same door. Claude and Codex L3 turns both run from fresh disposable
-runtime directories with the deployment checkout and Altitude state read-only. Codex's L3 profile denies direct
-command networking and the user-service bus. Its required stdio MCP coordinator tool forwards argument arrays
-and stdin to that project's role-fenced Unix socket; shell wrappers cannot connect from the native sandbox.
-Legacy L3 sessions rotate once onto the current confinement policy before resuming normal coordination. `web/` is the React UI built into
-`web/dist/` for the Python server to serve. That server also serves any project's wireframe
-boards read-only from the project's own checkout at `/design/<project>`, which the project header's
-overflow menu offers as Design boards when the boards exist.
+1. **Discuss the change in the project conversation.** Explain the user need and constraints to
+   the project's coordinator. It can answer directly or create a task when there is work to do.
+2. **A task gets one owner and an isolated workspace.** The owner investigates the repository
+   and chooses how to implement the change, including whether helpers or a proposal would help.
+3. **Follow or steer the work.** Open the task to message its owner directly and inspect its
+   live session. “Keep the existing column names” stays with the task as durable conversation.
+4. **Find the decision that needs you.** **Needs you** gathers questions across projects. Open
+   the task for context and give a product answer in its conversation; the card also offers
+   Resume or Reject when that is the action you need.
+5. **Follow delivery through a PR.** The owner runs the project's checks and appropriate review,
+   then lands through the guarded PR path. A merge hold keeps it for your review; otherwise the
+   owner can merge when ready. The verified report and conversation preserve the outcome.
 
-Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
-tasks, archived tasks, L3 and L2 conversations, monitor snapshots, and private
-incident evidence. Runtime state is not source-controlled.
+This is one example, with the execution approach chosen for the work. The
+[illustrated text walkthrough](docs/WALKTHROUGH.md) follows fictional projects through the
+project conversation, direct task conversation/live session, and cross-project decisions view.
+The UI and technical docs call the project coordinator **L3** and the task owner **L2**.
 
-Useful inspection commands print a compact text view; add `--json` for the complete record. Task
-status keeps its complete JSON view and adds `--brief` for compact orientation.
+## Why the coordination stays small
 
-```sh
-make test
-make web
-make ui
-bin/alt --project <name> task report <slug>
-bin/alt --project <name> task messages <slug> --last 5
-bin/alt --project <name> task events <slug> --last 5
-bin/alt --project <name> task status <slug> --brief
-bin/alt queue
-bin/alt --project <name> repo
-bin/alt --project <name> pr <number>
-bin/alt --project <name> l3 tools --days 7
-```
+- **Clear responsibility, flexible execution.** One coordinator per project and one owner per
+  task keep it clear who to talk to. The owner chooses investigation, decomposition, delegation,
+  and implementation strategy. A fixed sequence of stages and specialist roles would encode
+  assumptions that age as agents improve.
+- **Engineering judgment stays close to the work.** Set direction at the project level, steer
+  an individual task, or respond to decisions across projects. Isolated worktrees, declared file
+  scope, applicable checks, and the PR boundary make changes reviewable.
+- **Build on the agents' capabilities.** CLI engines supply their tools, sessions, context
+  management, and native helper facilities. Altitude adds focused coordinator/owner instructions
+  and delivery boundaries. Repository instructions, native skills, hooks, and agent facilities
+  are the place to customize how work gets done within those boundaries.
+- **Keep engine and access choices separate from the workflow.** The organizing idea is ongoing
+  CLI sessions behind replaceable integrations. Improvements in an engine should improve the
+  workspace without requiring another coordination mechanism for each new capability.
 
-[`docs/CLI.md`](docs/CLI.md) is the inspection and task-lifecycle reference. `alt monitor` remains the separate
-quota and live-session view.
+## Engines today and the integration direction
 
-Project verbs are `alt project add <name> [--path PATH] [--wip N]`, `list`, `discover`,
-`remove <name>`, and `set <name> --wip N --reason "…"` (or `--unset-wip --reason "…"`).
-Registration stores WIP only when supplied; otherwise the project inherits the default of 8.
-L3 can set its own project's cap from 1 to the machine cap of 10 or unset it; add and remove are
-operator-only. A set persists a reason-bearing request that altd applies on its next tick, without
-a PR, restart, or free task slot. The first registry load removes stored legacy caps of 3 once and
-logs the migration; approval and engine pins are preserved, and subsequent explicit caps of 3 persist.
+**Codex and Claude Code are the current integrations.** You can pin both project roles to one
+installed, authenticated engine; two subscriptions are not a prerequisite. Auto routing uses
+reported quota windows, so single-engine setup needs explicit pins today.
 
-The UI suite uses Playwright from a plain shell on every engine. With Node 22+ and pnpm available,
-install once with `pnpm --dir web install --frozen-lockfile` (in a restricted worktree, add
-`--store-dir /tmp/altitude-ui-pnpm-store` to keep the package store writable). `make ui` runs route
-smoke and component walkthroughs headlessly at 390×844 and 1440×900 against the local service at
-`https://10.88.0.1:8890`. Set `UI_BASE_URL` to target a throwaway altd on an unreserved port or a
-Vite dev server; Vite's `ALTITUDE_DEV_API` points its API proxy at that service. The suite reads a
-managed project and a real active or archived task; `UI_PROJECT` and `UI_TASK` select them when
-needed. A throwaway service needs those records populated. Missing data fails explicitly, never
-silently skips route coverage. It does not create projects, send messages, or dispatch tasks.
+The [engine boundary](docs/ARCHITECTURE.md#engine-integration-boundary) centers on
+[`altitude/engines.py`](altitude/engines.py) for launching, resuming, stopping and observing
+sessions, [`altitude/route.py`](altitude/route.py) for selection and usage windows, and
+[`altitude/config.py`](altitude/config.py) for engine settings. It is an internal integration
+boundary, not a plug-in API that accepts any CLI unchanged.
 
-The harness prefers bundled Chromium (`channel: "chromium"`), with its browser sandbox disabled
-inside the worker's filesystem sandbox. Incident I-20260907-041446 identifies the installed Chrome
-AppArmor profile denying network sockets there. Install the bundle once per Playwright version:
+The intended design lets your choice of agent, model provider, subscription, direct API billing,
+or access service vary independently of the project workflow. **OpenCode and access through
+services such as Bedrock are future integration candidates, not supported setup paths.** Each
+integration may need different session, authentication, capability and usage models; it should
+preserve the engine's native behavior rather than force every engine into today's interface.
+[Current gaps and release prerequisites](docs/ROADMAP.md#early-user-onboarding-and-public-release)
+are tracked separately from this documentation milestone.
+
+## Available now
+
+| Capability | What you can do |
+| --- | --- |
+| Multiple projects | Keep project conversations and active work together; move between repositories in one workspace. |
+| Direct conversations | Talk to the coordinator or a task owner; queued messages reach ongoing sessions at engine-specific checkpoints. |
+| Parallel work | Run tasks in separate Git worktrees and branches with one accountable owner each; shared-file changes still need reconciliation. |
+| Delivery visibility | Follow PRs, check outcomes, merge holds, reports and archived task conversations. |
+| Cross-project decisions | Use Needs you to find questions escalated for your judgment, with links back to the task. |
+| Routing and usage | Inspect engine selection reasons, reported usage windows and sessions; missing or stale telemetry is shown explicitly. |
+| Desktop and mobile web | Use the desktop conversation/work panels or phone tabs. Remote access needs a configured private network; voice also needs browser support and a local transcription service. |
+
+## Get started
+
+The current runtime targets Linux with a working **systemd user manager**, Git and authenticated
+GitHub CLI, Python (3.12 in CI), Node 22.22.2+ (22.x) or 24.15+ (24.x), pnpm, and at least one compatible authenticated coding
+CLI. Managed projects use a clean primary `main` checkout, `origin/main`, and GitHub PR delivery.
+There is no packaged installer or verified native macOS/Windows runtime yet.
+
+With repository access:
 
 ```sh
-PLAYWRIGHT_BROWSERS_PATH="${ALTITUDE_HOME:-$HOME/.altitude}/browsers" pnpm --dir web exec playwright install chromium
-make ui
+git clone git@github.com:mburakyucel/altitude.git
+cd altitude
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
 ```
 
-`pnpm ui` and `make ui` share that writable cache across task worktrees; `PLAYWRIGHT_BROWSERS_PATH`
-overrides it for installation and execution together. Installed Chrome (`channel: "chrome"`) is
-the fallback only when the bundled browser is absent. Profiles are temporary; no visible desktop
-window opens. See [Playwright browser setup](https://playwright.dev/docs/browsers).
-Crashpad's writable configuration also stays under `web/ui-artifacts/browser-config/`.
+Then follow [setup: register a project and start a conversation](docs/SETUP.md#register-a-project-and-start-a-conversation)
+for engine pins, Git guards and the foreground localhost command. That guide names the manual
+steps and machine-specific defaults; the shipped service unit needs adaptation for another host.
+Altitude is still being prepared for invited collaborators. No open-source license has been
+selected, and this milestone does not change repository visibility.
 
-`web/e2e/*.pw.ts` specs stay separate from the Vitest unit suite (`pnpm --dir web test`). Both
-viewport projects run each spec; `walkthrough.ts` asserts appearances and removals and captures
-named states. `project-menu.pw.ts` walks closed, open, reset confirmation, cancelled and dismissed
-states without confirming a reset. Screenshots, traces and the HTML report stay under ignored
-`web/ui-artifacts/`, grouped by spec and viewport. These contain real service data: keep them local
-and reference the proving spec in the PR. For a human-requested headed run of one spec:
-`make ui UI_ARGS='project-menu.pw.ts --project=desktop --headed'`. To view the saved report:
-`pnpm --dir web exec playwright show-report ui-artifacts/report`.
-The Vite target also checks browser-requested assets: its missing `/favicon.ico` currently reports
-a console 404. The live service suite is the acceptance run; console errors are not filtered out.
+## Documentation
 
-## Service lifecycle
+| Start here | Go deeper |
+| --- | --- |
+| [Setup](docs/SETUP.md) | [Architecture and engine boundary](docs/ARCHITECTURE.md) |
+| [Example walkthrough](docs/WALKTHROUGH.md) | [Engine and session lifecycle](docs/SESSION_LIFECYCLE.md) |
+| [Contributing](CONTRIBUTING.md) | [Development and checks](docs/DEVELOPMENT.md) |
+| [CLI usage](docs/CLI.md) | [Service operations and mobile access](docs/OPERATIONS.md) |
+| [Roadmap and release prerequisites](docs/ROADMAP.md) | [Design boards and UI specification](design/wireframes/README.md) |
 
-Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
-merges even while their workers run. A self-deploy fast-forward marks activation
-pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
-(`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
-`web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
-Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn, or report
-verification is in flight, `altd` runs the guarded restart script below as a transient user unit.
-A restart that has not happened ten
-minutes after it was requested is a system fault for L3 and the hold lifts.
+For an installed service, [operations](docs/OPERATIONS.md#service-lifecycle) documents automatic
+activation and the operator's `make restart` command. Browser target and installation instructions
+are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
 
-To restart sooner by hand, press Restart on the web app's restart banner (the button shows only
-at that narrow quiet point, including while workers run, and goes once restart is under way) or run `make restart` from the
-deployed primary checkout. The
-command refuses another clone/worktree, a non-exact or dirty `main`, and an in-flight dispatch,
-L3 turn, or report verification. Both engines run L2 workers in independent transient user units,
-so workers survive and are adopted after restart. Dispatch and
-L3 turns wait only from the restart request until the replacement daemon is ready.
-It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
-ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
-web page to answer from a new process. The prior bundle is restored if verification fails. There is
-no separate web service and no `sudo` is required. Node 22+ and `pnpm` are required; dependency
-retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
+The [simplification record](docs/SIMPLIFICATION.md) explains the project's design decisions and
+review rules. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;
+[issue #219](https://github.com/mburakyucel/altitude/issues/219) tracks this onboarding milestone
+and the remaining repository-presentation work.
 
-## Voice input on iPhone
+## Feedback
 
-Open Altitude at `https://10.88.0.1:8890` through WireGuard. Safari exposes the microphone only in a
-secure context, so the phone must trust the local CA used by Altitude's certificate; `/ca.crt` serves
-that CA when it needs to be installed. The microphone button remains a typing-only hint on plain
-HTTP or an unsupported browser.
-
-The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where available. Altitude
-converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
-path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
-audio is deleted after every success or failure and is never part of task or chat state. A recording
-becomes text through **Stop** (Ctrl/⌘+M), appending to the draft for editing, or the send arrow (Enter),
-appending and sending at once (queued while L3 is busy). **Cancel** (Esc) discards the recording.
-An empty transcript or transcription failure sends nothing and preserves the draft.
-
-For a manual Safari check, open each of a project conversation, a task conversation, and a project
-task's **Message L2** panel; record and stop; confirm the transcript is appended to the existing
-draft and nothing else appears; record again and use the arrow to transcribe and send or queue at once;
-then cancel a recording and deny microphone access once and confirm the
-typed draft remains usable. If Safari reports that voice needs HTTPS, use the secure URL above and verify the local CA is
-enabled under Certificate Trust Settings.
+Invited collaborators can [open an issue](https://github.com/mburakyucel/altitude/issues/new/choose)
+with what they tried, expected behavior, actual behavior, and a small reproducible example.
+Setup friction and confusing product language are useful feedback too. Keep examples fictional
+or redacted; send security-sensitive details privately to the maintainer through your invitation
+channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
