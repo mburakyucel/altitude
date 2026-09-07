@@ -156,12 +156,16 @@ Claude's confinement, while Codex retains its native filesystem sandbox.
 An existing Claude L3 session that predates this confinement policy is rotated before its next turn. Each engine
 keeps its own resumable L3 session after that boundary is established.
 
-Each Codex turn runs in a transient user unit created by the user manager, because altd's own `NoNewPrivileges`
-hardening would stop Codex's nested bwrap from starting. The outer launcher alone receives the user-session bus;
+Both engines launch L2 workers through the same transient user-unit command builder, outside altd's
+cgroup. Claude's `--bg` launcher uses `Type=forking` and `ExitType=cgroup`: startup waits for the launcher
+to return, and the unit remains alive while any descendant runs. Resume stops a previous worker's
+remaining descendants before reusing its task/attempt unit. Each Codex turn also uses this boundary,
+because altd's own `NoNewPrivileges` hardening would stop its nested bwrap from starting.
+The outer launcher alone receives the user-session bus;
 the child starts from Altitude's clean environment plus the actor identity; stopping the unit stops the whole
 process tree. Codex stdout JSONL is private task evidence: `thread.started.thread_id` is the session identity and
 `turn.completed.usage` the latest reported usage. A turn that ends without a report, a block, or a completion
-blocks the task as ended without a report, exactly like a Claude session that exits early.
+blocks the task with a system fault and incident, exactly like a Claude session that exits early.
 
 ## L3 sessions and provider changes
 
@@ -204,9 +208,13 @@ and report verification wait only from the restart unit request until the replac
 ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
 script itself.
 After an
-`altd` restart, Claude is rediscovered through its job registry and Codex through its private task
-record and the state of its transient unit. A missing or failed worker without a valid completion is
-a system fault, not “still running.” Rejection and post-merge cleanup use the same provider adapter.
+`altd` restart, Claude is rediscovered through its job registry and checked against its transient unit;
+Codex uses its private task record and transient unit. Both engines' units survive the service restart.
+An ended or missing worker's report is current only when its mtime is at or after the latest launch
+or resume timestamp, persisted on the task before the provider starts. A missing or stale report
+without an explicit completion is a system fault
+that blocks the task and files an incident; a current report goes to verification. Rejection and
+post-merge cleanup use the same provider adapter.
 
 A worker's PATH resolves `alt` to the deployment checkout's `bin/alt`, so each invocation uses the
 current CLI; L2 commands and the inbox hook use locked durable state directly and keep working while

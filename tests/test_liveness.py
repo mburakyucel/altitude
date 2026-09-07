@@ -1,6 +1,9 @@
 """A `claude --bg` worker that died (`claude agents` state=failed) is a finished-with-fault L2, never "still running"."""
 import json
+import os
+from datetime import datetime, timezone
 import unittest
+import time
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -8,6 +11,44 @@ from altitude import state as S, engines, dispatch, server, tasks as T
 
 
 class TestDeadWorker(AltitudeCase):
+    def test_incident_165145_stale_report_is_a_fault_not_a_verdict(self):
+        # I-20260907-165145: a pre-resume report must not be replayed after the worker disappears.
+        for state in (None, "failed", "done", "stopped"):
+            with self.subTest(state=state):
+                slug = f"stale-{state or 'absent'}"
+                task = T.new(self.project, slug, "Repair worker lifecycle")
+                task.update(state="running", attempt=1, agent_id="worker", session_id="session",
+                            dispatched="2026-09-07T10:00:00+00:00",
+                            worker_started_at="2026-09-07T16:00:00.500000+00:00")
+                S.save_task(self.project, task)
+                report = S.task_dir(self.project, slug) / "report.json"
+                report.write_text(json.dumps({"blocked": "old reason"}))
+                stale = datetime(2026, 9, 7, 16, 0, 0, 250000, timezone.utc).timestamp()
+                os.utime(report, (stale, stale))
+                rows = [] if state is None else [{"id": "worker", "sessionId": "session", "state": state}]
+                item = self._poll(rows, [task])[0]
+                self.assertTrue(item.get("died"))
+                with mock.patch.object(server.verify, "verify") as verify, \
+                     mock.patch.object(server.incidents, "system_fault") as fault:
+                    server.on_l2_finished(self.project, item)
+                verify.assert_not_called()
+                fault.assert_called_once()
+                self.assertEqual(fault.call_args.args[0], "l2-died")
+                saved = S.load_task(self.project, slug)
+                self.assertEqual(saved["state"], "blocked")
+                self.assertIn("fresh report", saved["blocked_reason"])
+
+    def test_fresh_report_after_resume_and_existing_resume_timestamp(self):
+        task = T.new(self.project, "resumed-report", "Repair worker lifecycle")
+        task.update(state="running", agent_id="worker", session_id="session", dispatched="2026-09-07T10:00:00+00:00")
+        report = S.task_dir(self.project, task["slug"]) / "report.json"
+        report.write_text("{}")
+        S.append_event(self.project, task["slug"], "state", frm="blocked", to="running", previous_worker="old")
+        rows = [{"id": "worker", "state": "done"}]
+        self.assertFalse(self._poll(rows, [task])[0].get("died"))
+        os.utime(report, (1, 1))
+        self.assertTrue(self._poll(rows, [task])[0].get("died"))
+
     def _poll(self, rows, tasks):
         self.patch(engines, "claude_agents", return_value=rows)
         self.patch(S, "list_tasks", return_value=tasks)
@@ -63,6 +104,7 @@ class TestResumeRebinds(AltitudeCase):
             return {"stdout": "", "stderr": "", "returncode": 0, "agent": {"id": "new", "sessionId": "new-sid", "state": "working"}}
         rows = [{"id": "old", "name": f"{self.project}/resume-me-1", "sessionId": "old-sid", "state": "working",
                  "status": "idle", "pid": 1, "startedAt": 1, "cwd": str(wt)}]
+        before_resume = time.time()
         with mock.patch.object(engines, "claude_resume_bg", fake_resume), \
              mock.patch.object(engines, "claude_agents", return_value=rows), \
              mock.patch.object(engines, "claude_stop", side_effect=lambda _id: rows.clear() or "stopped") as stop, \
@@ -74,6 +116,7 @@ class TestResumeRebinds(AltitudeCase):
         self.assertEqual((seen["name"], seen["sid"], seen["cwd"]), (f"{self.project}/resume-me-1", "old-sid", str(wt)))
         self.assertEqual(seen["env"].get("ALTITUDE_SESSION_KEY"), f"{self.project}--resume-me-1")
         t = S.load_task(self.project, "resume-me")
+        self.assertGreaterEqual(datetime.fromisoformat(t["worker_started_at"]).timestamp(), before_resume)
         self.assertEqual((t["state"], t["agent_id"], t["session_id"], t["attempt"]), ("running", "new", "new-sid", 1),
                          "the attempt survives a physical worker replacement")
         self.assertEqual(res["agent"]["id"], "new")

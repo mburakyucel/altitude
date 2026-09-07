@@ -1,6 +1,7 @@
 """Dispatch one task-owning L2 in its worktree, monitor it, and start its session again once it stopped."""
 from __future__ import annotations
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import fcntl
 import json
 import os
@@ -557,7 +558,8 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         engine = choice["engine"]
         selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
                           if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
-        task.update({"dispatching": S.now(), "l2_engine": engine, "engine_model": selected_model,
+        task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
+                     "l2_engine": engine, "engine_model": selected_model,
                      "launch_model": selected_model, "engine_reasoning_effort": None,
                      "routing": choice["why"]})
         S.save_task(project, task)
@@ -705,6 +707,10 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
     worker = {}
     try:
         T.update_resume_claim(project, slug, claim["id"], phase="launching")
+        with S.project_lock(project):
+            current = S.load_task(project, slug)
+            current["worker_started_at"] = datetime.now(timezone.utc).isoformat()
+            T._save_claim_task(project, current)
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
             persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
@@ -964,7 +970,16 @@ def poll(project: str) -> list[dict]:
     claude_rows = engines.claude_agents() if needs_claude else []
     finished = []
     for t in task_rows:
-        has_report = (S.task_dir(project, t["slug"]) / "report.json").exists()
+        report = S.task_dir(project, t["slug"]) / "report.json"
+        # I-20260907-165145: an earlier attempt/resume's report cannot account for a vanished worker.
+        started = t.get("worker_started_at")
+        if not started:
+            started = next((e["at"] for e in reversed(S.read_events(project, t["slug"]))
+                            if e.get("kind") == "state" and e.get("to") == "running"), t.get("dispatched"))
+        try:
+            has_report = report.stat().st_mtime >= (datetime.fromisoformat(started).timestamp() if started else 0)
+        except FileNotFoundError:
+            has_report = False
         if t["state"] == "blocked" and has_report and "idle without a report" in (t.get("blocked_reason") or ""):
             finished.append({"task": t, "agent": None})  # report landed after the idle check: hand it to the verifier
             continue
@@ -1001,7 +1016,7 @@ def poll(project: str) -> list[dict]:
                 continue
         if a and a.get("status") == "idle" and a.get("state") != "done" and not has_report:
             idle_since = prev.get("idle_since") or S.now()
-        died = (a is None or a.get("state") == "failed") and not has_report
+        died = (a is None or a.get("state") in ("done", "failed", "stopped") or a.get("status") == "exited") and not has_report
         if died:  # worker gone before a report: raised as a system fault by the server, never read as "still running"
             finished.append({"task": t, "agent": a, "died": True})
         elif a is None or a.get("state") in ("done", "failed") or a.get("status") == "exited" or (has_report and a.get("status") == "idle"):

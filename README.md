@@ -164,7 +164,8 @@ To restart sooner by hand, press Restart on the web app's restart banner (the bu
 at that narrow quiet point, including while workers run, and goes once restart is under way) or run `make restart` from the
 deployed primary checkout. The
 command refuses another clone/worktree, a non-exact or dirty `main`, and an in-flight dispatch,
-L3 turn, or report verification. Detached workers survive and are adopted after restart. Dispatch and
+L3 turn, or report verification. Both engines run L2 workers in independent transient user units,
+so workers survive and are adopted after restart. Dispatch and
 L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
