@@ -321,6 +321,12 @@ export const ChatMessageSchema = z
     text: z.string(),
     trigger: z.string().nullish(),
     engine: z.string().nullish(),
+    /** The id of the L3 turn the row belongs to; rows written before the id existed lack it. */
+    turn_id: z.string().nullish(),
+    /** A system row's task (an FYI, a decision follow-up) when the server recorded one. */
+    slug: z.string().nullish(),
+    /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
+    tasks: z.array(z.string()).nullish(),
   })
   .passthrough();
 
@@ -354,8 +360,9 @@ export const ChatViewSchema = z
     /** Messages queued while L3 was busy, oldest first; they run in order at the next turn boundary. */
     queued: z.array(QueuedMessageSchema).nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
-    /** The project's L3 engine pin; null or absent means the weekly quota decides. */
-    engine: z.enum(["claude", "codex"]).nullish(),
+    /** The project's L3 engine pin, one of the overview's engine names; null or absent means the
+     * weekly quota decides. */
+    engine: z.string().nullish(),
   })
   .passthrough();
 
@@ -618,14 +625,13 @@ export function useChatDequeue(project: string) {
   });
 }
 
-export type L3Engine = "claude" | "codex";
-
 /**
- * Pin the project's L3 to one engine, or clear the pin with null so the weekly quota decides. The
- * pin covers chat and server-triggered turns alike and stays until changed.
+ * Pin the project's L3 to one engine (a name from the overview's engine readout), or clear the pin
+ * with null so the weekly quota decides. The pin covers chat and server-triggered turns alike and
+ * stays until changed.
  */
 export function useL3Engine(project: string) {
-  return useOptimisticMutation<L3Engine | null, unknown, ChatView>({
+  return useOptimisticMutation<string | null, unknown, ChatView>({
     mutationFn: (engine) => post("/api/l3/engine", { project, engine }),
     queryKey: ["chat", project],
     update: (cached, engine) => cached && { ...cached, engine },
@@ -657,18 +663,28 @@ export interface ChatDone {
 /** A message sent while L3 was busy comes back queued instead of streamed. */
 export interface ChatSent extends ChatDone {
   queued?: QueuedMessage;
+  /** The turn the server opened for the message, named before its first text (SPEC.md §4.2). */
+  turn?: ActiveTurn;
+}
+
+export interface ChatStreamHandlers {
+  onText: (chunk: string) => void;
+  /** The server accepted the message: it is a stored row now, streamed or queued. */
+  onAccepted?: () => void;
+  /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. */
+  onTurn?: (turn: ActiveTurn) => void;
 }
 
 /**
- * POST /api/chat and read the reply. A free L3 streams NDJSON: {"t": "..."} lines feed onText and the
- * final {"done": {...}} comes back (the caller surfaces done.error). A busy L3 answers with a single
- * {"queued": {...}} object instead — the same line reader takes both. Polling is paused for the
- * duration. Non-2xx throws ApiError.
+ * POST /api/chat and read the reply. A free L3 streams NDJSON: a first {"turn": {...}} names the
+ * turn, {"t": "..."} lines feed onText and the final {"done": {...}} comes back (the caller surfaces
+ * done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
+ * reader takes both. Polling is paused for the duration. Non-2xx throws ApiError.
  */
 export async function streamChat(
   project: string,
   text: string,
-  onText: (chunk: string) => void,
+  handlers: ChatStreamHandlers,
 ): Promise<ChatSent> {
   setChatStreaming(true);
   try {
@@ -679,6 +695,7 @@ export async function streamChat(
     });
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
     if (!res.body) throw new ApiError(res.status, "no response body");
+    handlers.onAccepted?.();
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -686,13 +703,20 @@ export async function streamChat(
     let done: ChatSent = {};
     const handleLine = (line: string) => {
       if (!line.trim()) return;
-      let parsed: { t?: unknown; done?: ChatDone; queued?: unknown };
+      let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
       try {
-        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown };
+        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
       } catch {
         return; // tolerate a torn line
       }
-      if (typeof parsed.t === "string") onText(parsed.t);
+      if (parsed.turn) {
+        const turn = ActiveTurnSchema.safeParse(parsed.turn);
+        if (turn.success) {
+          done = { ...done, turn: turn.data };
+          handlers.onTurn?.(turn.data);
+        }
+      }
+      if (typeof parsed.t === "string") handlers.onText(parsed.t);
       if (parsed.done) done = { ...done, ...parsed.done };
       if (parsed.queued) done = { ...done, queued: QueuedMessageSchema.parse(parsed.queued) };
     };

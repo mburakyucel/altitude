@@ -6,13 +6,10 @@
     <meta name="theme-color" content="#f8fafc" />
     <title>Altitude</title>
     <script>
-      // Apply the persisted theme before first paint ("system" follows the OS scheme).
+      // Apply the persisted theme before first paint: light by default, dark when the operator chose it
+      // (shell/theme.tsx owns the choice).
       try {
-        var t = localStorage.getItem("altitude.theme");
-        var dark =
-          t === "dark" ||
-          (t !== "light" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
-        if (dark) {
+        if (localStorage.getItem("altitude.theme") === "dark") {
           document.documentElement.dataset.theme = "dark";
           document.querySelector('meta[name="theme-color"]').content = "#0f172a";
         }

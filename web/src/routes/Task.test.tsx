@@ -434,16 +434,20 @@ describe("Task on desktop", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Fix the timer" })).toBeInTheDocument();
   });
 
-  it("sends a reviewed voice transcript through the same message path", async () => {
+  it("lands the transcript in the draft and sends it through the same message path", async () => {
     installVoiceBrowser();
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    await user.type(screen.getByLabelText("Message the L2"), "Typed context.");
-    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
-    await screen.findByRole("region", { name: "Voice transcript review" });
+    const field = screen.getByLabelText("Message the L2");
+    await user.type(field, "Typed context.");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Typed context. spoken detail"));
+    // Landed: the draft is the only place the words appear (issue #195).
+    expect(screen.queryByRole("region", { name: /transcript/i })).toBeNull();
+    expect(screen.queryByText("spoken detail")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true));
@@ -473,14 +477,14 @@ describe("Task on desktop", () => {
     await router.navigate(route);
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
 
-    await user.type(screen.getByLabelText("Message the L2"), "Fix-only draft");
-    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
-    await screen.findByRole("region", { name: "Voice transcript review" });
+    const field = screen.getByLabelText("Message the L2");
+    await user.type(field, "Fix-only draft");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Fix-only draft fix-timer only"));
 
     await router.navigate("/projects/altitude/tasks/other-task");
     await screen.findByRole("heading", { level: 1, name: "Other task" });
-    expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
   });
 });

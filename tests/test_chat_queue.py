@@ -339,7 +339,7 @@ class TestChatQueue(AltitudeCase):
         self.assertIsNone(view["active"], "a bare busy lock is not an L3 turn the Chat UI may infer")
 
     def test_a_free_l3_still_streams_the_answer(self):
-        self.patch(l3, "turn", new=lambda project, text, *, trigger, on_text: (
+        self.patch(l3, "turn", new=lambda project, text, *, trigger, on_text, on_start=None: (
             on_text("two tasks."), {"session_id": "s1", "engine": "claude", "error": None,
                                     "turn_id": "turn-1"})[1])
         status, payload = self.request("POST", "/api/chat", {"project": self.project, "text": "status?"})
@@ -533,7 +533,7 @@ class TestChatQueue(AltitudeCase):
         drained = threading.Event()
         calls = []
 
-        def fake_turn(project, text, *, trigger, on_text=None):
+        def fake_turn(project, text, *, trigger, on_text=None, on_start=None):
             calls.append(text)
             if on_text:  # the turn Burak started from the page; he types again while it runs
                 l3.queue_message(project, "while you were busy", trigger="chat", role="burak")
@@ -592,6 +592,72 @@ class TestChatQueue(AltitudeCase):
             server.drain_l3_queue(self.project)
             server.drain_l3_queue(self.project)
         turn.assert_called_once_with(self.project, "before the restart", trigger="chat")
+
+    # ---- what the conversation reads (SPEC.md §3.3, §3.4, §5.2) --------------
+
+    def test_the_stream_names_its_turn_before_the_first_text(self):
+        # A poll that lands mid-stream already shows the server's rows for this turn; without the id
+        # the page had to guess which rows were its own and doubled the operator's bubble.
+        def provider(_prompt, **kwargs):
+            kwargs["on_start"](4242)
+            kwargs["on_text"]("two tasks.")
+            return self.claude_result("two tasks.")
+
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider):
+            status, payload = self.request("POST", "/api/chat", {"project": self.project, "text": "status?"})
+        self.assertEqual(status, 200)
+        lines = [json.loads(line) for line in payload.decode().splitlines() if line.startswith("{")]  # chunk sizes between
+        self.assertEqual([next(iter(line)) for line in lines], ["turn", "t", "done"])
+        self.assertEqual(set(lines[0]["turn"]), {"id", "started_at", "trigger"})
+        self.assertEqual(lines[0]["turn"]["trigger"], "chat")
+        self.assertEqual(lines[2]["done"]["turn_id"], lines[0]["turn"]["id"])
+        rows = self.chat_view()["history"]
+        self.assertEqual([r["turn_id"] for r in rows[-2:]], [lines[0]["turn"]["id"]] * 2)
+
+    def test_a_task_created_through_the_verb_broker_names_itself_on_the_turns_assistant_row(self):
+        # SPEC.md §5.2 note 4: the page shows the task under the reply that created it, so the reply's
+        # row must say which task that was; a task created outside any turn belongs to no row.
+        created = {}
+
+        def provider(_prompt, **_kwargs):
+            reply = server.l3_verb_request(self.project, {
+                "kind": "alt", "args": ["task", "new", "--title", "Fold the system lines", "-"],
+                "stdin": "Render every system turn as one line."})
+            self.assertEqual(reply["returncode"], 0, reply["stderr"])
+            created["slug"] = json.loads(reply["stdout"])["slug"]
+            return self.claude_result("Created one task for it.")
+
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(server, "request_l3_drain"):
+            server.server_l3_turn(self.project, "fold the system lines", trigger="chat")
+        user, assistant = self.chat_view()["history"][-2:]
+        self.assertEqual(assistant["tasks"], [created["slug"]])
+        self.assertNotIn("tasks", user)
+        self.assertEqual(S.load_task(self.project, created["slug"])["state"], "queued")
+
+        self.assertFalse(l3.note_task(self.project, "made-by-hand"), "no turn is running")
+        with self.deliverable(), mock.patch.object(engines, "claude_print",
+                                                   return_value=self.claude_result("nothing new")):
+            server.server_l3_turn(self.project, "anything new?", trigger="chat")
+        self.assertNotIn("tasks", self.chat_view()["history"][-1])
+
+    def test_the_report_prompt_is_label_value_rows_and_keeps_the_report_behind_the_task(self):
+        # SPEC.md §5.2 note 1: the excerpt made the stored row unreadable in the expanded system card.
+        task = T.new(self.project, "Persist paths", "Keep them.")
+        verdict = {"verdict": "ok", "problems": [], "signals": ["one flaky test retried"], "prs": [178],
+                   "spend": {"turns": 14, "subagent_launches": 2, "cost": None},
+                   "report": {"landed": {"prs": [{"number": 178, "merged": True}], "deploy": "healthy"},
+                              "review": [{"summary": "secret evidence text"}]}}
+        with mock.patch.object(l3, "turn", return_value={}) as turn:
+            server.report_turn(self.project, task, verdict)
+        header = turn.call_args.args[1]
+        self.assertEqual(turn.call_args.kwargs["trigger"], "report-landed")
+        self.assertEqual(header.splitlines()[:7], [
+            f"Report landed for {task['slug']}.", f"Task: {task['slug']}", "Verdict: ok", "Problems: none",
+            "Post-mortem signals: one flaky test retried", "PRs: #178 merged", "Spend: 14 turns, 2 subagent launches"])
+        self.assertNotIn("secret evidence text", header)
+        self.assertNotIn("Report excerpt", header)
+        self.assertIn(f"`alt task report {task['slug']}`", header)
 
 
 if __name__ == "__main__":

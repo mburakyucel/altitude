@@ -19,6 +19,9 @@ from . import config, engines, route, state as S, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
+#: Slugs of the tasks each running turn created through the daemon's `alt task new`, by turn id; the
+#: turn's assistant row carries them as `tasks` (SPEC.md §5.2 note 4) and the entry goes with the turn.
+_created: dict[str, list[str]] = {}
 _lifecycle_guards: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _turn_local = threading.local()
@@ -303,6 +306,24 @@ def active(project: str) -> dict | None:
         return dict(turn) if turn else None
 
 
+def note_task(project: str, slug: str) -> bool:
+    """Record that the project's running L3 turn created `slug`; false when no turn is running (a task
+    created from the CLI outside a turn belongs to no chat row)."""
+    with _lifecycle_guard(project):
+        turn = _active.get(project)
+        if not turn:
+            return False
+        _created.setdefault(turn["id"], []).append(slug)
+        return True
+
+
+def _created_meta(project: str, turn_id: str) -> dict:
+    """The `tasks` field for the assistant row of `turn_id`, taken once; empty when it created none."""
+    with _lifecycle_guard(project):
+        slugs = _created.pop(turn_id, None)
+    return {"tasks": slugs} if slugs else {}
+
+
 def chat_state(project: str, limit: int = 60) -> dict:
     """History, queue, and lifecycle fields from one turn-boundary snapshot."""
     turn_lock = lock(project)
@@ -344,6 +365,7 @@ def _publish_active_turn(project: str, trigger: str, claim=None):
         with lifecycle_guard:
             if _active.get(project, {}).get("id") == turn["id"]:
                 _active.pop(project, None)
+            _created.pop(turn["id"], None)
 
 
 @contextmanager
@@ -568,7 +590,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
-                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id)
+                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id))
             S.regen_state_md(project)
             res.update({"context_percent": pct, "completed": True, "turn_id": turn_id})
         return res
@@ -649,7 +671,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
              context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
-             turn_id=turn_id)
+             turn_id=turn_id, **_created_meta(project, turn_id))
     S.regen_state_md(project)
     out.update({"context_percent": pct, "completed": True})
     return out

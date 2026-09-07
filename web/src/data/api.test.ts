@@ -91,9 +91,30 @@ describe("streamChat", () => {
       ),
     );
     const seen: string[] = [];
-    const done = await streamChat("altitude", "hi", (t) => seen.push(t));
+    const done = await streamChat("altitude", "hi", { onText: (t) => seen.push(t) });
     expect(seen.join("")).toBe("Hello world");
     expect(done.session_id).toBe("s1");
+  });
+
+  it("names the turn before the first text and reports it on done", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        streamResponse([
+          '{"turn":{"id":"t9","started_at":"2026-09-07T09:14:00+00:00","trigger":"chat"}}\n',
+          '{"t":"Hi"}\n{"done":{"turn_id":"t9"}}\n',
+        ]),
+      ),
+    );
+    const order: string[] = [];
+    const done = await streamChat("altitude", "hi", {
+      onAccepted: () => order.push("accepted"),
+      onTurn: (turn) => order.push(`turn:${turn.id}`),
+      onText: (t) => order.push(`text:${t}`),
+    });
+    expect(order).toEqual(["accepted", "turn:t9", "text:Hi"]);
+    expect(done.turn?.id).toBe("t9");
+    expect(done.turn_id).toBe("t9");
   });
 
   it("throws ApiError on 409 (L3 busy)", async () => {
@@ -101,7 +122,7 @@ describe("streamChat", () => {
       "fetch",
       vi.fn(async () => jsonResponse({ error: "L3 is busy; try again in a moment" }, 409)),
     );
-    const err = await streamChat("altitude", "hi", () => {}).catch((e: unknown) => e);
+    const err = await streamChat("altitude", "hi", { onText: () => {} }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(409);
   });

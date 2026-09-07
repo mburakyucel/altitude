@@ -8,7 +8,9 @@ zod own the API boundary; react-router owns navigation; vitest and Testing Libra
 - Develop: `pnpm dev`. Vite proxies `/api` and `/digest.wav` to a local server.
 - Test: `pnpm test`. Typecheck and production build: `pnpm build`.
 
-The four primary navigation destinations are Inbox, Projects, Chat, and Monitor. Project and Task
-are detail routes; a task has Conversation and Live session tabs, and tasks are created only through
-Chat. Shared API, mutation, toast, and test helpers live under `src/data/` and
-`src/test/`.
+The shell has three destinations: Needs you, the projects, and Monitor (`design/wireframes/SPEC.md`
+§2.1). A project page is the conversation with L3 and the work panel; a task page has Conversation
+and Live session, and `/report` under it is the task's report view. L3 creates tasks from the
+conversation; the UI never creates one. Shared API, mutation, toast, and test helpers live under
+`src/data/` and `src/test/`; the conversation's rows, the system line, and the one composer live
+under `src/components/`.

@@ -267,6 +267,8 @@ def l3_verb_request(project: str, request: dict) -> dict:
                                     capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.SubprocessError) as exc:
             return {"returncode": 1, "stdout": "", "stderr": f"alt verb failed: {exc}\n"}
+        if args[:2] == ["task", "new"] and result.returncode == 0:
+            _note_created_task(project, result.stdout or "")
         return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
                 "stderr": _l3_bounded(result.stderr or "")}
     if kind == "service":
@@ -301,6 +303,17 @@ def l3_verb_request(project: str, request: dict) -> dict:
 
     return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
             "stderr": _l3_bounded(result.stderr or "")}
+
+
+def _note_created_task(project: str, stdout: str) -> None:
+    """Attach the task `alt task new` just printed to the L3 turn that created it, so the turn's assistant
+    chat row names it (`tasks: [slug]`, SPEC.md §5.2 note 4) and the page can show the task under the reply."""
+    try:
+        slug = json.loads(stdout).get("slug")
+    except (ValueError, AttributeError):
+        slug = None
+    if isinstance(slug, str) and slug:
+        l3.note_task(project, slug)
 
 
 def _validate_l3_alt_args(args: list[str]) -> None:
@@ -612,6 +625,21 @@ def _on_l2_finished(project: str, item: dict) -> None:
     report_turn(project, t, v)
 
 
+def report_fields(slug: str, v: dict) -> str:
+    """The verifier's verdict as "Label: value" lines: task, verdict, problems, signals, PRs, spend."""
+    def listed(items) -> str:
+        return "; ".join(str(item) for item in items) if items else "none"
+    landed = ((v.get("report") or {}).get("landed") or {}) if isinstance(v.get("report"), dict) else {}
+    merged = {pr.get("number"): pr.get("merged") for pr in (landed.get("prs") or []) if isinstance(pr, dict)}
+    prs = ", ".join(f"#{n} {'merged' if merged.get(n) else 'open'}" if n in merged else f"#{n}"
+                    for n in (v.get("prs") or []))
+    spend = v.get("spend") or {}
+    spent = ", ".join(f"{val} {key.replace('_', ' ')}" for key, val in spend.items() if val not in (None, "", 0, {}))
+    return "\n".join((f"Task: {slug}", f"Verdict: {v.get('verdict')}", f"Problems: {listed(v.get('problems'))}",
+                       f"Post-mortem signals: {listed(v.get('signals'))}", f"PRs: {prs or 'none'}",
+                       f"Spend: {spent or 'none recorded'}"))
+
+
 def report_turn(project: str, t: dict, v: dict) -> None:
     with config.restart_lock() as ready:
         if ready and not config.restart_in_progress():
@@ -689,10 +717,11 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
                         t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
                     log(f"[{project}/{slug}] clean report closed by altd; no L3 turn")
                     return
-    # Report details belong in the task record, not a turn-log reply.
-    header = (f"Report landed for `{slug}`: verdict **{v['verdict']}**. Problems: {v['problems'] or 'none'}. "
-              f"Post-mortem signals: {v['signals'] or 'none'}. Spend: {v.get('spend')}. PRs: {v.get('prs')}. "
-              f"Report excerpt: {json.dumps(v.get('report') or {})[:1500]}\n\n"
+    # Report details belong in the task record, not a turn-log reply. The prompt is label/value rows the
+    # conversation's expanded system card shows as they are (SPEC.md §3.4); the report itself stays behind
+    # `alt task report` and the task's report view.
+    header = (f"Report landed for {slug}.\n" + report_fields(slug, v) + "\n\n"
+              f"Read the full report with `alt task report {slug}`. "
               "Handle the report: write a concise digest and use `alt task done`, or block/resume with the exact gap; "
               "record an incident only when its evidence will help a later recovery or diagnosis. An incident never creates "
               "a repair task or healing workflow. "
@@ -1199,7 +1228,18 @@ class Handler(BaseHTTPRequestHandler):
                         gone.append(e)
                         log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
 
-                res = server_l3_turn(project, text, trigger="chat", on_text=send)
+                def started(_pid) -> None:
+                    # The page keys its pending bubble on the turn id from here on, so a poll that already
+                    # shows the server's own rows for this turn never doubles them (SPEC.md §4.2).
+                    if gone:
+                        return
+                    try:
+                        self._stream_send({"turn": l3.active(project)})
+                    except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:
+                        gone.append(e)
+                        log(f"POST {self.path}: client went away as the turn started ({type(e).__name__}: {e})")
+
+                res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started)
                 if gone:
                     return
                 self._stream_send({"done": {k: res.get(k) for k in (

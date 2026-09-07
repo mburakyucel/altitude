@@ -117,7 +117,7 @@ describe("Project page", () => {
 
     expect(await screen.findByRole("heading", { name: "altitude" })).toBeInTheDocument();
     await screen.findByText("L3 answered 4 min ago on Alpha · 2 tasks in flight · 1 waits for your review");
-    expect(screen.getByRole("region", { name: "Transcript" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
   });
 
   it("says what L3 is doing while a turn runs", async () => {
@@ -198,7 +198,7 @@ describe("Project page", () => {
     expect(await screen.findByRole("heading", { name: "altitude", level: 1 })).toHaveClass("phone-title");
     const panel = await screen.findByRole("region", { name: "Work" });
     expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Transcript" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Work panel" })).toBeNull();
     expect(screen.getByRole("link", { name: /^Work/ })).toHaveAttribute("aria-current", "page");
   });
@@ -237,17 +237,20 @@ describe("Project page", () => {
     });
   });
 
-  it("uses the shared voice review in the task quick-message surface", async () => {
+  it("lands a transcript in the quick-message draft with nothing else on screen (issue #195)", async () => {
     installVoiceBrowser();
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
     const panel = await openPanel(user);
     await user.click(within(panel).getByRole("button", { name: "Message L2" }));
-    await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "Typed lead");
-    await user.click(within(panel).getByRole("button", { name: "Start voice recording" }));
-    await user.click(await within(panel).findByRole("button", { name: "Stop voice recording" }));
-    await within(panel).findByRole("region", { name: "Voice transcript review" });
+    const field = screen.getByLabelText("Message the L2 on fix-timer");
+    await user.type(field, "Typed lead");
+    await user.click(within(panel).getByRole("button", { name: "Start voice input" }));
+    await user.click(await within(panel).findByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Typed lead spoken check"));
+    expect(screen.queryByRole("region", { name: /transcript/i })).toBeNull();
+    expect(screen.queryByText("spoken check")).toBeNull();
     await user.click(within(panel).getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
@@ -259,7 +262,7 @@ describe("Project page", () => {
     });
   });
 
-  it("drops a quick-message voice review when the project destination changes", async () => {
+  it("drops a quick-message draft when the project destination changes", async () => {
     installVoiceBrowser();
     mockFetch({
       overview: {
@@ -274,14 +277,14 @@ describe("Project page", () => {
     const { router, user } = renderApp({ route: "/projects/altitude" });
     const panel = await screen.findByRole("region", { name: "Work" });
     await user.click(within(panel).getByRole("button", { name: "Message L2" }));
-    await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "Private draft");
-    await user.click(within(panel).getByRole("button", { name: "Start voice recording" }));
-    await user.click(await within(panel).findByRole("button", { name: "Stop voice recording" }));
-    await within(panel).findByRole("region", { name: "Voice transcript review" });
+    const field = screen.getByLabelText("Message the L2 on fix-timer");
+    await user.type(field, "Private draft");
+    await user.click(within(panel).getByRole("button", { name: "Start voice input" }));
+    await user.click(await within(panel).findByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Private draft spoken check"));
 
     await router.navigate("/projects/sibling");
     await screen.findByRole("heading", { name: "sibling" });
-    expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Message L2" }));
     expect(screen.getByLabelText("Message the L2 on fix-timer")).toHaveValue("");
   });
@@ -391,6 +394,6 @@ describe("Project page", () => {
 
     await screen.findByText("Altitude found 2 folders under ~/Projects");
     expect(screen.getAllByRole("button", { name: "Start L3" })).toHaveLength(3);
-    expect(screen.queryByRole("region", { name: "Transcript" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
   });
 });

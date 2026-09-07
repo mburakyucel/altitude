@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link, NavLink, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { agoText, when } from "../data/observed";
-import VoiceComposer from "../components/VoiceComposer";
+import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
+import Composer from "../components/Composer";
 import { DecisionCard } from "../components/DecisionCard";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
-import LiveSession, { Prose } from "./LiveSession";
+import LiveSession from "./LiveSession";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared fields (attempt,
 // session_id, l2_engine, prs, hold_merge, fault, ...) arrives typed `unknown`, so narrow it here.
@@ -29,8 +30,8 @@ function sentence(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/** The operator's role in a task conversation row, as the server records it. */
-const OPERATOR = "burak" as const;
+/** The rows that are not the L2's or the L3's are the operator's: right-aligned bubbles (SPEC.md §3.3). */
+const REPLIERS = new Set(["l2", "l3"]);
 
 // ---- what the page says about the task ---------------------------------------------------------
 
@@ -147,70 +148,6 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
-function dayLabel(at: number): string {
-  const day = new Date(at);
-  const today = new Date();
-  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).valueOf();
-  const diff = Math.round((startOf(today) - startOf(day)) / 86_400_000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return day.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-/** A long press (touch or pen, not a mouse) reveals the row's time on the phone (SPEC.md §3.3). */
-function useLongPress(onLong: () => void) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clear = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  };
-  return {
-    onPointerDown: (event: ReactPointerEvent) => {
-      if (event.pointerType === "mouse") return;
-      clear();
-      timer.current = setTimeout(onLong, 500);
-    },
-    onPointerUp: clear,
-    onPointerCancel: clear,
-    onPointerLeave: clear,
-  };
-}
-
-function Row({ message, pending = false }: { message: Pick<TaskMessage, "role" | "text" | "at">; pending?: boolean }) {
-  const [shown, setShown] = useState(false);
-  const press = useLongPress(() => setShown((v) => !v));
-  const mine = message.role === OPERATOR;
-  const at = when(message.at);
-  return (
-    <div
-      className="msg-row"
-      data-role={message.role}
-      data-mine={mine || undefined}
-      data-pending={pending || undefined}
-      data-time-shown={shown || undefined}
-      {...press}
-    >
-      {mine ? (
-        <div className="bubble">{message.text}</div>
-      ) : (
-        <div className="reply">
-          {message.role === "l3" ? <span className="reply-from">L3</span> : null}
-          <Prose text={message.text} />
-        </div>
-      )}
-      {at != null ? (
-        <time className="msg-time" dateTime={message.at ?? undefined} title={new Date(at).toLocaleString()}>
-          {clock(at)}
-        </time>
-      ) : null}
-    </div>
-  );
-}
-
 function TaskConversation({
   project,
   task,
@@ -227,7 +164,6 @@ function TaskConversation({
   const following = useRef(true);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
   const messages = task.messages ?? [];
   const count = messages.length + (pending ? 1 : 0);
 
@@ -236,26 +172,19 @@ function TaskConversation({
     if (node && following.current) node.scrollTop = node.scrollHeight;
   }, [count, decision]);
 
-  // The bubble shows at once at 60%; accepted, it is the stored row at full opacity; refused, it leaves,
-  // the draft returns, and the hint reads "Not sent. Retry." (SPEC.md §3.6).
+  // The bubble shows at once at 60%; accepted, it is the stored row at full opacity; refused, it leaves
+  // and the composer brings the draft back with "Not sent. Retry." (SPEC.md §3.6).
   const send = async (text: string) => {
-    const ready = text.trim();
-    if (!ready || pending) return;
     following.current = true;
-    setFailed(false);
-    setPending(ready);
-    setDraft("");
+    setPending(text);
     try {
-      const row = await sendL2Message({ project, slug: task.slug, text: ready });
+      const row = await sendL2Message({ project, slug: task.slug, text });
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
         cached ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
       );
-      setPending(null);
       void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
-    } catch {
+    } finally {
       setPending(null);
-      setDraft(ready);
-      setFailed(true);
     }
   };
 
@@ -265,20 +194,23 @@ function TaskConversation({
     const at = when(message.at);
     const day = at != null ? dayLabel(at) : "";
     if (day && day !== lastDay) {
-      rows.push(
-        <div key={`day-${day}`} className="day-divider" role="separator">
-          {day}
-        </div>,
-      );
+      rows.push(<DayDivider key={`day-${day}`} label={day} />);
       lastDay = day;
     }
-    rows.push(<Row key={message.id || `${message.at ?? "message"}-${index}`} message={message} />);
+    const key = message.id || `${message.at ?? "message"}-${index}`;
+    rows.push(
+      !REPLIERS.has(message.role) ? (
+        <Bubble key={key} text={message.text} at={message.at} />
+      ) : (
+        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />
+      ),
+    );
   });
 
   return (
-    <section className="task-convo" aria-label="Task conversation">
+    <section className="convo" aria-label="Task conversation">
       <div
-        className="task-convo-scroll"
+        className="convo-scroll"
         ref={scroller}
         onScroll={(event) => {
           const node = event.currentTarget;
@@ -297,32 +229,19 @@ function TaskConversation({
             </p>
           ) : null}
           {rows}
-          {pending ? <Row message={{ role: OPERATOR, text: pending, at: new Date().toISOString() }} pending /> : null}
+          {pending ? <Bubble text={pending} at={new Date().toISOString()} pending /> : null}
         </div>
       </div>
       {facts.canMessage ? (
-        <div className="task-composer">
-          <VoiceComposer
+        <div className="convo-dock">
+          <Composer
             value={draft}
             onChange={setDraft}
             onSubmit={send}
             ariaLabel="Message the L2"
             placeholder="Message the L2"
-            rows={2}
-            submitting={pending != null}
+            hint={facts.hint}
           />
-          <p className={`composer-hint ${failed ? "text-danger" : "text-muted"}`} role={failed ? "alert" : undefined}>
-            {failed ? (
-              <>
-                Not sent.{" "}
-                <button type="button" className="link" onClick={() => void send(draft)}>
-                  Retry
-                </button>
-              </>
-            ) : (
-              facts.hint
-            )}
-          </p>
         </div>
       ) : null}
     </section>

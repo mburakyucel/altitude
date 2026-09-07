@@ -13,13 +13,14 @@ import {
 } from "../data/api";
 import type { ChatView, Decision, EngineReadout, ProjectView, TaskRow } from "../data/api";
 import { age, ageText, agoText, when } from "../data/observed";
-import VoiceComposer from "../components/VoiceComposer";
+import Composer from "../components/Composer";
 import { DecisionCard } from "../components/DecisionCard";
+import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { decisionsFor, managedProjects } from "../shell/projects";
 import { useStarting } from "../shell/starting";
-import Chat from "./Chat";
+import Conversation from "./Conversation";
 import FirstRun from "./FirstRun";
 
 /** The payload's loose corners (live, l3, config) arrive as `unknown`. */
@@ -131,18 +132,15 @@ function TaskCard({ project, task }: { project: string; task: TaskRow }) {
         </Link>
       </div>
       {panel ? (
-        <VoiceComposer
+        <Composer
           value={text}
-          placeholder="Message for the L2"
+          placeholder="Message the L2"
           ariaLabel={`Message the L2 on ${task.slug}`}
-          rows={2}
           autoFocus
           onChange={setText}
           disabled={act.isPending}
-          submitting={message.isPending}
           onSubmit={async (submitted) => {
             await message.mutateAsync({ project, slug: task.slug, text: submitted });
-            setText("");
             setPanel("");
           }}
         />
@@ -232,24 +230,6 @@ function WorkPanel({
 }
 
 // ---- the project header (SPEC.md §3.2) --------------------------------------------------------
-
-/** What L3 is handling during a system turn (SPEC.md §4.1), from the turn's trigger. */
-export function handling(trigger: string): string {
-  switch (trigger) {
-    case "report-landed":
-      return "a landed report";
-    case "block":
-      return "a block";
-    case "incident":
-      return "a fault";
-    case "restart":
-      return "the restart";
-    case "start":
-      return "the start";
-    default:
-      return "a system event";
-  }
-}
 
 /** The status line's parts, left to right. */
 export function statusParts(
@@ -452,9 +432,9 @@ function ProjectHeader({
 // ---- the page ---------------------------------------------------------------------------------
 
 /**
- * The project page (SPEC.md §2.1): the §3.2 header, the conversation (the existing Chat component,
- * unrestyled until slice 2), and the work panel inline, as an overlay, or as the phone's Work tab.
- * With nothing managed, every project route shows First run instead.
+ * The project page (SPEC.md §2.1): the §3.2 header, the conversation (§3.3), and the work panel
+ * inline, as an overlay, or as the phone's Work tab. With nothing managed, every project route shows
+ * First run instead.
  */
 export default function ProjectPage() {
   const { name = "" } = useParams();
@@ -487,6 +467,7 @@ export default function ProjectPage() {
   }
 
   const panel = <WorkPanel name={name} project={project} decisions={decisions} />;
+  const conversation = <Conversation name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
   return (
     <div className="project-page">
       <ProjectHeader
@@ -504,15 +485,11 @@ export default function ProjectPage() {
         tab === "work" ? (
           panel
         ) : (
-          <div className="project-conversation">
-            <Chat />
-          </div>
+          conversation
         )
       ) : (
         <div className="project-body">
-          <div className="project-conversation">
-            <Chat />
-          </div>
+          {conversation}
           {panelInline ? (
             panel
           ) : panelOpen ? (
