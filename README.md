@@ -84,7 +84,15 @@ are tracked separately from this documentation milestone.
 | Delivery visibility | Follow PRs, check outcomes, merge holds, reports and archived task conversations. |
 | Cross-project decisions | Use Needs you to find questions escalated for your judgment, with links back to the task. |
 | Routing and usage | Inspect engine selection reasons, reported usage windows and sessions; missing or stale telemetry is shown explicitly. |
+| Task tokens | Follow cumulative locally observed input/output tokens, expand engine and owner/helper breakdowns, and retain the final observation with the archived task. |
 | Desktop and mobile web | Use the desktop conversation/work panels or phone tabs. Remote access needs a configured private network; voice also needs browser support and a local transcription service. |
+
+Task token accounting reads existing local engine records without model calls. Input includes cache
+reads and writes once; output includes any reported reasoning subset. These are observed token
+counts, separate from context occupancy, quota percentages and billing. The task header and report
+show coverage and freshness: missing records stay unknown or partial, and native helpers are counted
+only when local parentage supports attribution. Provider aggregates that cannot split helper usage
+say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
 
 ## Get started
 

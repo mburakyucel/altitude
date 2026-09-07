@@ -8,6 +8,7 @@ import { agoText, when } from "../data/observed";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { DecisionCard } from "../components/DecisionCard";
+import { TokenUsage } from "../components/TokenUsage";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import LiveSession from "./LiveSession";
@@ -438,6 +439,7 @@ function TaskPage({
           </div>
           <ConfirmRow actions={actions} />
           <BlockLines facts={blockFacts} />
+          <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
         </div>
         <nav className="task-tabs" aria-label="Task views">
           <NavLink className="task-tab" to={base} end>
@@ -478,6 +480,7 @@ function TaskPage({
         </h1>
         {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
         <Chips chips={facts.chips} />
+        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
         <ConfirmRow actions={actions} />
         <BlockLines facts={blockFacts} />
       </header>

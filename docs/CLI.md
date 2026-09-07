@@ -10,6 +10,13 @@ not install Git guards. [Operations](OPERATIONS.md) covers project settings and 
 
 ## Inspection
 
+`alt task status <slug>` and `alt task report <slug> --json` include `token_usage`: the daemon's
+persisted local token observation, independent of the report's agent-authored spend. It contains
+inclusive input/output and their observed total, optional cache/reasoning subsets, session rows with
+engine/attempt/owner or delegated attribution, coverage notes, and checked/observed/finalized times.
+These commands do not rescan provider logs. Missing counters remain null or partial; archived tasks
+retain their final observation. See [token semantics](SESSION_LIFECYCLE.md#task-token-accounting).
+
 These commands are read-only. They print compact text unless `--json` is present:
 
 ```text

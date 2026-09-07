@@ -285,12 +285,53 @@ worker records travel with it. Task state changes and stop/resume records are th
 parser error or incomplete final JSONL record is displayed as viewer evidence and retried on the next poll; it
 never changes task or worker state.
 
+## Task token accounting
+
+The task header and report retain cumulative **observed tokens** across recorded owner sessions,
+resumes and engine handoffs. `token_usage` on the task holds the public accounting; the task folder's
+`token-usage.json` holds engine cursors and numeric deduplication evidence. Both travel into archive,
+so final accounting survives provider-log or worktree cleanup. Earlier attempts whose identities or
+counters are unavailable remain partial. Queued/older tasks without readings say unknown, never zero.
+The task API, `alt task status`, and `alt task report --json` expose the same snapshot independently
+of agent-authored `report.json.spend`.
+
+Input is inclusive of cache reads and writes exactly once. Output includes reasoning when the
+provider reports it as a subset. The combined count is observed inclusive input plus output, across
+sessions whose local records support attribution; it is neither context occupancy nor quota usage
+nor a billing estimate. Each model request counts its supplied input again, including cached input;
+this measures consumed tokens, not unique words in the conversation. Engines use their own tokenizers: adding observed counts is an activity
+measure, not a comparable price or workload measure. Optional cache/reasoning counters remain
+unknown when absent. If some contributors lack a counter, the known contributions are retained as
+a partial lower bound; the total adds the available input and output contributions. It is unknown
+only when neither has been observed. Incomplete fields and helper coverage remain explicit.
+
+| Engine evidence | Counting semantics |
+| --- | --- |
+| Claude assistant records | One request per message ID, with maximum counters across repeated streamed blocks. Inclusive input adds uncached input, cache-read input and cache-creation input; cache-creation duration breakdowns are subsets, not extra tokens. Output is counted once per message. Synthetic limit records are excluded. |
+| Codex response usage records | One increment per response ID, attributed to its recorded thread ID. Cache-read input is already within input; reasoning output is already within output. Repeated cumulative and turn snapshots are not added to the same response records. |
+| Provider aggregates | Available older snapshots or owned turn results supply partial provider observations when request records are unavailable. They cannot claim an owner/helper split; overlapping helper observations are excluded. |
+
+Native helper records require a task owner's recorded parentage. Shared response/message identities
+deduplicate replayed history on resume and fork; copied records belonging to a different thread are
+excluded. Available native children appear as delegated work, without creating a lifecycle role or
+supervising helpers. Discovery cannot prove exhaustive helper coverage, so observed task totals may
+be partial even when the owner's counters are current. Project-global L3 usage is not charged to a
+task. Collection uses no model calls, summaries, live-agent experiments, or external export.
+
+The daemon reads complete appended JSONL records in bounded batches, persists byte cursors, and
+refreshes at report/finalization boundaries. An unfinished trailing record is retried; unread,
+replaced, inaccessible or lost evidence produces a coverage gap rather than an invented count.
+The UI distinguishes **checked** (collector time), **observed** (provider counter time), and
+**finalized** (the retained completion observation). A live check older than a minute is stale;
+finalized observations retain their timestamp rather than becoming live-stale. The detail disclosure
+shows engine, owner/delegated/provider coverage, input/output and available cache/reasoning subsets.
+
 ## Context and prompt-cache evidence
 
 For Claude, context is the newest genuine assistant usage record: input plus cache-read plus
-cache-creation tokens. Synthetic all-zero limit records are ignored. For Codex, the latest
-`turn.completed.usage.input_tokens` drives an approximate percentage against the configured context
-window; reported `cached_input_tokens` is retained separately.
+cache-creation tokens. Synthetic all-zero limit records are ignored. Codex task context is unknown:
+`turn.completed.usage.input_tokens` measures cumulative consumption, not context occupancy. Its
+cache counters are part of the separate task token observation.
 
 Every quota and session figure carries the time it was observed, and age is reported rather than
 hidden. A quota snapshot older than thirty minutes — the age at which the router stops routing on

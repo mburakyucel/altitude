@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router";
 import { Prose } from "../components/Prose";
-import { useTask } from "../data/api";
+import { TokenUsage } from "../components/TokenUsage";
+import { useOverview, useTask } from "../data/api";
 
 /*
  * The task's report view (SPEC.md §3.4, §5.2 note 1): the full report that no longer travels in the
@@ -41,6 +42,7 @@ function line(v: unknown): string {
 export default function TaskReport() {
   const { name = "", slug = "" } = useParams();
   const task = useTask(name, slug);
+  const overview = useOverview();
   if (task.isPending) {
     return (
       <div className="page" aria-label="Loading">
@@ -83,6 +85,7 @@ export default function TaskReport() {
         <Link to={`/projects/${name}/tasks/${slug}`}>← {view.title || slug}</Link>
       </p>
       <h1 className="text-[18px] font-semibold">Report</h1>
+      <TokenUsage usage={view.token_usage} running={view.state === "running"} engines={overview.data?.engines} />
       {empty ? <p className="text-muted">No report yet.</p> : null}
       {prs.length > 0 || runs.length > 0 || landed.deploy != null ? (
         <Section title="Landed">

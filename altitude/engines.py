@@ -489,6 +489,329 @@ def _codex_usage(events: list[dict]) -> dict:
     return {}
 
 
+# Passive task accounting reads provider evidence only. Cursors contain offsets and numeric
+# deduplication ledgers, never transcript text; callers persist one cursor per engine per task.
+_TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")
+_TOKEN_ROLLOUT_INDEX: dict[str, dict] = {}
+
+
+def _token_numbers(usage: dict, engine: str) -> dict:
+    def number(key):
+        value = usage.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+    if engine == "claude":
+        reads, writes = number("cache_read_input_tokens"), number("cache_creation_input_tokens")
+        plain = number("input_tokens")
+        inputs = sum(v for v in (plain, reads, writes) if v is not None) if any(v is not None for v in (plain, reads, writes)) else None
+        details = usage.get("output_tokens_details") or {}
+        reasoning = details.get("thinking_tokens") if isinstance(details, dict) else None
+    else:
+        inputs, reads, writes = number("input_tokens"), number("cached_input_tokens"), number("cache_write_input_tokens")
+        reasoning = number("reasoning_output_tokens")
+    return {**dict(zip(_TOKEN_FIELDS, (inputs, number("output_tokens"), reads, writes,
+                                     reasoning if isinstance(reasoning, int) and not isinstance(reasoning, bool) and reasoning >= 0 else None))),
+            "incomplete": inputs is None or number("output_tokens") is None or
+                          (engine == "claude" and (plain is None or reads is None or writes is None))}
+
+
+def _token_max(old: dict, new: dict) -> dict:
+    return {**{key: max(v for v in (old.get(key), new.get(key)) if v is not None)
+               if old.get(key) is not None or new.get(key) is not None else None for key in _TOKEN_FIELDS},
+            "incomplete": new.get("incomplete", False)}
+
+
+def _token_sum(records: list[dict]) -> dict:
+    # Retain observed lower bounds when some records omit a counter, without inventing zero.
+    return {key: sum(row[key] for row in records if row.get(key) is not None) if any(row.get(key) is not None for row in records)
+            else None for key in _TOKEN_FIELDS}
+
+
+def _token_legacy_segments(row: dict) -> list[dict]:
+    """Old snapshots may span turns. Only an observed reset starts another additive segment."""
+    segments, previous = [], None
+    for turn in row.get("turn_order", []):
+        values = row["turns"][turn]
+        first = row.get("turn_starts", {}).get(turn)
+        reset = (previous is not None and first is not None and first < previous and
+                 turn != "unidentified" and not turn.startswith("offset:"))
+        if not segments or reset:
+            segments.append(values)
+        else:
+            segments[-1] = _token_max(segments[-1], values)
+        previous = values.get("input_tokens")
+    return segments
+
+
+def _token_rollouts(home: Path) -> tuple[dict, bool]:
+    """Cache only rollout identity/parentage; at most 128 new headers per discovery pass."""
+    cache = _TOKEN_ROLLOUT_INDEX.setdefault(str(home), {"at": 0, "paths": {}, "todo": []})
+    if time.monotonic() - cache["at"] >= 30 or not cache["at"]:
+        cache["at"] = time.monotonic()
+        cache["todo"] = [str(p) for p in home.glob("sessions/*/*/*/rollout-*.jsonl")
+                         if str(p) not in cache["paths"]]
+    for name in cache["todo"][:128]:
+        try:
+            with Path(name).open("rb") as stream:
+                raw = stream.readline(128 * 1024)
+            event = json.loads(raw)
+            meta = event.get("payload") or {}
+            if event.get("type") != "session_meta":
+                continue
+            sid = meta.get("id") or meta.get("session_id")
+            if not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
+                continue
+            source = meta.get("source") or {}
+            subagent = source.get("subagent") if isinstance(source, dict) else None
+            spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+            parent = meta.get("parent_thread_id") or (spawn.get("parent_thread_id") if isinstance(spawn, dict) else None)
+            cache["paths"][name] = {"session_id": sid, "parent": parent if isinstance(parent, str) and parent else None,
+                                    "forked": bool(meta.get("forked_from_id")),
+                                    "fork_time": meta.get("timestamp"),
+                                    "fork_ordinal": meta.get("subagent_history_start_ordinal")}
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    cache["todo"] = cache["todo"][128:]
+    return cache["paths"], bool(cache["todo"])
+
+
+def _token_read(path: Path, file: dict, budget: list[int]):
+    """Yield complete new JSONL records; retain offsets through restarts and retried partial writes."""
+    stat = path.stat()
+    identity = [stat.st_dev, stat.st_ino]
+    if file.get("identity") != identity or file.get("missing") or stat.st_size < file.get("offset", 0):
+        if file.get("identity"):
+            file["lost"] = True
+        file.update(identity=identity, offset=0)
+    with path.open("rb") as stream:
+        stream.seek(file["offset"])
+        while budget[0] > 0:
+            start = stream.tell()
+            raw = stream.readline(min(budget[0], 1024 * 1024) + 1)
+            if not raw:
+                break
+            budget[0] -= len(raw)
+            if not raw.endswith(b"\n"):
+                file["pending"] = True
+                # A huge transcript line must not prevent later numeric evidence being read.
+                if len(raw) > 1024 * 1024:
+                    file.update(offset=stream.tell(), skipping=True, lost=True)
+                break
+            file.update(offset=stream.tell(), pending=False)
+            if file.pop("skipping", False):
+                continue
+            try:
+                event = json.loads(raw)
+                if isinstance(event, dict):
+                    yield start, event
+            except (ValueError, UnicodeDecodeError):
+                file["lost"] = True
+    file["pending"] = file.get("pending", False) or file["offset"] < stat.st_size
+
+
+def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None, *,
+                        job_root: Path | None = None, home: Path | None = None,
+                        max_bytes: int = 2 * 1024 * 1024) -> dict:
+    """Incremental, task-scoped observations from local records, with no engine invocation.
+
+    Share the returned JSON cursor across every owner identity of this engine within one task.
+    Codex response records are request increments; legacy snapshots have version-dependent scope.
+    Claude messages are repeated streaming snapshots, deduplicated by message id. Inclusive input
+    is input+cache-read+cache-write for Claude, input alone for Codex; reasoning is an output subset.
+    Native children require recorded parentage. Discovery cannot prove exhaustive helper coverage.
+    """
+    state = json.loads(json.dumps(cursor or {}))
+    state.setdefault("owners", [])
+    state.setdefault("sessions", {})
+    state.setdefault("files", {})
+    state.setdefault("records", {})
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", session_id or ""):
+        return {"cursor": state, "sessions": [], "status": "unknown", "pending": False,
+                "notes": ["Provider session identity is unavailable."]}
+    if session_id not in state["owners"]:
+        state["owners"].append(session_id)
+    budget, pending, sources = [max_bytes], False, []
+    notes = ["Only locally observed usage is counted; native helper coverage may be incomplete."]
+
+    def register(sid, parent=None, **metadata):
+        row = state["sessions"].setdefault(sid, {"parent_session_id": parent, "observed_at": None,
+                                               "turns": {}, "notes": []})
+        if parent:
+            row["parent_session_id"] = parent
+        row.update(metadata)
+        return row
+
+    register(session_id)
+    try:
+        if engine == "codex":
+            root = home or _codex_home(codex_env())
+            index, pending = _token_rollouts(root)
+            wanted = set(state["owners"])
+            while True:
+                children = {meta["session_id"] for meta in index.values() if meta["parent"] in wanted}
+                if children <= wanted:
+                    break
+                wanted |= children
+            for name, meta in index.items():
+                if meta["session_id"] in wanted:
+                    sid = meta["session_id"]
+                    register(sid, meta["parent"], **{key: meta[key] for key in ("forked", "fork_time", "fork_ordinal")})
+                    sources.append((Path(name), sid, "rollout"))
+        elif engine == "claude":
+            root = home or config.HOME / ".claude"
+            for sid in state["owners"]:
+                for path in root.glob(f"projects/*/{sid}.jsonl"):
+                    sources.append((path, sid, "messages"))
+                    for child in path.with_suffix("").glob("subagents/agent-*.jsonl"):
+                        child_id = f"{sid}/{child.stem}"
+                        register(child_id, sid)
+                        sources.append((child, child_id, "messages"))
+        else:
+            notes.append("This engine has no local token accounting adapter.")
+        # Owned stdout survives archive and supplies a provider aggregate if transcript/rollout
+        # evidence is missing. Worker metadata, never the transcript's cwd, binds it to the task.
+        if job_root:
+            for path in Path(job_root).glob("*.json"):
+                record = S.read_json(path, {})
+                sid = record.get("session_id") if isinstance(record, dict) else None
+                if sid in state["owners"] and record.get("engine", "codex") == engine:
+                    sources.append((path.with_suffix(".stdout.jsonl"), sid, "stdout"))
+
+        # Revisit disappeared known files too, preserving their counts and exposing the gap.
+        known = {str(path) for path, _, _ in sources}
+        sources.extend((Path(name), file["session_id"], file["kind"])
+                       for name, file in state["files"].items() if name not in known)
+        for path, sid, kind in sources:
+            row = register(sid)
+            file = state["files"].setdefault(str(path), {"session_id": sid, "kind": kind})
+            if budget[0] <= 0:
+                pending = True
+                break
+            try:
+                for offset, event in _token_read(path, file, budget):
+                    at = event.get("timestamp")
+                    payload = event.get("payload") or {}
+                    values, key, turn = None, None, None
+                    if engine == "claude" and kind == "messages" and event.get("type") == "assistant":
+                        parent = row["parent_session_id"] or sid
+                        identity = event.get("sessionId") or event.get("session_id")
+                        if identity != parent or bool(event.get("isSidechain")) != bool(row["parent_session_id"]):
+                            continue
+                        if row["parent_session_id"] and event.get("agentId") != path.stem.removeprefix("agent-"):
+                            continue
+                        message = event.get("message") or {}
+                        usage = message.get("usage") or {}
+                        if not usage or not message.get("id") or message.get("model") == "<synthetic>":
+                            continue
+                        values = _token_numbers(usage, engine)
+                        if not any(values.get(key) for key in _TOKEN_FIELDS):  # synthetic quota/error records are not an observed zero
+                            continue
+                        key = f"message:{message['id']}"
+                    elif engine == "codex" and kind == "rollout":
+                        if event.get("type") == "token_usage_record":
+                            if payload.get("thread_id") != sid or not payload.get("response_id"):
+                                continue  # copied fork history belongs to its recorded thread
+                            values = _token_numbers(payload.get("usage") or {}, engine)
+                            key, turn = f"response:{payload['response_id']}", payload.get("turn_id")
+                        elif event.get("type") in ("event_msg", "turn_context"):
+                            if row.get("forked"):
+                                boundary = row.get("fork_ordinal")
+                                if isinstance(boundary, int) and event.get("ordinal", -1) < boundary:
+                                    continue
+                                if not isinstance(boundary, int) and (not at or not row.get("fork_time") or at < row["fork_time"]):
+                                    continue
+                            if payload.get("turn_id"):
+                                file["turn"] = payload["turn_id"]
+                            elif payload.get("type") == "task_started":
+                                file["turn"] = f"offset:{offset}"
+                            if payload.get("type") == "token_count":
+                                usage = (payload.get("info") or {}).get("total_token_usage")
+                                if not isinstance(usage, dict):
+                                    continue
+                                turn = file.get("turn", "unidentified")
+                                values = _token_numbers(usage, engine)
+                                old = row["turns"].get(turn, {})
+                                if turn not in row.setdefault("turn_order", []):
+                                    row["turn_order"].append(turn)
+                                row.setdefault("turn_starts", {}).setdefault(turn, values["input_tokens"])
+                                if old.get("input_tokens") is not None and values["input_tokens"] is not None and values["input_tokens"] < old["input_tokens"]:
+                                    row["notes"] = list(set(row["notes"] + ["A replayed or reset counter cannot be fully reconciled."]))
+                                row["turns"][turn] = _token_max(old, values)
+                    elif kind == "stdout" and ((engine == "codex" and event.get("type") == "turn.completed") or
+                                               (engine == "claude" and event.get("type") == "result" and event.get("session_id") == sid)):
+                        values = _token_numbers(event.get("usage") or {}, engine)
+                        if not any(values.get(key) for key in _TOKEN_FIELDS):
+                            continue
+                        row.setdefault("stdout", {})[path.name] = _token_max(row.get("stdout", {}).get(path.name, {}), values)
+                        at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+                    if key and values:
+                        old = state["records"].get(key)
+                        # A replacement session may repeat inherited message ids; ownership stays
+                        # with the first recorded session and only new numeric evidence is added.
+                        state["records"][key] = {"session_id": old["session_id"] if old else sid,
+                                                  "values": _token_max(old["values"] if old else {}, values)}
+                    if values and at:
+                        row["observed_at"] = max(row["observed_at"] or "", at)
+                if file.get("lost"):
+                    row["notes"] = list(set(row["notes"] + ["Some local records were missing, replaced, or unreadable."]))
+                pending |= file.get("pending", False)
+                file["missing"] = False
+            except (OSError, ValueError, TypeError, AttributeError):
+                file["missing"] = True
+    except (OSError, ValueError, TypeError, AttributeError):
+        notes.append("Some local usage evidence could not be read.")
+
+    score = lambda values: (values.get("input_tokens") or 0) + (values.get("output_tokens") or 0)
+    visited = set()
+
+    def project(sid):
+        # A subtree's lower bound is the larger of its ambiguous provider aggregate and its
+        # disjoint own responses plus child bounds. Never add an aggregate to its children.
+        visited.add(sid)
+        row = state["sessions"][sid]
+        children = [project(child) for child, child_row in state["sessions"].items()
+                    if child_row["parent_session_id"] == sid and child not in visited]
+        records = [entry["values"] for entry in state["records"].values() if entry["session_id"] == sid]
+        own = _token_sum(records)
+        disjoint = _token_sum([own, *(bound for bound, _ in children)])
+        legacy = _token_legacy_segments(row)
+        candidates = [_token_sum(legacy), *row.get("stdout", {}).values()]
+        row_notes = list(row["notes"])
+        if row.get("forked"):
+            candidates = []
+            if legacy or row.get("stdout"):
+                row_notes.append("Inherited aggregate usage has no reliable fork baseline and is excluded.")
+        aggregate = max(candidates, key=score) if candidates else {}
+        use_aggregate = score(aggregate) > score(disjoint)
+        role = "provider" if use_aggregate else "owner" if sid in state["owners"] else "delegated"
+        values = {key: aggregate.get(key) for key in _TOKEN_FIELDS} if use_aggregate else own
+        if use_aggregate:
+            row_notes.append("Provider aggregate; helper usage cannot be split. Linked helper totals are excluded to avoid overlap.")
+            row_notes.append("Overlapping usage sources retain the largest observed lower bound, not a sum.")
+        if legacy and use_aggregate:
+            row_notes.append("Legacy counter scope varies: cumulative snapshots are not summed without an observed reset.")
+        if any(record.get("incomplete") for record in records + legacy) or (use_aggregate and aggregate.get("incomplete")):
+            row_notes.append("Some counters are missing; available token counts are a lower bound.")
+        total = score(values) if any(values.get(key) is not None for key in ("input_tokens", "output_tokens")) else None
+        files = [file for file in state["files"].values() if file["session_id"] == sid]
+        if not files or any(file.get("missing") for file in files):
+            row_notes.append("Local usage records are unavailable; retained counters may be incomplete.")
+        public = {"session_id": sid, "parent_session_id": row["parent_session_id"], "role": role,
+                  **values, "total_tokens": total, "observed_at": row["observed_at"],
+                  "status": "unknown" if total is None and not records else
+                            "partial" if row_notes or total is None else "observed", "notes": row_notes}
+        return (values, [public]) if use_aggregate else (disjoint, [public, *(item for _, rows in children for item in rows)])
+
+    sessions = []
+    roots = [sid for sid, row in state["sessions"].items() if row["parent_session_id"] not in state["sessions"]]
+    for sid in [*roots, *state["owners"], *state["sessions"]]:
+        if sid not in visited:
+            _, rows = project(sid)
+            sessions.extend(rows)
+    return {"cursor": state, "sessions": sessions, "pending": bool(pending),
+            "status": "partial" if any(row["total_tokens"] is not None for row in sessions) else "unknown", "notes": notes}
+
+
 def _codex_session_model(session_id: str | None, started_at: str, home: Path) -> dict:
     """altd reads this turn's rollout context, never the requested/default model (CLI 0.153.4)."""
     if not session_id or not re.fullmatch(r"[A-Za-z0-9-]+", session_id):

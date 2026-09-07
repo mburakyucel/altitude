@@ -6,7 +6,7 @@ import re
 import subprocess
 import uuid
 
-from . import config, github_intake, state as S
+from . import config, github_intake, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -272,6 +272,9 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     frm = task["state"]
     if to not in TRANSITIONS.get(frm, set()):
         raise TransitionError(f"{task['slug']}: {frm} → {to} is not allowed")
+    usage.remember(task)
+    if to == "rejected":
+        usage.capture(project, task)
     stopped = None
     if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
         from . import engines
@@ -285,6 +288,8 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
             ) from exc
         stopped = (engine, note)
     task["state"] = to
+    if to in ("blocked", "reported", "done", "rejected"):
+        usage.capture(project, task, final=to in ("done", "rejected"))
     if to == "running":
         task["dispatching"] = None
     S.save_task(project, task)
@@ -370,6 +375,7 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug)
+        usage.remember(task)
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
                      "routing": routing, "dispatched": S.now()})
@@ -429,6 +435,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
         if expected_claim is not None and (task.get("resume_claim") or {}).get("id") != expected_claim:
             raise TransitionError(f"{slug}: resume claim {expected_claim} is no longer current")
         if agent_id:
+            usage.remember(task)
             task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
         _clear_block(task)
         return _move(project, task, "running", actor, **ev)
@@ -448,6 +455,7 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
                               expected_session_id=expected_session_id)
         if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
+        usage.capture(project, task)
         task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None, "routing": None})
         _clear_block(task)
         return _move(project, task, "queued", actor, **ev)

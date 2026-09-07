@@ -232,7 +232,7 @@ test("a blocked task: the decision card, waiting for L3, a fault", async ({ page
   });
   await walk.state("04-fault-session-paused", {
     action: () => v.showLive(),
-    visible: [v.live.getByText("Session paused until the task resumes")],
+    visible: [v.live.getByText("Session paused until the task resumes", { exact: true })],
     hidden: [],
   });
 });

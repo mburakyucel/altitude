@@ -32,10 +32,7 @@ def sessions() -> list[dict]:
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 engine = t.get("l2_engine") or "claude"
                 if engine == "codex":
-                    row = engines.codex_worker(t.get("agent_id"), job_root=S.task_dir(name, t["slug"]) / "l2-engine")
-                    usage = (row or {}).get("usage") or {}
-                    tokens = int(usage.get("input_tokens", 0) or 0)
-                    cp = engines.context_percent(tokens, "codex") if tokens else None
+                    cp = None  # Completed-turn consumption is not context-window occupancy.
                 else:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),

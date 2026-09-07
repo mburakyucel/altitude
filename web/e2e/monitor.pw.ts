@@ -97,6 +97,11 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
     ...body,
     seats: seatsWith(body, (quota) => ({
       ...quota, known: false, stale: true,
+      // The real source may never have emitted a figure. This state needs an actual old
+      // observation, not just a stale flag on unknown data; keep the no-reading assertion below.
+      ...(typeof quota.primary_used !== "number" &&
+          !(typeof quota.five_hour === "number" && typeof quota.seven_day === "number")
+        ? { primary_used: 25, primary_window_minutes: 300 } : {}),
       ...("read_at" in quota ? { read_at: hoursAgo(2).toISOString() } : { at: Math.floor(hoursAgo(2).getTime() / 1000) }),
     })),
   }));

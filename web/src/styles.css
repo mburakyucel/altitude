@@ -1133,6 +1133,25 @@
   justify-content: space-between;
   gap: 8px;
 }
+
+/* Task consumption stays folded beside the header facts; details fit phone and desktop. */
+.token-usage { min-width: 0; font-size: var(--text-meta); }
+.task-phone-head .token-usage { width: 100%; margin-right: 8px; }
+.token-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-height: var(--target-min); padding: 4px 0; text-align: left; color: var(--text-secondary); }
+.token-summary-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.token-coverage, .token-freshness { color: var(--text-muted); }
+.token-toggle { color: var(--accent-text); }
+.token-details { max-height: 40dvh; overflow-y: auto; padding: 8px 12px; margin: 2px 0 6px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); }
+.token-details p { margin: 4px 0; }
+.token-counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 6px 12px; margin: 8px 0; }
+.token-counters dt { color: var(--text-muted); }
+.token-counters dd { margin: 0; font-variant-numeric: tabular-nums; }
+.token-engine { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.token-engine h3 { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: inherit; font-weight: 600; }
+.token-engine h3 span { color: var(--text-muted); font-weight: 400; }
+.token-session + .token-session { margin-top: 12px; }
+.token-session-label { font-weight: 500; }
+.token-session-id { color: var(--text-muted); overflow-wrap: anywhere; }
 .task-crumb {
   font-size: var(--text-meta);
   color: var(--text-muted);

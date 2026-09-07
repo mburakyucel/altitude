@@ -72,6 +72,8 @@ class TestDeadWorker(AltitudeCase):
         self.assertTrue(self._poll(rows, [task])[0].get("died"))
 
     def _poll(self, rows, tasks):
+        for task in tasks:
+            S.save_task(self.project, task)
         self.patch(engines, "worker", side_effect=lambda engine, task, **kw: next(
             (row for row in rows if row.get("id") == task.get("agent_id")), None))
         self.patch(S, "list_tasks", return_value=tasks)
