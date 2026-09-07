@@ -7,6 +7,10 @@ from altitude import config, dispatch, server, state as S, tasks as T
 
 
 class TestDirectDispatch(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.quiet_engines()
+
     def test_overlapping_queued_tasks_both_launch_and_second_brief_names_overlap(self):
         self.register(self.project, wip=config.WIP_PER_PROJECT)
         first = T.new(self.project, "First", "request", paths=["README.md", "docs/"])

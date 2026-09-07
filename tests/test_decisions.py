@@ -133,6 +133,7 @@ class TestDecisions(AltitudeCase):
         self.assertNotIn("Recent FYIs", digest.text())
 
     def test_the_overview_counts_blocks_waiting_on_l3_and_names_each_queue_hold(self):
+        self.quiet_engines()
         self.blocked("On L3", "Need the lease.", waiting_on="l3")
         queued = T.new(self.project, "Waiting", "Do it.", actor="burak")
         overview = server.overview()
