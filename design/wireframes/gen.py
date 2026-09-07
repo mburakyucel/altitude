@@ -3,8 +3,8 @@
 
 The boards are static HTML: markup here, styles in wireframes.css, tokens from the build's
 web/design/tokens.css, the one token file the boards and the build share (SPEC.md §6). Run it after
-editing and commit the output with it: `python3 design/wireframes/gen.py`. SPEC.md is the authority
-on behaviour; a board shows one moment of it.
+editing and commit the output with it: `python3 design/wireframes/gen.py`. SPEC.md and these boards
+are the design record together; keep their rules and visual states aligned.
 """
 import pathlib
 
@@ -47,7 +47,7 @@ svg.i.sm{width:14px;height:14px}
 .who{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;color:var(--text-secondary);font-size:13px;font-weight:500}
 .avatar{width:26px;height:26px;border-radius:50%;background:var(--bubble);color:var(--text-primary);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
 /* pane */
-.pane{display:flex;flex-direction:column;min-width:0;background:var(--surface)}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface);overflow:hidden}
 .ph{display:flex;align-items:center;justify-content:space-between;height:64px;padding:0 28px;flex:none}
 .ph h1{font-size:18px;font-weight:600;margin:0;line-height:1.3}
 .ph .sub{font-size:13px;color:var(--text-muted);margin-top:1px}
@@ -58,6 +58,9 @@ svg.i.sm{width:14px;height:14px}
 /* conversation */
 .convo{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;padding:0 28px}
 .col{width:100%;max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+.convo>.col{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding-bottom:22px}
+.convo>.col>*{flex-shrink:0}.convo>.col>:first-child{margin-top:auto}
+.convo>.composer,.convo>.hint{flex-shrink:0}
 .day{text-align:center;font-size:12px;color:var(--text-muted)}
 .me{align-self:flex-end;max-width:76%;background:var(--bubble);border-radius:var(--radius-bubble);padding:10px 16px;font-size:15px;line-height:1.55}
 .l3{font-size:15px;line-height:1.65;color:var(--text-primary);padding:2px 0;display:flex;flex-direction:column;gap:12px}
@@ -74,6 +77,7 @@ svg.i.sm{width:14px;height:14px}
 .pillbtn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px 0 12px;border-radius:999px;color:var(--text-secondary);font-size:13px;font-weight:500;border:1px solid transparent}
 .icb{width:36px;height:36px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;color:var(--text-secondary);flex:none}
 .icb.send{background:var(--accent);color:var(--on-accent)}
+.icb.send.disabled{opacity:.4}
 .icb.rec{background:var(--danger);color:var(--on-accent)}
 .icb.dim{color:var(--border)}
 .hint{text-align:center;font-size:12px;color:var(--text-muted);padding:10px 0 14px}
@@ -119,30 +123,29 @@ svg.i.sm{width:14px;height:14px}
 .lh{display:flex;align-items:center;justify-content:space-between;height:64px;padding:0 20px;flex:none}
 .lh h2{font-size:15px;font-weight:600;margin:0;display:flex;align-items:center;gap:8px}
 .lh .pulse{width:8px;height:8px;border-radius:50%;background:var(--success-text)}
-.lbody{padding:0 20px 20px;display:flex;flex-direction:column;gap:8px;font-size:13px}
+.lbody{padding:0 20px 20px;display:flex;flex-direction:column;gap:8px;font-size:13px;min-height:0;overflow:auto;overscroll-behavior:contain}.lbody>*{flex-shrink:0}
 .sep{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-muted);padding:6px 0}
 .sep .ln{flex:1;height:1px;background:var(--hairline)}
 .prompt{background:var(--accent-tint);border:1px solid var(--accent-tint-border);border-radius:var(--radius-control);padding:10px 12px;font-size:13px;color:var(--text-primary)}
 .prompt b{color:var(--accent-text);font-weight:600;display:block;margin-bottom:2px;font-size:12px}
 .prose{padding:2px 0;color:var(--text-primary);line-height:1.55}
-.tool{display:flex;align-items:center;gap:10px;height:36px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--card);font-family:var(--font-mono);font-size:12.5px;color:var(--text-primary)}
+.tool{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--card);font-family:var(--font-mono);font-size:12.5px;color:var(--text-primary);overflow-wrap:anywhere}
 .tool b{font-family:var(--font-ui);font-weight:600;font-size:12px;color:var(--text-secondary);width:42px}
 .tool .n{margin-left:auto;color:var(--text-muted);font-family:var(--font-ui);font-size:12px;display:inline-flex;align-items:center;gap:4px}
-.tool .diff{margin-left:auto;font-size:12px}.tool .diff b{width:auto;color:var(--success-text)}.tool .diff i{font-style:normal;color:var(--danger)}
 /* needs-you list */
 .list{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
 .calm{text-align:center;color:var(--text-muted);font-size:13px;padding:28px 0}
 .calm b{display:block;color:var(--text-secondary);font-weight:500;font-size:14px;margin-bottom:2px}
 /* mobile */
-.m{width:390px;height:844px;display:grid;grid-template-rows:54px 56px 1fr auto 84px;background:var(--surface)}
+.m{width:390px;height:844px;display:grid;grid-template-rows:0 54px minmax(0,1fr) auto 84px;background:var(--surface);overflow:hidden}
 .mh{display:flex;align-items:center;padding:0 10px 0 16px;gap:8px}
 .mh .name{display:inline-flex;align-items:center;gap:4px;height:40px;padding:0 10px 0 4px;border-radius:var(--radius-control);font-size:17px;font-weight:600;color:var(--text-primary)}
 .mh .name svg{color:var(--text-muted)}
 .mh .subl{font-size:12px;color:var(--text-muted);line-height:1.2}
 .mh .sp{flex:1}
-.mbody{min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:0 16px}
+.mbody{min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;padding:0 16px}.mbody>*{flex-shrink:0}
 .mbody.top{justify-content:flex-start;padding-top:6px;gap:14px}
-.mcol{display:flex;flex-direction:column;gap:16px}
+.mcol{display:flex;flex-direction:column;gap:16px;margin-top:auto;padding-bottom:12px}
 .m .me{max-width:82%;font-size:16px;padding:10px 14px}
 .m .l3{font-size:16px;line-height:1.6}
 .m .composer{border-radius:22px;padding:12px 10px 8px 16px;max-width:none}
@@ -176,7 +179,6 @@ svg.i.sm{width:14px;height:14px}
 .wave{display:flex;align-items:center;gap:3px;height:24px;flex:1;padding:0 6px}
 .wave i{display:block;width:3px;border-radius:2px;background:var(--accent)}
 .status{font-size:13px;color:var(--text-muted);display:inline-flex;align-items:center;gap:6px}
-.undo{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border-radius:999px;background:var(--accent-tint);color:var(--accent-text);font-size:12px;font-weight:500}
 .inl{font-size:13px;color:var(--danger);display:inline-flex;align-items:center;gap:6px}
 /* decision page */
 .card.sel{border-color:var(--accent)}
@@ -215,6 +217,38 @@ svg.i.sm{width:14px;height:14px}
 .sysx .ft{display:flex;gap:14px;margin-top:10px;font-size:12px}
 .sysl{display:flex;flex-direction:column;gap:6px;padding:4px 0 0 18px;font-size:12.5px;color:var(--text-muted)}
 .sysl div{display:flex;gap:8px;align-items:center}
+/* State examples use the same shapes as their route boards. */
+.muted{color:var(--text-muted);font-size:13px}.danger{color:var(--danger)}
+.skel{height:16px;border-radius:6px;background:var(--bubble);margin:10px 0}
+.statebox{border:1px solid var(--hairline);border-radius:var(--radius-card);padding:16px;min-width:0}
+.statebox p{margin:6px 0 12px}.statebox .hint{padding-bottom:0}
+.statebox .composer{max-width:358px}.statebox .crow{flex-wrap:nowrap}
+.statebox .wave{min-width:0;overflow:hidden}.statebox .status{flex-shrink:0}
+.statebox .icb{width:40px;height:40px}.statebox .ph2,.statebox .draft{font-size:16px}
+.statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
+.route-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 28px 28px}
+.route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
+.route-content h2{font-size:14px;font-weight:600;margin:22px 0 12px}
+.route-content h3{font-size:15px;margin:0;font-weight:600}
+.route-content p{margin:8px 0}.route-content ul{padding-left:20px}
+.seats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.monitor-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.monitor-row .muted{margin-left:auto}
+.window{margin-top:18px}.window .monitor-row{justify-content:space-between}
+.reserve{position:relative;overflow:visible;margin:8px 0}.reserve:after{content:"";position:absolute;left:70%;top:-3px;bottom:-3px;width:1px;background:var(--text-secondary)}
+.stale .meter{opacity:.5}.route-content .card{padding:18px}
+.routing{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 18px;padding:12px 0;border-bottom:1px solid var(--hairline)}
+.routing p{grid-column:1/-1;font-size:13px;color:var(--text-muted);margin:0;overflow-wrap:anywhere}
+.sessionrow{padding:16px;border:1px solid var(--border);border-radius:var(--radius-card);margin-top:12px}.sessionrow b{overflow-wrap:anywhere;min-width:0}
+.banner{display:flex;gap:16px;align-items:center;padding:12px 28px;background:var(--accent-tint);border-bottom:1px solid var(--accent-tint-border);font-size:13px;flex-shrink:0}
+.banner p{margin:0}.banner .btn{margin-left:auto}.banner .muted{font-size:12px}
+.m .route-content{padding:16px}.m .seats{grid-template-columns:minmax(0,1fr)}
+.m .banner{padding:10px 16px;gap:8px}.m .banner .btn{height:36px;padding:0 10px;font-size:13px}
+.task-phone{grid-template-rows:54px auto auto minmax(0,1fr) auto 84px}
+.task-meta{padding:8px 16px;font-size:12px}.task-meta .monitor-row{gap:6px}
+.task-tabs{display:flex;border-bottom:1px solid var(--hairline);padding:4px 16px 8px;gap:24px;font-size:14px}
+.task-tabs .on{color:var(--accent-text);border-bottom:2px solid var(--accent);padding-bottom:4px}
+.task-phone .live{border:0}.task-phone .lh{padding:0 16px;height:48px}.task-phone .lh h2{font-size:14px}
+.task-phone .lbody{padding:0 16px 16px}.task-phone .tool .n{white-space:nowrap}
 """
 
 # ---------- icons ----------
@@ -293,7 +327,7 @@ def composer(placeholder="Message L3 about altitude", engine=True, mobile=False,
         f'<div class="composer">{body}'
         f'<div class="crow">{eng}<span style="flex:1"></span>'
         f'<span class="icb">{I("mic","i lg")}</span>'
-        f'<span class="icb send">{I("up","i lg")}</span></div></div>{h}'
+        f'<span class="icb send{"" if draft else " disabled"}" aria-label="Send">{I("up","i lg")}</span></div></div>{h}'
     )
 
 def tcard(title, meta, dot="dot"):
@@ -348,7 +382,7 @@ def convo_altitude(mobile=False):
         '<div class="l3"><p>Created one task for it. It started a minute ago with Fable on Claude, and its PR will be held for your review before anything merges.</p>'
         + tcard("Design wireframes for the simplified product", "Running · Fable on Claude · started 1 min ago") +
         '</div>'
-        '<div class="sys"><span class="ln"></span><span>L3 handled two system events</span><a href="#">Show</a><span class="ln"></span></div>'
+        '<div class="sys"><span class="ln"></span><span>L3 handled 2 system events between your messages</span><a href="#">Show</a><span class="ln"></span></div>'
         '<div class="me">Not only desktop first. Both mobile and desktop need to land.</div>'
         '<div class="l3"><p>Passed that to the task’s L2. Every board will ship in a desktop and an iPhone version in the same PR.</p></div>'
     )
@@ -435,20 +469,19 @@ board("NeedsYou", 1440, 900, needs_inner)
 # Desktop 3: task page — L2 conversation beside the live session
 live = (
     '<aside class="live">'
-    f'<div class="lh"><h2><span class="pulse"></span>Live session</h2><div style="display:flex;gap:4px"><span class="btn ghost" style="height:32px">Pause</span><span class="btn ghost" style="height:32px">Raw events</span></div></div>'
+    f'<div class="lh"><h2><span class="pulse"></span>Live session</h2><div style="display:flex;gap:4px"><span class="btn ghost" style="height:32px">Pause</span><span class="btn ghost" style="height:32px" title="credential-shaped keys and values are redacted; model reasoning is never shown">Raw events</span></div></div>'
     '<div class="lbody">'
-    '<div class="sep"><span class="ln"></span>Session started 09:00 · attempt 1 · Fable on Claude<span class="ln"></span></div>'
+    '<div class="sep"><span class="ln"></span>queued → running · altd · 09:00<span class="ln"></span></div>'
     '<div class="prompt"><b>Brief</b>Design wireframes for the simplified product (#166): the request, the L2 persona, and the lease. 2,300 words</div>'
     '<div class="prose">I’ll start by orienting: the issue with the comments, the docs, the live routes, the tokens, and the design skill.</div>'
-    f'<div class="tool"><b>Bash</b>gh issue view 166 --comments<span class="n">38 lines{I("chev-r","i sm")}</span></div>'
+    f'<div class="tool"><b>$</b>gh issue view 166 --comments<span class="n">38 lines{I("chev-r","i sm")}</span></div>'
     f'<div class="tool"><b>Read</b>docs/ARCHITECTURE.md<span class="n">121 lines{I("chev-r","i sm")}</span></div>'
     f'<div class="tool"><b>Read</b>web/design/tokens.css<span class="n">72 lines{I("chev-r","i sm")}</span></div>'
     '<div class="prose">Fonts load in headless Chrome, so the boards can use the build’s IBM Plex faces. Writing the shared stylesheet next.</div>'
-    '<div class="tool"><b>Write</b>design/wireframes/wireframes.css<span class="diff"><b>+297</b> <i>−0</i></span></div>'
-    '<div class="sep"><span class="ln"></span>Turn ended 09:31 · context 9% used<span class="ln"></span></div>'
+    f'<div class="tool"><b>Edit</b>design/wireframes/gen.py<span class="n">3 lines{I("chev-r","i sm")}</span></div>'
     '<div class="prompt"><b>You, via the task inbox</b>Not only desktop first. Both mobile and desktop need to land.</div>'
     '<div class="prose">Understood. Every board ships at both sizes in this PR; the mobile boards respect the iPhone safe areas.</div>'
-    f'<div class="tool"><b>Write</b>design/wireframes/MobileInbox.html<span class="diff"><b>+84</b> <i>−0</i></span></div>'
+    f'<div class="tool"><b>$</b>python3 design/wireframes/gen.py<span class="n">running…</span></div>'
     '<div class="sep" style="color:var(--success-text)"><span class="ln"></span>Following live · new steps appear at the bottom<span class="ln"></span></div>'
     '</div></aside>'
 )
@@ -458,20 +491,20 @@ task_inner = (
     '<main class="pane">'
     '<header style="padding:16px 28px 14px;display:flex;flex-direction:column;gap:6px;flex:none">'
     f'<div style="display:flex;align-items:center;justify-content:space-between"><div class="crumb">{I("chev-l","i sm")}altitude</div>'
-    f'<div class="acts"><span class="btn ghost">Stop</span><span class="btn ghost">Reject…</span><span class="ib on">{I("panel")}</span></div></div>'
-    '<h1 style="display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:600;line-height:1.3"><span class="dot held"></span>Design wireframes for the simplified product</h1>'
-    '<div class="sub" style="font-size:13px;color:var(--text-muted)">Fable on Claude · attempt 1 · 42 min · 13% of its context used</div>'
-    '<div style="display:flex;align-items:center;gap:6px;margin-top:2px"><span class="chip ok">PR #176 checks passed</span><span class="chip held">held for your review</span></div>'
+    f'<div class="acts"><span class="btn ghost">Stop</span><span class="btn ghost">Reject</span><span class="ib on">{I("panel")}</span></div></div>'
+    '<h1 style="display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:600;line-height:1.3"><span class="dot"></span>Design wireframes for the simplified product</h1>'
+    '<div class="sub" style="font-size:13px;color:var(--text-muted)">attempt 1 · started 32 min ago · 18% of its context used</div>'
+    '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:2px"><span class="chip">Running</span><span class="chip">Fable on Claude</span><a href="#" class="chip">PR #176 open · main checks passed</a><span class="chip held">Merge held · your review</span></div>'
     '</header>'
     '<div class="convo"><div class="col">'
     '<div class="day">Today</div>'
     '<div class="l3"><p>I read #166 and both of your comments. Plan: one shared stylesheet on the build’s tokens, sixteen boards, numbered callouts on each. I’ll render with headless Chrome to check clipping at both sizes.</p></div>'
     '<div class="me">Not only desktop first. Both mobile and desktop need to land.</div>'
+    '<div class="l3"><span class="muted">L3</span><p>The brief calls for both sizes. Keep the PR held for review.</p></div>'
     '<div class="l3"><p>Understood: every board ships at both sizes in this PR. The mobile boards respect the iPhone safe areas and keep the composer at 16px.</p></div>'
     '<div class="l3"><p>PR #176 is open and green. It is held for your review as the brief says; the README lists the three assumptions I made where the record was silent.</p>'
-    + tcard("PR #176 · Design wireframes for the simplified product", "Checks passed · held for your review · open on GitHub", dot="dot held") +
     '</div></div><div style="height:22px"></div>'
-    + composer("Ask or steer this task’s L2", engine=False, hint="Messages reach the L2 at its next checkpoint. Stop aborts the worker.") +
+    + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") +
     '</div></main>' + live + '</div>'
 )
 board("Task", 1440, 900, task_inner)
@@ -522,7 +555,7 @@ mobile_convo = (
     '<div class="l3"><p>Created one task for it. It started a minute ago with Fable on Claude, and its PR will be held for your review before anything merges.</p>'
     + tcard("Design wireframes for the simplified product", "Running · Fable on Claude · 1 min") +
     '</div>'
-    '<div class="sys"><span class="ln"></span><span>Two system events</span><a href="#">Show</a><span class="ln"></span></div>'
+    '<div class="sys"><span class="ln"></span><span>L3 handled 2 system events between your messages</span><a href="#">Show</a><span class="ln"></span></div>'
     '<div class="me">Not only desktop first. Both mobile and desktop need to land.</div>'
     '<div class="l3"><p>Passed that to the task’s L2. Every board will ship in a desktop and an iPhone version in the same PR.</p></div>'
 )
@@ -599,34 +632,55 @@ def wave(heights):
 def state(label, note, body):
     return f'<div class="st"><div class="lab">{label}<span>{note}</span></div>{body}</div>'
 
-def comp_custom(top, row):
-    return f'<div class="composer">{top}<div class="crow">{row}</div></div>'
+def comp_custom(top, row, hint=""):
+    return f'<div class="composer">{top}<div class="crow">{row}</div></div>' + (f'<div class="hint">{hint}</div>' if hint else '')
+
+def arrow(disabled=False):
+    return f'<span class="icb send{" disabled" if disabled else ""}" aria-label="Send">{I("up","i lg")}</span>'
+
+def compose_state(phase):
+    """One send control in every state; 358px examples also prove the phone row."""
+    draft = phase in ("Typing", "Busy", "Landed", "Failed")
+    top = '<div class="draft">Both phone and desktop need to land.</div>' if draft else '<div class="ph2">Message L3 about altitude</div>'
+    pin = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span>'
+    mic = f'<span class="icb">{I("mic","i lg")}</span>'
+    hint = ""
+    if phase == "Listening":
+        return comp_custom('<div class="draft"></div>', pin + f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>{wave(W[:6])}<span class="status">0:07</span><span class="icb" aria-label="Stop">{I("stop","i lg")}</span>' + arrow())
+    if phase == "Transcribing":
+        top = '<div class="draft">Both phone and desktop need to land.</div>'
+        mic = f'<span class="icb dim">{I("mic","i lg")}</span>'
+        return comp_custom(top, pin + wave(W[:6]) + '<span class="status">0:07</span>' + mic + arrow(True), "Transcribing…")
+    elif phase == "Busy":
+        hint = "L3 is mid-turn · runs next"
+    elif phase == "Denied":
+        mic = f'<span class="icb dim">{I("mic-off","i lg")}</span>'
+        hint = "Microphone blocked in the browser. Typing works."
+    elif phase == "Unavailable":
+        mic = ""
+        hint = "Voice needs HTTPS"
+    elif phase == "Failed":
+        hint = '<span class="danger">Could not transcribe. Typing works.</span>'
+    return comp_custom(top, pin + '<span style="flex:1"></span>' + mic + arrow(not draft), hint)
 
 W = [6,10,16,22,14,8,12,20,24,18,10,6,9,15,21,17,11,7,13,19,23,16,9,6,12,18,14,8]
-states = (
-    state("Idle", "mic and send inside the field; engine pin is a quiet pill",
-          comp_custom('<div class="ph2">Message L3 about altitude</div>',
-                      f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span style="flex:1"></span><span class="icb">{I("mic","i lg")}</span><span class="icb dim">{I("up","i lg")}</span>'))
-    + state("Listening", "one tap; the field becomes the recording surface",
-          comp_custom('', f'<span class="icb">{I("x","i lg")}</span>{wave(W)}<span class="status" style="font-family:var(--font-mono)">0:07</span><span class="icb rec">{I("stop","i lg")}</span>'))
-    + state("Transcribing", "waveform freezes; nothing else changes",
-          comp_custom('', f'<span class="icb dim">{I("x","i lg")}</span>{wave([4]*28)}<span class="status">{I("spin","i sm")}Transcribing…</span><span class="icb dim">{I("stop","i lg")}</span>'))
-    + state("Transcript landed", "text is the draft; one undo, no review panel",
-          comp_custom('<div class="draft">Address issue 166 and use Fable at L2 for this one as well, design is important.</div>',
-                      f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span class="undo">{I("undo","i sm")}Undo transcript</span><span style="flex:1"></span><span class="icb">{I("mic","i lg")}</span><span class="icb send">{I("up","i lg")}</span>'))
-    + state("L3 is busy", "send becomes Queue; the message runs at the next turn",
-          comp_custom('<div class="draft">Not only desktop first. Both mobile and desktop need to land.</div>',
-                      f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span class="status">L3 is mid-turn · queued messages run in order</span><span style="flex:1"></span><span class="icb">{I("mic","i lg")}</span><span class="btn primary" style="border-radius:999px;height:36px">Queue</span>'))
-    + state("Voice unavailable", "denied, plain HTTP, or no speech service: one line, typing unchanged",
-          comp_custom('<div class="ph2">Message L3 about altitude</div>',
-                      f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span><span class="inl">{I("mic-off","i sm")}Microphone needs the secure address · typing works</span><span style="flex:1"></span><span class="icb dim">{I("up","i lg")}</span>'))
-)
+states = ''.join(state(label, note, '<div class="statebox">' + compose_state(label) + '</div>') for label, note in [
+    ("Idle", "typing enables the arrow"),
+    ("Typing", "the draft sends through the arrow"),
+    ("Listening", "Cancel discards; Stop edits; arrow sends at once"),
+    ("Transcribing", "editable draft; controls disabled; hint below"),
+    ("Landed", "transcript appended to draft; nothing else appears"),
+    ("Busy", "same arrow; message runs at the next turn"),
+    ("Denied", "mic disabled; typing remains available"),
+    ("Unavailable", "mic hidden; HTTPS hint below"),
+    ("Failed", "draft stays; no message sent"),
+]) + state("Sending refused", "bubble leaves; the draft returns", '<div class="statebox">' + composer(draft="Both phone and desktop need to land.", hint='<span class="danger">Not sent. Retry.</span>') + '</div>')
 sheet_inner = (
     '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Composer states</h1>'
-    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:760px">One composer for Chat, the task conversation, and the project quick message. Every state lives inside the field; no status lines or review panels below it. Mobile uses the same states at 16px with 44px targets.</p></div>'
+    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">One composer for project chat, task conversation, and follow-ups. Each field below is phone-width: 358px inside a portrait 390px screen, with 16px text. Hints sit below the field. The accent arrow is the only send control, including while busy.</p></div>'
     f'<div class="sheetgrid">{states}</div>'
 )
-board("ComposerStates", 1200, 760, sheet_inner)
+board("ComposerStates", 1200, 1380, sheet_inner)
 
 
 # =====================================================================
@@ -737,10 +791,14 @@ sys_states = (
           + '<div class="me" style="font-size:14px">Good. What is left this week?</div></div>')
     + state("Several in a row, grouped", "consecutive system turns become one line; Show lists them",
           '<div style="display:flex;flex-direction:column;gap:10px;padding:6px 0">'
-          + sysline("L3 handled three system events between your messages")
-          + '<div class="sysl"><div><span class="d" style="width:6px;height:6px;border-radius:50%;background:var(--text-muted)"></span>09:14 · Report landed for Persist paths: closed as done.</div>'
-          '<div><span class="d" style="width:6px;height:6px;border-radius:50%;background:var(--danger)"></span>09:20 · Dispatch fault on Fast-forward a self-deploy checkout: L3 repaired it and resumed the task.</div>'
-          '<div><span class="d" style="width:6px;height:6px;border-radius:50%;background:var(--text-muted)"></span>09:31 · Altitude restarted on the new main; both running tasks kept their workers.</div></div></div>')
+          + sysline("L3 handled 3 system events between your messages", dot="fault")
+          + '</div>')
+    + state("Group expanded", "each turn opens separately; Hide folds the group",
+          '<div style="display:flex;flex-direction:column;gap:12px">'
+          + sysline("09:14 · Persist paths is done; PR #178 merged.")
+          + sysline("09:20 · L3 repaired the dispatch fault and resumed the task.", dot="fault")
+          + sysline("09:31 · Altitude restarted; the running tasks kept their workers.")
+          + '<a href="#" style="align-self:flex-end">Hide</a></div>')
     + state("Expanded", "what altd sent, what L3 did, one link into the task",
           '<div class="sysx"><div class="hd"><span>Report landed · Persist paths when L3 resumes a task · 09:14</span><a href="#">Hide</a></div>'
           '<div class="lbl">What altd sent L3</div>'
@@ -748,22 +806,136 @@ sys_states = (
           '<div class="lbl">L3 replied</div>'
           '<p class="rp">Closed the task as done and recorded the flaky test in the digest. Nothing waits on you.</p>'
           f'<div class="ft"><a href="#">Open task</a><a href="#">Full report</a><a href="#">Digest</a></div></div>')
-    + state("In progress", "the line appears when the turn starts; your Send becomes Queue meanwhile",
+    + state("In progress", "the active turn stays outside the completed group",
           '<div style="display:flex;flex-direction:column;gap:14px;padding:6px 0">'
-          + sysline("L3 is handling a landed report for Persist paths when L3 resumes a task", dot="live", show="")
-          + '<div class="composer" style="max-width:none;box-shadow:none"><div class="draft">Good. What is left this week?</div>'
-          f'<div class="crow"><span class="pillbtn">Auto{I("chev-d","i sm")}</span><span class="status">L3 is mid-turn · runs next</span><span style="flex:1"></span><span class="icb">{I("mic","i lg")}</span><span class="btn primary" style="border-radius:999px;height:36px">Queue</span></div></div></div>')
+          + sysline("L3 handled 2 system events between your messages")
+          + sysline("L3 is handling a landed report for Persist paths when L3 resumes a task", show="")
+          + compose_state("Busy") + '</div>')
     + state("Fault repaired", "faults carry a red dot; the incident stays in the task record",
           '<div style="padding:6px 0">' + sysline("A dispatch fault blocked Fast-forward a self-deploy checkout; L3 repaired it and resumed the task.", dot="fault") + '</div>')
     + state("FYI from L3", "FYIs live here now, not in Needs you",
           '<div style="padding:6px 0">' + sysline("FYI: Codex’s sandbox kept a worktree read-only; PR #171 fixed it, so no repair task was needed.") + '</div>')
+    + state("Failed report turn", "failure changes the words; the trigger keeps its muted dot",
+          sysline("L3 could not handle a landed report for Persist paths when L3 resumes a task"))
 )
 sys_inner = (
     '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">System turns in chat</h1>'
     '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">Every L3 turn the operator did not start (a landed report, a fault, a restart, an FYI) stays in the one conversation in its real order, but renders as a single muted line: L3’s short reply, with Show for the full prompt and reply. The chat log already records the trigger on every row, so this is a rendering rule, not a second conversation.</p></div>'
     f'<div class="sheetgrid">{sys_states}</div>'
 )
-board("SystemTurnStates", 1200, 820, sys_inner)
+board("SystemTurnStates", 1200, 1100, sys_inner)
+
+# Task on the phone: the state/actions stay above either scroll container.
+phone_task_header = (
+    f'<header class="mh"><span class="name">{I("chev-l")}Design wireframes</span></header>'
+    '<div class="task-meta" style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1">'
+    '<span class="dot"></span> Running · Fable on Claude · <a href="#">PR #176 open · main checks passed</a></div>'
+    '<span>Stop</span><span>Reject</span></div>'
+)
+phone_task_convo = (
+    '<div class="day">Today</div>'
+    '<div class="l3"><p>The boards are ready for review at both sizes.</p></div>'
+    '<div class="me">Check the phone header and the keyboard too.</div>'
+    '<div class="l3"><span class="muted">L3</span><p>The brief keeps the shell fixed while the content scrolls.</p></div>'
+    '<div class="l3"><p>The composer stays above the keyboard. I’m checking the inner scroll containers next.</p></div>'
+)
+for name, is_live in [("MobileTask", False), ("MobileTaskLive", True)]:
+    tabs = f'<div class="task-tabs"><span class="{"" if is_live else "on"}">Conversation</span><span class="{"on" if is_live else ""}">Live session</span></div>'
+    content = live if is_live else '<div class="mbody"><div class="mcol">' + phone_task_convo + '</div></div>'
+    field = '<div></div>' if is_live else '<div class="mcomp">' + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") + '</div>'
+    board(name, 390, 844, '<div class="m task-phone">' + phone_task_header + tabs + content + field + tabbar("work") + '</div>')
+
+# The same live panel overlays the main pane from 1024 through 1279px.
+board("TaskOverlay", 1100, 900,
+      '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("altitude") +
+      '<main class="pane"><header class="ph"><h1>Design wireframes for the simplified product</h1></header>'
+      '<div class="convo"><div class="col">' + phone_task_convo + '</div>' + composer("Message the L2", engine=False) + '</div></main></div>'
+      '<div class="scrim"></div><div style="position:absolute;inset:0 0 0 auto;width:480px;display:flex">' + live + '</div>')
+
+def state_sheet(name, title, examples, height):
+    content = ''.join(state(label, note, '<div class="statebox">' + body + '</div>') for label, note, body in examples)
+    board(name, 1200, height, f'<div style="padding:28px 40px"><h1 style="font-size:20px;margin:0">{title}</h1></div><div class="sheetgrid">{content}</div>')
+
+state_sheet("TaskStates", "Task page states", [
+    ("Stop confirmation", "inline under the state line", '<p>Stop this task? Its worker ends; the branch stays.</p><span class="btn">Cancel</span> <span class="btn primary">Stop</span>'),
+    ("Reject confirmation", "optional reason accompanies the archive", '<p>Reject this task? Its worker ends and the task is archived.</p><div class="field">Reason (optional)</div><div class="opts"><span class="btn">Cancel</span><span class="btn primary">Reject</span></div>'),
+    ("Waiting on L3", "reason below the chips", '<span class="chip">Blocked</span><p>Waits for L3’s answer · Which recorded decision applies?</p>'),
+    ("Held until resume", "Queued replaces the blocked label", '<span class="chip">Queued</span><p>Waits for resume · the window reopens at 10:30</p><div class="hint">Delivered when Altitude resumes the L2.</div>'),
+    ("Connecting", "skeleton until the session arrives", '<div class="skel" style="height:50px"></div><div class="skel" style="width:75%"></div><p class="muted">Connecting to the session…</p>'),
+    ("Boundaries arrived first", "retain the recorded boundary", '<div class="sep">queued → running · altd · 09:00</div><p class="muted">Connecting to the session…</p>'),
+    ("Streaming", "tool output folds under its row", '<div class="tool"><b>$</b>make test<span class="n">running…</span></div><div class="tool"><b>Edit</b>gen.py<span class="n">3 lines ›</span></div><div class="tool"><b>$</b>check assets<span class="n danger">error</span></div><div class="tool"><b>Read</b>SPEC.md<span class="n">no output</span></div>'),
+    ("Following or paused", "Pause changes to Follow", '<span class="btn ghost">Follow</span><p class="muted">Paused · Follow to catch up</p><p class="muted">Following live · new steps appear at the bottom</p>'),
+    ("Unavailable / ended", "session footer follows task state", '<p class="muted">No session file for this attempt</p><p class="muted">Session paused until the task resumes</p><p class="muted">Session ended</p>'),
+    ("Empty conversations", "active and finished", '<p class="muted">No messages yet.</p><p class="muted">No messages on this task.</p><span class="chip">Done</span> <a class="chip ok" href="#">PR #178 merged · main checks passed</a><p class="muted">attempt 1 · done 2h ago</p>'),
+    ("Resume by message", "blocked task composer", composer("Message the L2", engine=False, hint="Sending resumes the L2 with your message.")),
+    ("Message refused", "bubble removed; editable draft returned", composer("Message the L2", engine=False, draft="Check the phone header too.", hint='<span class="danger">Not sent. Retry.</span>')),
+], 1480)
+
+state_sheet("ConversationStates", "Conversation and report states", [
+    ("L3 never ran", "header offers Start L3", '<span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p>'),
+    ("Conversation empty", "L3 has run before", '<p class="muted">Say what you want done. L3 answers or creates one task.</p>'),
+    ("Conversation loading", "three prose-shaped rows", '<div class="skel" style="height:40px"></div><div class="skel" style="width:80%;height:40px"></div><div class="skel" style="width:90%;height:40px"></div>'),
+    ("Conversation error", "cached rows stay visible", '<p class="danger">Could not load the conversation. <a href="#">Retry</a></p><div class="l3"><p>The task’s PR is ready for review.</p></div>'),
+    ("Report loading", "heading skeleton", '<div class="skel" style="width:45%;height:24px"></div>'),
+    ("Report empty / error", "Retry repeats the read", '<p class="muted">No report yet.</p><p class="danger">Could not load the report. <a href="#">Retry</a></p>'),
+], 740)
+
+report_content = (
+    '<p class="muted"><a href="Task.html">← Persist paths when L3 resumes a task</a></p><h1>Report</h1>'
+    '<h2>Landed</h2><ul><li>PR #178 merged · Persist task paths</li><li>Main checks success</li><li>Deploy: healthy</li></ul>'
+    '<h2>Review</h2><ul><li>Resume retained a stale path · fixed · The current task record supplies the lease.</li></ul>'
+    '<h2>Decisions</h2><ul><li>Use the recorded lease when the task resumes.</li></ul>'
+    '<h2>FYI</h2><ul><li>The merged behavior is verified.</li></ul>'
+    '<h2>Follow-ups</h2><ul><li>Review the queued-task wording with slice 3.</li></ul>'
+    '<h2>Spend</h2><p>turns: 14</p>'
+    '<h2>Report notes</h2><p>The task paths survive a resume and the full suite passes.</p>'
+    '<h2 id="digest">Digest</h2><p>PR #178 is merged, checks pass, and the result is deployed.</p>'
+)
+board("Report", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("altitude") + '<main class="pane"><div class="route-content">' + report_content + '</div></main></div>')
+board("MobileReport", 390, 844, '<div class="m"><div></div>' + mheader_project() + '<div class="route-content">' + report_content + '</div><div></div>' + tabbar("work") + '</div>')
+
+def seat(label, stale=False, empty=False):
+    if empty:
+        return f'<article class="card"><h3>{label}</h3><p class="muted">No reading. The seat has not been read yet.</p></article>'
+    windows = ''.join(f'<div class="window"><div class="monitor-row"><span>{name}</span><span>{percent}%</span></div><div class="meter reserve"><i style="width:{percent}%"></i></div><p class="muted">{reset}</p></div>' for name, percent, reset in [
+        ("5-hour", 24, "resets in 2h 10m (Mon 14:30)"), ("7-day", 32, "resets in 3d 4h (Thu 16:20)")])
+    return f'<article class="card{" stale" if stale else ""}"><div class="monitor-row"><h3>{label}</h3>' + ('<span class="chip held">Stale</span>' if stale else '') + f'<span class="muted">reading {"2h" if stale else "3m"} old</span></div>{windows}</article>'
+
+monitor_content = (
+    '<h1>Monitor</h1><h2>Seats</h2><div class="seats">' + seat("Claude Code") + seat("Codex", stale=True) + '</div>'
+    '<p class="muted">The mark on each meter is the 70% reserve line.</p>'
+    '<h2>Routing now</h2><div class="card">'
+    '<div class="routing"><span>L3 · altitude · Auto</span><b>Claude Code</b><p>More weekly headroom in the current readings.</p></div>'
+    '<div class="routing"><span>L3 · voice-tutor · pinned to Codex</span><b>Codex</b><p>Pinned for this project.</p></div>'
+    '<div class="routing"><span>L2 · new task</span><b>Claude Code</b><p>More weekly headroom in the current readings.</p></div></div>'
+    '<h2>Sessions (2)</h2><div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>altitude / design-wireframes</b><span class="muted">3 min ago</span></div><p class="muted">Claude Code · Fable · context 18%</p><div class="meter"><i style="width:18%"></i></div></div>'
+    '<div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>altitude / persist-paths</b><span class="muted">2 days ago</span></div><p class="muted">Codex · context 9% · idle</p><div class="meter"><i style="width:9%"></i></div></div>'
+)
+
+def restart_banner(mode="idle"):
+    message = "Altitude is restarting…" if mode == "underway" else "Altitude restarts at the next quiet moment."
+    if mode == "waiting":
+        message += " Waiting for an L3 turn."
+    return '<div class="banner"><div><p>Merged changes to the web app are waiting to activate. <span class="muted" title="7 September 2026, 10:00">4 files, landed 2h ago</span></p><p>' + message + '</p></div>' + ('<span class="btn primary">Restart</span>' if mode == "idle" else '') + '</div>'
+
+board("Monitor", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("monitor") + '<main class="pane">' + restart_banner() + '<div class="route-content">' + monitor_content + '</div></main></div>')
+board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting") + mheader_global() + '<div class="route-content">' + monitor_content + '</div><div></div>' + tabbar("monitor") + '</div>')
+
+state_sheet("MonitorStates", "Monitor states", [
+    ("Loading", "skeleton in the page’s shape", '<div class="skel" style="width:30%"></div><div class="skel" style="height:100px"></div><div class="skel" style="height:60px"></div>'),
+    ("Read failed", "one sentence and Retry", '<p class="danger">Could not read the monitor. <a href="#">Retry</a></p>'),
+    ("No reading", "the API supplies what produces one", seat("Claude Code", empty=True)),
+    ("Stale", "amber chip; meter at 50% opacity", seat("Codex", stale=True)),
+    ("One configured engine", "one card fills the row", seat("Claude Code")),
+    ("No sessions / no engine", "explicit empty readings", '<h3>Sessions (0)</h3><p class="muted">No live sessions.</p><div class="routing"><span>L2 · new task</span><b class="danger">No engine</b><p>No engine is available.</p></div>'),
+], 1180)
+
+state_sheet("RestartStates", "Restart banner states", [
+    ("Pending at a quiet point", "running workers can remain", restart_banner()),
+    ("Waiting", "names what holds activation", restart_banner("waiting")),
+    ("Restart under way", "button leaves at once", restart_banner("underway")),
+    ("New process answered", "banner leaves", '<header class="ph" style="padding:0"><h1>altitude</h1><span class="muted">L3 answered 3 min ago</span></header>'),
+], 540)
 
 # =====================================================================
 # Outputs beside the boards
@@ -780,11 +952,19 @@ ROUTES = [
     ("Project work (phone)", None, "MobileWork"),
     ("Needs you, across projects", "NeedsYou", "MobileNeedsYou"),
     ("Decision page", "Decision", "MobileDecision"),
-    ("Task page: L2 conversation and live session", "Task", None),
+    ("Task page: L2 conversation and live session", "Task", "MobileTask"),
+    ("Task live session (phone)", None, "MobileTaskLive"),
+    ("Task live panel overlay below 1280px", "TaskOverlay", None),
+    ("Task page states", "TaskStates", None),
+    ("Report and digest", "Report", "MobileReport"),
+    ("Monitor", "Monitor", "MobileMonitor"),
+    ("Monitor states", "MonitorStates", None),
+    ("Restart banner states", "RestartStates", None),
     ("First run", "FirstRun", None),
     ("Composer states, voice included", "ComposerStates", None),
     ("Decision card states", "DecisionStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
+    ("Conversation and report states", "ConversationStates", None),
 ]
 sizes = {name: (w, h) for name, w, h in BOARDS}
 listed = {n for _, d, m in ROUTES for n in (d, m) if n}

@@ -8,11 +8,19 @@ window.WIREFRAME_BOARDS = [
   { label: 'Project work (phone)', mobile: 'MobileWork.html' },
   { label: 'Needs you, across projects', desktop: 'NeedsYou.html', mobile: 'MobileNeedsYou.html' },
   { label: 'Decision page', desktop: 'Decision.html', mobile: 'MobileDecision.html' },
-  { label: 'Task page: L2 conversation and live session', desktop: 'Task.html' },
+  { label: 'Task page: L2 conversation and live session', desktop: 'Task.html', mobile: 'MobileTask.html' },
+  { label: 'Task live session (phone)', mobile: 'MobileTaskLive.html' },
+  { label: 'Task live panel overlay below 1280px', desktop: 'TaskOverlay.html', desktopSize: { w: 1100, h: 900, name: 'Sheet' } },
+  { label: 'Task page states', desktop: 'TaskStates.html', desktopSize: { w: 1200, h: 1480, name: 'Sheet' } },
+  { label: 'Report and digest', desktop: 'Report.html', mobile: 'MobileReport.html' },
+  { label: 'Monitor', desktop: 'Monitor.html', mobile: 'MobileMonitor.html' },
+  { label: 'Monitor states', desktop: 'MonitorStates.html', desktopSize: { w: 1200, h: 1180, name: 'Sheet' } },
+  { label: 'Restart banner states', desktop: 'RestartStates.html', desktopSize: { w: 1200, h: 540, name: 'Sheet' } },
   { label: 'First run', desktop: 'FirstRun.html' },
-  { label: 'Composer states, voice included', desktop: 'ComposerStates.html', desktopSize: { w: 1200, h: 760, name: 'Sheet' } },
+  { label: 'Composer states, voice included', desktop: 'ComposerStates.html', desktopSize: { w: 1200, h: 1380, name: 'Sheet' } },
   { label: 'Decision card states', desktop: 'DecisionStates.html', desktopSize: { w: 1200, h: 880, name: 'Sheet' } },
-  { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 820, name: 'Sheet' } },
+  { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
+  { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
 ];
 
 /* Native sizes, matching shots.sh (which reads each board's own width and height). A row's

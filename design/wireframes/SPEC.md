@@ -1,8 +1,8 @@
 # Altitude UI specification
 
-This document governs the UI. The boards beside it illustrate it; **where a board and this spec
-disagree, the spec wins**, and a rule that is only visible on a board is not a rule until it is
-written here. It is written for the L3 and L2 that implement it: every component lists its states,
+This document and the boards beside it are the UI's source of truth, for both visual design and
+rules. They stay aligned when the build departs from them; an unresolved rule change is a question
+for the operator (§4.6). It is written for the L3 and L2 that implement it: every component lists its states,
 every behaviour names the data it reads, and §7 cuts the work into slices with acceptance criteria.
 Approved by the operator on 2026-09-05 (work panel beside the chat; decision page with follow-up to
 the asker; system turns folded in the one L3 conversation).
@@ -38,6 +38,7 @@ reviewable work. The UI shows that and nothing else. Its four principles:
 | `/projects/:name/decisions/:slug` | the decision page for the blocked task `slug` | new |
 | `/projects/:name/tasks/:slug` | the task page: L2 conversation, live session | unchanged |
 | `/projects/:name/tasks/:slug/live` | the same page with the live session in front (phone tab) | unchanged |
+| `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
 | `/monitor` | Monitor | unchanged |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
 
@@ -57,7 +58,9 @@ task: today one blocked task carries one open question, and the route follows th
 - A decision page or a task page opened from a phone tab pushes over that tab with a back control
   and keeps the tab bar.
 - No viewport ever scrolls horizontally; transcripts and tables scroll inside their own container.
-- The shell fills the visual viewport and never scrolls or bounces: headers, the tab bar and composer stay docked while inner regions own native scrolling and bounce; the conversation shrinks above the keyboard and follows its newest row while the operator is at the bottom.
+- The shell fills the visual viewport and never scrolls or bounces. Headers, the tab bar and composer
+  stay docked; content and transcripts own native scrolling and bounce inside their containers. The
+  shell follows changes to the visual viewport, including the phone keyboard.
 - Breakpoint constants live in one place in the web code and are the only place widths are named.
 
 ### 2.3 Scope rule
@@ -118,13 +121,16 @@ are left-aligned prose with no bubble (15px, line-height 1.65): paragraphs, list
 links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task.
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
+The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
+row while the operator is at the bottom; scrolling up leaves the reading position in place.
 
 Data: `GET /api/chat/<project>` → `history[]` rows `{at, role, text, trigger, engine, turn_id}`,
 `active {id, started_at, trigger}`, `queued[]`. Rows with `trigger == "chat"` are the conversation;
 every other trigger is a system turn. The assistant row of a turn that created tasks carries their
 slugs (`tasks: [slug]`, added in slice 2) and the card reads the task from `GET /api/task/<project>/<slug>`.
 
-States: loading (three prose-shaped skeleton rows); empty (First run copy when L3 never ran,
+States: loading (three prose-shaped skeleton rows); empty ("L3 has not started. Start L3 to begin
+the conversation." beside the header's Start L3 when L3 never ran,
 otherwise "Say what you want done. L3 answers or creates one task."); error ("Could not load the
 conversation." and Retry, cached rows still shown); a turn in progress (§4.2); a queued message
 (§4.2); a reply that failed ("L3 could not answer this turn." in muted text under the prompt, with
@@ -134,17 +140,25 @@ Retry that resends the same prompt).
 
 One line, centred, 13px `--text-muted`: a dot, the text, and **Show**. It stands for one system turn
 or a run of them (§4.1). The dot is `--text-muted` for reports, restarts, and FYIs and `--danger`
-for `incident`, `system-recovery`, and fault triggers.
+for `incident`, `system-recovery`, and fault triggers. A failed turn of another trigger keeps the
+muted dot; its line carries the failure.
 
 Expanded: a card in the column with a header ("Report landed · <task title> · 09:14", **Hide**),
 "What altd sent L3" as label/value rows when the prompt has structured fields (verdict, problems,
 signals, PRs, spend) and as preformatted text otherwise, "L3 replied" with the full reply, and links:
 **Open task**, **Full report** (the task's report view), **Digest** when the reply recorded one.
+The structured prompt's Task field supplies Open task and is omitted from the label/value rows.
 A group expands to a list of its turns, each with its own Show.
 
 States: folded; expanded; in progress ("L3 is handling a landed report for <task>", no Show yet);
 grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Show reveals the
 prompt and the error).
+
+The report view has a back link to the task and a "Report" title. It reads the task's report and
+shows plain sections when present: Landed (PRs, main checks and deploy), Review, Blocked, Decisions,
+FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and the digest are prose;
+Digest links land at its section. States: loading (a title-shaped skeleton); empty ("No report
+yet."); error ("Could not load the report." and Retry).
 
 ### 3.5 Task card (inline and in the work panel)
 
@@ -244,27 +258,55 @@ and a link to the archive); error.
 
 ### 3.10 Task page
 
-Desktop anatomy: header rows (crumb and actions; title; state chips: state, engine and model, PR
-with checks state, hold reason); left the operator's conversation with the L2 (same bubbles and
-composer as §3.3 and §3.6, placeholder "Message the L2"); right the live session panel (480px,
-toggled by the header button) as a transcript: tinted prompt blocks, the worker's prose, one compact
-row per tool call with output folded, separators at task boundaries, subtle timestamps, **Raw
-events** behind a toggle. Actions **Stop** and **Reject** are quiet text buttons with an inline
-confirm ("Stop this task? Its worker ends; the branch stays."); no browser dialogs. Below 1280px the
-live session panel follows the §2.2 rule for the work panel: an overlay from the header's panel
-button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop too.
+Desktop anatomy: header rows (crumb and actions; title with state dot; a muted line; state chips:
+state, engine and model, PR with checks state, hold reason); left the operator's conversation with
+the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
+the header button). The muted line reads "attempt 1 · started 32 min ago · 18% of its context used"
+when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
+and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
+and check states, in danger tone when main checks failed. It links to the PR when the repository
+URL is known, otherwise it is a plain chip. A hold reads "Merge held · <reason>".
 
-Phone (not drawn; this is the layout): header with back and the title; a state line; a two-tab row
-**Conversation | Live session** (the `live` route selects the second); content; the composer pinned
-above the tab bar on the Conversation tab.
+Actions **Stop** and **Reject** are quiet text buttons with inline confirmation; no browser dialogs.
+Stop asks "Stop this task? Its worker ends; the branch stays." with Stop and Cancel. Reject asks
+"Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
+Cancel. Stop appears while running; Reject appears while queued, running, blocked or reported.
 
-Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`, `POST /api/l2/message`, `POST /api/task/action`.
+Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
+header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
+too. Phone anatomy: header with back and the title; a dot-separated state line and Stop/Reject at its
+end, confirmation below it; a two-tab row **Conversation | Live session** (the `live` route selects
+the second); content; the composer pinned above the tab bar on the Conversation tab.
 
-States: queued (a line "Waits for <lease or dispatch>" replaces the live panel); running; blocked on
-the operator (the decision card inline at the top of the conversation); blocked by a fault (a red
-line with the one-sentence reason and "L3 has been told"); done or rejected (read-only conversation,
-composer gone, PR link in the header); live session connecting, streaming, ended, unavailable ("No
-session file for this attempt"); message failed ("Not sent. Retry.").
+The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
+the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
+Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."
+for another blocked task. A failed send restores the draft and replaces the hint with "Not sent.
+Retry." The composer appears for running and blocked tasks; finished conversations stay readable.
+
+The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded
+output, subtle timestamps, and the lifecycle boundaries the record supplies (state transitions,
+stops, holds). A shell command's tool label is "$"; other rows use the recorded tool name, including
+Edit for a file change. The hint reads "N lines", "running…", "error", or "no output"; write rows
+carry no diff counts. **Raw events** toggles the transcript to the raw list; its hover title states
+the server's redaction rule. There is no transcript search field. Footer states are "Following live
+· new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
+resumes", or "Session ended"; Pause and Follow control following while the worker runs.
+
+Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
+`GET /api/overview` (engine labels, decision card and queue), `GET /api/project/<project>`
+(repository URL), `POST /api/l2/message`, `POST /api/task/action`.
+
+States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
+queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
+operator (the decision card inline at the top of the conversation); blocked on L3 ("Waits for L3's
+answer · <reason>" under the chips); blocked by a fault (a red line with the one-sentence reason
+and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
+the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
+Empty conversations read "No messages yet." on an active task and "No messages on this task." on
+a finished one. The live session is connecting (skeleton and "Connecting to the session…";
+recorded lifecycle boundaries stay visible), streaming, paused, ended, or unavailable ("No session
+file for this attempt").
 
 ### 3.11 Project switcher (phone)
 
@@ -281,16 +323,42 @@ page opens on its first reply); failed (one sentence and Retry).
 
 ### 3.13 Restart banner
 
-On every route, above the header, when a merged change awaits activation: what changed in words and
-"Altitude restarts at the next quiet moment". The **Restart** button appears only when nothing is
-running (no worker, no report waiting, no L3 turn) and disappears when the restart is under way;
-the banner leaves when the new process answers.
+On every route, above the phone header and first in the desktop main pane, when a merged change
+awaits activation: "Merged changes to <what changed> are waiting to activate.", where what changed
+is "the backend", "the web app", "the backend and the web app", or "Altitude"; the file count; and
+"landed 2h ago" with the exact time on hover. The next line says
+"Altitude restarts at the next quiet moment." and appends "Waiting for <list>." while it waits.
+
+The quiet point has no dispatch or resume claim, L3 turn, or report verification in flight; running
+workers do not hold activation. **Restart** appears when the waiting list is empty and no restart
+is under way. Pressing it or receiving a recorded restart request removes the button and changes
+the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not
+complete; L3 has the fault." The banner leaves when the new process answers without a pending
+restart. Data: `GET /api/overview` `restart`; the button requests `POST /api/restart`.
 
 ### 3.14 Monitor
 
-Not redrawn. Content as approved on 2026-09-03: both seats' windows and reset times in human terms
-with the 70% reserve line drawn, the age of each reading, where each role would go right now and
-why, live sessions with their tasks. It reads `GET /api/monitor` and derives no action.
+Anatomy: **Monitor** title; **Seats**, one card per configured engine in the API's order and under
+its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
+percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
+plan when supplied, and "reading 3m old". Exact reading times appear on hover.
+
+Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
+<project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
+in `--danger`, with the router's reason below. Rows wrap within the card. Session rows show their
+kind and task, engine and model when supplied, context meter and recorded status, and a snapshot
+age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
+process list.
+
+States: loading (seat, routing and session skeletons); error ("Could not read the monitor." and
+Retry); no reading ("No reading." with the seat's sentence explaining what produces one); stale
+(reading kept, amber Stale chip using `--chip-claimed-*`, meter at 50% opacity); one configured
+engine (one seat card, no empty column); no routing ("No roles to route."); no sessions ("No live
+sessions.").
+
+Data: `GET /api/monitor` `seats[]` identifies each seat by its configured engine and supplies its
+label, windows, plan and reading metadata; `routing[]` and `sessions[]` supply their rows.
+`GET /api/overview` `engines[]` supplies routing and session engine labels. Monitor derives no action.
 
 ## 4. Behaviour rules
 
@@ -299,7 +367,8 @@ why, live sessions with their tasks. It reads `GET /api/monitor` and derives no 
 Every chat row whose `trigger` is not `chat` renders as a system line, never as bubbles. The line
 text is the last paragraph of the turn's assistant row; while no assistant row exists the line reads
 "L3 is handling <what>", where <what> comes from the trigger ("a landed report for <task>", "a
-block on <task>", "a fault on <task>", "the restart"). Consecutive system turns with no `chat` row
+block on <task>", "a fault on <task>", "the restart"). An active turn stays outside the group so
+its current handling line remains visible. Consecutive completed system turns with no `chat` row
 between them collapse to one line: "L3 handled N system events between your messages", expanding
 to the list. An FYI is a system line too (`trigger == "fyi"`, `role == "system"`, no reply). A
 clean report closes without an L3 turn and produces no line; the task simply moves to Done this
@@ -309,7 +378,8 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 ### 4.2 One conversation, in order
 
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
-keeps the arrow and the queued rows sit under the conversation until they run. A running turn shows
+keeps its accent circle with the arrow and shows "L3 is mid-turn · runs next" under the field; the
+queued rows sit under the conversation until they run. A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.
@@ -337,10 +407,11 @@ UI text and show the configured name where a name is shown. Engine and model nam
 engine seam reports. Ages read "N min ago", "2h", "yesterday"; exact times appear on hover or in the
 expanded card.
 
-### 4.6 Nothing is inferred from a board
+### 4.6 Boards and spec stay aligned
 
-A behaviour the boards show but this document does not state is a question for the operator, asked
-as one plain dilemma, not a guess. The answer is written here before it is implemented.
+The boards and this document describe the same visual design and rules. Accepted departures are
+folded into the matching section and board. An unresolved change to an explicit rule is a question
+for the operator, asked as one plain dilemma; the answer is recorded in both before implementation.
 
 ## 5. Data binding and backend notes
 
@@ -353,6 +424,7 @@ as one plain dilemma, not a guess. The answer is written here before it is imple
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | `POST /api/decide` |
 | Decision page | the same plus `GET /api/task/<project>/<slug>` (events for the timeline) | `POST /api/decide`, `POST /api/chat` or `POST /api/l2/message` for the follow-up |
 | Task page | `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>` | `POST /api/l2/message`, `POST /api/task/action` |
+| Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
 | Composer voice | `POST /api/transcribe` | none; audio is deleted after transcription |
 | Monitor | `GET /api/monitor` | none |
 
@@ -415,7 +487,7 @@ Order matters: each slice leaves the app usable.
 | 2 | **Conversation.** §3.3, §3.4, §3.6 on the project page; fold and group (§4.1); queue (§4.2); backend notes 1, 2, 4. | A landed report shows as one line and expands to label/value rows; consecutive system turns group; Queue works mid-turn; voice lands in the draft with no transcript box; `Chat.tsx` and the old bubble meta line are gone. |
 | 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | A decision is answerable from the panel and from Needs you; More context opens the page with timeline and evidence; a follow-up to L3 and to an L2 both mirror on the card; `digest.fyis` and the overview `fyis` field are deleted. |
 | 4 | **Task page.** §3.10 on desktop and phone, Stop and Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
-| 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Content unchanged, shell new, restart button appears only when nothing runs. |
+| 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Seats, routing and sessions use the shell; Restart appears at the quiet point defined in §3.13. |
 
 Not drawn and not scheduled: settings, a Done view beyond the folded list, project removal beyond
 the overflow menu. They are questions for the operator when they come up.

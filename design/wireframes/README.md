@@ -2,8 +2,8 @@
 
 This folder is the design record Altitude's own L3 and L2 read: static boards, the generator that
 writes them, and [`SPEC.md`](SPEC.md), which states every interaction, state, and rule the boards
-illustrate. **Where a board and the spec disagree, the spec wins.** A board shows one moment; the
-spec says what happens before and after it. Nothing here depends on a hosted tool: the files open
+illustrate. **The boards and spec are the source of truth together**, for visual design and rules;
+accepted departures are folded into both. Nothing here depends on a hosted tool: the files open
 from disk, from `serve.sh`, or from the Altitude UI's Design link.
 
 Burak approved this direction on 2026-09-05. It replaces the 2026-09-03 set (#166), which polished
@@ -15,8 +15,9 @@ operator's explicit go.
 
 ## What each board shows
 
-Desktop boards are 1440×900, phone boards an exact 390×844 iPhone screen, sheets 1200 wide. Every
-board opens in light; add `?dark` to the URL for the dark theme.
+Desktop boards are 1440×900, phone boards an exact portrait 390×844 iPhone screen, sheets 1200 wide.
+The live-panel overlay example is 1100×900. Every board opens in light; add `?dark` for dark.
+Phone headers, composers and tab bars stay docked while content scrolls inside the shell.
 
 | Board | Files | What it shows |
 | --- | --- | --- |
@@ -25,15 +26,19 @@ board opens in light; add `?dark` to the URL for the dark theme.
 | Project work | `MobileWork.html` | The work panel as the phone's Work tab: same sections and cards as the desktop panel. |
 | Needs you | `NeedsYou.html`, `MobileNeedsYou.html` | Every decision waiting on the operator, grouped by project, each card with the asker's recommendation, two option buttons, and More context. The one cross-project route. |
 | Decision page | `Decision.html`, `MobileDecision.html` | What More context opens: the question, the options with an optional note, why the asker recommends one, where the question came from (a short timeline), evidence chips into the task, the live session, and the record, and a follow-up composer addressed to whoever asked. The work panel keeps the card selected. |
-| Task page | `Task.html` | The operator's conversation with the task's L2 beside the live engine session, with header rows for title, state chips, PR, and the quiet Stop and Reject. The phone task page is not drawn; `SPEC.md` §3.10 gives its layout. |
+| Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, labelled L3 prose, attempt/age/context metadata and PR/check chips. Phone actions sit at the end of the state line, above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
+| Task overlay and states | `TaskOverlay.html`, `TaskStates.html` | The live panel overlays the main pane below 1280px. Inline Stop/Reject confirmations, L3 block, held resume, connecting, streaming, paused, unavailable, finished/empty conversation, and message failure. |
+| Report | `Report.html`, `MobileReport.html` | Full report and digest as plain sections, with a back link to the task. |
+| Monitor | `Monitor.html`, `MobileMonitor.html`, `MonitorStates.html` | Configured engine seats, reserve lines, reading ages, stale chips, routing and Sessions (N). Loading, error, no reading, one engine, and empty states. The route boards also show the restart banner above the header/content. |
+| Restart banner states | `RestartStates.html` | Pending at the quiet point, waiting with a named reason, under way with the button gone, and absent after the new process answers. |
 | First run | `FirstRun.html` | No managed project yet: the folders Altitude found, pick one, Start L3. |
-| Composer states | `ComposerStates.html` | Idle, typing, listening, transcribing, landed, busy (Queue), denied, unavailable, failed: what appears and disappears at each step. No transcript box ever appears (issue #195). |
+| Composer states | `ComposerStates.html` | Phone-width examples of idle, typing, listening (Cancel, Stop, arrow), transcribing, landed, busy, denied, unavailable, failed and send refusal. Every state has one send control: the accent arrow. Busy and voice hints sit below the field; no transcript box or Undo chip appears. |
 | Decision card states | `DecisionStates.html` | Waiting, follow-up sent, answer arrived, asked by an L2, deciding, decided, failed. |
 | System turns in chat | `SystemTurnStates.html` | A landed report, a fault, a restart, or an FYI is one folded line in the conversation: one turn, several grouped, expanded, in progress, fault, FYI. |
+| Conversation and report states | `ConversationStates.html` | L3 never started, empty conversation, loading and cached-error rows, report loading, empty and error. |
 
-Monitor is not redrawn: its 2026-09-03 content (both seats' windows and resets in human terms, the
-age of each reading, where each role would go now and why, live sessions) moves into the new shell
-unchanged. The restart-pending banner keeps its rule (`SPEC.md` §3.13).
+The restart banner follows `SPEC.md` §3.13: running workers can remain while dispatch, L3 and
+verification reach the quiet point. Monitor readings and session snapshots show their age.
 
 ## View
 
@@ -61,7 +66,7 @@ The boards, `wireframes.css`, and `boards.js` are written by `gen.py`; edit the 
 call and one row in the generator's `ROUTES` table. `wireframes.css` imports the build's
 `web/design/tokens.css`, which carries the redesign's tokens since slice 1; `SPEC.md` §6 records
 where they departed from the earlier set.
-A change in behaviour is a change to `SPEC.md` first; the boards follow it.
+A change in behaviour updates `SPEC.md` and the matching boards together.
 
 ## Content
 
