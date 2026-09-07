@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { useMonitor } from "../data/api";
 import type { CodexQuota, Quota, RoutingRow, Session } from "../data/api";
-import { asOf, engineName, older, SESSION_STALE_MS, when } from "../data/observed";
+import { asOf, engineName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
  * Both seats' quota side by side, which engine a new turn would get, one card per live session, and
@@ -71,7 +71,7 @@ function capitalize(text: string): string {
 function Bar({ percent, stale }: { percent: number; stale?: boolean }) {
   const p = Math.max(0, Math.min(100, percent));
   const style: CSSProperties = { width: `${p}%` };
-  if (p >= 70) style.background = "var(--danger)";
+  if (p >= RESERVE_PERCENT) style.background = "var(--danger)";
   return (
     <div className={`bar${stale ? " opacity-50" : ""}`}>
       <div className="bar-fill" style={style} />

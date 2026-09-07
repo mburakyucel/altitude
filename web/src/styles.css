@@ -21,9 +21,17 @@
   --color-success: var(--success-text);
   --color-success-bg: var(--success-bg);
   --color-danger: var(--danger);
+  --color-card: var(--card);
+  --color-bubble: var(--bubble);
+  --color-on-accent: var(--on-accent);
+  --color-claimed: var(--data-claimed);
   --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+  --radius-composer: var(--radius-composer);
+  --radius-bubble: var(--radius-bubble);
   --radius-input: var(--radius-input);
   --radius-pill: var(--radius-pill);
+  --shadow-card: var(--shadow);
   --text-label: var(--text-label);
   --text-meta: var(--text-meta);
   --text-body: var(--text-body);
@@ -43,6 +51,7 @@
   body {
     margin: 0;
     min-height: 100dvh;
+    overflow-x: hidden;
   }
   a {
     color: var(--accent-text);
@@ -95,7 +104,7 @@
     min-height: var(--target-min);
     padding: 0 16px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-card);
+    border-radius: var(--radius-control);
     background: var(--surface);
     font-weight: 500;
     cursor: pointer;
@@ -108,7 +117,7 @@
   .btn-primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 600;
   }
   .btn-primary:not(:disabled):hover {
@@ -127,25 +136,6 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-input);
     background: var(--surface);
-  }
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 40px;
-    padding: 0 12px;
-    border-radius: var(--radius-card);
-    color: var(--text-secondary);
-    font-weight: 500;
-    text-decoration: none;
-  }
-  .nav-item:hover {
-    background: var(--hairline);
-    color: var(--text-primary);
-  }
-  .nav-item[aria-current="page"] {
-    background: var(--accent-tint);
-    color: var(--accent-text);
   }
   .tab {
     padding: 8px 12px;
@@ -340,7 +330,7 @@
     white-space: pre-wrap;
   }
 
-  /* One composer for every Burak↔L2/L3 text surface, with voice as progressive enhancement. */
+  /* One composer for every operator↔L2/L3 text surface, with voice as progressive enhancement. */
   .voice-composer {
     display: flex;
     flex-direction: column;
@@ -474,30 +464,8 @@
   }
 }
 
-/* Unlayered safe-area padding overrides the shell utilities only on Chat. */
-main:has(> .chat-route) {
-  display: flex;
-  height: 100vh;
-  padding: calc(1rem + env(safe-area-inset-top, 0px)) calc(1rem + env(safe-area-inset-right, 0px))
-    calc(6rem + env(safe-area-inset-bottom, 0px)) calc(1rem + env(safe-area-inset-left, 0px));
-  flex-direction: column;
-  overflow: hidden;
-}
-
-@supports (height: 100dvh) {
-  main:has(> .chat-route) {
-    height: 100dvh;
-  }
-}
-
-@media (min-width: 48rem) {
-  main:has(> .chat-route) {
-    padding: calc(2rem + env(safe-area-inset-top, 0px)) calc(2rem + env(safe-area-inset-right, 0px))
-      calc(2rem + env(safe-area-inset-bottom, 0px)) calc(2rem + env(safe-area-inset-left, 0px));
-  }
-}
-
-@media (min-width: 48rem) and (hover: hover) and (pointer: fine) {
+/* A pointer that hovers is a desktop: the composer can drop the 16px that stops phone zoom. */
+@media (hover: hover) and (pointer: fine) {
   .voice-composer-textarea {
     font-size: var(--text-body);
   }
@@ -541,4 +509,558 @@ main:has(> .chat-route) {
       opacity: 1;
     }
   }
+}
+
+/* ---- The shell (SPEC.md §2.2). Sizes come from shell/breakpoints.ts as custom properties on .shell;
+ * the phone layout is the data-phone attribute the shell sets from the same constants. ---- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+.shell[data-phone] {
+  display: flex;
+  flex-direction: column;
+}
+.shell-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+  overflow-x: hidden;
+}
+.shell-main > [role="status"] {
+  margin: 16px 24px 0;
+}
+.shell[data-phone] .shell-main > [role="status"] {
+  margin: 12px 12px 0;
+}
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+}
+.shell[data-phone] .page {
+  padding: 16px 16px 32px;
+}
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.skeleton {
+  border-radius: var(--radius-input);
+  background: var(--hairline);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.icon-btn {
+  display: inline-flex;
+  width: var(--target-min);
+  height: var(--target-min);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--hairline);
+  color: var(--text-primary);
+}
+.icon-btn[aria-pressed="true"] {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+}
+.dot[data-state="running"] {
+  background: var(--accent);
+}
+.dot[data-state="waiting"] {
+  background: var(--data-claimed);
+}
+.dot[data-state="danger"] {
+  background: var(--danger);
+}
+.dot[data-state="idle"] {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+.badge {
+  display: inline-flex;
+  min-width: 20px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bubble);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The rail (§3.1). */
+.rail {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+}
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rail-brand {
+  padding: 4px 12px 12px;
+  font-size: var(--text-card-title);
+  font-weight: 600;
+}
+.rail-item {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.rail-item:hover {
+  background: color-mix(in srgb, var(--accent-tint) 50%, transparent);
+  color: var(--text-primary);
+}
+.rail-item[aria-current="page"] {
+  background: var(--accent-tint);
+  color: var(--text-primary);
+}
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 0 0 0 12px;
+}
+.rail-engines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0 8px;
+  padding: 0 12px;
+  font-size: var(--text-meta);
+}
+.meter {
+  height: 4px;
+  margin-top: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--data-track);
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.meter-fill[data-danger="true"] {
+  background: var(--danger);
+}
+.rail-operator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 12px 0 0 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* The phone header and tab bar (§2.2). */
+.phone-header {
+  display: flex;
+  height: var(--phone-header-h);
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.phone-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  font-size: var(--text-card-title);
+  font-weight: 600;
+}
+.phone-title-button {
+  min-height: var(--target-min);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  cursor: pointer;
+}
+.tab-bar {
+  display: grid;
+  height: var(--tab-bar-h);
+  flex: none;
+  grid-template-columns: repeat(4, 1fr);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.tab-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.tab-item[aria-current="page"] {
+  color: var(--accent-text);
+}
+.tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+.tab-badge {
+  position: absolute;
+  top: -6px;
+  left: 14px;
+  margin: 0;
+  min-width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+/* Overlays: the work panel from the right, the switcher sheet, First run as a dialog. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+}
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: var(--scrim);
+  cursor: default;
+}
+.overlay-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: auto;
+}
+.overlay[data-side="right"] {
+  justify-content: flex-end;
+}
+.overlay[data-side="right"] .overlay-panel {
+  width: var(--panel-w);
+  max-width: 100%;
+  height: 100%;
+  border-left: 1px solid var(--border);
+}
+.overlay[data-side="bottom"] {
+  align-items: flex-end;
+}
+.overlay[data-side="bottom"] .overlay-panel {
+  width: 100%;
+  max-height: 85dvh;
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.overlay[data-side="center"] {
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.overlay[data-side="center"] .overlay-panel {
+  width: min(560px, 100%);
+  max-height: 90dvh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 12px 16px;
+}
+.sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
+/* First run (§3.12). */
+.first-run-page {
+  justify-content: center;
+  flex: 1;
+}
+.first-run {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+.overlay .first-run,
+.first-run-compact {
+  border: 0;
+  background: transparent;
+}
+.first-run-compact {
+  padding: 8px 0 0;
+  border-top: 1px solid var(--hairline);
+}
+.first-run-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.first-run-path {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The project page (§3.2, §3.7). */
+.project-page {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.project-header {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 10px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.shell[data-phone] .project-header {
+  padding: 6px 8px 6px 16px;
+}
+.project-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.project-conversation {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 16px 24px;
+  overflow: hidden;
+}
+.shell[data-phone] .project-conversation {
+  padding: 12px;
+}
+/* A landscape phone has no room for a bounded transcript between the header and the tab bar: the
+ * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
+@media (orientation: landscape) {
+  .shell[data-phone] .project-conversation {
+    overflow-y: auto;
+  }
+  .shell[data-phone] .project-conversation > .chat-route {
+    min-height: max-content;
+  }
+}
+.work-panel {
+  display: flex;
+  width: var(--panel-w);
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+.overlay .work-panel {
+  width: 100%;
+  border-left: 0;
+}
+.shell[data-phone] .work-panel {
+  width: auto;
+  flex: 1;
+  border-left: 0;
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  min-width: 240px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--hairline);
+}
+.menu-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+/* The decision card (§3.8). */
+.decision {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  transition:
+    opacity 200ms ease-out,
+    transform 200ms ease-out;
+}
+.decision[data-leaving] {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.decision-kind {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+.decision-kind[data-tone="accent"] .kind-label {
+  color: var(--accent-text);
+}
+.decision-kind[data-tone="claimed"] .kind-label {
+  color: var(--data-claimed);
+}
+.decision-kind[data-tone="danger"] .kind-label {
+  color: var(--danger);
+}
+.decision-question {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.decision-why {
+  display: -webkit-box;
+  margin: 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

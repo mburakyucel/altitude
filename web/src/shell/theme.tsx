@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Light / dark / system theme. The preference persists under "altitude.theme"; the tokens flip
- * on <html data-theme="dark">, and index.html applies the same rule before first paint.
+ * Light by default, dark on request, persisted per browser under "altitude.theme". The tokens flip on
+ * <html data-theme="dark">; index.html applies the stored value before first paint, which is why boot
+ * stores the default too.
  */
-export type Theme = "light" | "dark" | "system";
+export type Theme = "light" | "dark";
 
 export const THEME_KEY = "altitude.theme";
 
@@ -12,22 +13,15 @@ const listeners = new Set<() => void>();
 
 export function readTheme(): Theme {
   try {
-    const stored = localStorage.getItem(THEME_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") return stored;
+    if (localStorage.getItem(THEME_KEY) === "dark") return "dark";
   } catch {
-    // preference storage unavailable — fall through
+    // preference storage unavailable: light
   }
-  return "system";
-}
-
-function systemPrefersDark(): boolean {
-  // jsdom may not implement matchMedia — guard every use.
-  return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
+  return "light";
 }
 
 export function applyTheme(theme: Theme): void {
-  const dark = theme === "dark" || (theme === "system" && systemPrefersDark());
-  if (dark) document.documentElement.dataset.theme = "dark";
+  if (theme === "dark") document.documentElement.dataset.theme = "dark";
   else delete document.documentElement.dataset.theme;
 
   let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -36,27 +30,17 @@ export function applyTheme(theme: Theme): void {
     themeColor.name = "theme-color";
     document.head.append(themeColor);
   }
-  themeColor.content = dark ? "#0f172a" : "#f8fafc";
+  themeColor.content = theme === "dark" ? "#0f172a" : "#f8fafc";
 }
 
 export function setTheme(theme: Theme): void {
   try {
     localStorage.setItem(THEME_KEY, theme);
   } catch {
-    // no persistence — still applies for this page
+    // no persistence: still applies for this page
   }
   applyTheme(theme);
   listeners.forEach((listener) => listener());
-}
-
-/** Re-apply when the OS scheme changes while the preference is "system". Call once at boot. */
-export function watchSystemTheme(): void {
-  if (typeof matchMedia !== "function") return;
-  const query = matchMedia("(prefers-color-scheme: dark)");
-  if (typeof query.addEventListener !== "function") return;
-  query.addEventListener("change", () => {
-    if (readTheme() === "system") applyTheme("system");
-  });
 }
 
 function subscribe(listener: () => void) {
@@ -65,26 +49,37 @@ function subscribe(listener: () => void) {
 }
 
 export function useTheme(): [Theme, (theme: Theme) => void] {
-  return [useSyncExternalStore(subscribe, readTheme, () => "system"), setTheme];
+  return [useSyncExternalStore(subscribe, readTheme, () => "light"), setTheme];
 }
 
-const LABELS: Record<Theme, string> = { light: "Light", system: "System", dark: "Dark" };
-
+/** One button in the operator row: pressed while dark. */
 export function ThemeToggle() {
   const [theme, set] = useTheme();
+  const dark = theme === "dark";
   return (
-    <div role="group" aria-label="Theme" className="inline-flex rounded-card border border-border p-0.5 text-meta">
-      {(["light", "system", "dark"] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          aria-pressed={theme === option}
-          onClick={() => set(option)}
-          className="min-h-[var(--target-min)] rounded-[6px] px-3 font-medium text-ink-2 aria-pressed:bg-accent-tint aria-pressed:text-accent-ink"
-        >
-          {LABELS[option]}
-        </button>
-      ))}
-    </div>
+    <button
+      type="button"
+      className="icon-btn"
+      aria-label="Dark theme"
+      aria-pressed={dark}
+      title={dark ? "Switch to the light theme" : "Switch to the dark theme"}
+      onClick={() => set(dark ? "light" : "dark")}
+    >
+      <svg aria-hidden viewBox="0 0 20 20" width="18" height="18">
+        {dark ? (
+          <path d="M11.5 2.5a7.5 7.5 0 1 0 6 12 6.5 6.5 0 0 1-6-12Z" fill="currentColor" />
+        ) : (
+          <>
+            <circle cx="10" cy="10" r="3.5" fill="currentColor" />
+            <path
+              d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M4.3 15.7l1.6-1.6M14.1 5.9l1.6-1.6"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+          </>
+        )}
+      </svg>
+    </button>
   );
 }

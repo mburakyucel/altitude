@@ -57,7 +57,7 @@ and its keyed resume runner coalesces a simultaneous API wake, retry, or lease r
 persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox. Delivered
 messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
 for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `alt task message` requests that
-daemon resume, or `alt task escalate` turns it into an Inbox card for Burak; `--for-burak` on the block skips L3.
+daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
 On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
 Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it

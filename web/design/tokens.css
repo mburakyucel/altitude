@@ -20,16 +20,19 @@
   /* weights: 400 / 500 / 600; tabular-nums only in columns and timers */
 
   /* Spacing & shape — 4px base scale: 4/8/12/16/20/24/32 */
-  --radius-card: 8px;    /* cards & buttons */
-  --radius-input: 6px;
+  --radius-card: 12px;      /* cards */
+  --radius-control: 10px;   /* buttons, icon buttons, rail rows */
+  --radius-composer: 24px;  /* the chat composer */
+  --radius-bubble: 18px;    /* the operator's chat bubble */
+  --radius-input: 6px;      /* plain inputs */
   --radius-pill: 999px;
   --target-min: 44px;    /* minimum interactive target */
-  --sidebar-w: 232px;
-  --drawer-w: 420px;     /* 400–480px range */
 
   /* Color — light (dashboard default) */
   --page: #f8fafc;
   --surface: #ffffff;
+  --card: #ffffff;            /* raised card on --surface */
+  --bubble: #f1f5f9;          /* operator bubble and quiet chips */
   --border: #e2e8f0;
   --hairline: #f1f5f9;
   --text-primary: #0f172a;
@@ -40,6 +43,9 @@
   --accent-text: #4f46e5;     /* accent as TEXT (links, active tabs, "live") — the fill color is not readable on dark */
   --accent-tint: #eef2ff;
   --accent-tint-border: #c7d2fe;
+  --on-accent: #ffffff;       /* text on --accent fills */
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 32px -18px rgba(15, 23, 42, 0.22);
+  --scrim: rgba(15, 23, 42, 0.42);
   --success-text: #166534;
   --success-bg: #dcfce7;
   --danger: #dc2626;
@@ -59,6 +65,8 @@
   /* Color — dark (dashboard dark + session world) */
   --page: #0f172a;
   --surface: #1e293b;
+  --card: #243044;
+  --bubble: #334155;
   --border: #334155;
   --hairline: #263244;        /* between surface and border (was #1e293b = surface: nav hover and dividers vanished) */
   --text-primary: #e2e8f0;
@@ -69,6 +77,9 @@
   --accent-text: #a5b4fc;     /* 8.3:1 on surface (the fill #6366f1 is 3.3:1 as text) */
   --accent-tint: #2a345c;     /* ≈ 18% accent over surface — visibly lifted from #1e293b (indigo-950 was not) */
   --accent-tint-border: #3730a3;
+  --on-accent: #ffffff;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -18px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(2, 6, 23, 0.6);
   --success-text: #86efac;
   --success-bg: #14532d;
   --danger: #f87171;

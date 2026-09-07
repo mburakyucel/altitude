@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/render";
+import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -31,44 +31,71 @@ const project = {
     },
     { slug: "add-badge", state: "queued", title: "Add the badge", updated: ago(30) },
   ],
-  archive: [{ slug: "old-thing", state: "done", title: "Old thing" }],
-  inbox: [{ at: ago(9), slug: "fix-timer", text: "L2 picked it up" }],
-  decisions: [
-    {
-      slug: "add-badge",
-      title: "Add the badge",
-      question: "Stopped mid-task: Which badge color should be used?",
-      asked: ago(4),
-      options: ["Resume", "Reject"],
-      kind: "blocked",
-    },
+  archive: [
+    { slug: "old-thing", state: "done", title: "Old thing", updated: ago(60 * 24 * 2) },
+    { slug: "older-thing", state: "done", title: "Older thing", updated: ago(60 * 24 * 20) },
   ],
-  incidents: [{ id: "INC-1", title: "altd restarted", tags: ["restart"] }],
+  decisions: [],
+  incidents: [],
   hold: null,
   state_md: "# STATE\nall good",
 };
 
-const overview = {
-  projects: [],
-  queue: [],
-  fyis: [],
-  wip: { per_project: {}, machine: 0, waiting: [] },
-  quota: { known: false },
+const decision = {
+  project: "altitude",
+  slug: "add-badge",
+  title: "Add the badge",
+  question: "L3 asks: Which badge colour should the count use?",
+  detail: "The boards show accent; the old build used amber.",
+  asked: ago(4),
+  options: ["Resume", "Reject"],
+  kind: "blocked",
 };
 
-function mockFetch() {
+const overview = {
+  projects: [{ name: "altitude", managed: true, counts: { running: 1 } }],
+  queue: [decision],
+  wip: { per_project: {}, machine: 0, waiting: [] },
+  quota: { known: false },
+  engines: [{ engine: "alpha", label: "Alpha", week: 52, known: true, stale: false, at: ago(1) }],
+  roots: ["~/Projects"],
+  operator: "Ada",
+};
+
+const chatView = {
+  history: [
+    { at: ago(5), role: "user", text: "how is it going?" },
+    { at: ago(4), role: "assistant", text: "two tasks running.", trigger: "chat", engine: "alpha" },
+  ],
+  active: null,
+  busy: false,
+  l3: { session_id: "abcdef1234567890" },
+};
+
+type Fixtures = { overview?: unknown; project?: unknown; chat?: unknown };
+
+function mockFetch(fixtures: Fixtures = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/overview")) return jsonResponse(overview);
+    if (url.includes("/api/overview")) return jsonResponse(fixtures.overview ?? overview);
     if (url.includes("/api/transcribe")) return jsonResponse({ text: "spoken check" });
-    if (url.includes("/api/project/altitude")) return jsonResponse(project);
+    if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
+    if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
+    if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? chatView);
     if (url.includes("/api/task/action")) return jsonResponse({ ok: true });
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
+    if (url.includes("/api/l3/")) return jsonResponse({ ok: true });
+    if (url.includes("/api/project/remove")) return jsonResponse({ ok: true });
     if (url.includes("/api/decide")) return jsonResponse({ ok: true });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function posted(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  const call = fetchMock.mock.calls.find(([u]) => String(u).includes(path));
+  return call ? JSON.parse(String((call[1] as RequestInit | undefined)?.body)) : null;
 }
 
 /** The <article> a task title link sits in — the element carrying the card's styling. */
@@ -78,37 +105,117 @@ function cardFor(title: HTMLElement): HTMLElement {
   return card;
 }
 
-describe("Project", () => {
-  it("renders the L3 card and the task list", async () => {
+async function openPanel(user: ReturnType<typeof renderApp>["user"]) {
+  await user.click(await screen.findByRole("button", { name: "Work panel" }));
+  return screen.findByRole("dialog", { name: "Work" });
+}
+
+describe("Project page", () => {
+  it("composes the header status line from the chat, the tasks, and the decisions", async () => {
     mockFetch();
     renderApp({ route: "/projects/altitude" });
 
-    await screen.findByRole("link", { name: "Fix the timer" });
-    expect(screen.getByText("Tasks (2)")).toBeInTheDocument();
-    expect(screen.getByText(/session abcdef12 · 12 turns · context 33% · last 7m/)).toBeInTheDocument();
-    expect(screen.getByText(/approval: ask · WIP 2/)).toBeInTheDocument();
-    expect(screen.getByText(/L2 active\/tool · ctx 44%/)).toBeInTheDocument();
-    expect(screen.getByText("Needs you (1)")).toBeInTheDocument();
-    expect(screen.getByText("L2 picked it up")).toBeInTheDocument();
-    expect(screen.getByText(/INC-1/)).toBeInTheDocument();
-    expect(screen.getByText("Done / rejected (1)")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "altitude" })).toBeInTheDocument();
+    await screen.findByText("L3 answered 4 min ago on Alpha · 2 tasks in flight · 1 waits for your review");
+    expect(screen.getByRole("region", { name: "Transcript" })).toBeInTheDocument();
+  });
+
+  it("says what L3 is doing while a turn runs", async () => {
+    mockFetch({ chat: { ...chatView, active: { id: "t1", started_at: ago(0), trigger: "report-landed" } } });
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByText(/^L3 is handling a landed report ·/);
+  });
+
+  it("offers Start L3 when L3 never ran and posts the start", async () => {
+    const fetchMock = mockFetch({
+      project: { ...project, l3: {} },
+      chat: { ...chatView, history: [], l3: {} },
+    });
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await screen.findByText("L3 has not started");
+    await user.click(screen.getByRole("button", { name: "Start L3" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/l3/start")).toEqual({ project: "altitude" }));
+  });
+
+  it("shows the read error in the status line and keeps the conversation", async () => {
+    mockFetch({ project: null });
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/overview")) return jsonResponse(overview);
+      if (url.includes("/api/project/altitude")) return jsonResponse({ error: "state file unreadable" }, 500);
+      if (url.includes("/api/chat/")) return jsonResponse(chatView);
+      return jsonResponse({ error: "not found" }, 404);
+    });
+    renderApp({ route: "/projects/altitude" });
+
+    expect(await screen.findByText("state file unreadable")).toHaveClass("text-danger");
+    expect(await screen.findByText("two tasks running.")).toBeInTheDocument();
+  });
+
+  // Below the inline width the panel is an overlay from the header button; Esc closes it.
+  it("opens the work panel as an overlay at 1024 and closes it with Escape", async () => {
+    mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    const panel = await openPanel(user);
+    expect(within(panel).getByText("2 active · 1 done this week")).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
+    expect(within(panel).getByText("Needs you (1)")).toBeInTheDocument();
+    expect(within(panel).getByText("Done this week (1)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Work panel" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Work" })).toBeNull();
+  });
+
+  it("keeps the panel inline at 1440 with no toggle", async () => {
+    mockFetch();
+    setViewport(1440);
+    renderApp({ route: "/projects/altitude" });
+
+    const panel = await screen.findByRole("region", { name: "Work" });
+    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Work panel" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says when nothing runs", async () => {
+    mockFetch({ overview: { ...overview, queue: [] }, project: { ...project, tasks: [], archive: [] } });
+    setViewport(1440);
+    renderApp({ route: "/projects/altitude" });
+
+    const panel = await screen.findByRole("region", { name: "Work" });
+    await within(panel).findByText("Nothing running. Ask L3 for something.");
+    expect(within(panel).getByText("0 active · 0 done this week")).toBeInTheDocument();
+  });
+
+  it("shows the Work tab on the phone under the project header", async () => {
+    mockFetch();
+    setViewport(390);
+    renderApp({ route: "/projects/altitude?tab=work" });
+
+    expect(await screen.findByRole("heading", { name: "altitude", level: 1 })).toHaveClass("phone-title");
+    const panel = await screen.findByRole("region", { name: "Work" });
+    expect(within(panel).getByRole("link", { name: "Fix the timer" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Transcript" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Work panel" })).toBeNull();
+    expect(screen.getByRole("link", { name: /^Work/ })).toHaveAttribute("aria-current", "page");
   });
 
   it("dispatches a queued task through /api/task/action", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
-    await user.click(await screen.findByRole("button", { name: "Dispatch" }));
+    const panel = await openPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Dispatch" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/task/action"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
-    expect(call?.[1]?.method).toBe("POST");
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "add-badge",
-      action: "dispatch",
+      expect(posted(fetchMock, "/api/task/action")).toEqual({
+        project: "altitude",
+        slug: "add-badge",
+        action: "dispatch",
+      });
     });
   });
 
@@ -116,74 +223,71 @@ describe("Project", () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
-    await user.click(await screen.findByRole("button", { name: "Message L2" }));
+    const panel = await openPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
     await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "check the toast timer");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(within(panel).getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "fix-timer",
-      text: "check the toast timer",
+      expect(posted(fetchMock, "/api/l2/message")).toEqual({
+        project: "altitude",
+        slug: "fix-timer",
+        text: "check the toast timer",
+      });
     });
   });
 
-  it("uses the shared voice review in the project quick-message surface", async () => {
+  it("uses the shared voice review in the task quick-message surface", async () => {
     installVoiceBrowser();
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
 
-    await user.click(await screen.findByRole("button", { name: "Message L2" }));
+    const panel = await openPanel(user);
+    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
     await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "Typed lead");
-    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
-    await screen.findByRole("region", { name: "Voice transcript review" });
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(within(panel).getByRole("button", { name: "Start voice recording" }));
+    await user.click(await within(panel).findByRole("button", { name: "Stop voice recording" }));
+    await within(panel).findByRole("region", { name: "Voice transcript review" });
+    await user.click(within(panel).getByRole("button", { name: "Send" }));
 
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/l2/message"))).toBe(true);
-    });
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/l2/message"));
-    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
-      project: "altitude",
-      slug: "fix-timer",
-      text: "Typed lead spoken check",
+      expect(posted(fetchMock, "/api/l2/message")).toEqual({
+        project: "altitude",
+        slug: "fix-timer",
+        text: "Typed lead spoken check",
+      });
     });
   });
 
   it("drops a quick-message voice review when the project destination changes", async () => {
     installVoiceBrowser();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/api/overview")) return jsonResponse(overview);
-        if (url.includes("/api/transcribe")) return jsonResponse({ text: "altitude-only words" });
-        if (url.includes("/api/project/sibling")) return jsonResponse({ ...project, name: "sibling" });
-        if (url.includes("/api/project/altitude")) return jsonResponse(project);
-        return jsonResponse({ error: "not found" }, 404);
-      }),
-    );
-
+    mockFetch({
+      overview: {
+        ...overview,
+        projects: [
+          { name: "altitude", managed: true },
+          { name: "sibling", managed: true },
+        ],
+      },
+    });
+    setViewport(1440);
     const { router, user } = renderApp({ route: "/projects/altitude" });
-    await user.click(await screen.findByRole("button", { name: "Message L2" }));
+    const panel = await screen.findByRole("region", { name: "Work" });
+    await user.click(within(panel).getByRole("button", { name: "Message L2" }));
     await user.type(screen.getByLabelText("Message the L2 on fix-timer"), "Private draft");
-    await user.click(screen.getByRole("button", { name: "Start voice recording" }));
-    await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
-    await screen.findByRole("region", { name: "Voice transcript review" });
+    await user.click(within(panel).getByRole("button", { name: "Start voice recording" }));
+    await user.click(await within(panel).findByRole("button", { name: "Stop voice recording" }));
+    await within(panel).findByRole("region", { name: "Voice transcript review" });
 
     await router.navigate("/projects/sibling");
     await screen.findByRole("heading", { name: "sibling" });
     expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Message L2" }));
+    await user.click(await screen.findByRole("button", { name: "Message L2" }));
     expect(screen.getByLabelText("Message the L2 on fix-timer")).toHaveValue("");
   });
 
-  // A blocked task with resume_after is held by Altitude, not stuck on you: it says so and keeps
-  // the neutral card. A blocked task without one is still a real block, danger border and all.
+  // A blocked task with resume_after is held by Altitude, not stuck on the operator: it says so and
+  // keeps the neutral card. A blocked task without one is still a real block, danger border and all.
   it("separates a held task from a blocked one", async () => {
     const held = {
       slug: "held-task",
@@ -201,16 +305,8 @@ describe("Project", () => {
       blocked_reason: "the test suite will not run",
       resume_after: null,
     };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/api/overview")) return jsonResponse(overview);
-        if (url.includes("/api/project/altitude"))
-          return jsonResponse({ ...project, tasks: [held, stuck], decisions: [] });
-        return jsonResponse({ error: "not found" }, 404);
-      }),
-    );
+    mockFetch({ overview: { ...overview, queue: [] }, project: { ...project, tasks: [held, stuck] } });
+    setViewport(1440);
     renderApp({ route: "/projects/altitude" });
 
     const heldCard = cardFor(await screen.findByRole("link", { name: "Held task" }));
@@ -228,38 +324,73 @@ describe("Project", () => {
     expect(stuckCard).toHaveClass("border-danger/40");
   });
 
-  // The link is present only when the project checkout has boards: it is the server's answer, not
+  // The item is present only when the project checkout has boards: it is the server's answer, not
   // a guess the page makes from the project name.
-  it("opens the wireframe viewer in a new tab when the project has one", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url.includes("/api/overview")) return jsonResponse(overview);
-        if (url.includes("/api/project/altitude"))
-          return jsonResponse({
-            ...project,
-            design_viewer: "/design/altitude/design/wireframes/index.html",
-          });
-        return jsonResponse({ error: "not found" }, 404);
-      }),
-    );
-    renderApp({ route: "/projects/altitude" });
+  it("offers Design boards in the overflow menu only when the project has a viewer", async () => {
+    mockFetch({ project: { ...project, design_viewer: "/design/altitude/design/wireframes/index.html" } });
+    const { user } = renderApp({ route: "/projects/altitude" });
 
-    const link = await screen.findByRole("link", { name: "Design" });
+    await screen.findByRole("heading", { name: "altitude" });
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    const link = await screen.findByRole("menuitem", { name: "Design boards" });
     expect(link).toHaveAttribute("href", "/design/altitude/design/wireframes/index.html");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noreferrer");
-    expect(link.className).toContain("hover:border-accent");
-    expect(link.className).toContain("active:bg-accent-tint");
-    expect(link.className).not.toContain("hover:text-accent"); // the label is accent already
   });
 
-  it("shows no Design link for a project without boards", async () => {
+  it("shows no Design boards item for a project without boards", async () => {
     mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("heading", { name: "altitude" });
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await screen.findByRole("menuitem", { name: "Reset L3 conversation" });
+    expect(screen.queryByRole("menuitem", { name: "Design boards" })).toBeNull();
+  });
+
+  it("resets the L3 conversation after an inline confirm", async () => {
+    const fetchMock = mockFetch();
+    const { user } = renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("heading", { name: "altitude" });
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Reset L3 conversation" }));
+    expect(posted(fetchMock, "/api/l3/reset")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/l3/reset")).toEqual({ project: "altitude" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  it("removes the project after an inline confirm and leaves for Needs you", async () => {
+    const fetchMock = mockFetch();
+    const { router, user } = renderApp({ route: "/projects/altitude" });
+
+    await screen.findByRole("heading", { name: "altitude" });
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText("Remove altitude from Altitude?")).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/project/remove")).toEqual({ name: "altitude" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
+
+  it("shows First run on a project route when nothing is managed", async () => {
+    mockFetch({
+      overview: {
+        ...overview,
+        queue: [],
+        projects: [
+          { name: "alpha", managed: false, path: "/home/ada/Projects/alpha" },
+          { name: "beta", managed: false, path: "/home/ada/Projects/beta" },
+        ],
+      },
+    });
     renderApp({ route: "/projects/altitude" });
 
-    await screen.findByRole("link", { name: "Fix the timer" });
-    expect(screen.queryByRole("link", { name: "Design" })).toBeNull();
+    await screen.findByText("Altitude found 2 folders under ~/Projects");
+    expect(screen.getAllByRole("button", { name: "Start L3" })).toHaveLength(3);
+    expect(screen.queryByRole("region", { name: "Transcript" })).toBeNull();
   });
 });

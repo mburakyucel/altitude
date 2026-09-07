@@ -16,7 +16,7 @@ Burak
 
 L2 worktree/branch ─► checks/review ─► PR ─► merge ─► archive task
 system fault ─► blocked task + private incident ─► one queued L3 message
-L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escalates (Inbox card for Burak)
+L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escalates (a Needs you card for the operator)
 ```
 
 ## Responsibilities
@@ -85,8 +85,8 @@ refuses that shortcut when the task branch changed. Code work uses the verified 
 Queued tasks wait for WIP, lease, and engine availability gates. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
-first, which answers from the record or escalates one plain dilemma to Burak; only a block flagged
-for Burak or an escalation is an Inbox card. After a restart L3 receives the active tasks and resumes
+first, which answers from the record or escalates one plain dilemma to the operator; only a block flagged
+for the operator or an escalation is a Needs you card. After a restart L3 receives the active tasks and resumes
 the ones a fault had stopped. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
@@ -138,9 +138,9 @@ task, files private incident evidence (one incident per fault kind per day), and
 in the project's L3 queue; a repeat of that kind blocking another task adds one line for L3, not a
 new incident. An L2 that meets an environment fault (a sandbox, host, or tool refusing
 what the brief requires) reports it with `alt task block --fault` and takes the same path, so the
-cause reaches L3 instead of sitting in the Inbox as a question for Burak. The server delivers that message as a turn when L3 is free and an engine
+cause reaches L3 instead of sitting on Needs you as a question for the operator. The server delivers that message as a turn when L3 is free and an engine
 is available; L3 records the learning on the incident and fixes the cause directly or creates one
-ordinary task. An incident raised by that repair task (`--source recovery`) goes to the Inbox instead
+ordinary task. An incident raised by that repair task (`--source recovery`) goes to Needs you instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
 
@@ -163,9 +163,25 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
-The Python server owns state transitions and JSON APIs. The React app provides Inbox, Projects,
-Chat, and Monitor navigation plus project/task detail routes. Chat is the only way to create a task
-from the web: the L3 turn creates it through `alt task new`. The composer's engine choice pins the
+The Python server owns state transitions and JSON APIs. The React app is one shell around four
+pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
+compact cards grouped by project, answered through `POST /api/decide`), the project page at
+`/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
+the work panel), the task page, and Monitor. `/projects` and `/chat/<name>` redirect to the project
+page, and with no managed project every project route shows First run, which lists the folders under
+the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
+first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
+panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
+narrower is the phone: a 54px header and an 84px tab bar (Chat, Work, Needs you, Monitor), where
+the header names the selected project and opens the switcher sheet, and a task page pushes over its
+tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
+selected project is browser state under `localStorage`, set by the rail, the switcher, a project
+route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
+rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
+display name the engine seam gives, so the web code names no provider; the same read carries the
+scan roots First run names and the operator's configured name. `POST /api/l3/start` runs the start
+turn for a managed project whose L3 never ran, from the header's Start L3. Chat is the only way to
+create a task from the web: the L3 turn creates it through `alt task new`. The composer's engine choice pins the
 project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
 stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
@@ -217,9 +233,9 @@ visible. Only the `design/wireframes/` and `web/design/` subtrees are readable a
 extensions a board needs; the resolved path must stay inside those subtrees, and a project without
 `design/wireframes/index.html`, a directory, and anything outside the rule are one plain 404. The
 tree is mirrored under the prefix because a board's stylesheet imports the build's design tokens two
-levels up. `/api/project` reports that URL only when the boards exist, and the project page turns it
-into a Design link that opens in a new tab. Any project with boards gets one; the route knows nothing
-about this repository's own.
+levels up. `/api/project` reports that URL only when the boards exist, and the project header's
+overflow menu turns it into Design boards, opening in a new tab. Any project with boards gets one; the
+route knows nothing about this repository's own.
 
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
 work is derived from it. It shows both seats side by side — Claude's five-hour and seven-day

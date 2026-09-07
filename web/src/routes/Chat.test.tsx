@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 // @ts-expect-error Node types are not part of the browser app's TypeScript surface.
 import { rmSync } from "node:fs";
-import { renderApp } from "../test/render";
+import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -433,7 +433,9 @@ describe("Chat", () => {
     const chatRoute = transcript.closest(".chat-route");
 
     expect(chatRoute).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
-    expect(chatRoute?.parentElement).toBe(screen.getByRole("main"));
+    // The project page's conversation column is the bounded box; the shell's main pane holds it.
+    expect(chatRoute?.parentElement).toHaveClass("project-conversation");
+    expect(screen.getByRole("main")).toContainElement(chatRoute as HTMLElement);
     expect(transcript).toHaveClass(
       "min-h-0",
       "min-w-0",
@@ -491,6 +493,7 @@ describe("Chat", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    setViewport(390);
     const { user } = renderApp({ route });
     await screen.findAllByText(unbroken);
     fireEvent.change(screen.getByLabelText("Message L3"), { target: { value: unbroken } });
@@ -758,6 +761,7 @@ describe("Chat", () => {
       }),
     );
 
+    setViewport(390);
     const { user } = renderApp({ route });
     await screen.findByText("how is it going?");
     await user.click(screen.getByRole("button", { name: "Start voice recording" }));
@@ -806,12 +810,14 @@ describe("Chat", () => {
     await user.click(await screen.findByRole("button", { name: "Stop voice recording" }));
     await screen.findByRole("region", { name: "Voice transcript review" });
 
-    await user.click(screen.getByRole("link", { name: "sibling" }));
+    // The rail lists the same projects; the strip is Chat's own.
+    const strip = () => screen.getByRole("navigation", { name: "Projects" });
+    await user.click(within(strip()).getByRole("link", { name: "sibling" }));
     await screen.findByText("Sibling chat");
     expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
     expect(screen.getByLabelText("Message L3")).toHaveValue("");
 
-    await user.click(screen.getByRole("link", { name: "altitude" }));
+    await user.click(within(strip()).getByRole("link", { name: "altitude" }));
     await screen.findByText("how is it going?");
     expect(screen.queryByRole("region", { name: "Voice transcript review" })).toBeNull();
     expect(screen.getByLabelText("Message L3")).toHaveValue("Altitude draft");
@@ -938,7 +944,7 @@ describe("Chat", () => {
 
     expect(within(strip).getByRole("link", { name: "sibling" })).toHaveAttribute(
       "href",
-      "/chat/sibling",
+      "/projects/sibling",
     );
     expect(within(strip).getByRole("link", { name: "altitude" })).toHaveAttribute(
       "aria-current",
