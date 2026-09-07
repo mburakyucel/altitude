@@ -121,7 +121,8 @@ class TestL3Sessions(AltitudeCase):
         self.assertEqual(sessions["claude"]["session_id"], "cl-1")
 
     def test_codex_resume_rejects_a_different_thread(self):
-        l3.save_info(self.project, {"sessions": {"codex": {"session_id": "cx-1"}}, "engine_last": "codex"})
+        l3.save_info(self.project, {"sessions": {"codex": {"session_id": "cx-1",
+            "confinement_version": l3.L3_CONFINEMENT_VERSION}}, "engine_last": "codex"})
         result = {"text": "wrong thread answer", "session_id": "cx-2", "reported_session_id": "cx-2",
                   "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
@@ -130,6 +131,21 @@ class TestL3Sessions(AltitudeCase):
         self.assertFalse(out["completed"])
         self.assertIn("different thread", out["error"])
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["session_id"], "cx-1")
+
+    def test_sept7_legacy_codex_session_rotates_once_onto_coordinator_mcp(self):
+        l3.save_info(self.project, {"sessions": {"codex": {"session_id": "legacy-shell"}},
+                                   "engine_last": "codex"})
+        result = {"text": "coordinator connected", "session_id": "mcp-thread", "reported_session_id": "mcp-thread",
+                  "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
+        with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
+             mock.patch.object(engines, "codex_exec", return_value=result) as execute:
+            first = l3.turn(self.project, "check coordinator access")
+            second = l3.turn(self.project, "check again")
+        self.assertTrue(first["completed"] and second["completed"])
+        self.assertEqual([call.kwargs["resume"] for call in execute.call_args_list], [None, "mcp-thread"])
+        session = l3.info(self.project)["sessions"]["codex"]
+        self.assertEqual(session["rotated_from"], "legacy-shell")
+        self.assertEqual(session["confinement_version"], l3.L3_CONFINEMENT_VERSION)
 
     def test_partial_limited_claude_turn_is_not_replayed_on_codex(self):
         result = {"text": "I already changed state", "session_id": "cl-1", "usage": {},

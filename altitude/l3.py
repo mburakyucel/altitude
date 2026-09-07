@@ -530,8 +530,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         session = sessions.setdefault(engine, {})
         sid = session.get("session_id")
         over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
-        confinement_changed = (engine == "claude" and bool(sid)
-                               and session.get("confinement_version") != L3_CONFINEMENT_VERSION)
+        confinement_changed = bool(sid) and session.get("confinement_version") != L3_CONFINEMENT_VERSION
         fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
         if fresh and sid:
             rotate_reason = "L3 confinement policy changed" if confinement_changed else (
@@ -586,7 +585,6 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                            engine_reasoning_effort=None)
             _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
                           res.get("cost", 0.0), res.get("usage") or {}, choice)
-            session["confinement_version"] = L3_CONFINEMENT_VERSION
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
@@ -599,7 +597,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
 def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float,
                   fresh: bool, cost: float, usage: dict, choice: dict) -> None:
     act = config.CONTEXT_LINES[engine][1] * 100
-    session.update({"session_id": sid, "turns": (0 if fresh else int(session.get("turns") or 0)) + 1,
+    session.update({"session_id": sid, "confinement_version": L3_CONFINEMENT_VERSION,
+                    "turns": (0 if fresh else int(session.get("turns") or 0)) + 1,
                     "context_percent": pct, "last_turn": S.now(), "last_cost": cost,
                     "started": session.get("started") if not fresh else S.now(),
                     "context_state": engines.context_state(pct, engine), "rotate_next": pct >= act,

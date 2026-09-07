@@ -78,7 +78,8 @@ repository, the Claude inbox hook, and the statusline monitor. A Codex L2 runs i
 workspace-write sandbox and uses the same door. Claude and Codex L3 turns both run from fresh disposable
 runtime directories with the deployment checkout and Altitude state read-only. Codex's L3 profile denies direct
 command networking and the user-service bus. Its required stdio MCP coordinator tool forwards argument arrays
-and stdin to that project's role-fenced Unix socket; shell wrappers cannot connect from the native sandbox. `web/` is the React UI built into
+and stdin to that project's role-fenced Unix socket; shell wrappers cannot connect from the native sandbox.
+Legacy L3 sessions rotate once onto the current confinement policy before resuming normal coordination. `web/` is the React UI built into
 `web/dist/` for the Python server to serve. That server also serves any project's wireframe
 boards read-only from the project's own checkout at `/design/<project>`, which the project header's
 overflow menu offers as Design boards when the boards exist.
