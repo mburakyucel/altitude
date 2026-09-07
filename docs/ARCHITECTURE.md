@@ -34,7 +34,7 @@ the lightest useful execution shape. Its conversation with Burak is stored apart
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; an explicit Stop aborts a worker. Appending a message to a blocked
 task also persists a due `resume_after` request. An L3 CLI process stops there: altd coalesces that
-request with timer and lease-release wakes, then owns Git provenance validation and provider relaunch. A
+request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
 Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI after persisting one
@@ -82,7 +82,9 @@ reported -> done | running | blocked | rejected
 A no-code research or proposal task can go directly from `running` to `done/archive`; a git check
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
 
-Queued tasks wait for WIP, lease, and engine availability gates. One provider's quota does not
+Queued tasks wait for WIP and engine availability gates. The default caps are 8 running tasks per
+project and 10 across the machine. Overlapping declared paths are information in task status and
+briefs; they do not hold dispatch or resume. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
 first, which answers from the record or escalates one plain dilemma to the operator; only a block flagged
@@ -99,8 +101,14 @@ into L3 context.
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
 based on the exact fetched `origin/main`. Commits require the task provenance trailer. Protected
 branches cannot be updated outside the guarded landing path. The trusted landing code validates the
-lease and repository, commits, pushes, opens the PR, waits for configured checks, and merges only
+staging lease and repository, fetches the base, commits, pushes, opens the PR, pins the current
+base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
+The lease limits which changes can be staged. Parallel tasks may edit shared paths; their briefs
+name those paths and ask owners to rebase onto main before landing and keep shared-doc edits to
+their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
+an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
+not resolve conflicts automatically.
 
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
 daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged

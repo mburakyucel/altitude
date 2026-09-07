@@ -20,6 +20,11 @@ phase deleted.
   the task's L2. Messages sent while L3 is busy queue and run at the next turn boundary, in order.
 - Every code change uses an isolated worktree and branch, then a PR. The L2 may merge after the
   applicable checks and review unless an explicit merge hold says otherwise.
+- Tasks dispatch up to 8 running per project by default and 10 across the machine, subject to
+  engine availability. Leases declare staging scope; overlapping tasks may run together. Briefs
+  name shared paths and ask owners to rebase onto main before landing and edit only their own
+  sections in shared docs. `alt task status --brief` shows informational overlaps; `alt land`
+  refuses changes outside the declared lease.
 - Fresh L2 work and each L3 turn choose Claude Code or Codex weekly-first, record the reason, and
   preserve separate provider sessions; one provider's short-window limit does not freeze the other.
 - L3 is read-only on the deployment checkout on both engines. Its runtime `alt` and narrow external

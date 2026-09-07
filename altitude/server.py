@@ -228,7 +228,7 @@ def spawn(key: str, fn, *a) -> bool:
 # ---- workflows the timers and buttons trigger --------------------------------
 
 def request_task_resume(project: str, slug: str, *, due: bool = True) -> bool:
-    """Wake one daemon-side resume; message, timer and lease-release requests coalesce on the same key."""
+    """Wake one daemon-side resume; message, timer and capacity requests coalesce on the same key."""
     if due and slug not in dispatch.resume_due(project):
         return False
     return spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
@@ -741,8 +741,6 @@ def dispatch_waiting(project: str) -> None:
         if t["state"] != "queued":
             continue
         hold = dispatch.wip_hold(project, t)
-        if hold and dispatch.per_task_hold(hold):
-            continue
         if hold:
             S.write_json(config.project_dir(project) / "hold.json", {"at": S.now(), "reason": hold})
             return

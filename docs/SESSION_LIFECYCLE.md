@@ -20,12 +20,17 @@ keys the edit-count telemetry across worker replacements.
 ```text
 queued task
   ├─ self-deploy checkout fast-forwarded to origin/main
-  ├─ WIP/lease and Git provenance gates
+  ├─ WIP and Git provenance gates
   ├─ weekly-first provider decision (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
   └─ bind its concrete session and worker → running
 ```
+
+WIP defaults to 8 running tasks per project and 10 across the machine. Shared lease paths do not
+hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
+landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
+informational overlaps; the lease remains the staging boundary enforced by `alt land`.
 
 When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
 the provenance gate reads it, and announces activation pending if the pull carried loaded backend code
@@ -53,7 +58,7 @@ the inbox hook returns it as additional context after a tool call, or as the rea
 session is about to stop. A running Codex L2 receives it when its current turn ends and the message resumes the
 thread with the inbox. For a blocked task the same locked append records a due `resume_after` request. The L3
 CLI returns without fetching or writing the deployment checkout; altd sees the durable request on its next tick
-and its keyed resume runner coalesces a simultaneous API wake, retry, or lease release. Before provider launch it
+and its keyed resume runner coalesces a simultaneous API wake, retry, or available WIP slot. Before provider launch it
 persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox. Delivered
 messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
 for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `alt task message` requests that
@@ -81,7 +86,7 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 
 1. a task blocked before any launch goes back to the queue;
 2. `resume_after` makes a message request or operational retry due; an exhausted window of a pinned engine or a
-   file lease keeps the task blocked with a `waiting: …` reason until the request can run;
+   WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
 3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
    worktree and commit provenance are validated, and a worker that is still live is stopped first;
 4. the provider conversation is resumed with the inbox text (or "Continue from your progress file.") and the
@@ -101,9 +106,12 @@ to the other engine, and the next dispatch briefs the fresh attempt with the tas
 
 Claude resume uses `claude --bg --resume`; Codex resume uses `codex exec resume <thread-id> -` with the inbox on
 stdin from the same task worktree. Both engines have one contract: the persona may invoke the scoped Altitude
-CLI, and the backend applies the identity, clean-Git, lease, provenance, and merge-policy checks relevant to each
+CLI, and the backend applies the identity, clean-Git, staging-scope, provenance, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
+Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs
+updating runs `git rebase origin/main` in the worktree; a conflict they cannot resolve goes to L3
+through an ordinary `alt task block`, without `--fault`.
 
 ## Engine containment
 

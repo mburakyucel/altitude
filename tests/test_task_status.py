@@ -73,7 +73,6 @@ class TestTaskStatus(AltitudeCase):
         self.assertEqual(result["lease"], ["altitude/status.py", "bin/alt"])
         self.assertEqual(result["other_leases"], [{
             "slug": "other-task", "paths": ["altitude/server.py"],
-            "hold_paths": ["altitude/server.py"],
         }])
         self.assertTrue(result["report_json"]["exists"])
         self.assertEqual(result["gate"], "github-actions")
@@ -109,109 +108,6 @@ class TestTaskStatus(AltitudeCase):
 
         self.assertIsNone(result["repository"])
         self.assertTrue(any(error.startswith("repository: git unavailable") for error in result["errors"]))
-
-    def test_bare_top_level_other_lease_does_not_create_wip_hold(self):
-        task_path = S.task_dir("demo", "task-one") / "status.json"
-        task = S.read_json(task_path)
-        task["paths"] = ["tests/test_x.py", "tests/"]
-        S.write_json(task_path, task)
-        other_path = S.task_dir("demo", "other-task") / "status.json"
-        other = S.read_json(other_path)
-        other["paths"] = ["tests/"]
-        S.write_json(other_path, other)
-
-        result = task_status.status("demo", "task-one")
-
-        self.assertIsNone(result["wip_hold"])
-        self.assertIsNone(dispatch.wip_hold("demo", task))
-        self.assertEqual(result["lease"], ["tests/test_x.py", "tests/"])
-        self.assertEqual(result["other_leases"], [{
-            "slug": "other-task", "paths": ["tests/"], "hold_paths": [],
-        }])
-
-    def test_bare_top_level_own_lease_does_not_create_wip_hold(self):
-        task_path = S.task_dir("demo", "task-one") / "status.json"
-        task = S.read_json(task_path)
-        task["paths"] = ["tests/"]
-        S.write_json(task_path, task)
-        other_path = S.task_dir("demo", "other-task") / "status.json"
-        other = S.read_json(other_path)
-        other["paths"] = ["tests/test_y.py"]
-        S.write_json(other_path, other)
-
-        result = task_status.status("demo", "task-one")
-
-        self.assertIsNone(result["wip_hold"])
-        self.assertEqual(result["wip_hold"], dispatch.wip_hold("demo", task))
-
-    def test_both_hold_entry_points_use_the_shared_helper(self):
-        reason = "sentinel hold conflict"
-        task = S.read_json(S.task_dir("demo", "task-one") / "status.json")
-
-        with mock.patch.object(dispatch, "hold_conflict", return_value=reason) as helper:
-            result = task_status.status("demo", "task-one")
-            dispatcher_hold = dispatch.wip_hold("demo", task)
-
-        self.assertEqual(result["wip_hold"], reason)
-        self.assertEqual(dispatcher_hold, reason)
-        self.assertGreaterEqual(helper.call_count, 2)
-
-    def test_file_lease_wip_hold_matches_dispatcher(self):
-        task_path = S.task_dir("demo", "task-one") / "status.json"
-        task = S.read_json(task_path)
-        task["paths"] = ["tests/test_x.py"]
-        S.write_json(task_path, task)
-        other_path = S.task_dir("demo", "other-task") / "status.json"
-        other = S.read_json(other_path)
-        other["paths"] = ["tests/test_x.py"]
-        S.write_json(other_path, other)
-
-        result = task_status.status("demo", "task-one")
-        dispatcher_hold = dispatch.wip_hold("demo", task)
-
-        self.assertEqual(dispatcher_hold,
-                         "file lease: `other-task` is running on tests/test_x.py")
-        self.assertEqual(result["wip_hold"], dispatcher_hold)
-        self.assertEqual(result["other_leases"], [{
-            "slug": "other-task", "paths": ["tests/test_x.py"],
-            "hold_paths": ["tests/test_x.py"],
-        }])
-
-        other["state"] = "blocked"
-        other["resume_after"] = "2026-08-30T12:00:00+00:00"
-        S.write_json(other_path, other)
-
-        result = task_status.status("demo", "task-one")
-        dispatcher_hold = dispatch.wip_hold("demo", task)
-
-        self.assertEqual(result["wip_hold"], dispatcher_hold)
-        self.assertEqual(result["wip_hold"],
-                         "file lease: `other-task` is blocked with a pending resume on tests/test_x.py")
-        self.assertEqual(result["other_leases"], [{
-            "slug": "other-task", "paths": ["tests/test_x.py"],
-            "pending_resume": True, "hold_paths": ["tests/test_x.py"],
-        }])
-
-    def test_other_leases_are_published_only_after_all_are_annotated(self):
-        # `z-` sorts last, so the first entry is annotated before the second one raises: a
-        # half-annotated `other_leases` would hand a consumer a KeyError on `hold_paths`.
-        broken_dir = S.tasks_dir("demo") / "z-broken-task"
-        broken_dir.mkdir(parents=True)
-        S.write_json(broken_dir / "status.json", {
-            "slug": "z-broken-task", "state": "running", "paths": ["boom/x.py"],
-        })
-        real_narrow = dispatch.narrow
-
-        def narrow(paths):
-            if "boom/x.py" in paths:
-                raise ValueError("boom")
-            return real_narrow(paths)
-
-        with mock.patch.object(dispatch, "narrow", narrow):
-            result = task_status.status("demo", "task-one")
-
-        self.assertEqual(result["other_leases"], [])
-        self.assertTrue(any(error.startswith("other_leases:") for error in result["errors"]))
 
     def test_record_slug_is_excluded_from_other_leases(self):
         task_path = S.task_dir("demo", "task-one") / "status.json"

@@ -59,7 +59,7 @@ PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
 # `modelSettings` (fable xhigh, opus high) — it applies to every session Altitude launches.
 CODEX_EFFORT = {"l3": None}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
-WIP_PER_PROJECT = 3
+WIP_PER_PROJECT = 8
 WIP_PER_MACHINE = 10
 L3_TURN_TIMEOUT = 900             # seconds
 L3_CODEX_TURN_TIMEOUT = 1200

@@ -136,9 +136,9 @@ class TestInspectionCLI(AltitudeCase):
         record = json.loads(cli("queue", "--json"))
 
         self.assertIn(f"{self.project}/holder", text)
-        self.assertIn("holder", next(row["reason"] for row in record["waiting"] if row["slug"] == "lease-wait"))
-        self.assertEqual(next(row["files"] for row in record["waiting"] if row["slug"] == "lease-wait"), ["shared.py"])
-        self.assertEqual({row["kind"] for row in record["waiting"]}, {"lease", "wip", "waiting-burak"})
+        self.assertIn("WIP limit", next(row["reason"] for row in record["waiting"] if row["slug"] == "lease-wait"))
+        self.assertEqual(next(row["files"] for row in record["waiting"] if row["slug"] == "lease-wait"), [])
+        self.assertEqual({row["kind"] for row in record["waiting"]}, {"wip", "waiting-burak"})
         self.assertIn("Choose a colour", text)
 
         S.write_json(config.MONITOR_DIR / "restart-pending.json", {"since": S.now(), "files": ["bin/alt"]})

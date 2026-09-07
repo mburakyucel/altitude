@@ -3,10 +3,50 @@ import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import dispatch, server, state as S, tasks as T
+from altitude import config, dispatch, server, state as S, tasks as T
 
 
 class TestDirectDispatch(AltitudeCase):
+    def test_overlapping_queued_tasks_both_launch_and_second_brief_names_overlap(self):
+        self.register(self.project, wip=config.WIP_PER_PROJECT)
+        first = T.new(self.project, "First", "request", paths=["README.md", "docs/"])
+        second = T.new(self.project, "Second", "request", paths=["README.md", "docs/ARCHITECTURE.md"])
+        launches = []
+
+        def launch(*args, **kwargs):
+            launches.append((args, kwargs))
+            return {"returncode": 0, "agent": {"id": f"agent-{len(launches)}",
+                                               "sessionId": f"session-{len(launches)}"}}
+
+        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
+             mock.patch.object(dispatch.engines, "start_l2", side_effect=launch):
+            server.dispatch_waiting(self.project)
+
+        self.assertEqual(len(launches), 2)
+        for task in (first, second):
+            self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+        brief = (S.task_dir(self.project, second["slug"]) / "brief.md").read_text()
+        self.assertIn("Shared paths with `first` on README.md, docs/ARCHITECTURE.md", brief)
+
+    def test_default_project_cap_is_eight_and_machine_cap_is_ten(self):
+        self.register(self.project)
+        self.assertEqual(config.WIP_PER_PROJECT, 8)
+        self.assertEqual(config.WIP_PER_MACHINE, 10)
+        for index in range(8):
+            self.assertIsNone(dispatch.wip_hold(self.project))
+            task = T.new(self.project, f"Worker {index}", "request")
+            task["state"] = "running"
+            S.save_task(self.project, task)
+        self.assertEqual(dispatch.wip_hold(self.project), f"WIP limit: 8 running in {self.project}")
+        self.register("another")
+        for index in range(2):
+            self.assertIsNone(dispatch.wip_hold("another"))
+            task = T.new("another", f"Worker {index}", "request")
+            task["state"] = "running"
+            S.save_task("another", task)
+        self.assertEqual(dispatch.wip_hold("another"), "WIP limit: 10 running on this machine")
+
     def test_new_task_is_immediately_queued_without_pipeline_metadata(self):
         task = T.new(self.project, "Fix the focused bug", "Fix it and test it.", actor="burak")
 
