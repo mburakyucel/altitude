@@ -198,7 +198,20 @@ test("a blocked task: the decision card, waiting for L3, a fault", async ({ page
     page,
     project.name,
     { ...base, state: "blocked", live: null, resume_after: null, blocked_reason: question },
-    { queue: [{ project: project.name, slug: base.slug, kind: "decision", title, question, asked: new Date().toISOString(), options: ["Keep it", "Change it"] }] },
+    {
+      queue: [{
+        project: project.name,
+        slug: base.slug,
+        kind: "asks",
+        asked_by: "l3",
+        title,
+        question,
+        asked: new Date().toISOString(),
+        since: new Date().toISOString(),
+        options: [{ key: "A", label: "Keep it" }, { key: "B", label: "Change it" }],
+        recommendation: { option: "A", why: "The old default is what the tests cover." },
+      }],
+    },
   );
   await walk.open(taskPath(project.name, base.slug));
   const card = v.conversation.getByRole("article", { name: title, exact: true });

@@ -1,7 +1,7 @@
 """A mechanically clean report closes without spending an L3 report-landed turn."""
 import unittest
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, fyi_rows
 from altitude import incidents, l3, server, state as S, tasks as T
 
 
@@ -62,7 +62,7 @@ class TestCleanClose(AltitudeCase):
 
     def test_clean_report_closes_without_an_l3_turn_and_posts_one_fyi(self):
         task, verdict = self._task_and_verdict("clean")
-        before = len(T.inbox(self.project, limit=1000))
+        before = len(fyi_rows(self.project))
 
         turns, logs = self._run(task, verdict)
 
@@ -70,7 +70,7 @@ class TestCleanClose(AltitudeCase):
         closed = S.load_task(self.project, "clean")
         self.assertEqual(closed["state"], "done")
         self.assertIsNotNone(closed["l3_handled"])
-        items = T.inbox(self.project, limit=1000)[before:]
+        items = fyi_rows(self.project)[before:]
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["by"], "altd")
         text = items[0]["text"]
@@ -104,7 +104,7 @@ class TestCleanClose(AltitudeCase):
             with self.subTest(name=name):
                 task, verdict = self._task_and_verdict(f"dirty-{name}", change=change, **task_options)
                 expected_state = S.load_task(self.project, task["slug"])["state"]
-                before = len(T.inbox(self.project, limit=1000))
+                before = len(fyi_rows(self.project))
 
                 turns, logs = self._run(task, verdict)
 
@@ -112,7 +112,7 @@ class TestCleanClose(AltitudeCase):
                 self.assertEqual(turns[0][0], self.project)
                 self.assertEqual(turns[0][2], "report-landed")
                 self.assertEqual(S.load_task(self.project, task["slug"])["state"], expected_state)
-                self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
+                self.assertEqual(len(fyi_rows(self.project)), before)
                 self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
     def test_unfinished_l3_report_turn_remains_retryable(self):
@@ -204,23 +204,23 @@ class TestCleanClose(AltitudeCase):
         live = S.load_task(self.project, held_task["slug"])
         live["hold_merge"] = "always-list: live hold"
         S.save_task(self.project, live)
-        before = len(T.inbox(self.project, limit=1000))
+        before = len(fyi_rows(self.project))
 
         held_turns, _ = self._run(held_task, held_verdict)
 
         self.assertEqual(len(held_turns), 1)
         self.assertEqual(S.load_task(self.project, held_task["slug"])["state"], "reported")
-        self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
+        self.assertEqual(len(fyi_rows(self.project)), before)
 
         stale_task, stale_verdict = self._task_and_verdict("stale-caller-hold")
         stale_task["hold_merge"] = "stale caller snapshot"
-        before = len(T.inbox(self.project, limit=1000))
+        before = len(fyi_rows(self.project))
 
         stale_turns, _ = self._run(stale_task, stale_verdict)
 
         self.assertEqual(stale_turns, [])
         self.assertEqual(S.load_task(self.project, stale_task["slug"])["state"], "done")
-        items = T.inbox(self.project, limit=1000)[before:]
+        items = fyi_rows(self.project)[before:]
         self.assertEqual(len(items), 1)
         self.assertIn("hold_merge unset", items[0]["text"])
         self.assertNotIn("stale caller snapshot", items[0]["text"])
@@ -228,7 +228,7 @@ class TestCleanClose(AltitudeCase):
     def test_blocked_transition_during_done_falls_through_to_l3(self):
         """A block that lands inside the close window leaves the task blocked and hands L3 the turn."""
         task, verdict = self._task_and_verdict("blocked-during-done")
-        before = len(T.inbox(self.project, limit=1000))
+        before = len(fyi_rows(self.project))
         original_done = T.done
 
         def block_then_done(project, slug, **kwargs):
@@ -242,7 +242,7 @@ class TestCleanClose(AltitudeCase):
         self.assertEqual(len(turns), 1)
         self.assertEqual(turns[0][2], "report-landed")
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "blocked")
-        self.assertEqual(len(T.inbox(self.project, limit=1000)), before)
+        self.assertEqual(len(fyi_rows(self.project)), before)
         self.assertFalse(any("clean report closed by altd" in line for line in logs))
 
     def test_unknown_review_dispositions_fail_closed(self):

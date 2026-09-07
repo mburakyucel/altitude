@@ -46,7 +46,6 @@ describe("schemas", () => {
           extra: "ignored",
         },
       ],
-      fyis: [],
       wip: { per_project: {}, machine: 0, waiting: [] },
       quota: { known: false },
       now: "2026-08-29T12:00:00",

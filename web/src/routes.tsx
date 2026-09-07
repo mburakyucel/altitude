@@ -7,6 +7,7 @@ import { useStarting } from "./shell/starting";
 import FirstRun from "./routes/FirstRun";
 import NeedsYou from "./routes/NeedsYou";
 import ProjectPage from "./routes/Project";
+import DecisionPage from "./routes/Decision";
 import Task from "./routes/Task";
 import TaskReport from "./routes/TaskReport";
 import Monitor from "./routes/Monitor";
@@ -53,7 +54,8 @@ export const routes: RouteObject[] = [
       { path: "/", element: <NeedsYou /> },
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
-      // /projects/:name/decisions/:slug is reserved for the decision page (slice 3).
+      // The decision page (SPEC.md §3.9): the project layout with the decision in place of the conversation.
+      { path: "/projects/:name/decisions/:slug", element: <DecisionPage /> },
       // One page for both: the desktop shows the conversation beside the live session, the phone
       // tabs between them and `/live` selects the second tab (SPEC.md §2.1, §3.10).
       { path: "/projects/:name/tasks/:slug", element: <Task /> },

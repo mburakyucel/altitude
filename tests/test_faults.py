@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, fyi_rows
 from altitude import config, state as S, incidents, l3, verify, engines, dispatch, tasks as T
 
 PROJECT = "altitude"
@@ -17,8 +17,7 @@ class TestSystemFault(AltitudeCase):
         self.register(PROJECT)
 
     def inbox_texts(self, project=PROJECT) -> list[str]:
-        p = config.project_dir(project) / "inbox.jsonl"
-        return [json.loads(line)["text"] for line in p.read_text().splitlines()] if p.exists() else []
+        return [row["text"] for row in fyi_rows(project)]
 
     def queued(self, project=PROJECT) -> list[dict]:
         p = l3.queue_path(project)

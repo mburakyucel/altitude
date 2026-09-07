@@ -118,18 +118,38 @@ export const RoutingRowSchema = z
   })
   .passthrough();
 
-// Rows for tasks blocked on user input.
+/** One option the asker offered (tasks.py parse_dilemma): `key` is what the L2 reads back ("A", "resume"). */
+export const DecisionOptionSchema = z
+  .object({
+    key: z.string().nullish(),
+    label: z.string(),
+    /** The option's full description when the asker wrote one; empty for Resume and Reject. */
+    text: z.string().nullish(),
+  })
+  .passthrough();
+
+/**
+ * Rows for tasks blocked on the operator (tasks.py decisions(), SPEC.md §3.8): `kind` is "asks",
+ * "stopped", "fault" or "review"; `asked_by` says who raised it; `recommendation` names the recommended
+ * option's key and the why; `since` opens the follow-up window the card mirrors (§4.3).
+ */
 export const DecisionSchema = z
   .object({
     project: z.string(),
     slug: z.string(),
     kind: z.string().nullish(),
+    asked_by: z.string().nullish(),
     title: z.string().nullish(),
     question: z.string().nullish(),
     context: z.string().nullish(),
     detail: z.string().nullish(),
     asked: z.string().nullish(),
-    options: z.array(z.string()).nullish(),
+    since: z.string().nullish(),
+    options: z.array(DecisionOptionSchema).nullish(),
+    recommendation: z
+      .object({ option: z.string().nullish(), why: z.string().nullish() })
+      .passthrough()
+      .nullish(),
   })
   .passthrough();
 
@@ -146,9 +166,13 @@ export const WipSchema = z
     machine: z.number(),
     limit_project: z.number().nullish(),
     limit_machine: z.number().nullish(),
-    // why: "dispatch" (state queued) or "resume" (blocked with resume_after) — digest.py wip().
+    // why: "dispatch" (state queued) or "resume" (blocked with resume_after); hold: the queue's own
+    // text for what the task waits on (the WIP limit, an engine hold, a pending activation, a resume
+    // checkpoint, or "ready for dispatch") — digest.py wip().
     waiting: z.array(
-      z.object({ project: z.string(), slug: z.string(), why: z.string().nullish() }).passthrough(),
+      z
+        .object({ project: z.string(), slug: z.string(), why: z.string().nullish(), hold: z.string().nullish() })
+        .passthrough(),
     ),
   })
   .passthrough();
@@ -234,7 +258,6 @@ export const ProjectViewSchema = z
     busy: z.boolean().nullish(),
     tasks: z.array(TaskRowSchema),
     archive: z.array(TaskRowSchema).nullish(),
-    inbox: z.array(z.record(z.string(), z.unknown())).nullish(),
     decisions: z.array(ProjectDecisionSchema).nullish(),
     log: z.array(z.record(z.string(), z.unknown())).nullish(),
     incidents: z.array(z.record(z.string(), z.unknown())).nullish(),
@@ -373,6 +396,8 @@ export const QueuedMessageSchema = z
     text: z.string(),
     /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
     position: z.number().nullish(),
+    /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
+    slug: z.string().nullish(),
   })
   .passthrough();
 
@@ -382,6 +407,8 @@ export const ActiveTurnSchema = z
     id: z.string(),
     started_at: z.string(),
     trigger: z.string(),
+    /** The decision's task when the turn is a follow-up from its page or card (SPEC.md §5.2 note 6). */
+    slug: z.string().nullish(),
   })
   .passthrough();
 
@@ -404,6 +431,7 @@ export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough(
 export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
+export type DecisionOption = z.infer<typeof DecisionOptionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
@@ -523,8 +551,9 @@ export function useChat(project: string, limit = 60, enabled = true) {
 export interface DecideInput {
   project: string;
   slug: string;
-  /** Index into the decision's options list (the server does int(option)). */
-  option?: number;
+  /** The chosen option's label or key (the server also accepts an index into the options). */
+  option: string | number;
+  /** The optional note for the L2, sent with the decision (SPEC.md §3.9). */
   note?: string;
 }
 
@@ -536,6 +565,7 @@ export function useDecide() {
     onSettled: (_out, _error, input) => {
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
       void queryClient.invalidateQueries({ queryKey: ["project", input.project] });
+      void queryClient.invalidateQueries({ queryKey: ["task", input.project, input.slug] });
     },
   });
 }
@@ -731,13 +761,15 @@ export async function streamChat(
   project: string,
   text: string,
   handlers: ChatStreamHandlers,
+  /** A follow-up from a decision page names the decision's task; its rows carry the slug (SPEC.md §4.3). */
+  options: { slug?: string } = {},
 ): Promise<ChatSent> {
   setChatStreaming(true);
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project, text }),
+      body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
     });
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
     if (!res.body) throw new ApiError(res.status, "no response body");

@@ -217,11 +217,13 @@ def save_info(project: str, data: dict) -> None:
     S.write_json(info_path(project), data)
 
 
-def chat_log(project: str, role: str, text: str, **meta) -> None:
+def chat_log(project: str, role: str, text: str, **meta) -> dict:
     path = config.project_dir(project) / "chat.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    row = {"at": S.now(), "role": role, "text": text, **meta}
     with open(path, "a") as stream:
-        stream.write(json.dumps({"at": S.now(), "role": role, "text": text, **meta}, sort_keys=True) + "\n")
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+    return row
 
 
 def chat_history(project: str, limit: int | None = 60) -> list[dict]:
@@ -336,18 +338,19 @@ def chat_state(project: str, limit: int = 60) -> dict:
 
 
 @contextmanager
-def _active_turn(project: str, trigger: str, claim=None):
+def _active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
     with config.project_activity(project) as attached, config.restart_lock() as ready:
         if not attached or not config.is_managed(project) or not ready or config.restart_in_progress():
             yield None
             return
-        with _publish_active_turn(project, trigger, claim) as turn:
+        with _publish_active_turn(project, trigger, claim, slug) as turn:
             yield turn
 
 
 @contextmanager
-def _publish_active_turn(project: str, trigger: str, claim=None):
-    turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger}
+def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
+    # A follow-up on a decision names its task, so the card can show the turn in flight (SPEC.md §5.2 note 6).
+    turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger, **_slug_meta(slug)}
     lifecycle_guard = _lifecycle_guard(project)
     with lifecycle_guard:
         claimed = claim is None or claim()
@@ -369,14 +372,19 @@ def _publish_active_turn(project: str, trigger: str, claim=None):
 
 
 @contextmanager
-def _turn_scope(project: str, trigger: str):
+def _turn_scope(project: str, trigger: str, slug: str | None = None):
     """Adopt a queue handoff owned by this thread, or acquire a direct turn normally."""
     claimed = getattr(_turn_local, "claimed", None)
     if claimed and claimed["project"] == project and claimed["trigger"] == trigger:
         yield claimed["turn"]
         return
-    with lock(project), _active_turn(project, trigger) as turn:
+    with lock(project), _active_turn(project, trigger, slug=slug) as turn:
         yield turn
+
+
+def _slug_meta(slug: str | None) -> dict:
+    """The task a chat row or turn is about, present only when there is one."""
+    return {"slug": slug} if slug else {}
 
 
 def queue_path(project: str) -> Path:
@@ -402,11 +410,12 @@ def queued(project: str) -> list[dict]:
         return _queue_rows(queue_path(project))
 
 
-def queue_message(project: str, text: str, *, trigger: str, role: str = "server") -> dict:
+def queue_message(project: str, text: str, *, trigger: str, role: str = "server", slug: str | None = None) -> dict:
     """Leave one message for the project's L3; the server delivers it as a turn once L3 is free. The
     returned row carries the id that drops it again and its position in the queue."""
     path = queue_path(project)
-    row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": role, "text": text}
+    row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": role, "text": text,
+           **_slug_meta(slug)}
     with S.project_lock(project):
         if trigger == "chat" and not config.is_managed(project):
             raise ValueError("This project is not managed. Add its folder again to attach L3.")
@@ -446,8 +455,9 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat":
-                while take < len(rows) and rows[take].get("trigger") == "chat":
+            if rows[0].get("trigger") == "chat":  # a follow-up on a decision keeps its own turn
+                while (take < len(rows) and rows[take].get("trigger") == "chat"
+                       and rows[take].get("slug") == rows[0].get("slug")):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
@@ -461,24 +471,31 @@ def deliver_queued(project: str) -> dict | None:
                     return True
 
             trigger = selected[0].get("trigger") or "queued"
-            with _active_turn(project, trigger, claim=claim) as active_turn:
+            slug = selected[0].get("slug") or None
+            with _active_turn(project, trigger, claim=claim, slug=slug) as active_turn:
                 if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
                     return None
                 _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn}
                 try:
-                    return turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger)
+                    return turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger,
+                                **_slug_meta(slug))
                 finally:
                     del _turn_local.claimed
     finally:
         turn_lock.release()
 
 
-def _header(project: str, trigger: str, fresh: bool) -> str:
+def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) -> str:
     directory = config.project_dir(project)
     lines = [f"[altitude] project={project} trigger={trigger} state_file={directory / 'STATE.md'} "
              f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)}"]
     if fresh:
         lines.append("[altitude] Fresh provider session. Read the state file first; it is durable project memory.")
+    if slug:  # SPEC.md §4.3: a follow-up on a decision is answered from the record and never decides
+        lines.append(f"[altitude] This is a follow-up on the decision waiting on task `{slug}`. Read "
+                     f"`alt task show {slug}` and `alt task messages {slug}` and answer from the record in plain "
+                     "sentences. Do not resume, reject, or decide the task: it stays blocked until the operator "
+                     "chooses an option.")
     return "\n".join(lines) + "\n\n"
 
 
@@ -509,15 +526,17 @@ def _select(project: str, engine: str | None = None) -> dict:
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
-         on_text=None, on_start=None, model: str | None = None) -> dict:
+         on_text=None, on_start=None, model: str | None = None, slug: str | None = None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
-    a provider. Each provider resumes only its own transcript."""
+    a provider. Each provider resumes only its own transcript. `slug` marks a follow-up on that task's
+    decision: the turn's rows carry it, so the decision card mirrors the exchange."""
     requested = engine
-    with _turn_scope(project, trigger) as active_turn:
+    with _turn_scope(project, trigger, slug) as active_turn:
         if active_turn is None:
             if not config.is_managed(project):
                 return {"error": "This project is not managed. Add its folder again to attach L3.", "completed": False}
-            row = queue_message(project, prompt, trigger=trigger, role="burak" if trigger == "chat" else "server")
+            row = queue_message(project, prompt, trigger=trigger, role="burak" if trigger == "chat" else "server",
+                                slug=slug)
             return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
         choice = _select(project, requested)
@@ -550,12 +569,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         history = chat_history(project, 60)
         handoff = _handoff(history, engine, session.get("last_turn"))
         turn_started_at = active_turn["started_at"]
-        chat_log(project, "user", prompt, trigger=trigger, engine=engine, at=turn_started_at, turn_id=turn_id)
+        chat_log(project, "user", prompt, trigger=trigger, engine=engine, at=turn_started_at, turn_id=turn_id,
+                 **_slug_meta(slug))
         if engine == "codex":
             res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
-                              handoff, model=model, on_start=on_start)
+                              handoff, model=model, on_start=on_start, slug=slug)
         else:
-            text = _header(project, trigger, fresh) + handoff + prompt
+            text = _header(project, trigger, fresh, slug) + handoff + prompt
             runtime = _l3_runtime(project, "claude")
             try:
                 res = engines.claude_print(
@@ -579,9 +599,10 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                     codex_handoff = _handoff(history, "codex", codex_session.get("last_turn"))
                     return _codex_turn(project, prompt, trigger, turn_started_at, turn_id, fallback, inf, codex_session,
                                        not codex_session.get("session_id"), codex_handoff, model=None,
-                                       on_start=on_start)
+                                       on_start=on_start, slug=slug)
             if res.get("error") and not res.get("session_id"):
-                chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id)
+                chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
+                         **_slug_meta(slug))
                 res["turn_id"] = turn_id
                 return res
             pct = engines.context_percent(res.get("context_tokens", 0), "claude")
@@ -592,7 +613,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             save_info(project, inf)
             chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                      engine="claude", context_percent=pct, turns=res.get("turns"),
-                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id))
+                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
+                     **_slug_meta(slug))
             S.regen_state_md(project)
             res.update({"context_percent": pct, "completed": True, "turn_id": turn_id})
         return res
@@ -617,12 +639,13 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
-                inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None) -> dict:
+                inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
+                slug: str | None = None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     proj = config.project(project)
     sid = None if fresh else session.get("session_id")
-    body = _header(project, trigger, fresh) + handoff + prompt
+    body = _header(project, trigger, fresh, slug) + handoff + prompt
     if fresh:
         body = ((config.PERSONAS / "l3.md").read_text() + "\n\n"
                 + f"[altitude] Engine: Codex — {choice['why']}.\n\n" + body)
@@ -668,13 +691,13 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
         chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
-                 engine="codex", turn_id=turn_id)
+                 engine="codex", turn_id=turn_id, **_slug_meta(slug))
         return out
     _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
              context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
-             turn_id=turn_id, **_created_meta(project, turn_id))
+             turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug))
     S.regen_state_md(project)
     out.update({"context_percent": pct, "completed": True})
     return out

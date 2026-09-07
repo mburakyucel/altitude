@@ -64,11 +64,17 @@ const stuck = {
 const decision = {
   project: "altitude",
   slug: "fix-timer",
-  kind: "decision",
+  kind: "asks",
+  asked_by: "l2",
   title: "Fix the timer",
   question: "Should the timer keep the old default?",
   asked: ago(3),
-  options: ["Keep it", "Change it"],
+  since: ago(3),
+  options: [
+    { key: "A", label: "Keep it" },
+    { key: "B", label: "Change it" },
+  ],
+  recommendation: { option: "A", why: "" },
 };
 
 const askingL3 = { ...stuck, waiting_on: "l3", blocked_reason: "which suite covers the timer" };

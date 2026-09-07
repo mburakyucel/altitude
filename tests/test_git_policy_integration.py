@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
+from tests.support import ALT, AltitudeCase, add_worktree, fyi_rows, git, make_repo
 from altitude import config, dispatch, engines, git_policy, server, state as S
 from altitude import tasks as T
 
@@ -291,7 +291,7 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual(self.head(), merged)
         pend = S.read_json(self.pending, {})
         self.assertEqual(pend.get("files"), sorted(inputs))
-        self.assertIn("the deployed web bundle is older than main", T.inbox("altitude")[-1]["text"])
+        self.assertIn("the deployed web bundle is older than main", fyi_rows("altitude")[-1]["text"])
         fault.assert_not_called()
 
     def test_backend_code_pulled_at_dispatch_marks_activation_pending(self):
@@ -305,7 +305,7 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual(self.head(), merged)
         pend = S.read_json(self.pending, {})
         self.assertEqual((pend.get("files"), pend.get("head")), (["altitude/x.py"], merged))
-        self.assertIn("the running Altitude backend is older than main", T.inbox("altitude")[-1]["text"])
+        self.assertIn("the running Altitude backend is older than main", fyi_rows("altitude")[-1]["text"])
         fault.assert_not_called()                                 # flagged for an authorized restart, never restarted
 
     def test_decision_11_tick_discovers_merge_and_requests_activation_while_its_worker_runs(self):
