@@ -1,48 +1,57 @@
 import { useRestart } from "../data/api";
 import type { Restart } from "../data/api";
+import { agoText, exactTime } from "../data/observed";
 
-/** Shown while merged backend or web changes await activation. Altitude restarts at the quiet point;
- * the button starts that guarded path sooner once nothing is running, and is the way back after a failure. */
+/** What the pending files touch, in words: the loaded backend paths, the web build inputs, or both. */
+export function changedText(files: string[]): string {
+  const backend = files.some((path) => ["altitude/", "bin/", "systemd/"].some((root) => path.startsWith(root)));
+  const web = files.some((path) => path.startsWith("web/"));
+  if (backend && web) return "the backend and the web app";
+  if (backend) return "the backend";
+  if (web) return "the web app";
+  return "Altitude";
+}
+
+/**
+ * The restart banner (SPEC.md §3.13): above the header on every route while a merged change awaits
+ * activation. It says what changed in words and that Altitude restarts at the next quiet moment. The
+ * Restart button appears only when nothing is running (`waiting_for` is empty) and disappears once the
+ * restart is under way; the banner leaves when the new process answers with no pending restart.
+ * `restart` is `GET /api/overview`'s `restart` field, the one data source.
+ */
 export function RestartBanner({ restart }: { restart: Restart | null | undefined }) {
   const act = useRestart();
   if (!restart) return null;
-  const files = restart.files?.length ?? 0;
-  const since = restart.since ? restart.since.slice(0, 16).replace("T", " ") : "";
-  const backend = restart.files?.some((path) =>
-    ["altitude/", "bin/", "systemd/"].some((root) => path.startsWith(root)),
-  );
-  const web = restart.files?.some((path) => path.startsWith("web/"));
-  const changes = backend && web ? "backend and web" : backend ? "backend" : web ? "web" : "Altitude";
-  const waiting = restart.waiting_for.length > 0;
+  const files = restart.files ?? [];
+  const waiting = restart.waiting_for;
+  // A hand-pressed Restart is under way from the click; an automatic one from the time altd requested it.
+  const underWay = act.isPending || act.isSuccess || Boolean(restart.requested_at && !restart.failed);
+  const count = `${files.length} file${files.length === 1 ? "" : "s"}`;
+  const landed = restart.since ? agoText(restart.since) : "";
+
   return (
-    <div
-      role="status"
-      className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-body"
-    >
-      <span>
-        Merged {changes} changes are waiting to activate: {files} file{files === 1 ? "" : "s"} changed
-        {since ? ` since ${since}Z` : ""}.
-      </span>
-      {restart.failed ? (
-        <span className="text-muted">
-          Automatic activation did not complete; L3 has the fault.
-          {waiting ? ` Retry is available once nothing is running; waiting for ${restart.waiting_for.join(", ")}.` : null}
-        </span>
-      ) : waiting ? (
-        <span className="text-muted">
-          Altitude activates them automatically once nothing is running; waiting for {restart.waiting_for.join(", ")}.
-        </span>
-      ) : restart.requested_at && !restart.failed ? (
-        <span className="text-muted">Activating changes…</span>
-      ) : null}
-      {!waiting && (!restart.requested_at || restart.failed) ? (
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => act.mutate()}
-          disabled={act.isPending || act.isSuccess}
-        >
-          {act.isPending || act.isSuccess ? "Activating…" : "Restart Altitude"}
+    <div className="restart-banner" role="status" aria-label="Restart pending">
+      <div className="restart-banner-text">
+        <p className="restart-banner-what">
+          Merged changes to {changedText(files)} are waiting to activate.
+          <span className="restart-banner-meta" title={exactTime(restart.since)}>
+            {" "}
+            {count}
+            {landed ? `, landed ${landed}` : ""}
+          </span>
+        </p>
+        <p className="restart-banner-rule">
+          {underWay
+            ? "Altitude is restarting…"
+            : restart.failed
+              ? "Automatic activation did not complete; L3 has the fault."
+              : "Altitude restarts at the next quiet moment."}
+          {!underWay && waiting.length > 0 ? ` Waiting for ${waiting.join(", ")}.` : null}
+        </p>
+      </div>
+      {!underWay && waiting.length === 0 ? (
+        <button type="button" className="btn btn-primary restart-banner-button" onClick={() => act.mutate()}>
+          Restart
         </button>
       ) : null}
     </div>
