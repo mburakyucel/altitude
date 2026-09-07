@@ -507,6 +507,13 @@ def session_settings(project: str, slug: str, session_key: str) -> Path:
 
 
 def run(project: str, slug: str, model: str | None = None) -> dict:
+    with config.restart_lock() as ready:
+        if not ready or config.restart_in_progress():
+            raise T.TransitionError("Altitude is restarting; retry shortly")
+        return _run(project, slug, model)
+
+
+def _run(project: str, slug: str, model: str | None = None) -> dict:
     # Read task eligibility first, but do not mark or write anything until the deployment checkout has passed
     # its remote-backed gate and this task's worktree has a provenance-safe base.
     with S.project_lock(project):
@@ -613,6 +620,13 @@ def l2_env(project: str, slug: str, attempt: int) -> dict:
 
 
 def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
+    with config.restart_lock() as ready:
+        if not ready or config.restart_in_progress():
+            return {"held": "Altitude is restarting; retry shortly"}
+        return _resume(project, slug, daemon_request_id=daemon_request_id)
+
+
+def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
     """Start a blocked task's provider session again in its worktree, with whatever waits in its inbox.
 
     This is the only way a session is launched again, and nothing running is ever replaced: a task blocks when its
@@ -1034,6 +1048,14 @@ def activation_component(path: str) -> str | None:
 
 
 def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
+    # Decision 11: a finishing worker must not clear requested_at or change build inputs during activation.
+    with config.restart_lock() as ready:
+        if not ready or config.restart_in_progress():
+            return ["deferred self-deploy: activation in progress"]
+        return _self_deploy_fast_forward(project, slug)
+
+
+def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
     """When a project's checkout is its deployment, fast-forward it to origin/main, so merged hooks, personas and
     templates are what the next session runs. Loaded backend changes and tracked web build inputs need activation:
     those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here.

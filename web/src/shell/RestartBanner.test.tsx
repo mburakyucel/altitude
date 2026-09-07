@@ -11,7 +11,7 @@ function overview(restart: unknown) {
     projects: [],
     queue: [],
     fyis: [],
-    wip: { per_project: {}, machine: 0, waiting: [] },
+    wip: { per_project: { altitude: 1 }, machine: 1, waiting: [] },
     quota: { known: false },
     restart,
     now: new Date().toISOString(),
@@ -52,7 +52,7 @@ describe("RestartBanner", () => {
     expect(banner()).toBeNull();
   });
 
-  it("says what changed in words, that Altitude restarts at the next quiet moment, and offers Restart when nothing runs", async () => {
+  it("says what changed in words, that Altitude restarts at the next quiet moment, and offers Restart while a worker runs (decision 11)", async () => {
     mockFetch({ ...pending, waiting_for: [] });
     renderApp({ route: "/" });
     await screen.findByText(/Merged changes to the backend are waiting to activate\./);
@@ -61,7 +61,7 @@ describe("RestartBanner", () => {
     expect(restartButton()).toBeInTheDocument();
   });
 
-  it("names what the restart waits for and hides the button while something runs (SPEC.md §3.13)", async () => {
+  it("names what the restart waits for and hides the button during dispatch or L3 work (SPEC.md §3.13)", async () => {
     mockFetch({ ...pending, waiting_for: ["altitude/fix-thing", "altitude L3"] });
     renderApp({ route: "/" });
     await screen.findByText(/Waiting for altitude\/fix-thing, altitude L3\./);
@@ -89,7 +89,7 @@ describe("RestartBanner", () => {
     expect(restartButton()).toBeNull();
   });
 
-  it("offers a failed activation's retry only after the system becomes idle", async () => {
+  it("offers a failed activation's retry only at the narrow quiet point", async () => {
     mockFetch({ ...pending, failed: new Date().toISOString(), waiting_for: ["altitude/new-work"] });
     const first = renderApp({ route: "/" });
     await screen.findByText(/Automatic activation did not complete; L3 has the fault\. Waiting for altitude\/new-work\./);

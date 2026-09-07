@@ -496,6 +496,12 @@ def restart_notice() -> None:
 
 
 def on_l2_finished(project: str, item: dict) -> None:
+    with config.restart_lock() as ready:
+        if ready and not config.restart_in_progress():
+            _on_l2_finished(project, item)
+
+
+def _on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
     with S.project_lock(project):
@@ -607,6 +613,12 @@ def on_l2_finished(project: str, item: dict) -> None:
 
 
 def report_turn(project: str, t: dict, v: dict) -> None:
+    with config.restart_lock() as ready:
+        if ready and not config.restart_in_progress():
+            _report_turn(project, t, v)
+
+
+def _report_turn(project: str, t: dict, v: dict) -> None:
     """Close a mechanically clean report, otherwise run the L3's report-landed turn.
 
     The clean-close gate uses the on-disk report and live task state. It requires an ok verifier with no problems or
@@ -734,9 +746,8 @@ def resume_stranded_reports(project: str) -> None:
 
 
 def dispatch_waiting(project: str) -> None:
-    pending = restart_status()
-    if pending and not pending.get("failed"):
-        return  # a restart is pending: no new worker until the service runs main (auto_restart)
+    if config.restart_in_progress():
+        return
     for t in S.list_tasks(project):
         if t["state"] != "queued":
             continue
@@ -775,6 +786,12 @@ def tick() -> None:
         log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
     for project in list(config.load_projects()):
+        # Decision 11: a sole running worker's merge must activate without another dispatch or report.
+        try:
+            with dispatch.publication_settlement(project):
+                dispatch.self_deploy_fast_forward(project)
+        except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
+            incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
         try:
             dispatch.run_project_wip(project)
             if l3.queue_path(project).exists():
@@ -1161,7 +1178,7 @@ class Handler(BaseHTTPRequestHandler):
                 project, text = o["project"], (o.get("text") or "").strip()
                 if not text:
                     return self._json({"error": "empty"}, 400)
-                if l3.busy(project):
+                if l3.busy(project) or config.restart_in_progress():
                     # Burak types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
                     row = l3.queue_message(project, text, trigger="chat", role="burak")
@@ -1195,7 +1212,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "no restart is pending"}, 409)
                 if status["waiting_for"]:
                     return self._json({"error": "restart waits for " + ", ".join(status["waiting_for"])}, 409)
-                return self._json(restart_service())
+                try:
+                    return self._json(restart_service())
+                except RestartBusy as exc:
+                    return self._json({"error": str(exc)}, 409)
             return self._json({"error": "unknown api"}, 404)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"POST {self.path}: client went away ({type(e).__name__}: {e})")
@@ -1213,11 +1233,19 @@ def restart_status() -> dict | None:
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
         return None
+    return {**pending, "waiting_for": restart_waiting_for()}
+
+
+def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     projects = list(config.load_projects())
     waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
-               if t.get("dispatching") or t.get("state") in ("running", "reported")]
+               if t.get("dispatching") or t.get("resume_claim")]
     waiting += [f"{p} L3" for p in projects if l3.busy(p)]
-    return {**pending, "waiting_for": waiting}
+    if check_activity:
+        with config.restart_lock(exclusive=True) as quiet:
+            if not quiet:
+                waiting.append("dispatch, L3 turn or report verification in flight")
+    return waiting
 
 
 RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the old process is gone well within this
@@ -1225,11 +1253,10 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (Burak, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Quiet means no task dispatching, running or reported and
-    no L3 turn in flight; `dispatch_waiting` holds new dispatches while activation is pending, so the quiet point
-    comes. The restart unit re-checks all of that itself before touching the service."""
+    until the deployed service and bundle contain it). Decision 11: only dispatch, L3 and report handling
+    hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
-    if not status or status["waiting_for"] or status.get("failed"):
+    if not status or status.get("failed"):
         return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
     pend = S.read_json(flag, {}) or {}
@@ -1245,20 +1272,42 @@ def auto_restart() -> None:
         log(f"auto-restart: {detail}; new dispatches resume")
         incidents.system_fault("restart", detail)
         return
+    if status["waiting_for"]:
+        return
     try:
         res = restart_service()
+    except RestartBusy:
+        return  # work claimed the quiet point before the restart requester
     except RuntimeError as e:
         pend["failed"] = S.now()
         S.write_json(flag, pend)
         log(f"auto-restart could not start: {e}; new dispatches resume")
         incidents.system_fault("restart", f"auto-restart could not start: {e}")
         return
-    pend.update({"requested_at": S.now(), "unit": res["unit"]})
-    S.write_json(flag, pend)
     log(f"quiet point: restarting for {len(pend.get('files', []))} changed file(s) via unit {res['unit']}")
 
 
+class RestartBusy(RuntimeError):
+    pass
+
+
 def restart_service() -> dict:
+    with config.restart_lock(exclusive=True) as quiet:
+        if not quiet or restart_waiting_for(check_activity=False):
+            raise RestartBusy("restart waits for dispatch, L3 turn or report verification")
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        pend = S.read_json(flag, {}) or {}
+        if pend.get("requested_at") and not pend.get("failed"):
+            return {"ok": True, "unit": pend.get("unit")}
+        # Publish before releasing the gate, including the manual button path: no launch can race the unit.
+        res = _request_restart_unit()
+        pend.pop("failed", None)
+        pend.update({"requested_at": S.now(), "unit": res["unit"]})
+        S.write_json(flag, pend)
+        return res
+
+
+def _request_restart_unit() -> dict:
     """Run the operator restart script as a transient user unit: outside altd's cgroup, it survives the restart."""
     unit = f"altitude-restart-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     cmd = [engines.SYSTEMD_RUN_BIN, "--user", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
@@ -1345,7 +1394,6 @@ def main(host: str | None = None, port: int | None = None) -> None:
         except git_policy.GitPolicyError as e:
             log(f"service startup refused: {e}")
             raise SystemExit(1) from e
-        (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     host = host or config.HOST
     port = port or config.PORT
     try:
@@ -1363,11 +1411,6 @@ def main(host: str | None = None, port: int | None = None) -> None:
         srv.server_close()
         log(f"cannot bind the L3 verb broker ({e}); refusing to start without the confinement boundary")
         raise SystemExit(1) from e
-    if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
-        restart_notice()
-        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
-    else:
-        log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     scheme = "http"
     crt, key = config.TLS_DIR / "server.crt", config.TLS_DIR / "server.key"
     if config.TLS and crt.is_file() and key.is_file():
@@ -1378,6 +1421,14 @@ def main(host: str | None = None, port: int | None = None) -> None:
         scheme = "https"
     elif config.TLS:
         log(f"no certificate in {config.TLS_DIR} — serving plain http (run `alt tls-init` for https)")
+    # Decision 11: do not release waiting launches if the replacement cannot bind its API or brokers.
+    if os.environ.get("ALTITUDE_SERVICE"):
+        (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
+    if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        restart_notice()
+        threading.Thread(target=timer_loop, name="timers", daemon=True).start()
+    else:
+        log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")
     try:
         srv.serve_forever()

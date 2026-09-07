@@ -33,9 +33,9 @@ def _waiting(project: str, task: dict, restart: dict | None) -> dict:
         who = task.get("waiting_on") or "burak"
         kind = f"waiting-{who}"
         reason = f"waiting on {'Burak' if who == 'burak' else 'L3'}: {task.get('blocked_reason') or 'blocked'}"
-    elif task["state"] == "queued" and restart and not restart.get("failed"):
+    elif restart and restart.get("requested_at") and not restart.get("failed"):
         kind = "restart"
-        reason = f"restart checkpoint since {restart.get('since') or '?'} ({len(restart.get('files') or [])} files)"
+        reason = f"restart in progress since {restart['requested_at']}"
     else:
         reason = dispatch.wip_hold(project, task) or ""
         if reason.startswith("WIP limit"):

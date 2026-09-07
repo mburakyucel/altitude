@@ -72,6 +72,32 @@ INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
 
 
+@contextmanager
+def restart_lock(*, exclusive: bool = False):
+    """Fence the short activation windows (2026-09-07: running workers starved activation).
+
+    Shared holders are dispatch, L3 and report handling, never the detached workers. The exclusive
+    requester checks quiet and records requested_at before another holder can enter, across processes.
+    """
+    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
+    with (MONITOR_DIR / "restart.lock").open("a") as handle:
+        try:
+            fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def restart_in_progress() -> bool:
+    from . import state as S
+    pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
+    return bool(pending.get("requested_at") and not pending.get("failed"))
+
+
 def ensure_root() -> None:
     for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
         d.mkdir(parents=True, exist_ok=True)

@@ -79,7 +79,9 @@ project's L3, whether altd detected it or an L2 reported it with `alt task block
 the cause through a trusted `alt` verb or creates the one repair task; it never edits source or runs Git in the deployment checkout, and Burak is not the one to repair the machine. There is no global hold: other tasks keep running. After a restart L3 receives the list of active tasks and resumes the ones blocked by a fault the
 restart fixed.
 
-Altitude restarts itself at the next quiet point after a merged change to its own code (no worker
-running, no report waiting, no L3 turn in flight; new dispatches hold until then). Do not start, stop,
+Altitude restarts itself at the next narrow quiet point after a merged change to its own code (no
+dispatch or resume claim, report verification, or L3 turn in flight; running workers do not hold it).
+New dispatches continue while activation is pending and wait only during the requested restart window.
+Do not start, stop,
 mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
 separate explicit authorization and post-change health verification.

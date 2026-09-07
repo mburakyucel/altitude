@@ -178,20 +178,25 @@ A merged Altitude change marks activation pending when the self-deploy fast-forw
 backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
 `web/tsconfig.json`, `web/vite.config.ts`), whether the fast-forward runs after a task lands or at the
-next dispatch. Web docs, design boards, the unused npm lockfile, and other non-build files do not
+next dispatch, or the regular thirty-second daemon tick discovers a merge while its worker still runs.
+Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Hooks, personas, and templates are read per use and deploy with the pull itself.
 
 The web app's restart banner sits above the header on every route while activation is pending: it
 says in words whether the backend, the web app, or both changed, how many files landed and when, and
-that Altitude restarts at the next quiet moment; while something runs it names what it waits for. New
-dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, altd runs
+that Altitude restarts at the next quiet moment; it names any dispatch, L3 turn or report verification
+in flight. Running and blocked workers survive activation and do not hold it. Dispatch continues
+while activation is pending. When those short windows are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
 restores the prior bundle. The banner's Restart button runs the same path sooner by hand: it appears
-only while nothing is running, disappears once the restart is under way (the banner then says so), and
+at that narrow quiet point, even while workers run, disappears once restart is under way (the banner then says so), and
 the banner leaves when the new process answers with nothing pending. A restart that has not happened
-ten minutes after it was requested is a system fault for L3, and the hold lifts. Ordinary source changes never
+ten minutes after it was requested is a system fault for L3, and the hold lifts. Dispatch, resume and
+L3 turns wait only from the unit request until the replacement daemon is ready; report verification
+also waits, leaving reports durable for the next tick. A shared activity lock fences these short
+operations against the exclusive restart request, including the launch-to-binding race. Ordinary source changes never
 start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
 authorization and post-change health verification.
 

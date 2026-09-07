@@ -144,6 +144,10 @@ class TestInspectionCLI(AltitudeCase):
         S.write_json(config.MONITOR_DIR / "restart-pending.json", {"since": S.now(), "files": ["bin/alt"]})
         restarted = json.loads(cli("queue", "--json"))
         queued = [row for row in restarted["waiting"] if row["state"] == "queued"]
+        self.assertEqual({row["kind"] for row in queued}, {"wip"})
+        S.write_json(config.MONITOR_DIR / "restart-pending.json", {"requested_at": S.now(), "files": ["bin/alt"]})
+        restarted = json.loads(cli("queue", "--json"))
+        queued = [row for row in restarted["waiting"] if row["state"] == "queued"]
         self.assertEqual({row["kind"] for row in queued}, {"restart"})
 
     def test_repo_combines_git_restart_faults_and_systemd(self):

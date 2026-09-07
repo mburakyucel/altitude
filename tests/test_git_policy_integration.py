@@ -167,7 +167,7 @@ class TestServiceGitPreflight(AltitudeCase):
         httpd.assert_not_called()
         self.assertIn("service startup refused", log.call_args.args[0])
 
-    def test_safe_service_checkout_clears_restart_flag_and_reaches_bind(self):
+    def test_failed_api_bind_keeps_restart_hold_even_with_a_safe_checkout(self):
         with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "0"}), \
              mock.patch.object(git_policy, "service_preflight") as preflight, \
              mock.patch.object(git_policy, "require_hooks_installed") as hooks, \
@@ -179,8 +179,23 @@ class TestServiceGitPreflight(AltitudeCase):
         self.assertEqual(stopped.exception.code, 1)
         preflight.assert_called_once_with(config.REPO)
         hooks.assert_called_once_with(config.REPO)
-        self.assertFalse(self.pending.exists())
+        self.assertTrue(self.pending.exists())
         httpd.assert_called_once()
+
+    def test_ready_replacement_releases_restart_hold_before_serving(self):
+        def serve():
+            self.assertFalse(self.pending.exists())
+        with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "0"}), \
+             mock.patch.object(git_policy, "service_preflight"), \
+             mock.patch.object(git_policy, "require_hooks_installed"), \
+             mock.patch.object(server, "ensure_l3_verb_broker"), \
+             mock.patch.object(server, "stop_l3_verb_brokers"), \
+             mock.patch.object(config, "TLS", False), \
+             mock.patch.object(server, "ThreadingHTTPServer") as httpd:
+            httpd.return_value.serve_forever.side_effect = serve
+            server.main()
+        self.assertFalse(self.pending.exists())
+        httpd.return_value.serve_forever.assert_called_once()
 
 
 class TestInstallGitGuardsCommand(AltitudeCase):
@@ -292,6 +307,22 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual((pend.get("files"), pend.get("head")), (["altitude/x.py"], merged))
         self.assertIn("the running Altitude backend is older than main", T.inbox("altitude")[-1]["text"])
         fault.assert_not_called()                                 # flagged for an authorized restart, never restarted
+
+    def test_decision_11_tick_discovers_merge_and_requests_activation_while_its_worker_runs(self):
+        task = T.new("altitude", "Still running after merge", "Finish the delivery.", actor="burak")
+        task.update(state="running", agent_id="detached", session_id="same-session")
+        S.save_task("altitude", task)
+        merged = self.merged_on_origin("altitude/x.py", "# merged while worker runs\n")
+        with mock.patch.object(server.quota_codex, "refresh_if_due"), \
+             mock.patch.object(server, "morning_digest"), \
+             mock.patch.object(server, "spawn"), \
+             mock.patch.object(dispatch, "poll", return_value=[]), \
+             mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "test-restart"}) as restart:
+            server.tick()
+        self.assertEqual(self.head(), merged)
+        self.assertEqual(S.load_task("altitude", task["slug"])["state"], "running")
+        self.assertEqual(S.read_json(self.pending)["unit"], "test-restart")
+        restart.assert_called_once()
 
     def test_a_resumed_task_fast_forwards_the_same_way(self):
         task = T.new("altitude", "Resume behind main", "Resume it.", actor="burak")

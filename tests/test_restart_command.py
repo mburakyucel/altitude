@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import REPO
+from tests.support import REPO, AltitudeCase
+from altitude import config, dispatch, state as S, tasks as T
 
 SCRIPT = REPO / "scripts" / "restart_altitude.py"
 
@@ -19,7 +20,7 @@ def load_script():
     return module
 
 
-class TestRestartCommand(unittest.TestCase):
+class TestRestartCommand(AltitudeCase):
     def test_make_exposes_one_operator_command(self):
         makefile = (REPO / "Makefile").read_text()
         restart = makefile.split("restart:", 1)[1].split("\ninstall-service:", 1)[0]
@@ -69,15 +70,42 @@ class TestRestartCommand(unittest.TestCase):
             self.assertEqual((dist / "version").read_text(), "old")
             self.assertFalse(staging.exists())
 
-    def test_a_blocked_task_with_an_idle_claude_job_does_not_hold_the_restart(self):
+    def test_decision_11_script_allows_running_and_blocked_workers_and_waiting_reports(self):
         restart = load_script()
-        task = {"slug": "checkpointed", "agent_id": "b0cdaeb1", "l2_engine": "claude", "state": "blocked"}
-        idle = [{"id": "b0cdaeb1", "state": "blocked", "status": "idle"}]
-        busy = [{"id": "b0cdaeb1", "state": "blocked", "status": "busy"}]
-        self.assertFalse(restart.worker_is_live("altitude", task, idle))
-        self.assertTrue(restart.worker_is_live("altitude", task, busy))
-        self.assertFalse(restart.worker_is_live("altitude", task, [{"id": "b0cdaeb1", "state": "stopped", "status": "exited"}]))
-        self.assertFalse(restart.worker_is_live("altitude", task, []))
+        self.private_ledgers()
+        for state in ("running", "blocked", "reported"):
+            task = T.new(self.project, state, "request", actor="burak")
+            task.update(state=state, agent_id="detached")
+            S.save_task(self.project, task)
+        with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "active"}), \
+                mock.patch.object(restart, "fetch", return_value=b'{"restart":{"waiting_for":[]}}'):
+            restart.require_idle()
+        self.assertTrue(config.restart_in_progress())
+        pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
+        pending["requested_at"] = "2026-09-07T08:00:00+00:00"
+        S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, pending)
+        with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "inactive"}):
+            restart.require_idle()
+        self.assertEqual(S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)["requested_at"],
+                         pending["requested_at"])
+
+    def test_script_rechecks_dispatch_claim_l3_and_report_verification(self):
+        restart = load_script()
+        self.private_ledgers()
+        task = T.new(self.project, "launching", "request", actor="burak")
+        with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "inactive"}):
+            for field in ("dispatching", "resume_claim"):
+                task[field] = "claim"; S.save_task(self.project, task)
+                with self.assertRaisesRegex(restart.RestartError, "active"):
+                    restart.require_idle()
+                task.pop(field); S.save_task(self.project, task)
+            with config.restart_lock():
+                with self.assertRaisesRegex(restart.RestartError, "active"):
+                    restart.require_idle()
+        with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "active"}), \
+                mock.patch.object(restart, "fetch", return_value=b'{"restart":{"waiting_for":["L3"]}}'):
+            with self.assertRaisesRegex(restart.RestartError, "L3"):
+                restart.require_idle()
 
 
 if __name__ == "__main__":

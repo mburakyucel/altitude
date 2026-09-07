@@ -14,20 +14,18 @@ import tempfile
 import time
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import quote
 from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from altitude import config, dispatch, engines, git_policy, state as S  # noqa: E402
+from altitude import config, dispatch, git_policy, state as S  # noqa: E402
 
 
 SERVICE = "altitude.service"
 WEB = ROOT / "web"
 DIST = WEB / "dist"
-TERMINAL_WORKER_STATES = {"failed", "done", "stopped"}
 
 
 class RestartError(RuntimeError):
@@ -79,56 +77,28 @@ def require_deployed_checkout() -> None:
         raise RestartError(str(exc)) from exc
 
 
-def worker_is_live(project: str, task: dict, claude_rows: list[dict] | None) -> bool:
-    worker_id = task.get("agent_id")
-    if not worker_id:
-        return False
-    if (task.get("l2_engine") or "claude") == "codex":
-        row = engines.codex_worker(worker_id, job_root=dispatch.l2_job_root(project, task["slug"]))
-        if row is None:
-            raise RestartError(f"cannot prove Codex worker {worker_id} has exited")
-    else:
-        row = next((item for item in (claude_rows or []) if item.get("id") == worker_id), None)
-        if row is None:
-            return False
-        # A Claude job stays registered, idle, after its task blocks; it lives under the claude daemon, not
-        # altd's cgroup, survives the restart and is re-attached on resume. Only a job mid-turn holds the
-        # restart (2026-09-03 08:32Z: a task checkpointed for the restart refused the restart it waited for).
-        if row.get("status") == "idle":
-            return False
-    return row.get("state") not in TERMINAL_WORKER_STATES and row.get("status") != "exited"
-
-
 def require_idle() -> None:
-    projects = config.load_projects()
-    tasks = [(project, task) for project in projects for task in S.list_tasks(project)]
-    needs_claude = any(
-        task.get("agent_id") and (task.get("l2_engine") or "claude") == "claude"
-        for _project, task in tasks
-    )
-    claude_rows = engines.claude_agents() if needs_claude else None
-    active: list[str] = []
-    for project, task in tasks:
-        state = task.get("state")
-        if task.get("dispatching"):
-            active.append(f"{project}/{task['slug']} (dispatch in progress)")
-        elif state in {"running", "reported"}:
-            active.append(f"{project}/{task['slug']} ({state})")
-        elif state == "blocked" and worker_is_live(project, task, claude_rows):
-            active.append(f"{project}/{task['slug']} (blocked but worker still live)")
-    if active:
-        raise RestartError("restart refused while work is active: " + ", ".join(active))
+    # Decision 11 (2026-09-07): detached workers survive; only launch/bind, L3 and report windows hold.
+    # Ask the live daemon too: its L3 turns and verification are process-local, unlike task markers.
     if unit_properties().get("ActiveState") == "active":
-        busy_l3: list[str] = []
-        for project in projects:
-            try:
-                status = json.loads(fetch(f"/api/chat/{quote(project, safe='')}"))
-            except (RestartError, ValueError, json.JSONDecodeError) as exc:
-                raise RestartError(f"cannot prove {project} L3 is idle: {exc}") from exc
-            if status.get("busy"):
-                busy_l3.append(project)
-        if busy_l3:
-            raise RestartError("restart refused while L3 is active: " + ", ".join(busy_l3))
+        try:
+            status = json.loads(fetch("/api/overview")).get("restart") or {}
+        except (RestartError, ValueError) as exc:
+            raise RestartError(f"cannot prove Altitude is quiet: {exc}") from exc
+        if status.get("waiting_for"):
+            raise RestartError("restart refused while work is active: " + ", ".join(status["waiting_for"]))
+    with config.restart_lock(exclusive=True) as quiet:
+        active = [f"{p}/{t['slug']}" for p in config.load_projects() for t in S.list_tasks(p)
+                  if t.get("dispatching") or t.get("resume_claim")]
+        if not quiet or active:
+            raise RestartError("restart refused while dispatch, L3 or report verification is active: " + ", ".join(active))
+        # The operator command also closes entry until the replacement daemon answers.
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        pending = S.read_json(flag, {}) or {}
+        if pending.pop("failed", None):
+            pending.pop("requested_at", None)
+        pending.setdefault("requested_at", S.now())
+        S.write_json(flag, pending)
 
 
 def validate_bundle(directory: Path) -> None:
