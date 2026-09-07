@@ -248,9 +248,10 @@ positive issue number and an explicit reason, accepts no body or publishing opti
 `not-planned` to GitHub as `not planned`. After GitHub succeeds, altd returns the checkout-origin issue
 URL and appends an `issue-close` project event with actor, number, reason, title, and URL. L2 issue
 permissions and the read-only `gh` broker remain unchanged.
-These verbs publish only to the selected project's checkout origin. Another project's L3 has no
-upstream repository override; the operator reports Altitude defects through its GitHub feedback
-route, with a fictional or redacted reproduction and private incident evidence kept locally.
+New, comment and close target only the selected project's checkout origin, with no repository
+override. L3 can explicitly file an Altitude defect with the separate create-only
+`alt issue upstream` verb through the same transport. Its product target and public reproduction
+contract are described under [faults](#faults); private evidence stays in the calling project.
 
 ## Faults
 
@@ -272,10 +273,21 @@ is available; L3 records the learning on the incident and fixes the cause direct
 ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
-Repairs remain owned by the affected project. Upstream Altitude implementation defects are tracked
-through the operator's [GitHub feedback route](../README.md#feedback); they do not inject messages
-into Altitude's L3 or create another project's recovery task there. Reporting an issue does not
-automatically turn it into an Altitude task.
+Project-local repairs remain owned by the affected project. Its L3 reports Altitude implementation
+defects with [`alt issue upstream`](CLI.md#upstream-altitude-defects), a create-only exception to the
+project-local issue verbs. The daemon owns the product target seam: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`
+in altd's environment, defaulting to the installed Altitude checkout's GitHub origin. Resolution
+uses neither the calling project's origin nor a registered `altitude` project's state. The caller
+cannot override the destination, attach files, label, comment on, or close upstream issues.
+
+The same issue parser and handler serve the project-bound broker/MCP transport and operator HTTP
+API. Upstream bodies contain only caller-authored expected behavior, actual behavior, reproduction,
+and optional version. The handler rejects recognizable credentials, home paths and private evidence
+references before invoking `gh issue create`. It returns the confirmed URL or an actionable failure,
+and records only actor, title and URL in an `issue-upstream` event in the calling project. It reads no
+incidents or conversations, transfers no fault evidence, queues no L3 messages and creates no tasks.
+The reporting project's L3 does not repair Altitude; Altitude's operator/coordinator selects any
+implementation separately. There is no automatic intake from issues.
 
 A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle

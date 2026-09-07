@@ -17,7 +17,7 @@ L3_COMMANDS = {
     ("project", "set"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("repo", None), ("pr", None), ("l3", "tools"),
-    ("issue", "new"), ("issue", "comment"), ("issue", "close"),
+    ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "list")),

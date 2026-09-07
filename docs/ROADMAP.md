@@ -50,6 +50,12 @@ stays separate from ordinary source work and requires explicit authorization.
 
 ## Current product work
 
+Project L3s can report Altitude defects now through
+[`alt issue upstream`](CLI.md#upstream-altitude-defects). Reporting is create-only, uses the
+installation's product target and a fictional/redacted reproduction, and leaves local evidence and
+recovery in the affected project. Altitude's operator/coordinator selects implementation separately;
+there is no automatic upstream issue intake or cross-project repair.
+
 The product redesign, approved on 2026-09-05, replaced the 2026-09-03 wireframes under
 `design/wireframes/`; its `SPEC.md` governs the UI and lists the implementation slices, each one
 task. The durable backlog is GitHub issues selected by the operator. The current priorities are:

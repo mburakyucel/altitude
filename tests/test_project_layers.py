@@ -61,7 +61,7 @@ OPERATOR_BASELINE = {
     "docs/SESSION_LIFECYCLE.md": 5,
     "docs/SIMPLIFICATION.md": 6,
     "personas/l2.md": 6,
-    "personas/l3.md": 10,
+    "personas/l3.md": 9,
     "web/src/data/api.ts": 1,
     "web/src/routes/Task.test.tsx": 1,
 }

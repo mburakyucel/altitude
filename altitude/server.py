@@ -1517,16 +1517,18 @@ def issue_parser() -> argparse.ArgumentParser:
             raise ValueError(f"alt issue: {message}")
 
         def exit(self, status=0, message=None):
-            raise ValueError(message or "use alt issue new --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
+            raise ValueError(message or "use alt issue new/upstream --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
 
     parser = Parser(prog="alt issue", add_help=False)
     commands = parser.add_subparsers(dest="operation", required=True)
     new = commands.add_parser("new")
     new.add_argument("--title", required=True)
     new.add_argument("--label", action="append", dest="labels")
+    upstream = commands.add_parser("upstream")
+    upstream.add_argument("--title", required=True)
     comment = commands.add_parser("comment")
     comment.add_argument("number", type=int)
-    for command in (new, comment):
+    for command in (new, comment, upstream):
         command.add_argument("text", choices=["-"])
     close = commands.add_parser("close")
     close.add_argument("number", type=int)
@@ -1534,42 +1536,94 @@ def issue_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def upstream_issue_repository() -> str:
+    """The installation's product seam, independent of the calling project's registry or origin."""
+    target = config.UPSTREAM_ISSUE_REPOSITORY
+    if target is None:
+        try:
+            origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.REPO,
+                                    capture_output=True, text=True, timeout=10)
+            target = repository_url(origin.stdout) if origin.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            target = None
+    elif re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", target):
+        target = "https://github.com/" + target
+    repository = repository_url(target or "")
+    if not repository:
+        raise ValueError("alt issue upstream: operator must configure ALTITUDE_UPSTREAM_ISSUE_REPOSITORY "
+                         "in altd as the Altitude GitHub owner/repository, or install from a GitHub origin")
+    return repository
+
+
+def upstream_issue_body(body: str) -> str:
+    """Accept only a deliberately authored reproduction; never read local incident/session evidence."""
+    try:
+        report = json.loads(body)
+    except ValueError:
+        report = None
+    required = {"expected", "actual", "reproduction"}
+    if (not isinstance(report, dict) or not required <= report.keys()
+            or report.keys() - required - {"version"}
+            or any(not isinstance(value, str) or not value.strip() for value in report.values())):
+        raise ValueError("alt issue upstream: stdin must be a fictional/redacted JSON object with nonempty "
+                         "expected, actual, reproduction strings and optional version; no evidence attachments")
+    return "\n\n".join(f"## {label}\n{report.get(key, 'unknown')}" for key, label in (
+        ("expected", "Expected behavior"), ("actual", "Actual behavior"),
+        ("reproduction", "Fictional/redacted reproduction"), ("version", "Altitude version"))) + "\n"
+
+
 def issue_write(project: str, operation: str, body: str, *, actor: str,
                 title: str = "", labels: list[str] | None = None, number: int | None = None,
                 reason: str | None = None) -> str:
-    """Altd handles requested backlog and operator-requested closure using its gh login."""
+    """Altd owns project-local issues and the create-only upstream reporting exception."""
     if actor not in ("l3", "operator"):
         raise ValueError("alt issue: not available to an L2 worker")
-    if operation not in ("new", "comment", "close"):
-        raise ValueError("alt issue: only new, comment, and close are available")
+    if operation not in ("new", "comment", "close", "upstream"):
+        raise ValueError("alt issue: only new, comment, close, and upstream are available")
+    creating = operation in ("new", "upstream")
     if (not isinstance(body, str) or not isinstance(title, str)
             or labels is not None and (not isinstance(labels, list) or any(not isinstance(x, str) for x in labels))):
         raise ValueError("alt issue: body, title, and labels must be text")
-    if operation == "new" and not title.strip():
-        raise ValueError("alt issue new: title is required")
+    if creating and not title.strip():
+        raise ValueError(f"alt issue {operation}: title is required")
     if operation in ("comment", "close") and (type(number) is not int or number < 1):
         raise ValueError(f"alt issue {operation}: a positive issue number is required")
-    if (operation != "new" and (title or labels) or operation == "new" and number is not None
+    if (not creating and (title or labels) or creating and number is not None
+            or operation == "upstream" and labels is not None
             or operation != "close" and reason is not None):
         raise ValueError("alt issue: fields do not match the operation")
     if operation == "close" and (reason not in ISSUE_CLOSE_REASONS or body):
         raise ValueError("alt issue close: --reason completed|not-planned is required; no body is accepted")
+    if operation == "upstream":
+        body = upstream_issue_body(body)
     # Private incident evidence boundary: local evidence never leaves the machine in a public issue.
     public_text = unquote("\n".join([body, title, *(labels or [])]))
     home = str(Path.home()) + "/"
     absolute_paths = re.findall(r"/[^\s`'\"<>\[\]{}()]+", public_text)
     if (home in public_text
             or any((os.path.normpath("/" + path.lstrip("/")) + "/").startswith(home) for path in absolute_paths)
-            or re.search(r"\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)", public_text, re.I)):
+            or re.search(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|"
+                         r"\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
+                         r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b|\.altitude/", public_text, re.I)):
         raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
+    if re.search(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|"
+                 r"AKIA[A-Z0-9]{16})\b|-----BEGIN [\w ]*PRIVATE KEY-----|"
+                 r"\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|"
+                 r"(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
+                 r"(?!\[REDACTED\]|<REDACTED>)[A-Za-z0-9_+/.-]{8,}|"
+                 r"https?://[^\s/@:]+:[^\s/@]+@", public_text, re.I):
+        raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
     checkout = config.project_path(project)
-    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                            capture_output=True, text=True, timeout=10)
-    repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+    if operation == "upstream":
+        repository = upstream_issue_repository()
+    else:
+        origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                                capture_output=True, text=True, timeout=10)
+        repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt issue: checkout origin must identify a GitHub repository")
-    args = ["gh", "issue", "create" if operation == "new" else operation]
-    if operation == "new":
+    args = ["gh", "issue", "create" if creating else operation]
+    if creating:
         args += [f"--title={title}", *(f"--label={label}" for label in labels or [])]
     else:
         args.append(str(number))
@@ -1577,14 +1631,28 @@ def issue_write(project: str, operation: str, body: str, *, actor: str,
     args += ["--reason", reason.replace("-", " ")] if operation == "close" else ["--body-file", "-"]
     env = engines.clean_env()
     env.pop("GH_REPO", None)
-    result = subprocess.run(args, input=body, cwd=checkout, env=env,
-                            capture_output=True, text=True, timeout=120)
+    try:
+        result = subprocess.run(args, input=body, cwd=checkout, env=env,
+                                capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        if operation != "upstream":
+            raise
+        raise ValueError("alt issue upstream: GitHub request unavailable or timed out. Operator: check for an "
+                         "existing report before retrying; verify altd's gh installation, authentication "
+                         f"and access to {repository}.") from exc
     if result.returncode:
+        if operation == "upstream":
+            raise ValueError("alt issue upstream: GitHub refused the report. Operator: check for an existing "
+                             "report before retrying; verify altd's gh authentication and issue access "
+                             f"to {repository}.")
         raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
     url = f"{repository}/issues/{number}" if operation == "close" else result.stdout.strip()
+    if operation == "upstream" and not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url, re.I):
+        raise ValueError("alt issue upstream: GitHub returned no confirmed issue URL. Operator: check for the "
+                         f"report before retrying at {repository}/issues")
     with S.project_lock(project):
         S.project_log(project, f"issue-{operation}", actor=actor,
-                      title=title if operation == "new" else f"Issue #{number}", url=url,
+                      title=title if creating else f"Issue #{number}", url=url,
                       **({"number": number, "reason": reason} if operation == "close" else {}))
     return url
 

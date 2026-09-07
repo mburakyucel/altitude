@@ -144,9 +144,11 @@ another affected task still gets a coordinator notification. Repair-task faults 
 coordinator again. Machine faults without a project notify the registered `altitude` project, or
 remain in the machine fault ledger when it is absent.
 
-An upstream Altitude defect is reported through the [GitHub feedback route](#feedback) with a
-fictional or redacted reproduction. The affected project's incident evidence, tasks and coordinator
-conversation stay in that project. Reporting an issue does not start recovery work in Altitude.
+A project's L3 reports an upstream Altitude defect with
+[`alt issue upstream`](docs/CLI.md#upstream-altitude-defects), supplying a fictional or redacted
+reproduction. The affected project's incident evidence, tasks and coordinator conversation stay in
+that project. Reporting creates only a GitHub issue; Altitude's operator/coordinator selects any
+implementation separately. The reporting L3 does not repair Altitude or create an Altitude recovery task.
 
 ## Remove a project
 
@@ -183,3 +185,9 @@ with what they tried, expected behavior, actual behavior, and a small reproducib
 Setup friction and confusing product language are useful feedback too. Keep examples fictional
 or redacted; send security-sensitive details privately to the maintainer through your invitation
 channel. See [contributor guidance](CONTRIBUTING.md) before proposing implementation work.
+
+Managed projects' L3s can use `alt issue upstream --title "…" -` through their coordinator transport.
+The JSON body describes expected and actual behavior, a fictional/redacted reproduction, and the
+version if known. Altd resolves the product repository from its installation origin or the operator's
+`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` setting; callers cannot choose a destination or other upstream
+action. See [the command and MCP example](docs/CLI.md#upstream-altitude-defects).

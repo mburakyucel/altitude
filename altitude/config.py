@@ -22,6 +22,8 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
         "set ALTITUDE_HOME to a throwaway directory before importing altitude"
     )
 REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, schemas/, templates/, web/
+# Product issue target, set only in altd's environment. Unset uses this installation's origin.
+UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
 PERSONAS = REPO / "personas"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"

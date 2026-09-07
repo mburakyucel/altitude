@@ -58,11 +58,11 @@ The repository comes from the selected project's checkout origin; issue numbers 
 integers, and URLs or repository overrides are refused. The L3 socket fixes the project.
 
 New and comment read their public body from stdin; titles, labels, and bodies must exclude home paths
-and private incident evidence. Close requires `--reason completed` for finished work or
+and private incident evidence; recognizable credentials and tokens are rejected too. Close requires `--reason completed` for finished work or
 `--reason not-planned` for work the operator decides not to pursue. Altd maps the latter to GitHub's
 `not planned` reason. Close accepts no stdin body, title, labels, or comment option; a separately
 requested public explanation uses `alt issue comment` and its existing evidence check. No other issue
-mutations or direct `gh` writes are enabled.
+mutations or direct `gh` writes are enabled except the create-only upstream report below.
 
 The coordinator MCP tool takes, for example,
 `{"kind":"alt","args":["issue","close","42","--reason","completed"]}`.
@@ -71,6 +71,55 @@ The operator CLI uses `POST /api/issue` with
 `body` may be omitted or empty. Both paths apply the same operation validation and return the issue
 URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful closure appends an
 `issue-close` project event with actor, number, reason, title, and URL; failed calls record no success.
+
+### Upstream Altitude defects
+
+```sh
+alt issue upstream --title "Fictional resume defect" - <<'JSON'
+{
+  "expected": "The fictional Atlas task resumes once.",
+  "actual": "The task remains blocked.",
+  "reproduction": "Create a toy project, block its task, then request resume.",
+  "version": "example-build-123"
+}
+JSON
+```
+
+L3 can explicitly report an Altitude defect from any managed project. The command creates only a
+GitHub issue in the installation's Altitude issue repository; it does not fix Altitude, create a
+recovery task, wake Altitude's L3, or copy local incidents or conversations. Altitude's
+operator/coordinator selects implementation separately. Ordinary recovery for the project's own
+problems stays in that project. Reporting does not enable automatic issue-to-task intake.
+
+Stdin is a JSON object with nonempty `expected`, `actual`, and `reproduction` strings, plus optional
+`version` (an Altitude release or commit if known; omission publishes `unknown`). Other fields are
+refused. Author a small fictional or redacted reproduction, never paste operational logs, incident
+evidence or conversation transcripts. All public fields, including the title and version, pass the
+same home-path, private-evidence and credential checks as ordinary issues. These checks catch
+recognizable patterns; the author must still redact private or security-sensitive details.
+Use `[REDACTED]` for a credential placeholder.
+
+The product target seam is `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in **altd's environment**, an
+operator-configured GitHub `owner/repository` or GitHub origin URL. Unset uses the installed
+Altitude source checkout's GitHub origin. A fork installation can configure its intended upstream
+there. An invalid or unavailable target fails with configuration instructions, with no fallback to
+the reporting project's repository. L3 cannot change this setting through the reporting verb;
+neither request fields nor the caller's environment choose the target. No `--repo`, `--target`,
+`--project`, file attachment, label, issue number, upstream comment or closure is accepted.
+
+The coordinator MCP tool receives argument arrays and a JSON string on stdin:
+
+```json
+{"kind":"alt","args":["issue","upstream","--title","Fictional resume defect","-"],"stdin":"{\"expected\":\"Resume once\",\"actual\":\"Still blocked\",\"reproduction\":\"Create a toy project, block its task, request resume\"}"}
+```
+
+The runtime `alt` shim uses the same project-bound broker. The operator CLI uses `POST /api/issue`
+with `project`, `operation: "upstream"`, `title` and `body` (the same JSON string); L2 issue writes
+remain denied. Success returns the issue URL and writes one `issue-upstream` event with actor,
+title and URL in the calling project's log, without the report body. Failures name configuration,
+GitHub authentication/access, or an unconfirmed result without echoing GitHub's private error output.
+After a timeout or unconfirmed response, the operator checks the target's issues before retrying to
+avoid duplicates; L3's GitHub read broker remains project-local.
 
 ## Project lifecycle
 
