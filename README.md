@@ -50,6 +50,7 @@ phase deleted.
   browser, and every badge counts decisions only.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
+- L3 and the operator file requested backlog through altd with `alt issue new --title "…" [--label …] -` or `alt issue comment <number> -` (body on stdin); L2 is refused, and public issues exclude home paths and private incident evidence.
 - An L2's question goes to L3 first, which answers from the record or escalates one plain dilemma;
   Burak sees only what L3 escalates or what the L2 flags for him.
 - A system fault blocks only its own task, records private incident evidence, and leaves one

@@ -153,10 +153,10 @@ and only that project's role-fenced altd Unix socket is reachable. A Claude L3 t
 `dontAsk` with unattended prompts denied, restricted settings, only Read/Grep/Glob/Bash, no editing
 tools, and exact read/`alt` command rules. Runtime shims send every `alt` invocation plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
-re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no write-shaped
-GitHub or service operation. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
+re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
+`alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the CLAUDE.md boundary, and record one project event with actor, title, and URL.
 
 ## Faults
 

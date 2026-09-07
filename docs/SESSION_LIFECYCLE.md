@@ -148,7 +148,7 @@ prompts, no Edit/Write/NotebookEdit tools, and an exact allowlist. Both can read
 log/diff-stat/show-stat shims and the altitude journal. Runtime shims send every `alt` invocation and fixed
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
-write shapes are absent. Claude's native Bash
+write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check. Claude's native Bash
 sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its
 hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
 Claude's confinement, while Codex retains its native filesystem sandbox.

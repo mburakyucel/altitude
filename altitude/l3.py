@@ -28,7 +28,7 @@ _turn_local = threading.local()
 
 L3_CONFINEMENT_VERSION = 1
 L3_TOOLS = "Read,Grep,Glob,Bash"
-ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS
+ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS + ",Bash(alt issue new *),Bash(alt issue comment *)"
 
 
 def _write_executable(path: Path, text: str) -> None:

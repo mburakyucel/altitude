@@ -17,6 +17,7 @@ L3_COMMANDS = {
     ("project", "set"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
     ("repo", None), ("pr", None), ("l3", "tools"),
+    ("issue", "new"), ("issue", "comment"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "list")),
@@ -214,6 +215,8 @@ def main(argv=None) -> None:
     pr = sub.add_parser("pr"); pr.add_argument("number", type=int); pr.add_argument("--json", action="store_true", dest="as_json")
     l3p = sub.add_parser("l3"); l3s = l3p.add_subparsers(dest="l3cmd", required=True)
     lt = l3s.add_parser("tools"); lt.add_argument("--days", type=int, default=7); lt.add_argument("--json", action="store_true", dest="as_json")
+    from altitude import server
+    sub.add_parser("issue", parents=[server.issue_parser()], add_help=False)
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
@@ -238,8 +241,31 @@ def main(argv=None) -> None:
                      getattr(args, "icmd", None) if c == "incident" else
                      getattr(args, "pcmd", None) if c == "project" else
                      getattr(args, "l3cmd", None) if c == "l3" else None)
+    if c == "issue":
+        actor_command = (c, args.operation)
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
+    if c == "issue":
+        import ssl
+        import urllib.error
+        import urllib.request
+        payload = {"project": _project(args), "operation": args.operation, "body": sys.stdin.read(),
+                   **{key: getattr(args, key) for key in ("title", "labels", "number") if hasattr(args, key)}}
+        # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
+        if ACTOR == "l3":
+            sys.exit("alt issue: L3 must use its project-bound runtime alt socket")
+        tls = config.TLS and all((config.TLS_DIR / name).is_file() for name in ("server.crt", "server.key"))
+        context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt")) if tls else None
+        request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/issue",
+                                         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, context=context, timeout=130) as response:
+                out(json.load(response)["url"])
+        except urllib.error.HTTPError as exc:
+            sys.exit("alt issue: " + json.load(exc).get("error", str(exc)))
+        except OSError as exc:
+            sys.exit(f"alt issue: altd unavailable: {exc}")
+        return
     if c == "project":
         if args.pcmd == "set":
             from altitude import dispatch
@@ -434,5 +460,5 @@ def main(argv=None) -> None:
 if __name__ == "__main__":
     try:
         main()
-    except T.TransitionError as e:
+    except (T.TransitionError, ValueError) as e:
         sys.exit(f"alt: {e}")
