@@ -59,6 +59,11 @@ ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
 #: The operator seam: the one configured name the UI shows where a name is shown.
 OPERATOR = os.environ.get("ALTITUDE_OPERATOR") or "Operator"
 PRIMARY_DEFAULT_ENGINE = os.environ.get("ALTITUDE_PRIMARY_ENGINE", "codex")
+# Ordered tiers; order within a tie settles unknown/equal weekly headroom.
+AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_DEFAULT_ENGINE == "claude" else None},
+                 {"engine": "claude" if PRIMARY_DEFAULT_ENGINE != "claude" else "codex",
+                  "model": "fable" if PRIMARY_DEFAULT_ENGINE != "claude" else None}],
+                [{"engine": "claude", "model": "opus"}]]
 # Codex model and effort come from the Codex CLI's configuration and are recorded per session.
 CODEX_EFFORT = {"l3": None}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
@@ -72,6 +77,49 @@ PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
+
+
+def parse_routing(value: str) -> list[list[dict]]:
+    """Operator syntax: comma ties options, > starts a lower priority tier."""
+    tiers, seen = [], set()
+    for tier in value.split(">"):
+        options = []
+        for item in tier.split(","):
+            engine, separator, model = item.strip().partition(":")
+            if engine not in ENGINES or separator and (not model or any(c.isspace() for c in model)):
+                raise ValueError("routing needs engine[:model] options, comma ties, and > between tiers")
+            key = (engine, model or None)
+            if key in seen:
+                raise ValueError(f"duplicate routing option: {item.strip()}")
+            seen.add(key)
+            options.append({"engine": engine, "model": model or None})
+        tiers.append(options)
+    return tiers
+
+
+def default_model(role: str, engine: str) -> str | None:
+    return MODELS[role] if engine == "claude" else None
+
+
+def pinned_option(role: str, project: dict, *, engine: str | None = None,
+                  model: str | None = None) -> dict | None:
+    """Launch overrides are separate from Auto preferences and observed session models."""
+    overrides = {"claude": project.get(f"{role}_model"), "codex": project.get(f"{role}_codex_model")}
+    if model and not engine:
+        engine = "claude" if model in MODEL_ALIASES else project.get(f"{role}_engine")
+        if not engine:
+            raise ValueError("a model pin requires --engine for this model")
+    engine = engine or project.get(f"{role}_engine")
+    if not engine and any(overrides.values()):
+        choices = [key for key, value in overrides.items() if value]
+        if len(choices) != 1:
+            raise ValueError(f"set {role}_engine to disambiguate the project's model pins")
+        engine = choices[0]
+    if not engine:
+        return None
+    if engine not in ENGINES:
+        raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
+    return {"engine": engine, "model": model or overrides.get(engine) or default_model(role, engine)}
 
 
 @contextmanager

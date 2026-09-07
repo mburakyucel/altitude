@@ -53,6 +53,90 @@ CODEX_PATCH_NOTE = (
 )
 
 
+def installation(engine: str) -> dict:
+    """An executable proves installation, never account or model access."""
+    binary = {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}[engine]
+    if not shutil.which(binary):
+        return {"available": False, "why": f"{engine} executable is missing; install it or configure its binary"}
+    return {"available": None, "why": "installed; account and model access are unknown until the provider responds"}
+
+
+def _event_error(engine: str, event: dict):
+    if event.get("type") in ("error", "turn.failed"):
+        return event.get("error") or event.get("message") or event
+    if engine == "claude":
+        if event.get("type") == "result" and event.get("is_error"):
+            return {key: event.get(key) for key in ("error", "errors", "result")}
+        message = event.get("message") or {}
+        if event.get("type") == "assistant" and message.get("model") == "<synthetic>":
+            return {"error": event.get("error"), "message": message.get("content")}
+    return None
+
+
+def rejection(engine: str, result: dict, model: str | None = None) -> dict | None:
+    """Recognize provider rejection evidence, without echoing tokens or arbitrary provider text.
+
+    Claude's error codes/messages are emitted by stream-json; Codex includes API errors in turn.failed.
+    Capacity, transport errors, plan names, and a generic permission/404 failure prove no model entitlement.
+    """
+    errors = [result.get(key) for key in ("error", "stderr", "raw_stderr", "detail", "synthetic")]
+    errors.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    text = "\n".join(value if isinstance(value, str) else json.dumps(value) for value in errors if value)
+    codes = set(re.findall(r'"(?:code|type|error)"\s*:\s*"([a-z_]+)"', text))
+    if text.strip() in ("model_not_found", "authentication_error", "invalid_api_key"):
+        codes.add(text.strip())
+    model_missing = "model_not_found" in codes
+    if engine == "claude":
+        model_missing |= bool(re.search(
+            r"There's an issue with the selected model \([^\n]+\)\. It may not exist or you may not have access to it\.", text))
+        if model:
+            model_missing |= bool(re.search(r"The model " + re.escape(model) + r" is not available on your [^\n]+ deployment\.", text))
+        auth = bool(codes & {"authentication_error", "invalid_api_key"}) or any(message in text for message in (
+            "Not logged in", "Invalid API key", "Invalid auth token",
+            "Failed to authenticate: OAuth session expired and could not be refreshed"))
+    elif engine == "codex":
+        auth = bool(codes & {"authentication_error", "invalid_api_key"}) or any(message in text for message in (
+            "Your access token could not be refreshed", "You do not have access to Codex",
+            "This account is not currently authorized to use Codex in this workspace")) or text.strip() == "Not logged in"
+    else:
+        raise ValueError(f"unknown engine {engine!r}")
+    if auth:
+        return {"scope": "engine", "why": "provider rejected authentication or account access; sign in and verify access"}
+    if model_missing:
+        return {"scope": "model", "why": "provider rejected the selected model as missing or inaccessible; configure an accessible model"}
+    return None
+
+
+def _safe_event(engine: str, event: dict) -> bool:
+    """Only initialization and failure evidence can justify replaying a rejected turn."""
+    typ = event.get("type")
+    if typ in ("thread.started", "turn.started", "turn.failed", "error"):
+        return True
+    if engine == "claude":
+        if typ == "system" and event.get("subtype") in ("init", "status", "api_retry"):
+            return True
+        if typ == "result":
+            return bool(event.get("is_error"))
+        if typ == "assistant":
+            message = event.get("message") or {}
+            return message.get("model") == "<synthetic>" and all(
+                item.get("type") == "text" for item in message.get("content") or [])
+    return False
+
+
+def _safe_output(engine: str, text: str) -> bool:
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(event, dict) or not _safe_event(engine, event):
+            return False
+    return True
+
+
 def cap_raw(data: bytes, cap: int, *, total: int | None = None) -> tuple[bytes, bool]:
     """Cap raw bytes, retaining the head and tail with an exact drop notice."""
     total = len(data) if total is None else total
@@ -270,7 +354,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
                 "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": held,
-                "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+                "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False,
+                "safe_to_retry": True, "rejection": None}
     cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
            "--permission-mode", permission_mode]
     if permission_prompts:
@@ -320,13 +405,17 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
     failure = None
+    safe_to_retry, rejected = True, None
     try:
         for line in proc.stdout:
             stdout_capture.add(line)
             try:
                 o = json.loads(line)
             except ValueError:
+                safe_to_retry = False
                 continue
+            safe_to_retry = safe_to_retry and _safe_event("claude", o)
+            rejected = rejection("claude", {"error": _event_error("claude", o)}, model) or rejected
             if o.get("session_id"):
                 out["session_id"] = o["session_id"]
             typ = o.get("type")
@@ -386,6 +475,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         out["error"] = f"usage limit: window exhausted until {lim}"
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
+    out.update(safe_to_retry=safe_to_retry, rejection=rejected or rejection("claude", out, model))
     if schema and out["structured"] is None and out["text"]:
         try:
             out["structured"] = json.loads(out["text"])
@@ -1000,14 +1090,23 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
                       or paths["stdout"].read_text(errors="replace")[-500:] or "Worker exited without a result")
         except OSError:
             detail = "Worker exited without a result"
-    return {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
+    row = {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
             "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
             "detail_at": max((paths[k].stat().st_mtime for k in ("stdout", "stderr") if paths[k].exists()),
                              default=paths["record"].stat().st_mtime),
             "startedAt": record.get("started_at"), "engine": engine,
+            "resumed": bool(record.get("resume")),
             "engine_model": next((e["model"] for e in events if e.get("model")), record.get("engine_model")),
             "engine_reasoning_effort": record.get("engine_reasoning_effort")}
+    # Auto may retry only a settled rejection with the entire turn proving no assistant/tool activity.
+    try:
+        stdout = paths["stdout"].read_text(errors="replace")
+        row.update(safe_to_retry=not alive and _safe_output(engine, stdout),
+                   rejection=rejection(engine, {"detail": detail, "raw_stdout": stdout}, record.get("launch_model")))
+    except OSError:
+        row.update(safe_to_retry=False, rejection=None)
+    return row
 
 
 def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
@@ -1056,7 +1155,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
               "started_at": datetime.now(timezone.utc).isoformat(),
               "codex_home": str(_codex_home(codex_env(extra_env))),
-              "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None}
+              "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
+              "launch_model": model}
     S.write_json(paths["record"], record)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
@@ -1083,10 +1183,13 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             row = codex_worker(worker_id, job_root=root) or {}
             detail = (f"resumed a different {engine.title()} thread" if thread_id else
                       row.get("detail") or "no session initialization event")
-            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row}
+            return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row,
+                    "rejection": row.get("rejection"), "safe_to_retry": not thread_id and row.get("safe_to_retry", False)}
         record["session_id"] = thread_id
         S.write_json(paths["record"], record)
-        return {"stdout": "", "stderr": "", "returncode": 0, "agent": codex_worker(worker_id, job_root=root)}
+        row = codex_worker(worker_id, job_root=root)
+        return {"stdout": "", "stderr": "", "returncode": 0, "agent": row,
+                "rejection": row.get("rejection"), "safe_to_retry": row.get("safe_to_retry", False)}
     except BaseException as exc:
         # I-20260907-171446: startup must not leave an unbound worker that a retry duplicates.
         try:
@@ -1250,12 +1353,21 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
              if event.get("type") == "item.completed"
              and (event.get("item") or {}).get("type") == "command_execution"]
     thread = _codex_thread(events)
-    return {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
+    failure = next((_event_error("codex", event) for event in reversed(events)
+                    if event.get("type") == "turn.failed" or
+                    (proc.returncode != 0 and event.get("type") == "error")), None)
+    result = {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
             "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
             "tools": tools, **metadata,
-            "error": None if proc.returncode == 0 else (stderr or "").strip()[:500],
+            "error": (failure if isinstance(failure, str) else json.dumps(failure))[:500] if failure else
+                     None if proc.returncode == 0 else (stderr or "").strip()[:500],
             "raw_stdout": stdout or "", "raw_stderr": stderr or "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+    result.update(safe_to_retry=_safe_output("codex", stdout or ""), rejection=rejection("codex", result, model))
+    limited = usage_limit_in(result.get("error"))
+    if limited:
+        result["limited"] = limited
+    return result
 
 
 def context_percent(context_tokens: int, engine: str = "claude") -> float:

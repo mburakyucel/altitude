@@ -509,20 +509,13 @@ def _handoff(history: list[dict], engine: str, since: str | None) -> str:
     return "[altitude] Cross-provider chat missed by this session (oldest first):\n" + "\n".join(lines) + "\n\n"
 
 
-def _select(project: str, engine: str | None = None) -> dict:
-    """The engine for one turn: Burak's choice for this turn, else the project pin, else the quota route."""
-    proj = config.project(project)
-    forced = engine or proj.get("l3_engine")
-    held = engines.usage_hold()
-    if held and not forced:
-        choice = route.pick_engine("l3", forced="codex")
-        if choice.get("engine"):
-            choice["why"] = f"Claude short-window hold until {held}; " + choice["why"]
-        return choice
-    choice = route.pick_engine("l3", forced=forced, current=info(project).get("engine_last"))
-    if engine and choice.get("engine"):
-        choice["why"] = "chosen by Burak for this turn"
-    return choice
+def _select(project: str, engine: str | None = None, *, model: str | None = None, excluded: tuple = ()) -> dict:
+    """Shared Auto policy or an explicit turn/project pin; session observation is never a pin."""
+    proj, inf = config.project(project), info(project)
+    current = inf.get("engine_last")
+    session = (inf.get("sessions") or {}).get(current, {})
+    return route.pick_engine("l3", forced=engine, model=model, project=proj,
+                             current=current, current_model=session.get("launch_model"), excluded=excluded)
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
@@ -539,91 +532,104 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                                 slug=slug)
             return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
-        choice = _select(project, requested)
-        if not choice.get("engine"):
-            return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
-                    "turns": 0, "structured": None, "error": f"engine hold: {choice['why']}", "tools": [],
-                    "skipped": False, "completed": False, "_turn_started_at": None, "routing": choice,
-                    "turn_id": turn_id}
-        engine = choice["engine"]
-        proj = config.project(project)
-        S.regen_state_md(project)
-        inf = info(project)
-        sessions = inf.setdefault("sessions", {})
-        session = sessions.setdefault(engine, {})
-        sid = session.get("session_id")
-        over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
-        confinement_changed = bool(sid) and session.get("confinement_version") != L3_CONFINEMENT_VERSION
-        fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
-        if fresh and sid:
-            rotate_reason = "L3 confinement policy changed" if confinement_changed else (
-                session.get("rotate_reason") or "context threshold")
-            S.project_log(project, "l3-rotate", engine=engine, old=sid,
-                          reason=rotate_reason)
-            session.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
-                            "context_percent": 0, "rotated_from": sid, "rotated_at": S.now()})
-            inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
-                        "context_percent": 0, "rotated_from": sid, "rotated_at": session["rotated_at"]})
-            save_info(project, inf)
-            sid = None
-        history = chat_history(project, 60)
-        handoff = _handoff(history, engine, session.get("last_turn"))
+        choice = _select(project, requested, model=model)
         turn_started_at = active_turn["started_at"]
-        chat_log(project, "user", prompt, trigger=trigger, engine=engine, at=turn_started_at, turn_id=turn_id,
-                 **_slug_meta(slug))
-        if engine == "codex":
-            res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
-                              handoff, model=model, on_start=on_start, slug=slug)
-        else:
-            text = _header(project, trigger, fresh, slug) + handoff + prompt
-            runtime = _l3_runtime(project, "claude")
-            try:
-                res = engines.claude_print(
-                    text, cwd=runtime, resume=None if fresh else sid,
-                    persona=config.PERSONAS / "l3.md", allowed_tools=ALLOWED_TOOLS, tools=L3_TOOLS,
-                    permission_mode="dontAsk", permission_prompts="none", restricted=True,
-                    add_dirs=(config.project_path(project), config.ROOT),
-                    model=model or proj.get("l3_model") or config.MODELS["l3"], on_text=on_text, on_start=on_start,
-                    extra_env=_l3_env(project, runtime))
-            finally:
-                _remove_runtime(runtime)
-            res.update({"skipped": False, "_turn_started_at": turn_started_at, "engine": "claude",
-                        "routing": choice})
-            # A provider-limit result can follow tool side effects. Never replay such a turn automatically elsewhere.
-            if (res.get("limited") and not res.get("text") and not res.get("tools")
-                    and not requested and not proj.get("l3_engine")):
-                fallback = route.pick_engine("l3", forced="codex")
-                if fallback.get("engine"):
-                    fallback["why"] = f"Claude window closed before producing output; {fallback['why']}"
-                    codex_session = sessions.setdefault("codex", {})
-                    codex_handoff = _handoff(history, "codex", codex_session.get("last_turn"))
-                    return _codex_turn(project, prompt, trigger, turn_started_at, turn_id, fallback, inf, codex_session,
-                                       not codex_session.get("session_id"), codex_handoff, model=None,
-                                       on_start=on_start, slug=slug)
-            if res.get("error") and not res.get("session_id"):
-                chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
-                         **_slug_meta(slug))
-                res["turn_id"] = turn_id
+        chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
+                 turn_id=turn_id, **_slug_meta(slug))
+        tried = []
+        while choice.get("engine"):
+            res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug)
+            if res.get("rejection"):
+                route.note_rejection(choice, res["rejection"])
+            elif res.get("limited"):
+                route.note_limit(choice["engine"], res["limited"])
+            else:
                 return res
-            pct = engines.context_percent(res.get("context_tokens", 0), "claude")
-            session.update(engine_model=model or proj.get("l3_model") or config.MODELS["l3"],
-                           engine_reasoning_effort=None)
-            _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
-                          res.get("cost", 0.0), res.get("usage") or {}, choice)
-            save_info(project, inf)
-            chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
-                     engine="claude", context_percent=pct, turns=res.get("turns"),
-                     tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
+            pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
+            if pinned or not res.get("safe_to_retry"):
+                chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
+                         trigger=trigger, engine=choice["engine"], turn_id=turn_id, **_slug_meta(slug))
+                return res
+            tried.append(route.option_key(choice))
+            choice = _select(project, requested, model=model, excluded=tried)
+        why = f"engine hold: {choice['why']}"
+        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+        return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
+                "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
+                "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id}
+
+
+def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug):
+    turn_id = active_turn["id"]
+    engine = choice["engine"]
+    S.regen_state_md(project)
+    inf = info(project)
+    sessions = inf.setdefault("sessions", {})
+    session = sessions.setdefault(engine, {})
+    sid = session.get("session_id")
+    over = (session.get("context_percent") or 0) >= config.CONTEXT_LINES[engine][1] * 100
+    confinement_changed = bool(sid) and session.get("confinement_version") != L3_CONFINEMENT_VERSION
+    fresh = not sid or session.get("rotate_next", False) or over or confinement_changed
+    if fresh and sid:
+        rotate_reason = "L3 confinement policy changed" if confinement_changed else (
+            session.get("rotate_reason") or "context threshold")
+        S.project_log(project, "l3-rotate", engine=engine, old=sid,
+                      reason=rotate_reason)
+        session.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
+                        "context_percent": 0, "rotated_from": sid, "rotated_at": S.now()})
+        inf.update({"session_id": None, "rotate_next": False, "rotate_reason": None,
+                    "context_percent": 0, "rotated_from": sid, "rotated_at": session["rotated_at"]})
+        save_info(project, inf)
+        sid = None
+    history = [row for row in chat_history(project, 60) if row.get("turn_id") != turn_id]
+    handoff = _handoff(history, engine, session.get("last_turn"))
+    turn_started_at = active_turn["started_at"]
+    if engine == "codex":
+        res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
+                          handoff, model=choice.get("model"), on_start=on_start, slug=slug)
+    else:
+        text = _header(project, trigger, fresh, slug) + handoff + prompt
+        runtime = _l3_runtime(project, "claude")
+        try:
+            res = engines.claude_print(
+                text, cwd=runtime, resume=None if fresh else sid,
+                persona=config.PERSONAS / "l3.md", allowed_tools=ALLOWED_TOOLS, tools=L3_TOOLS,
+                permission_mode="dontAsk", permission_prompts="none", restricted=True,
+                add_dirs=(config.project_path(project), config.ROOT),
+                model=choice.get("model"), on_text=on_text, on_start=on_start,
+                extra_env=_l3_env(project, runtime))
+        finally:
+            _remove_runtime(runtime)
+        res.update({"skipped": False, "_turn_started_at": turn_started_at, "engine": "claude",
+                    "routing": choice})
+        if (res.get("rejection") or res.get("limited")) and res.get("safe_to_retry"):
+            res.update(completed=False, turn_id=turn_id)
+            return res
+        if res.get("error") and not res.get("session_id"):
+            chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
+                     tools=_tool_log(res.get("tools") or []),
                      **_slug_meta(slug))
-            S.regen_state_md(project)
-            res.update({"context_percent": pct, "completed": True, "turn_id": turn_id})
-        return res
+            res["turn_id"] = turn_id
+            return res
+        pct = engines.context_percent(res.get("context_tokens", 0), "claude")
+        session.update(engine_model=choice.get("model"),
+                       engine_reasoning_effort=None)
+        _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
+                      res.get("cost", 0.0), res.get("usage") or {}, choice)
+        save_info(project, inf)
+        chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
+                 engine="claude", context_percent=pct, turns=res.get("turns"),
+                 tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
+                 **_slug_meta(slug))
+        S.regen_state_md(project)
+        res.update({"context_percent": pct, "completed": not bool(res.get("error")), "turn_id": turn_id})
+    return res
 
 
 def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float,
                   fresh: bool, cost: float, usage: dict, choice: dict) -> None:
     act = config.CONTEXT_LINES[engine][1] * 100
-    session.update({"session_id": sid, "confinement_version": L3_CONFINEMENT_VERSION,
+    session.update({"session_id": sid, "confinement_version": L3_CONFINEMENT_VERSION, "launch_model": choice.get("model"),
                     "turns": (0 if fresh else int(session.get("turns") or 0)) + 1,
                     "context_percent": pct, "last_turn": S.now(), "last_cost": cost,
                     "started": session.get("started") if not fresh else S.now(),
@@ -643,7 +649,6 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
                 slug: str | None = None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
-    proj = config.project(project)
     sid = None if fresh else session.get("session_id")
     body = _header(project, trigger, fresh, slug) + handoff + prompt
     if fresh:
@@ -662,7 +667,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
         result = engines.codex_exec(
-            body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model or proj.get("l3_codex_model"),
+            body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model,
             effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
             extra_env=_l3_env(project, runtime),
             sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
@@ -683,15 +688,18 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     out = {"text": str(result.get("text") or ""), "session_id": reported_sid or sid or "",
            "usage": usage, "context_tokens": tokens, "cost": 0.0, "turns": 1, "structured": None,
            "error": identity_error or result.get("error"), "tools": result.get("tools") or [],
-           "skipped": False, "completed": False,
+           "skipped": False, "completed": False, "rejection": result.get("rejection"),
+           "safe_to_retry": result.get("safe_to_retry", False), "limited": result.get("limited"),
            "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice, "turn_id": turn_id}
+    if (out.get("rejection") or out.get("limited")) and out.get("safe_to_retry"):
+        return out
     pct = engines.context_percent(tokens, "codex") if tokens else 0.0
     if identity_error or (result.get("error") and not out["text"]):
         if reported_sid and not identity_error:
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
         chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
-                 engine="codex", turn_id=turn_id, **_slug_meta(slug))
+                 engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_slug_meta(slug))
         return out
     _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)
     save_info(project, inf)
@@ -699,7 +707,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
              context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
              turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug))
     S.regen_state_md(project)
-    out.update({"context_percent": pct, "completed": True})
+    out.update({"context_percent": pct, "completed": not bool(out.get("error"))})
     return out
 
 

@@ -255,7 +255,7 @@ class TestFreshAttempt(AltitudeCase):
         self.assertIn("- done: half of it", brief)
         self.assertIn("Altitude resumes your thread on Codex", brief, "one conversation contract for both engines")
 
-    def test_dispatch_honours_the_engine_chosen_by_the_window_switch(self):
+    def test_fresh_dispatch_does_not_turn_a_previous_selection_into_a_pin(self):
         task = T.new(PROJECT, "Switch fixture", "Do it.", actor="burak")
         task["l2_engine"] = "claude"
         S.save_task(PROJECT, task)
@@ -264,11 +264,11 @@ class TestFreshAttempt(AltitudeCase):
              mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
              mock.patch.object(dispatch.route, "pick_engine",
-                               side_effect=lambda role, forced=None: {"engine": forced or "codex", "why": "t"}) as pick, \
+                               side_effect=lambda role, forced=None, **kwargs: {"engine": forced or "codex", "why": "t"}) as pick, \
              mock.patch.object(dispatch.engines, "start_l2", return_value=fake) as launch:
             dispatch.run(PROJECT, task["slug"])
-        self.assertEqual(pick.call_args.kwargs["forced"], "claude")
-        self.assertEqual(launch.call_args.args[0], "claude")
+        self.assertIsNone(pick.call_args.kwargs["forced"])
+        self.assertEqual(launch.call_args.args[0], "codex")
         self.assertEqual(launch.call_args.kwargs["persona"], config.PERSONAS / "l2.md")
         self.assertEqual(S.load_task(PROJECT, task["slug"])["attempt"], 1)
 

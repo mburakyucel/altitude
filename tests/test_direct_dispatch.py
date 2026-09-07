@@ -7,6 +7,10 @@ from altitude import config, dispatch, server, state as S, tasks as T
 
 
 class TestDirectDispatch(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.quiet_engines()
+
     def test_overlapping_queued_tasks_both_launch_and_second_brief_names_overlap(self):
         self.register(self.project, wip=config.WIP_PER_PROJECT)
         first = T.new(self.project, "First", "request", paths=["README.md", "docs/"])
@@ -121,7 +125,7 @@ class TestDirectDispatch(AltitudeCase):
         self.assertEqual((env["ALTITUDE_ATTEMPT"], env["ALTITUDE_SESSION_KEY"]),
                          ("1", S.session_key(self.project, task["slug"], 1)))
         self.assertEqual(running["l2_engine"], "codex")
-        self.assertIn("default policy", running["routing"])
+        self.assertIn("configured tie order", running["routing"])
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from altitude import engines, l3, state as S
 class TestRotationIsPersistedBeforeTheTurn(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.quiet_engines()
         self.register(self.project, l3_engine="claude")
 
     def test_a_restart_mid_turn_does_not_rotate_the_same_session_again(self):

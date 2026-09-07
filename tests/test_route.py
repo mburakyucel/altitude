@@ -13,10 +13,12 @@ def codex(weekly, short=0):
 class TestPickEngine(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.private_ledgers()
         self.claude, self.codex = {"known": False}, {"known": False}
         self.patch(monitor, "quota", side_effect=lambda: self.claude)
         self.patch(route, "quota_codex", side_effect=lambda: self.codex)
         self.patch(engines, "usage_hold", return_value=None)
+        self.installation = self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
 
     def test_override_is_visible_and_unavailable_override_does_not_fallback(self):
         choice = route.pick_engine("l2", forced="claude")
@@ -30,7 +32,7 @@ class TestPickEngine(AltitudeCase):
     def test_unknown_quotas_use_codex_default_out_loud(self):
         choice = route.pick_engine("l2")
         self.assertEqual(choice["engine"], config.PRIMARY_DEFAULT_ENGINE)
-        self.assertIn("unknown", choice["why"]); self.assertIn("default policy", choice["why"])
+        self.assertIn("unknown", choice["why"]); self.assertIn("configured tie order", choice["why"])
 
     def test_weekly_headroom_wins_over_short_window_percentage(self):
         self.claude = {"known": True, "five_hour": 5, "seven_day": 80}
@@ -45,7 +47,77 @@ class TestPickEngine(AltitudeCase):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}
         self.codex = codex(80, short=20)
         choice = route.pick_engine("l2")
-        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude unavailable", choice["why"])
+        self.assertEqual(choice["engine"], "codex"); self.assertIn("claude:fable unavailable", choice["why"])
+
+    def test_opus_only_with_unknown_quota_and_missing_second_engine(self):
+        self.installation.side_effect = lambda engine: {"available": False if engine == "codex" else None,
+                                                        "why": "executable missing"}
+        for role in ("l2", "l3"):
+            choice = route.pick_engine(role, project={"routing": config.parse_routing("claude:opus")})
+            self.assertEqual((choice["engine"], choice["model"]), ("claude", "opus"))
+            self.assertIn("access unverified", choice["why"])
+
+    def test_preferences_outrank_headroom_and_tie_order_is_configurable(self):
+        project = {"routing": config.parse_routing("claude:opus>codex")}
+        self.claude = {"known": True, "seven_day": 99}
+        self.codex = codex(0)
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "opus")
+        project["routing"] = config.parse_routing("claude:fable,codex>claude:opus")
+        self.claude = {"known": False}
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "fable")
+        self.claude = {"known": True, "seven_day": 99}
+        self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
+
+    def test_model_rejection_excludes_only_that_model_and_expires(self):
+        project = {"routing": config.parse_routing("claude:fable>claude:opus")}
+        option = {"engine": "claude", "model": "fable"}
+        route.note_rejection(option, {"scope": "model", "why": "model not accessible"})
+        self.assertEqual(route.pick_engine("l3", project=project)["model"], "opus")
+        self.assertIsNone(route.pick_engine("l3", model="fable", project=project)["engine"])
+        self.assertIsNone(route.pick_engine("l2", project=project, excluded=[("claude", "opus")])["engine"])
+        self.patch(route.S, "now", return_value="2000-01-01T00:00:00+00:00")
+        route.note_rejection(option, {"scope": "model", "why": "old rejection"})
+        self.assertEqual(route.pick_engine("l3", project=project)["model"], "fable")
+
+    def test_account_rejection_and_quota_exhaustion_cover_all_seat_models(self):
+        project = {"routing": config.parse_routing("claude:fable>claude:opus>codex")}
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "engine", "why": "sign in"})
+        self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
+        route.note_limit("codex", "2099-01-01T00:00:00+00:00")
+        choice = route.pick_engine("l2", project=project)
+        self.assertIsNone(choice["engine"])
+        self.assertIn("sign in", choice["why"])
+        self.assertIn("resets", choice["why"])
+        self.assertIn("--routing", choice["why"])
+
+    def test_unresolved_native_default_rejection_is_scoped_to_its_role(self):
+        project = {"routing": config.parse_routing("codex")}
+        choice = route.pick_engine("l2", project=project)
+        route.note_rejection(choice, {"scope": "model", "why": "default model not accessible"})
+        self.assertIsNone(route.pick_engine("l2", project=project)["engine"])
+        self.assertEqual(route.pick_engine("l3", project=project)["engine"], "codex")
+
+    def test_no_entitlement_or_model_allowance_is_inferred_from_plan_or_account_meter(self):
+        project = {"routing": config.parse_routing("claude:fable>claude:opus")}
+        self.claude = {"known": True, "plan": "cheap", "seven_day": 10}
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "fable")
+        self.claude["seven_day"] = 100
+        self.assertIsNone(route.pick_engine("l2", project=project)["engine"])
+
+    def test_continuity_within_tier_never_overrides_a_higher_available_tier(self):
+        project = {"routing": config.parse_routing("claude:fable,claude:opus>codex")}
+        choice = route.pick_engine("l3", project=project, current="claude", current_model="opus")
+        self.assertEqual(choice["model"], "opus")
+        project["routing"] = config.parse_routing("claude:fable>claude:opus")
+        self.assertEqual(route.pick_engine("l3", project=project, current="claude", current_model="opus")["model"], "fable")
+
+    def test_missing_installation_falls_through_default_tiers_and_pins_never_do(self):
+        self.installation.side_effect = lambda engine: {"available": False if engine == "codex" else None,
+                                                        "why": "executable missing"}
+        self.assertEqual(route.pick_engine("l2")["model"], "fable")
+        self.assertIsNone(route.pick_engine("l2", forced="codex")["engine"])
+        self.installation.side_effect = lambda engine: {"available": False, "why": "executable missing"}
+        self.assertIsNone(route.pick_engine("l2")["engine"])
 
     def test_both_exhausted_returns_no_engine(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 5}

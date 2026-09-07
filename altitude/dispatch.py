@@ -166,36 +166,44 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-def request_project_wip(project: str, wip: int | None, reason: str, *, actor: str) -> dict:
+def request_project_setting(project: str, setting: str, value, reason: str, *, actor: str) -> dict:
     """2026-09-07 WIP incident: persist an operational change without needing a free task slot."""
     reason = str(reason or "").strip()
     if actor not in DAEMON_REQUEST_ACTORS or not reason:
         raise T.TransitionError("project set requires L3 or the operator and a nonempty reason")
-    if wip is not None and (type(wip) is not int or not 1 <= wip <= config.WIP_PER_MACHINE):
+    if setting not in ("wip", "routing"):
+        raise T.TransitionError("unknown project setting")
+    if setting == "wip" and value is not None and (type(value) is not int or not 1 <= value <= config.WIP_PER_MACHINE):
         raise T.TransitionError(f"WIP must be between 1 and {config.WIP_PER_MACHINE}")
+    if setting == "routing" and value is not None:
+        value = config.parse_routing(value)
     with S.project_lock(project):
         entry = config.project(project)
-        path = config.project_dir(project) / "wip-request.json"
+        path = config.project_dir(project) / f"{setting}-request.json"
         previous = S.read_json(path, {})
-        same = (previous.get("wip"), previous.get("reason"), previous.get("actor")) == (wip, reason, actor)
-        if same and (previous.get("status") == "pending" or previous.get("result_wip") == entry.get("wip")):
+        same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
+        if same and (previous.get("status") == "pending" or previous.get(f"result_{setting}") == entry.get(setting)):
             return {"idempotent": True, "request": previous}
         if previous.get("status") == "pending":
             raise T.TransitionError("project set already pending in altd")
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": "project-set", "project": project,
-                   "actor": actor, "reason": reason, "wip": wip, "status": "pending"}
+                   "actor": actor, "reason": reason, setting: value, "status": "pending"}
         S.write_json(path, request)
         return {"idempotent": False, "request": request}
 
 
-def run_project_wip(project: str) -> dict:
+def run_project_settings(project: str) -> dict:
+    return {setting: _run_project_setting(project, setting) for setting in ("wip", "routing")}
+
+
+def _run_project_setting(project: str, setting: str) -> dict:
     """Altd drains this before task requests, independent of WIP and restart dispatch holds.
 
     D7/I-20260904-062512: preserve the receipt and deduplicate the project event across a crash.
     Re-registration is deliberate: the last registry write wins, with no registration identity fence.
     """
     with S.project_lock(project), config.projects_lock():
-        path = config.project_dir(project) / "wip-request.json"
+        path = config.project_dir(project) / f"{setting}-request.json"
         request = S.read_json(path, {})
         if request.get("status") != "pending":
             return request
@@ -204,20 +212,20 @@ def run_project_wip(project: str) -> dict:
         if entry is None:
             request.update(status="refused", note="project is not registered")
         else:
-            if request["wip"] is None:
-                entry.pop("wip", None)
+            if request[setting] is None:
+                entry.pop(setting, None)
             else:
-                entry["wip"] = request["wip"]
+                entry[setting] = request[setting]
             config.save_projects(projects)
             request["status"] = "done"
         events = config.project_dir(project) / "events.jsonl"
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": "project-set", "project": project, "request_id": request["id"],
-                     "actor": request["actor"], "reason": request["reason"], "wip": request["wip"],
+                     "actor": request["actor"], "reason": request["reason"], setting: request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
-        request.update(result_wip=entry.get("wip") if entry else None, completed_at=S.now())
+        request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
         S.write_json(path, request)
         return request
 
@@ -537,30 +545,55 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         proj = config.project(project)
-        forced_engine = task.get("engine") or task.get("l2_engine") or proj.get("l2_engine")
-        if model in config.MODEL_ALIASES and not forced_engine:
-            forced_engine = "claude"
-        choice = route.pick_engine("l2", forced=forced_engine)
+        if model:
+            pin = config.pinned_option("l2", proj, engine=task.get("engine"), model=model)
+            task.update(model=model, engine=pin["engine"])
+            S.save_task(project, task)
+        choice = route.pick_engine("l2", forced=task.get("engine"), model=model or task.get("model"), project=proj)
         if not choice.get("engine"):
             raise T.TransitionError(f"engine hold: {choice['why']}")
         engine = choice["engine"]
-        selected_model = (model or task.get("model") or proj.get("l2_model") or config.MODELS["l2"]
-                          if engine == "claude" else model or task.get("model") or proj.get("l2_codex_model"))
+        selected_model = choice.get("model")
         task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
                      "l2_engine": engine, "engine_model": selected_model,
                      "launch_model": selected_model, "engine_reasoning_effort": None,
-                     "routing": choice["why"]})
+                     "routing": choice["why"], "routing_pinned": choice.get("pinned", False)})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
     agent = {}
     try:
-        brief_md = build_brief(project, slug)
-        T.brief(project, slug, brief_md, actor="altd")
         settings = session_settings(project, slug, S.session_key(project, slug, attempt))
-        res = engines.start_l2(
-            engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
-            model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),
-            job_root=l2_job_root(project, slug))
+        tried = []
+        while True:
+            brief_md = build_brief(project, slug)
+            T.brief(project, slug, brief_md, actor="altd")
+            res = engines.start_l2(
+                engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
+                model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),
+                job_root=l2_job_root(project, slug))
+            rejection = res.get("rejection")
+            if not rejection:
+                break
+            route.note_rejection(choice, rejection)
+            if not res.get("safe_to_retry"):
+                break
+            tried.append(route.option_key(choice))
+            choice = route.pick_engine("l2", project=proj, forced=task.get("engine"),
+                                       model=model or task.get("model"), excluded=tried)
+            if not choice.get("engine"):
+                with S.project_lock(project):
+                    current = S.load_task(project, slug)
+                    current["dispatching"] = None
+                    S.save_task(project, current)
+                raise T.TransitionError(f"engine hold: {choice['why']}")
+            engine, selected_model = choice["engine"], choice["model"]
+            with S.project_lock(project):
+                current = S.load_task(project, slug)
+                current.update(l2_engine=engine, launch_model=selected_model, engine_model=selected_model,
+                               routing=choice["why"])
+                S.save_task(project, current)
+    except T.TransitionError:
+        raise
     except Exception as exc:
         raise record_dispatch_failure(project, slug, exc) from exc
     agent = res.get("agent") or {}
@@ -994,6 +1027,10 @@ def poll(project: str) -> list[dict]:
         settled = a and (a.get("state") in ("blocked", "done", "failed", "stopped")
                          or a.get("status") in ("idle", "exited"))
         if settled and not has_report:
+            if a.get("rejection"):
+                finished.append({"task": t, "agent": a, "rejection": a["rejection"],
+                                 "safe_to_retry": a.get("safe_to_retry", False)})
+                continue
             if engines.temporary_capacity_in(detail):
                 finished.append({"task": t, "agent": a, "capacity": True})
                 S.write_json(live_p, {"at": S.now(), "agent": live, "idle_since": None, "capacity": True})

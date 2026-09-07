@@ -5,7 +5,7 @@
 task record and current attempt under the project lock.
 
 Start with [setup](SETUP.md) to build the app, install project Git guards, register a project
-with explicit engine pins, and start a conversation. `alt project add` registers state; it does
+with Auto preferences or explicit pins, and start a conversation. `alt project add` registers state; it does
 not install Git guards. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
 
 ## Inspection
@@ -134,6 +134,57 @@ restores that history; queued messages become eligible for delivery again. The s
 the project's **More actions** menu (`POST /api/project/remove` with `{"name":"<name>"}`).
 The existing folder-add flow (`POST /api/project/add`) attaches L3 again. `alt l3-reset` remains a
 separate conversation reset; it marks a session for rotation without disabling coordination.
+
+### Automatic routing preferences
+
+The operator and a project's L3 can set that project's shared Auto policy for L3 turns and fresh
+L2 attempts through the existing operational settings command:
+
+```sh
+alt project set example --routing 'codex,claude:fable>claude:opus' --reason 'Prefer these peers; keep Opus as fallback'
+alt project set example --unset-routing --reason 'Restore default Auto preferences'
+```
+
+Quote the policy so the shell does not interpret `>`. Options use `engine[:model]`; commas tie
+options, and `>` starts a lower-priority tier. An omitted model uses the engine's role default.
+Empty tiers/options, duplicate options and unknown engines are rejected. The daemon applies the
+request on its next tick and records actor, reason and outcome. No PR, restart, UI setting or free
+task slot is needed. `alt project list` shows the stored override; `alt monitor` explains each
+project's L3 and fresh L2 choice, including its tier, skipped options and unknown quota.
+
+Auto uses the highest tier with an eligible option. Only comparable, named seven-day account
+readings select by headroom within a tie; short windows only determine availability. Unknown or
+incomparable weekly readings use configured tie order. An L3 engine/model still eligible in that
+tier stays unless a competing option has at least fifteen percentage points more weekly headroom.
+Default preferences tie Codex's default model with Claude Fable and put Opus below them;
+`ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. A project override replaces the
+whole preference list, and `--unset-routing` restores those defaults.
+
+| Intended preference | `--routing` value |
+| --- | --- |
+| Claude-only account with Opus available | `'claude:opus'` |
+| Fable unavailable; prefer Codex with Opus as fallback | `'codex>claude:opus'` |
+| Fable and Codex tied; prefer Fable when weekly quota is unknown | `'claude:fable,codex>claude:opus'` |
+| Same tie; prefer Codex when weekly quota is unknown | `'codex,claude:fable>claude:opus'` |
+| Prefer Opus first, then Codex | `'claude:opus>codex'` |
+
+A missing CLI, exhausted window or known access rejection excludes the affected options; unknown
+access or quota remains eligible. No plan name implies model entitlement, and a shared account
+meter does not supply separate Fable/Opus allowances. If Fable rejects access while Codex is absent,
+the default policy can try Opus after confirming no output or tool effects occurred. A model
+rejection excludes that model for thirty minutes; an authentication rejection excludes the engine
+for thirty minutes. A rejection of an unresolved native default is scoped to that role, since
+the two launchers can use different default models. Each alternative is tried at most once per dispatch or turn. When none is
+eligible, the explanation identifies installation, authentication, reset or configuration actions.
+
+Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
+one task; project `--l2-engine`/`--l3-engine` pins, the composer's L3 engine choice and
+`alt chat --engine …` take precedence over Auto and never silently fall back. An explicit model pin
+also remains strict. Changing preferences does not unpin them or change a running L2: resume keeps
+that attempt's engine, provider session and recorded launch model. A quota fallback is a recorded
+fresh attempt from `progress.md`. L3 retains a separate provider conversation per engine, including
+when its chosen model changes; crossing providers supplies missed human conversation without
+replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resume-and-stop).
 
 ## Task lifecycle
 

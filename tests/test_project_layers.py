@@ -32,12 +32,12 @@ ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
 
 #: Provider names per file in `altitude/*.py` and `bin/alt`, outside the engine seam.
 PROVIDER_BASELINE = {
-    "altitude/dispatch.py": 12,
-    "altitude/l3.py": 46,
+    "altitude/dispatch.py": 9,
+    "altitude/l3.py": 32,
     "altitude/monitor.py": 6,
     "altitude/quota_codex.py": 18,
-    "altitude/server.py": 17,
-    "altitude/tasks.py": 5,
+    "altitude/server.py": 14,
+    "altitude/tasks.py": 3,
     "altitude/transcript.py": 47,
 }
 
@@ -49,7 +49,7 @@ OPERATOR_BASELINE = {
     "altitude/digest.py": 3,
     "altitude/dispatch.py": 6,
     "altitude/incidents.py": 2,
-    "altitude/l3.py": 5,
+    "altitude/l3.py": 3,
     "altitude/land.py": 4,
     "altitude/server.py": 21,
     "altitude/tasks.py": 14,

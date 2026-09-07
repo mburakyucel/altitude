@@ -53,7 +53,7 @@ class TestOperatorCommands(AltitudeCase):
         request = json.loads(result.stdout)["request"]
         self.assertNotIn("wip", config.project(self.project), "CLI only persists the daemon request")
         self.assertEqual(json.loads(self.alt(*args).stdout)["request"]["id"], request["id"])
-        dispatch.run_project_wip(self.project)  # the daemon tick, even when WIP is full
+        dispatch.run_project_settings(self.project)  # the daemon tick, even when WIP is full
         self.assertEqual(config.project(self.project)["wip"], 5)
         self.assertTrue(json.loads(self.alt(*args).stdout)["idempotent"])
         events = config.project_dir(self.project) / "events.jsonl"
@@ -62,33 +62,59 @@ class TestOperatorCommands(AltitudeCase):
                          ("burak", "test", self.project))
         # D7 crash after effect/audit but before receipt: replay completes without duplicating the event.
         S.write_json(config.project_dir(self.project) / "wip-request.json", request)
-        dispatch.run_project_wip(self.project)
+        dispatch.run_project_settings(self.project)
         self.assertEqual(len(events.read_text().splitlines()), 1)
         result = self.alt("project", "set", self.project, "--unset-wip", "--reason", "restore default")
         self.assertEqual(result.returncode, 0, result.stderr)
-        dispatch.run_project_wip(self.project)
+        dispatch.run_project_settings(self.project)
         self.assertNotIn("wip", config.project(self.project))
         self.assertFalse(json.loads(self.alt(*args).stdout)["idempotent"], "an intervening change gets a new request")
 
     def test_sept7_project_set_reregistration_is_last_write_wins_and_caps_are_validated(self):
-        dispatch.request_project_wip(self.project, 5, "test", actor="l3")
+        dispatch.request_project_setting(self.project, "wip", 5, "test", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "already pending"):
-            dispatch.request_project_wip(self.project, 6, "different", actor="l3")
+            dispatch.request_project_setting(self.project, "wip", 6, "different", actor="l3")
         config.remove_project(self.project)
         with config.add_project(self.project, path=self.repo):
             pass
-        self.assertEqual(dispatch.run_project_wip(self.project)["status"], "done")
+        self.assertEqual(dispatch.run_project_settings(self.project)["wip"]["status"], "done")
         self.assertEqual(config.project(self.project)["wip"], 5)
         with config.add_project(self.project, path=self.repo):
             pass
         self.assertNotIn("wip", config.project(self.project), "deliberate re-registration is the last write")
         for wip in (0, config.WIP_PER_MACHINE + 1):
             with self.subTest(wip=wip), self.assertRaisesRegex(T.TransitionError, "between"):
-                dispatch.request_project_wip(self.project, wip, "test", actor="l3")
+                dispatch.request_project_setting(self.project, "wip", wip, "test", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "nonempty reason"):
-            dispatch.request_project_wip(self.project, 5, "  ", actor="l3")
+            dispatch.request_project_setting(self.project, "wip", 5, "  ", actor="l3")
         with self.assertRaisesRegex(T.TransitionError, "requires L3"):
-            dispatch.request_project_wip(self.project, 5, "test", actor="l2")
+            dispatch.request_project_setting(self.project, "wip", 5, "test", actor="l2")
+
+    def test_routing_is_reason_bearing_daemon_state_and_unset_restores_default(self):
+        args = ("project", "set", self.project, "--routing", "claude:fable,codex>claude:opus", "--reason", "my preferences")
+        result = self.alt(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        request = json.loads(result.stdout)["request"]
+        self.assertNotIn("routing", config.project(self.project))
+        dispatch.request_project_setting(self.project, "wip", 5, "independent cap", actor="l3")
+        dispatch.run_project_settings(self.project)
+        entry = config.project(self.project)
+        self.assertEqual(entry["routing"], config.parse_routing("claude:fable,codex>claude:opus"))
+        self.assertEqual(entry["wip"], 5)
+        self.assertEqual(json.loads(self.alt(*args).stdout)["request"]["id"], request["id"])
+        events = [json.loads(row) for row in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
+        routing_event = next(row for row in events if "routing" in row)
+        self.assertEqual((routing_event["actor"], routing_event["reason"]), ("burak", "my preferences"))
+        result = self.alt("project", "set", self.project, "--unset-routing", "--reason", "use defaults")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dispatch.run_project_settings(self.project)
+        self.assertNotIn("routing", config.project(self.project))
+
+    def test_invalid_tiers_are_refused_without_changing_preferences(self):
+        for value in ("", "unknown", "claude:", "codex,", ">codex", "codex>>claude:opus", "codex,codex", "claude:model name"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                dispatch.request_project_setting(self.project, "routing", value, "test", actor="l3")
+        self.assertNotIn("routing", config.project(self.project))
 
 
 if __name__ == "__main__":
