@@ -1,6 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
+import type { ChatView } from "../data/api";
+import { FakeMediaRecorder, installVoiceBrowser } from "../components/voiceTest";
 
 /*
  * The project conversation (SPEC.md §3.3, §3.4, §4.1, §4.2): rows, system lines and groups, the states
@@ -100,6 +102,194 @@ function posted(fetchMock: ReturnType<typeof vi.fn>, path: string, nth = 0) {
 }
 
 const conversation = () => screen.findByRole("region", { name: "Conversation" });
+
+/** Separate server snapshots and delayed network responses exercise the real route and stream reader. */
+function projectChats(post: (body: { project: string; text: string }) => Response | Promise<Response>) {
+  const names = ["alpha-project", "beta-project"];
+  const chats = Object.fromEntries(names.map((name) => [name, {
+    ...chatView,
+    history: [{ role: "assistant", text: `${name} history`, trigger: "chat", turn_id: `${name}-saved`, at: ago(5) }],
+  }])) as Record<string, ChatView>;
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url === "/api/overview") return jsonResponse({ ...overview, projects: names.map((name) => ({ name, managed: true })) });
+    if (url.startsWith("/api/project/")) return jsonResponse({ ...project, name: url.split("/").pop(), tasks: [], archive: [] });
+    if (url.startsWith("/api/chat/")) return jsonResponse(chats[url.split("?")[0]!.split("/").pop()!]);
+    if (url === "/api/chat") return post(JSON.parse(String(init?.body)));
+    return jsonResponse({ error: "unexpected request" }, 404);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { chats, fetchMock };
+}
+
+function liveReply() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let closed = false;
+  const response = new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }));
+  return {
+    response,
+    frame(value: unknown) { controller.enqueue(new TextEncoder().encode(`${JSON.stringify(value)}\n`)); },
+    close() { if (!closed) { closed = true; controller.close(); } },
+  };
+}
+
+describe.each([390, 1440])("project switching at %ipx", (width) => {
+  const field = (name: string) => screen.getByRole("textbox", { name: `Message L3 about ${name}-project` });
+
+  it("releases the source microphone on switching without sending or transcribing its recording", async () => {
+    const { fetchMock } = projectChats(() => { throw new Error("No recording should be submitted"); });
+    const { track } = installVoiceBrowser();
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    expect(track.stop).not.toHaveBeenCalled();
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    expect(FakeMediaRecorder.instances[0]?.state).toBe("inactive");
+    expect(track.stop).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    expect(field("beta")).toHaveValue("");
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
+  });
+
+  it("discards unsent drafts on switching either direction while retaining only the project's history", async () => {
+    projectChats(() => { throw new Error("No draft should be submitted"); });
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.type(field("alpha"), "Alpha private draft");
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    expect(field("beta")).toHaveValue("");
+    expect(screen.queryByText("alpha-project history")).toBeNull();
+    await user.type(field("beta"), "Beta private draft");
+    await act(() => router.navigate("/projects/alpha-project"));
+    await screen.findByText("alpha-project history");
+    expect(field("alpha")).toHaveValue("");
+    expect(screen.queryByText("beta-project history")).toBeNull();
+  });
+
+  it("removes a pending send on switching and keeps a late refusal out of the destination draft", async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { release = resolve; });
+    const { fetchMock } = projectChats(() => pending);
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Alpha pending request");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(screen.getByText("Alpha pending request").closest(".msg-row")).toHaveAttribute("data-pending");
+      await act(() => router.navigate("/projects/beta-project"));
+      await screen.findByText("beta-project history");
+      expect(screen.queryByText("Alpha pending request")).toBeNull();
+      await user.type(field("beta"), "Beta draft survives");
+      await act(async () => { release(jsonResponse({ error: "Alpha refused" }, 503)); });
+      expect(field("beta")).toHaveValue("Beta draft survives");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(posted(fetchMock, "/api/chat")).toEqual({ project: "alpha-project", text: "Alpha pending request" });
+    } finally {
+      await act(async () => { release(jsonResponse({ error: "refused" }, 503)); });
+    }
+  });
+
+  it.each(["alpha", "beta"])("isolates concurrent streams when %s finishes first, and restores source history on return", async (first) => {
+    const replies = { "alpha-project": liveReply(), "beta-project": liveReply() };
+    const { chats, fetchMock } = projectChats((body) => {
+      const turn = { id: `${body.project}-turn`, started_at: ago(0), trigger: "chat" };
+      chats[body.project]!.active = turn;
+      chats[body.project]!.history.push({ role: "user", text: body.text, turn_id: turn.id, trigger: "chat", at: ago(0) });
+      const reply = replies[body.project as keyof typeof replies];
+      reply.frame({ turn });
+      reply.frame({ t: `${body.project} partial` });
+      return reply.response;
+    });
+    const finish = async (name: string) => {
+      const owner = `${name}-project` as keyof typeof replies;
+      chats[owner]!.history.push({ role: "assistant", text: `${owner} complete`, turn_id: `${owner}-turn`, trigger: "chat", at: ago(0) });
+      chats[owner]!.active = null;
+      await act(async () => {
+        replies[owner].frame({ t: " complete" });
+        replies[owner].frame({ done: { turn_id: `${owner}-turn` } });
+        replies[owner].close();
+      });
+    };
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Alpha prompt");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("alpha-project partial");
+      await act(() => router.navigate("/projects/beta-project"));
+      await screen.findByText("beta-project history");
+      expect(screen.queryByText("Alpha prompt")).toBeNull();
+      expect(screen.queryByText("alpha-project partial")).toBeNull();
+      expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+      await user.type(field("beta"), "Beta prompt");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("beta-project partial");
+      await finish(first);
+      await finish(first === "alpha" ? "beta" : "alpha");
+      await screen.findByText("beta-project complete");
+      expect(screen.queryByText("alpha-project complete")).toBeNull();
+      expect(posted(fetchMock, "/api/chat", 0)).toEqual({ project: "alpha-project", text: "Alpha prompt" });
+      expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "beta-project", text: "Beta prompt" });
+      await act(() => router.navigate("/projects/alpha-project"));
+      await screen.findByText("alpha-project complete");
+      expect(screen.getAllByText("Alpha prompt")).toHaveLength(1);
+      expect(screen.queryByText("Beta prompt")).toBeNull();
+      expect(screen.queryByText("beta-project complete")).toBeNull();
+    } finally {
+      await act(async () => { Object.values(replies).forEach((reply) => reply.close()); });
+    }
+  });
+
+  it("keeps a late failed turn and its Retry in Alpha, including a switch back while it is active", async () => {
+    const reply = liveReply();
+    const { chats, fetchMock } = projectChats((body) => {
+      if (body.text === "Alpha fails" && !chats[body.project]!.history.some((row) => row.role === "error")) {
+        const turn = { id: "alpha-failed", started_at: ago(0), trigger: "chat" };
+        chats[body.project]!.active = turn;
+        chats[body.project]!.history.push({ role: "user", text: body.text, turn_id: turn.id, trigger: "chat", at: ago(0) });
+        reply.frame({ turn });
+        return reply.response;
+      }
+      return streamResponse(['{"t":"Retry accepted in Alpha"}', '{"done":{}}']);
+    });
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Alpha fails");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByRole("status", { name: "L3 is answering" });
+      await act(() => router.navigate("/projects/beta-project"));
+      await screen.findByText("beta-project history");
+      await act(() => router.navigate("/projects/alpha-project"));
+      await screen.findByText("Alpha fails");
+      expect(screen.getByRole("status", { name: "L3 is answering" })).toBeInTheDocument();
+      await act(() => router.navigate("/projects/beta-project"));
+      await screen.findByText("beta-project history");
+      await user.type(field("beta"), "Beta keeps typing");
+      chats["alpha-project"]!.history.push({ role: "error", text: "provider failed", trigger: "chat", turn_id: "alpha-failed", at: ago(0) });
+      chats["alpha-project"]!.active = null;
+      await act(async () => { reply.frame({ done: { turn_id: "alpha-failed", error: "provider failed" } }); reply.close(); });
+      expect(field("beta")).toHaveValue("Beta keeps typing");
+      expect(screen.queryByText(/L3 could not answer/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      await act(() => router.navigate("/projects/alpha-project"));
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "alpha-project", text: "Alpha fails" }));
+    } finally {
+      await act(async () => { reply.close(); });
+    }
+  });
+});
 
 describe("Conversation", () => {
   it("renders bubbles, prose, day dividers, and the task a turn created", async () => {

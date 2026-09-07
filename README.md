@@ -118,6 +118,14 @@ for engine pins, project Git guards and a foreground localhost server. The guide
 source-checked commands from the remaining clean-machine setup verification. No open-source
 license has been selected; public release is a separate milestone.
 
+## Project conversations
+
+Project conversations keep their own history and waiting messages. Switching projects clears the
+unsent draft and local reply state; a turn already sent finishes in its original project. Returning
+to that project shows its saved history and any active turn. Retry sends to the displayed project.
+Switching also stops voice recording and releases the microphone; a late transcription cannot fill
+the destination draft.
+
 ## Project faults
 
 A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
@@ -125,6 +133,10 @@ notification in the owning project. Repeated fault kinds are deduplicated within
 another affected task still gets a coordinator notification. Repair-task faults do not wake the
 coordinator again. Machine faults without a project notify the registered `altitude` project, or
 remain in the machine fault ledger when it is absent.
+
+An upstream Altitude defect is reported through the [GitHub feedback route](#feedback) with a
+fictional or redacted reproduction. The affected project's incident evidence, tasks and coordinator
+conversation stay in that project. Reporting an issue does not start recovery work in Altitude.
 
 ## Remove a project
 

@@ -146,7 +146,10 @@ notification all stay in its project. Fault deduplication uses the source projec
 with the same project's incident reference. Repair-task faults (`--source recovery`) never wake L3
 again. Faults without a project notify registered `altitude`, or only update the machine fault
 ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
-conversation to its project's L3. A cross-provider
+conversation to its project's L3. An upstream Altitude defect goes through the operator's
+[GitHub feedback route](../README.md#feedback) with a fictional or redacted reproduction; local
+incidents and recovery work stay with the affected project. The project-bound issue verbs target
+only their own repository and provide no upstream publication override. A cross-provider
 continuation is a deliberate new attempt based on saved work, not a fake transcript resume: when a worker's
 window runs out and the task is not pinned to an engine, Altitude removes the worker, requeues the task pinned
 to the other engine, and the next dispatch briefs the fresh attempt with the task's `progress.md`.
@@ -232,7 +235,13 @@ L3 stores separate Claude and Codex session records. The conversation composer's
 the project's L3 to one engine, for chat and server-triggered turns alike, until it is set back to
 Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never
 falls back. A turn started from Chat finishes and is recorded even when the page that started it
-leaves mid-stream. L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
+leaves mid-stream. Switching projects mounts a separate conversation: draft, pending prompt,
+streamed text and local errors leave the screen. Concurrent sends and late responses retain their
+original project; returning reads that project's history, queue and active turn. A stored failed
+turn offers Retry only in its owning conversation. Unsent drafts are not saved across switches.
+Leaving a voice composer stops its recorder, releases microphone tracks and cancels transcription;
+an outstanding microphone permission or transcription result cannot populate the new conversation.
+L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order; a message queued but not started is not a turn in flight, so it neither holds the

@@ -222,10 +222,8 @@ export default function Composer({
       } catch {
         // Nothing to release: the recorder is already gone.
       }
-      stream?.getTracks().forEach((track) => track.stop());
+      active?.stream.getTracks().forEach((track) => track.stop());
     };
-    // The stream in scope is the one to release when the composer unmounts mid-recording.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
