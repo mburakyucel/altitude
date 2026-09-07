@@ -118,6 +118,8 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
     hidden: [v.loading, v.main.getByText("Say what you want done."), v.queue],
   });
   await expect(v.send).toBeDisabled();
+  await expect(v.send).toHaveText("");
+  await expect(v.send.locator("svg")).toBeVisible();
   await expect(v.hint).toHaveText("L3 answers or creates one task. Shift + Enter for a new line.");
   await expect(v.status).toContainText(/L3 answered .* on /);
 
@@ -227,7 +229,7 @@ test("a turn in progress, a failed turn, an FYI, and an empty conversation (over
   await walk.open(project.path);
   const progress = v.lines.first();
   await walk.state("01-in-progress-overlay", {
-    visible: [progress.getByText(/^L3 is handling a landed report for /), v.queue, v.main.getByText("L3 is mid-turn · runs next")],
+    visible: [progress.getByText(/^L3 is handling a landed report for /), v.queue, v.hint],
     hidden: [progress.getByRole("button", { name: "Show", exact: true }), v.send],
   });
   await expect(v.status).toContainText(/^L3 is handling a landed report/);
@@ -347,6 +349,8 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
     hidden: [alert],
   });
   await expect(v.send).toBeEnabled();
+  await expect(v.send).toHaveText("");
+  await expect(v.send.locator("svg")).toBeVisible();
   await walk.state("02-refused-not-sent-retry", {
     action: () => v.send.click(),
     visible: [alert, alert.getByRole("button", { name: "Retry", exact: true })],
@@ -401,7 +405,7 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
   await expect.poll(() => retried).toEqual([text]);
 });
 
-test("busy: Queue, the queued row with Remove, the typing indicator, and Remove taking the row back", async ({ page, request }, info) => {
+test("busy: the arrow queues, the queued row with Remove, the typing indicator, and Remove taking the row back", async ({ page, request }, info) => {
   const project = await liveProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -427,21 +431,31 @@ test("busy: Queue, the queued row with Remove, the typing indicator, and Remove 
 
   await walk.open(project.path);
   const list = v.convo.getByRole("list", { name: "Queued messages", exact: true });
-  await walk.state("01-busy-typing-indicator", {
-    visible: [v.convo.getByRole("status", { name: "L3 is answering", exact: true }), v.queue, v.main.getByText("L3 is mid-turn · runs next")],
+  await walk.state("01-busy-typing-indicator-overlay", {
+    visible: [v.convo.getByRole("status", { name: "L3 is answering", exact: true }), v.queue, v.hint],
     hidden: [v.send, list],
   });
   await expect(v.status).toContainText(/^L3 is answering/);
-  await walk.state("02-queued-row", {
-    action: async () => {
-      await v.field.fill(text);
-      await v.queue.click();
-    },
+  await expect(v.queue).toBeDisabled();
+  await expect(v.queue).toHaveText("");
+  await expect(v.queue.locator("svg")).toBeVisible();
+  await walk.state("02-busy-draft-arrow-overlay", {
+    action: () => v.field.fill(text),
+    visible: [v.queue, v.hint],
+    hidden: [list],
+  });
+  await expect(v.queue).toBeEnabled();
+  await expect(v.queue).toHaveText("");
+  await expect(v.queue).toHaveCSS("width", v.phone ? "40px" : "36px");
+  await expect(v.queue).toHaveCSS("height", v.phone ? "40px" : "36px");
+  await expect(v.hint).toHaveText("L3 is mid-turn · runs next");
+  await walk.state("03-queued-row-overlay", {
+    action: () => v.queue.click(),
     visible: [list.getByText(text), list.getByRole("button", { name: "Remove", exact: true })],
     hidden: [v.bubble(text)],
   });
   await expect(v.field).toHaveValue("");
-  await walk.state("03-removed", {
+  await walk.state("04-removed-overlay", {
     action: () => list.getByRole("button", { name: "Remove", exact: true }).click(),
     visible: [v.queue],
     hidden: [list],
@@ -529,6 +543,8 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await expect(timer).toHaveText(/^0:0\d$/);
   await expect(v.send).toBeEnabled();
   const row = await v.main.locator(".composer-row").boundingBox();
+  await expect(v.send).toHaveText("");
+  await expect(v.send.locator("svg")).toBeVisible();
   expect(row).not.toBeNull();
   for (const item of [v.cancel, wave, timer, v.stop, v.send]) {
     const box = await item.boundingBox();

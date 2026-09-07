@@ -275,8 +275,8 @@ A failed chat turn reads "L3 could not answer this turn." with Retry, which rese
 
 `GET /api/project/<name>` includes `repository`, the GitHub HTTPS web URL derived from the deployment checkout's SSH or HTTPS `origin`, or `null` without a GitHub origin; the task PR chip links to `<repository>/pull/<n>` in a new tab when present and stays text otherwise.
 
-A message sent while L3 is busy is queued, never refused: the composer stays open, the Send button
-reads Queue, and the message shows under the conversation as a muted queued row with Remove until
+A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
+keeps its arrow, the hint reads "L3 is mid-turn · runs next", and the message shows as a muted queued row with Remove until
 its turn starts, when the row becomes the turn's bubble and typing indicator. The API snapshots the queue and active record under the same
 lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
@@ -293,7 +293,8 @@ permission, MediaRecorder state, a 595-second client stop below the server's 600
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
 prefix, separated from dictated text by one space when it does not already end in whitespace. Its
-states are the design spec's §3.6 table (idle, typing, sending at 60%, busy with Queue, listening
+send control is an arrow in an accent circle in every state, with no visible text and an accessible
+name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60%, busy queueing, listening
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
 phone and desktop widths in `web/e2e/conversation.pw.ts`. Decision and reason fields remain
 ordinary form fields.

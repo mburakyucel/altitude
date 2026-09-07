@@ -5,7 +5,7 @@ import { transcribeVoice } from "../data/api";
 /*
  * The one composer (SPEC.md §3.6): project chat, decision follow-up, task conversation. The page owns
  * the draft and the send; the composer owns the states in the §3.6 table: Idle, Typing, Sending (the
- * page's bubble at 60%), Busy (Send reads Queue), Listening, Transcribing, Landed (the transcript is
+ * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
  * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
  */
@@ -28,7 +28,7 @@ export interface ComposerProps {
   onSubmit: (text: string) => void | Promise<void>;
   placeholder: string;
   ariaLabel: string;
-  /** L3 is mid-turn: Send reads Queue and the hint says the message runs next (SPEC.md §4.2). */
+  /** L3 is mid-turn: the arrow queues and the hint says the message runs next (SPEC.md §4.2). */
   busy?: boolean;
   /** The hint under the field when no state claims it (12px muted). */
   hint?: ReactNode;
@@ -538,21 +538,15 @@ export default function Composer({
               {listening ? <StopIcon /> : <MicIcon />}
             </button>
           ) : null}
-          {busy && !listening ? (
-            <button type="button" className="composer-queue" disabled={!canSend} onClick={() => void submit(value)}>
-              Queue
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="composer-icon composer-send"
-              aria-label="Send"
-              disabled={!canSend}
-              onClick={() => phase === "listening" ? stop(true) : void submit(value)}
-            >
-              <SendIcon />
-            </button>
-          )}
+          <button
+            type="button"
+            className="composer-icon composer-send"
+            aria-label={busy ? "Queue" : "Send"}
+            disabled={!canSend}
+            onClick={() => phase === "listening" ? stop(true) : void submit(value)}
+          >
+            <SendIcon />
+          </button>
         </div>
       </div>
       {hintText ? (

@@ -61,10 +61,12 @@ phase deleted.
   folds to one muted line, red-dotted for an incident, a recovery, or a fault, with **Show** opening
   what altd sent L3, L3's reply, and links to the task, its full report, and its digest; a run of
   them between two operator messages folds to one line that expands to the list.
-- Every conversation uses one composer with the same optional microphone control. While listening,
-  **Cancel** discards the recording, **Stop** transcribes into the editable draft, and **Send**
-  transcribes, appends to the draft, and sends at once through the normal path, including **Queue**
-  while L3 is busy. Cancel, denial, and transcription failure leave typing and the draft available.
+- Every conversation uses one composer with the same optional microphone control and an arrow in
+  an accent circle for sending in every state, with no visible Send or Queue label. While listening,
+  **Cancel** discards the recording, **Stop** transcribes into the editable draft, and the arrow
+  transcribes, appends to the draft, and sends at once through the normal path. While L3 is busy the
+  arrow queues, and the hint reads "L3 is mid-turn · runs next". Cancel, denial, and transcription
+  failure leave typing and the draft available.
 
 ## Repository and runtime
 
@@ -184,13 +186,13 @@ The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where ava
 converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
 path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
 audio is deleted after every success or failure and is never part of task or chat state. A recording
-becomes text through **Stop** (Ctrl/⌘+M), appending to the draft for editing, or **Send** (Enter),
+becomes text through **Stop** (Ctrl/⌘+M), appending to the draft for editing, or the send arrow (Enter),
 appending and sending at once (queued while L3 is busy). **Cancel** (Esc) discards the recording.
 An empty transcript or transcription failure sends nothing and preserves the draft.
 
 For a manual Safari check, open each of a project conversation, a task conversation, and a project
 task's **Message L2** panel; record and stop; confirm the transcript is appended to the existing
-draft and nothing else appears; record again and use Send to transcribe and send or queue at once;
+draft and nothing else appears; record again and use the arrow to transcribe and send or queue at once;
 then cancel a recording and deny microphone access once and confirm the
 typed draft remains usable. If Safari reports that voice needs HTTPS, use the secure URL above and verify the local CA is
 enabled under Certificate Trust Settings.
