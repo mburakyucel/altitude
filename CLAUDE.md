@@ -57,7 +57,17 @@ outside a seam can only fall.
 From the wireframe-implementation phase on, a PR that implements or changes a UI component ships
 with that component's interaction states specified — empty, loading, listening, error, denied, and
 what appears and disappears after each action — and walked through on phone and desktop before the
-work is done. Review checks the states, not only the happy path; a state that is only described is
+work is done. Use the Playwright harness in `web/e2e/`: `make ui` runs the same specs headlessly at
+390×844 (phone, touch and mobile user agent) and 1440×900 (desktop), against real service data.
+Use `walkthrough.ts` to open the route, drive each action, assert visible text/roles that appear
+and disappear, and save a named screenshot for each state; `project-menu.pw.ts` is the example.
+The PR body lists the states walked at each viewport and the spec or screenshot folder that proves
+each state. Artifacts are local under `web/ui-artifacts/`; see README for target and browser setup.
+The harness prefers bundled Chromium under the Altitude home's shared `browsers/` directory,
+with Chromium's sandbox disabled inside the worker sandbox. Incident I-20260907-041446: this
+host's installed Chrome AppArmor profile denies network sockets there. Installed Chrome is only
+the fallback when the bundled browser is absent; install the bundle once as README describes.
+Review checks the states, not only the happy path; a state that is only described is
 not walked through. Functionality-first UI was acceptable before the boards were approved and is
 not now. The failure this prevents: after a voice message is sent the transcript box stays on
 screen, and that box should not exist at all (issue #195).

@@ -171,6 +171,25 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make test`
+runs Python unit and integration tests with throwaway state; `pnpm --dir web test` runs the web
+unit suite. `make ui` runs the separate Playwright `web/e2e/*.pw.ts` suite against a running
+service (`UI_BASE_URL`, default `https://10.88.0.1:8890`), including a Vite server with its API proxy
+or an independently populated throwaway altd. The smoke spec reads the route tree in
+`web/src/routes.tsx`, resolves dynamic parameters from real managed-project and task records, and
+checks rendered content, console/uncaught errors, API failures and viewport horizontal overflow.
+The same specs run at 390×844 with mobile user agent and touch and at 1440×900. Component specs use
+`walkthrough.ts` for actions, visible text/role assertions for appearances and removals, and named
+screenshots; `project-menu.pw.ts` demonstrates confirmation and cancellation without mutating state.
+Screenshots, traces and the HTML report live in ignored `web/ui-artifacts/`. Bundled Chromium runs
+headlessly with a temporary profile and its browser sandbox disabled inside the worker sandbox.
+`pnpm ui` sets `PLAYWRIGHT_BROWSERS_PATH` to the Altitude home's shared `browsers/` directory unless
+overridden; one install serves every worktree using that browser version. Installed Chrome is the
+fallback only when the bundle is absent (its host profile denies networking in incident
+I-20260907-041446). README documents setup,
+target overrides and the human's headed mode. The UI rule stays in the project instructions file,
+which both worker personas direct the task owner to read first.
+
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
 compact cards grouped by project, answered through `POST /api/decide`), the project page at

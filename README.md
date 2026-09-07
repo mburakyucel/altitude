@@ -74,6 +74,7 @@ status keeps its complete JSON view and adds `--brief` for compact orientation.
 ```sh
 make test
 make web
+make ui
 bin/alt --project <name> task report <slug>
 bin/alt --project <name> task messages <slug> --last 5
 bin/alt --project <name> task events <slug> --last 5
@@ -86,6 +87,42 @@ bin/alt --project <name> l3 tools --days 7
 
 [`docs/CLI.md`](docs/CLI.md) is the inspection and task-lifecycle reference. `alt monitor` remains the separate
 quota and live-session view.
+
+The UI suite uses Playwright from a plain shell on every engine. With Node 22+ and pnpm available,
+install once with `pnpm --dir web install --frozen-lockfile` (in a restricted worktree, add
+`--store-dir /tmp/altitude-ui-pnpm-store` to keep the package store writable). `make ui` runs route
+smoke and component walkthroughs headlessly at 390×844 and 1440×900 against the local service at
+`https://10.88.0.1:8890`. Set `UI_BASE_URL` to target a throwaway altd on an unreserved port or a
+Vite dev server; Vite's `ALTITUDE_DEV_API` points its API proxy at that service. The suite reads a
+managed project and a real active or archived task; `UI_PROJECT` and `UI_TASK` select them when
+needed. A throwaway service needs those records populated. Missing data fails explicitly, never
+silently skips route coverage. It does not create projects, send messages, or dispatch tasks.
+
+The harness prefers bundled Chromium (`channel: "chromium"`), with its browser sandbox disabled
+inside the worker's filesystem sandbox. Incident I-20260907-041446 identifies the installed Chrome
+AppArmor profile denying network sockets there. Install the bundle once per Playwright version:
+
+```sh
+PLAYWRIGHT_BROWSERS_PATH="${ALTITUDE_HOME:-$HOME/.altitude}/browsers" pnpm --dir web exec playwright install chromium
+make ui
+```
+
+`pnpm ui` and `make ui` share that writable cache across task worktrees; `PLAYWRIGHT_BROWSERS_PATH`
+overrides it for installation and execution together. Installed Chrome (`channel: "chrome"`) is
+the fallback only when the bundled browser is absent. Profiles are temporary; no visible desktop
+window opens. See [Playwright browser setup](https://playwright.dev/docs/browsers).
+Crashpad's writable configuration also stays under `web/ui-artifacts/browser-config/`.
+
+`web/e2e/*.pw.ts` specs stay separate from the Vitest unit suite (`pnpm --dir web test`). Both
+viewport projects run each spec; `walkthrough.ts` asserts appearances and removals and captures
+named states. `project-menu.pw.ts` walks closed, open, reset confirmation, cancelled and dismissed
+states without confirming a reset. Screenshots, traces and the HTML report stay under ignored
+`web/ui-artifacts/`, grouped by spec and viewport. These contain real service data: keep them local
+and reference the proving spec in the PR. For a human-requested headed run of one spec:
+`make ui UI_ARGS='project-menu.pw.ts --project=desktop --headed'`. To view the saved report:
+`pnpm --dir web exec playwright show-report ui-artifacts/report`.
+The Vite target also checks browser-requested assets: its missing `/favicon.ico` currently reports
+a console 404. The live service suite is the acceptance run; console errors are not filtered out.
 
 ## Service lifecycle
 
