@@ -207,6 +207,7 @@ export default function Conversation({
       if (following.current) node.scrollTop = node.scrollHeight;
     });
     observer.observe(column);
+    observer.observe(node);
     return () => observer.disconnect();
   }, []);
 

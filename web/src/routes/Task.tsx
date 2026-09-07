@@ -165,12 +165,17 @@ function TaskConversation({
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const messages = task.messages ?? [];
-  const count = messages.length + (pending ? 1 : 0);
-
   useEffect(() => {
     const node = scroller.current;
-    if (node && following.current) node.scrollTop = node.scrollHeight;
-  }, [count, decision]);
+    const column = node?.firstElementChild;
+    if (!node || !column || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (following.current) node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(column);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   // The bubble shows at once at 60%; accepted, it is the stored row at full opacity; refused, it leaves
   // and the composer brings the draft back with "Not sent. Retry." (SPEC.md §3.6).

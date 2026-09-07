@@ -57,6 +57,7 @@ task: today one blocked task carries one open question, and the route follows th
 - A decision page or a task page opened from a phone tab pushes over that tab with a back control
   and keeps the tab bar.
 - No viewport ever scrolls horizontally; transcripts and tables scroll inside their own container.
+- The shell fills the visual viewport and never scrolls or bounces: headers, the tab bar and composer stay docked while inner regions own native scrolling and bounce; the conversation shrinks above the keyboard and follows its newest row while the operator is at the bottom.
 - Breakpoint constants live in one place in the web code and are the only place widths are named.
 
 ### 2.3 Scope rule

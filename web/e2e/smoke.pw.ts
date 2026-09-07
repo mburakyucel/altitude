@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, test } from "@playwright/test";
 import { liveProject, liveTask } from "./live-data";
+import { walkthrough } from "./walkthrough";
 
 // Read route declarations without importing React/browser modules into the test runner.
 // Issue #195: a new route cannot silently escape rendered-state coverage.
@@ -26,8 +27,8 @@ function paths(node: ts.Node, parent = ""): string[] {
 }
 const routePaths = [...new Set(paths(source))];
 
-for (const route of routePaths) {
-  test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }) => {
+for (const route of [...routePaths, "/projects/:name?tab=work"]) {
+  test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }, info) => {
     const project = await liveProject(request, route === "/projects" || route === "/chat");
     const task = route.includes(":slug") ? await liveTask(request, project.name) : undefined;
     const url = route.replace(":name", encodeURIComponent(project.name))
@@ -74,9 +75,13 @@ for (const route of routePaths) {
     } else if (route === "/monitor") {
       await expect(main.getByRole("heading", { name: "Routing now", exact: true })).toBeVisible();
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {
-      await expect(page).toHaveURL(new RegExp(`${project.path}$`));
+      await expect(page).toHaveURL(new RegExp(`${project.path}(\\?tab=work)?$`));
       await expect(main.getByRole("button", { name: "More actions" })).toBeVisible();
-      await expect(main.getByRole("textbox", { name: /^Message L3 about / })).toBeVisible();
+      if (route.endsWith("?tab=work")) {
+        await expect(main.getByRole("region", { name: "Work", exact: true })).toBeVisible();
+      } else {
+        await expect(main.getByRole("textbox", { name: /^Message L3 about / })).toBeVisible();
+      }
     } else {
       expect(["/", "/*"], "Add a rendered-state assertion for the new route").toContain(route);
       await expect(main.getByRole("heading", { name: "Needs you", exact: true })).toBeVisible();
@@ -90,6 +95,35 @@ for (const route of routePaths) {
     });
     expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
       - document.documentElement.clientWidth), "SPEC §2.2: no viewport scrolls horizontally").toBeLessThanOrEqual(0);
+    await test.step("phone-shell-is-fixed-only-inner-containe: only inner regions scroll", async () => {
+      const fixed = page.locator(info.project.name === "phone" ? ".phone-header, .tab-bar, .convo-dock" : ".rail, .project-header, .task-header, .convo-dock");
+      const boxes = () => fixed.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
+      const before = await boxes();
+      const owners = main.locator(".page:visible, .convo-scroll:visible, .work-panel:visible, .live-body:visible");
+      if (info.project.name === "phone") await expect(owners).toHaveCount(1);
+      for (const owner of await owners.all()) {
+        await owner.evaluate((node) => { node.scrollTop = 0; });
+        await owner.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+        await expect.poll(() => owner.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop)).toBeLessThanOrEqual(1);
+        await owner.hover();
+        await page.mouse.wheel(0, 900);
+      }
+      await walkthrough(page, info).state("phone-shell-is-fixed-only-inner-containe-scrolled-to-end", {
+        visible: [fixed.first(), owners.first()], hidden: [],
+      });
+      expect(await boxes(), "Scrolling and overscrolling cannot move the shell or composer").toEqual(before);
+      expect(await page.evaluate(() => ({
+        height: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
+        viewport: window.innerHeight,
+        top: window.scrollY,
+        mainTop: document.querySelector("main")!.scrollTop,
+      }))).toEqual({ height: page.viewportSize()!.height, viewport: page.viewportSize()!.height, top: 0, mainTop: 0 });
+      for (const selector of ["html", "body", ".shell", ".shell-main"]) {
+        await expect(page.locator(selector)).toHaveCSS("overflow", "hidden");
+        await expect(page.locator(selector)).toHaveCSS("overscroll-behavior", "none");
+      }
+      for (const owner of await owners.all()) await expect(owner).toHaveCSS("overscroll-behavior", "contain");
+    });
     expect(errors, "A rendered route has no console errors, uncaught exceptions, or failed API reads").toEqual([]);
   });
 }

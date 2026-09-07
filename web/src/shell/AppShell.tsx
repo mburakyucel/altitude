@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Outlet, useParams } from "react-router";
 import { ToastViewport } from "../data/Toast";
 import { useOverview } from "../data/api";
@@ -20,6 +20,28 @@ export default function AppShell() {
   const params = useParams();
   const [addingFolder, setAddingFolder] = useState(false);
   const closeFirstRun = useCallback(() => setAddingFolder(false), []);
+  const shell = useRef<HTMLDivElement>(null);
+
+  // The phone keyboard shrinks the visual viewport independently of 100dvh on iOS.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const node = shell.current;
+    if (!phone || !viewport || !node) return;
+    const resize = () => {
+      if (viewport.scale !== 1) return; // Keep native pinch zoom.
+      node.style.setProperty("--viewport-height", `${viewport.height}px`);
+      node.style.setProperty("--viewport-top", `${viewport.offsetTop}px`);
+    };
+    resize();
+    viewport.addEventListener("resize", resize);
+    viewport.addEventListener("scroll", resize);
+    return () => {
+      viewport.removeEventListener("resize", resize);
+      viewport.removeEventListener("scroll", resize);
+      node.style.removeProperty("--viewport-height");
+      node.style.removeProperty("--viewport-top");
+    };
+  }, [phone]);
 
   // The scope rule: a project route selects its project (SPEC.md §2.3).
   const routeProject = params.name ?? "";
@@ -29,7 +51,7 @@ export default function AppShell() {
   }, [routeProject, managedNames]);
 
   return (
-    <div className="shell" data-phone={phone || undefined} style={LAYOUT_SIZES}>
+    <div className="shell" ref={shell} data-phone={phone || undefined} style={LAYOUT_SIZES}>
       {/* The restart banner sits above the header on every route (SPEC.md §3.13): above the phone
           header, and at the top of the main pane above a page's own header on the desktop. */}
       {phone ? (

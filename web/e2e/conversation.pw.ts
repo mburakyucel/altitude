@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
-import { liveProject } from "./live-data";
+import { liveProject, liveTask } from "./live-data";
 import { walkthrough } from "./walkthrough";
 
 /*
@@ -48,11 +48,11 @@ async function clearRoutes(page: Page) {
 
 /** The real chat rows and the slug of the latest landed report among them. */
 async function liveChat(page: Page, name: string) {
-  const response = await page.request.get(`${chatApi(name)}?limit=60`);
+  const response = await page.request.get(`${chatApi(name)}?limit=200`);
   expect(response.ok(), "Live chat must be available").toBe(true);
   const view = (await response.json()) as ChatView;
   const landed = [...view.history].reverse().find((row) => row.role === "user" && row.trigger === "report-landed");
-  const slug = landed ? /Report landed for `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/.exec(landed.text)?.[1] : undefined;
+  const slug = landed ? /Report landed for `?([A-Za-z0-9][A-Za-z0-9_.-]*)`?/.exec(landed.text)?.[1]?.replace(/\.$/, "") : undefined;
   return { view, slug };
 }
 
@@ -103,6 +103,8 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
   }, [0]);
   expect(runs.some((n) => n >= 2), "The walkthrough needs a run of two or more system turns in the live chat").toBe(true);
   expect(runs.some((n) => n === 1), "The walkthrough needs one lone system turn in the live chat").toBe(true);
+  // Keep the real rows stable while live turns arrive during the walkthrough.
+  await overlayChat(page, project.name, () => ({ ...view, active: null, busy: false }));
 
   await walk.open(project.path);
   const lastRow = v.convo.locator(".msg-row").last();
@@ -495,6 +497,7 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   const project = await liveProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
+  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false }));
   await page.addInitScript(FAKE_MIC);
   let answer: "ok" | "fail" = "ok";
   let release: () => void = () => {};
@@ -569,6 +572,7 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   const project = await liveProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
+  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false }));
   await page.addInitScript(`
     Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
       configurable: true,
@@ -587,6 +591,7 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   await expect(v.send).toBeEnabled();
 
   const insecure = await page.context().newPage();
+  await overlayChat(insecure, project.name, (live) => ({ ...live, active: null, busy: false }));
   await insecure.addInitScript(`Object.defineProperty(window, "isSecureContext", { value: false });`);
   const w = views(insecure, info);
   const insecureWalk = walkthrough(insecure, info);
@@ -613,4 +618,53 @@ test("the phone shows the project name once, in the header, with the composer ab
   const field = await v.field.boundingBox();
   const bar = await page.getByRole("navigation", { name: "Primary", exact: true }).boundingBox();
   expect(field && bar && field.y + field.height <= bar.y).toBe(true);
+});
+
+test("phone-shell-is-fixed-only-inner-containe: viewport shrink keeps the newest conversation row above the composer", async ({ page, request }, info) => {
+  const project = await liveProject(request);
+  const task = await liveTask(request, project.name);
+  const walk = walkthrough(page, info);
+  await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`,
+    (route) => route.fulfill({ json: { ...task, state: "running" } }));
+  // A keyboard changes only visualViewport on iOS; browser emulation has no native keyboard.
+  await page.addInitScript(() => {
+    const viewport = new EventTarget();
+    let height: number | undefined;
+    Object.defineProperty(viewport, "height", { get: () => height ?? window.innerHeight, set: (value: number) => { height = value; } });
+    Object.assign(viewport, { offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, "visualViewport", { value: viewport });
+  });
+  for (const [label, path] of [["project", project.path], ["task", `${project.path}/tasks/${task.slug}`]]) {
+    await walk.open(path);
+    const scroll = page.locator(".convo-scroll");
+    const field = page.getByRole("main").getByRole("textbox").first();
+    await expect(scroll.locator(".convo-col")).toBeVisible();
+    await page.evaluate(async () => { await document.fonts.ready; });
+    await expect(page.locator(".shell")).toHaveCSS("height", `${page.viewportSize()!.height}px`);
+    const height = await scroll.evaluate((node) => node.clientHeight);
+    await expect(field).toBeVisible();
+    await field.focus();
+    await scroll.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport!, { height: 480, offsetTop: 24 });
+      window.visualViewport!.dispatchEvent(new Event("resize"));
+    });
+    if (info.project.name === "phone") {
+      await expect(page.locator(".shell")).toHaveCSS("height", "480px");
+      expect(await scroll.evaluate((node) => node.clientHeight)).toBeLessThan(height);
+      await expect.poll(() => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeLessThanOrEqual(1);
+      const column = await scroll.locator(".convo-col").boundingBox();
+      const box = (await scroll.boundingBox())!;
+      expect(column!.y + column!.height).toBeLessThanOrEqual(box.y + box.height);
+    } else {
+      expect(await scroll.evaluate((node) => node.clientHeight)).toBe(height);
+    }
+    await walk.state(`${label}-keyboard-viewport-overlay`, { visible: [scroll], hidden: [] });
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport!, { height: window.innerHeight, offsetTop: 0 });
+      window.visualViewport!.dispatchEvent(new Event("resize"));
+    });
+    await expect.poll(() => scroll.evaluate((node) => node.clientHeight)).toBe(height);
+    await walk.state(`${label}-keyboard-dismissed-overlay`, { visible: [scroll], hidden: [] });
+  }
 });
