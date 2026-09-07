@@ -375,6 +375,7 @@ export type ProjectView = z.infer<typeof ProjectViewSchema>;
 export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
+export type Transcript = z.infer<typeof TranscriptSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type MonitorView = z.infer<typeof MonitorSchema>;
 export type DigestView = z.infer<typeof DigestSchema>;
@@ -424,12 +425,25 @@ export function useTask(project: string, slug: string) {
   });
 }
 
-export function useTranscript(project: string, slug: string, engine: string, sessionId: string, raw: boolean) {
+/** The worker's session as a timeline. `live` (the task is running) polls every 2s; a finished or
+ * paused session refreshes at the page's ordinary rate. A 404 is the server saying this attempt has
+ * no session file; the page reads that from `ApiError.status`. */
+export function useTranscript(
+  project: string,
+  slug: string,
+  engine: string,
+  sessionId: string,
+  raw: boolean,
+  live = true,
+) {
   const query = new URLSearchParams({ engine, session_id: sessionId, raw: raw ? "1" : "0" });
-  return useQuery({
+  return useQuery<Transcript>({
     queryKey: ["transcript", project, slug, engine, sessionId, raw],
     queryFn: async () => TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`)),
-    refetchInterval: 2_000,
+    refetchInterval: live ? 2_000 : pollInterval,
+    // The poll is the retry: a failed read shows at once (a 404 is the server's answer, no session
+    // file for this task generation) and the next interval reads again.
+    retry: false,
     enabled: Boolean(project && slug && engine && sessionId),
   });
 }
@@ -547,6 +561,19 @@ export interface L2MessageInput {
   project: string;
   slug: string;
   text: string;
+}
+
+/** The task page's message to the L2 (SPEC.md §3.10): the page owns the bubble and the "Not sent.
+ * Retry." hint itself, so this is the plain call rather than the toasting hook below. The reply
+ * carries the stored row, which the page appends to the conversation it already holds. */
+export async function sendL2Message(input: L2MessageInput): Promise<TaskMessage> {
+  const out = await post<{ message: unknown }>("/api/l2/message", input);
+  return TaskMessageSchema.parse(out.message);
+}
+
+/** Stop or Reject from the task page's inline confirm (SPEC.md §3.10); failure reads inline there. */
+export function taskAction(input: TaskActionInput): Promise<unknown> {
+  return post("/api/task/action", input);
 }
 
 export function useL2Message(project: string) {

@@ -205,8 +205,8 @@ a system fault, not “still running.” Rejection and post-merge cleanup use th
 
 ## Live transcript
 
-The task page's Conversation tab stays a concise Burak/L2 conversation. Its Live session tab reads like a
-Claude Code window: the engine's local session records and Altitude's task events project into one timeline
+The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
+tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline
 in time order, and the page renders it as a conversation. Prompts (the brief, a resume, a task message the
 worker read at its checkpoint) appear as prompt blocks; the worker's replies as prose with code blocks; each
 tool call as one compact row (`$ git status`, `Read altitude/tasks.py`, a Codex command or file change) with
@@ -216,7 +216,7 @@ id of the call it answers, so the page nests output under the command that produ
 its prompt into the thread, so the projection shows the task's own record of it: the brief for the first
 turn, the delivered task messages for a resumed one. Hidden model reasoning (Claude thinking blocks, Codex
 reasoning items) is stripped before anything crosses the HTTP boundary and never appears in either mode; the
-tab does not run a summarizer. Tool output is bounded in the conversation, and Raw mode lists every redacted
+panel does not run a summarizer. Tool output is bounded in the transcript, and Raw events lists every redacted
 record (credential-shaped keys and values replaced) as the escape hatch. The browser supplies no paths: the
 server derives the files from the registered task's engine and session id, reading the provider's own session
 store (Claude's project JSONL, or the stdout JSONL of every turn of the Codex thread, kept in the task

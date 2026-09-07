@@ -55,13 +55,17 @@ for (const route of routePaths) {
     const main = page.getByRole("main");
     await expect(main).toBeVisible();
     if (task) {
-      await expect(main.getByRole("heading", { name: task.title || task.slug, exact: true })).toBeVisible();
+      // The phone header carries the title outside main; the desktop header inside it (SPEC §3.10).
+      await expect(page.getByRole("heading", { level: 1, name: task.title || task.slug, exact: true })).toBeVisible();
       if (route.endsWith("/live")) {
-        await expect(task.session_id ? main.getByRole("textbox", { name: "Search transcript" })
-          : main.getByText("No session yet: the live view opens with the task's first worker.")).toBeVisible();
-        await expect(main.getByText("Loading the session…", { exact: true })).toBeHidden();
+        const live = main.getByRole("region", { name: "Live session", exact: true });
+        await expect(live).toBeVisible();
+        await expect(live.getByLabel("Connecting", { exact: true })).toBeHidden();
+        // A transcript, a session that is gone, or what a queued task waits for: never a blank panel.
+        await expect(live.getByRole("region", { name: "Live transcript", exact: true })
+          .or(live.getByText(/^(No session file for this attempt|Waits for )/)).first()).toBeVisible();
       } else {
-        await expect(main.getByRole("region", { name: "Task conversation" })).toBeVisible();
+        await expect(main.getByRole("region", { name: "Task conversation", exact: true })).toBeVisible();
       }
     } else if (route === "/monitor") {
       await expect(main.getByRole("heading", { name: "Routing now", exact: true })).toBeVisible();

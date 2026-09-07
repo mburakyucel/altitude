@@ -255,7 +255,7 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages fold into one turn in arrival order, each on its own line, while server-triggered messages
 keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-Chat, the task Conversation tab, and the project task card's quick-message panel use one controlled
+Chat, the task page's conversation, and the project task card's quick-message panel use one controlled
 voice-capable composer. The routes retain ownership of their draft and normal submit function; the
 shared composer owns microphone permission, MediaRecorder state, a 595-second client stop below the
 server's 600-second decoded-audio limit, transcription,
@@ -305,16 +305,26 @@ sessions the monitor knows follow, each with its task, its engine and the model 
 one, its context meter and the age of its snapshot; no session is one muted sentence. Loading is a
 skeleton in the page's shape, and a failed read is one sentence with Retry.
 
-A task has two views. Its header keeps the task's own state (slug, attempt, worktree, branch) and
-its worker's (engine, model, session, context percent with its state and observation age, turns,
-reported subagent launches) in two labelled groups, so lifecycle and session facts are never read as
-one thing; a live worker whose snapshot ages out is labelled stale by the same rule the Monitor page
-uses. The Conversation
-tab is the human-readable Burak/L2 exchange; the Live session tab reads the worker's own session log
-(Claude's session JSONL, or every turn of the Codex thread) together with Altitude's task events as a
-Claude Code window: prompts, replies, and each tool call as one row with its output folded under it,
-task boundaries as thin separators, hidden reasoning never shown, and Raw mode for the complete redacted
-records. Operational events remain an audit detail.
+The task page is the operator's conversation with the L2 beside the worker's live session
+(design spec §3.10). Its header carries the crumb back to the project, the quiet Stop and Reject
+actions with an inline confirm in place of any browser dialog, the title with its state dot, a muted
+line (attempt, when the task started or finished, context used), and chips: the state, the model on
+its engine as the engine seam reports them, the last PR with whether it merged and how the main run
+concluded, and the merge-hold reason. The conversation shows the operator's rows as bubbles and the
+L2's and L3's rows as prose under day dividers, the decision card at the top while the task waits on
+the operator, and the composer while the task is running or blocked; a block waiting on L3 and a
+fault each read as one line under the chips, the fault in red with "L3 has been told". The live
+session panel is 480px inline at 1280px and wider and an overlay from the header's panel button
+below that; it reads the worker's own session log (Claude's session JSONL, or every turn of the
+Codex thread) together with Altitude's task events as one transcript: tinted prompt blocks, the
+worker's prose, each tool call as one compact row with its output folded under it, task boundaries
+as thin separators with subtle timestamps, hidden reasoning never shown, and Raw events behind a
+toggle for the complete redacted records, the task's other operational events among them. A queued
+task shows what it waits for in place of the session, a finished one says the session ended, and a
+missing session file says so. On a phone the header carries Back and the title, a state line holds
+the chips and the actions, and two tabs, Conversation and Live session, switch the content (`/live`
+selects the second) with the composer pinned above the tab bar. A done or rejected task is
+read-only with the composer gone.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks

@@ -202,7 +202,7 @@ describe("Phone", () => {
 
     await router.navigate("/projects/tutor/tasks/fix-audio");
     expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "tutor", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "fix-audio", level: 1 })).toBeInTheDocument();
     const bar = screen.getByRole("navigation", { name: "Primary" });
     expect(within(bar).getByRole("link", { name: "Work" })).toHaveAttribute("aria-current", "page");
     // Chat and Work share a path; only the tab the page belongs to is current (walkthrough 2026-09-06:

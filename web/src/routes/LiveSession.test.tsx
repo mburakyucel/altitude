@@ -1,6 +1,6 @@
-import { screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { renderApp } from "../test/render";
+import { screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderApp, setViewport } from "../test/render";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
@@ -12,6 +12,7 @@ const overview = {
   fyis: [],
   wip: { per_project: {}, machine: 0, waiting: [] },
   quota: { known: false },
+  engines: [{ engine: "claude", label: "Claude", known: true }],
   now: new Date().toISOString(),
 };
 
@@ -21,9 +22,7 @@ const task = {
   title: "Fix the timer",
   attempt: 1,
   session_id: "0123456789abcdef",
-  agent_id: "a-9",
   l2_engine: "claude",
-  worktree: ".claude/worktrees/fix-timer",
   files: {},
   events: [],
   messages: [],
@@ -52,12 +51,14 @@ const transcript = {
   ],
 };
 
-function stub() {
+const boundariesOnly = { ...transcript, cursor: 1, events: [transcript.events[0]] };
+
+function stub(options: { task?: unknown; transcript?: () => Response } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
-    if (url.includes("/api/transcript/")) return jsonResponse(transcript);
-    if (url.includes("/api/task/")) return jsonResponse(task);
+    if (url.includes("/api/transcript/")) return options.transcript ? options.transcript() : jsonResponse(transcript);
+    if (url.includes("/api/task/")) return jsonResponse(options.task ?? task);
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -66,57 +67,126 @@ function stub() {
 
 const route = "/projects/altitude/tasks/fix-timer/live";
 
+afterEach(() => setViewport(1024));
+
+async function openPanel() {
+  setViewport(1440);
+  return screen.findByRole("region", { name: "Live session" });
+}
+
 describe("LiveSession", () => {
-  it("reads the session as prompts, replies, and folded tool calls", async () => {
+  it("reads the session as tinted prompts, the worker's prose, and folded tool rows", async () => {
     stub();
     renderApp({ route });
 
-    const view = await screen.findByRole("region", { name: "Live transcript" });
-    expect(await within(view).findByRole("separator")).toHaveTextContent("queued → running · altd");
+    const panel = await openPanel();
+    const view = await within(panel).findByRole("region", { name: "Live transcript" });
+    const separators = within(view).getAllByRole("separator");
+    expect(separators[0]).toHaveTextContent("queued → running · altd");
 
     const prompt = view.querySelector('[data-role="user"]');
+    expect(prompt).toHaveClass("session-prompt");
     expect(prompt).toHaveTextContent("Prompt");
     expect(prompt).toHaveTextContent("Fix the timer in alt.");
     expect(prompt?.querySelector("strong")).toHaveTextContent("timer");
     expect(prompt?.querySelector("code")).toHaveTextContent("alt");
+    expect(prompt?.querySelector("time")).toHaveAttribute("datetime", at(1));
 
     const reply = view.querySelector('[data-role="assistant"]');
     expect(reply).toHaveTextContent("Claude");
     expect(reply).toHaveTextContent("Reading the timer code first.");
     expect(reply?.querySelector("pre")).toHaveTextContent("make test");
 
-    const command = within(view).getByText("$ git status").closest("details");
+    const command = within(view).getByText("git status", { selector: "code" }).closest("details");
     expect(command).not.toHaveAttribute("open");
+    expect(command?.querySelector(".session-tool-name")).toHaveTextContent("$");
     expect(command).toHaveTextContent("2 lines");
     expect(command?.querySelector("[data-output]")).toHaveTextContent("nothing to commit");
-    expect(within(view).queryByText("nothing to commit", { selector: "article *" })).toBeNull();
 
-    const read = within(view).getByText("Read altitude/timer.py").closest("details");
+    const read = within(view).getByText("altitude/timer.py", { selector: "code" }).closest("details");
+    expect(read?.querySelector(".session-tool-name")).toHaveTextContent("Read");
     expect(read).toHaveTextContent("running…");
 
-    const codex = within(view).getByText("$ make test").closest("details");
+    const codex = within(view).getByText("make test", { selector: "code" }).closest("details");
     expect(codex?.querySelector("[data-output]")).toHaveTextContent("ok");
 
     expect(view.textContent).not.toContain("attachment");
-    expect(screen.getByText(/model reasoning is never shown/)).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("title", transcript.redaction);
+    expect(within(panel).getByText("Following live · new steps appear at the bottom").closest("[role=separator]")).toHaveAttribute("data-tone", "live");
+    expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "live");
   });
 
-  it("finds a row by its output and keeps raw mode as the escape hatch", async () => {
+  it("keeps Raw events behind its toggle and pauses following", async () => {
     const fetchMock = stub();
     const { user } = renderApp({ route });
 
-    const view = await screen.findByRole("region", { name: "Live transcript" });
-    await within(view).findByText("$ git status");
-    await user.type(screen.getByLabelText("Search transcript"), "nothing to commit");
-    expect(within(view).getByText("$ git status")).toBeInTheDocument();
-    expect(within(view).queryByText("Read altitude/timer.py")).toBeNull();
-    await user.clear(screen.getByLabelText("Search transcript"));
-
-    await user.click(screen.getByRole("button", { name: "Raw" }));
-    const raw = await screen.findByRole("region", { name: "Raw records" });
+    const panel = await openPanel();
+    await within(panel).findByRole("region", { name: "Live transcript" });
+    await user.click(within(panel).getByRole("button", { name: "Raw events" }));
+    const raw = await within(panel).findByRole("region", { name: "Raw events" });
     expect(within(raw).getByText(/claude · engine · attachment · system/)).toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("raw=1"))).toBe(true);
-    await user.click(screen.getByRole("button", { name: "Conversation" }));
-    expect(await screen.findByRole("region", { name: "Live transcript" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes("raw=1"))).toBe(true));
+    await user.click(within(panel).getByRole("button", { name: "Raw events" }));
+    expect(await within(panel).findByRole("region", { name: "Live transcript" })).toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("button", { name: "Pause" }));
+    expect(within(panel).getByText("Paused · Follow to catch up")).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "Follow" }));
+    expect(within(panel).getByText("Following live · new steps appear at the bottom")).toBeInTheDocument();
+  });
+
+  it("shows the connecting skeleton, then only boundaries while the worker has not written yet", async () => {
+    let release: (() => void) | undefined;
+    stub({
+      transcript: () => {
+        return new Promise<Response>((resolve) => {
+          release = () => resolve(jsonResponse(boundariesOnly));
+        }) as unknown as Response;
+      },
+    });
+    renderApp({ route });
+
+    const panel = await openPanel();
+    expect(await within(panel).findByLabelText("Connecting")).toBeInTheDocument();
+    expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
+    release?.();
+    await waitFor(() => expect(within(panel).queryByLabelText("Connecting")).toBeNull());
+    expect(within(panel).getByRole("separator")).toHaveTextContent("queued → running · altd");
+    expect(within(panel).getByText("Connecting to the session…")).toBeInTheDocument();
+  });
+
+  it("says the session ended, or paused, once the task is no longer running", async () => {
+    stub({ task: { ...task, state: "done" } });
+    renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Pause" })).toBeNull();
+    expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "off");
+  });
+
+  it("says the session is paused while the task is blocked", async () => {
+    stub({ task: { ...task, state: "blocked", blocked_reason: "which suite", waiting_on: "l3" } });
+    renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByText("Session paused until the task resumes")).toBeInTheDocument();
+  });
+
+  it("says there is no session file when the transcript is gone", async () => {
+    stub({ transcript: () => jsonResponse({ error: "transcript unavailable for this task generation" }, 404) });
+    renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByText("No session file for this attempt")).toBeInTheDocument();
+  });
+
+  it("offers Retry when the session cannot be read", async () => {
+    let fail = true;
+    stub({ transcript: () => (fail ? jsonResponse({ error: "boom" }, 500) : jsonResponse(transcript)) });
+    const { user } = renderApp({ route });
+    const panel = await openPanel();
+    expect(await within(panel).findByText(/Could not read the session/)).toBeInTheDocument();
+    fail = false;
+    await user.click(within(panel).getByRole("button", { name: "Retry" }));
+    expect(await within(panel).findByText("Reading the timer code first.")).toBeInTheDocument();
   });
 });

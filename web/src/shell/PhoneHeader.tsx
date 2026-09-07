@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useMatch, useNavigate } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { useTask } from "../data/api";
 import type { Overview } from "../data/api";
 import FirstRun from "../routes/FirstRun";
 import { Overlay } from "./Overlay";
@@ -51,7 +52,7 @@ function Switcher({
 }
 
 /** The 54px phone header (SPEC.md §2.2): the project name with a chevron on project tabs, a back control
- * on a pushed task page, "Altitude" on the global tabs. */
+ * and the task's title on a pushed task page (§3.10), "Altitude" on the global tabs. */
 export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
@@ -59,6 +60,8 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
   const projectMatch = useMatch("/projects/:name/*");
   const taskMatch = useMatch("/projects/:name/tasks/:slug/*");
   const name = projectMatch?.params.name ?? "";
+  // The same cache entry the task page reads: no request of the header's own.
+  const task = useTask(taskMatch?.params.name ?? "", taskMatch?.params.slug ?? "");
   const data = overview.data;
   const managed = managedProjects(data);
   const isProject = Boolean(name) && managed.some((p) => p.name === name);
@@ -95,7 +98,11 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
           </svg>
         </button>
       ) : (
-        <h1 className="phone-title">{isProject ? name : "Altitude"}</h1>
+        <h1 className="phone-title">
+          <span className="truncate">
+            {taskMatch ? task.data?.title || taskMatch.params.slug : isProject ? name : "Altitude"}
+          </span>
+        </h1>
       )}
       <span className="icon-btn invisible" aria-hidden />
       {open ? <Switcher overview={overview} current={name} onClose={() => setOpen(false)} /> : null}
