@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Prose } from "../components/Prose";
 import { ApiError, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
 
@@ -54,66 +55,6 @@ function Time({ at }: { at: string | null | undefined }) {
 }
 
 /** `code` and **bold** spans. Everything else stays text: nothing in a transcript is ever parsed as HTML. */
-function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
-    if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) return <code key={index}>{part.slice(1, -1)}</code>;
-    if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    return part;
-  });
-}
-
-/** Markdown-lite prose: fenced code blocks, paragraphs split on blank lines, line breaks kept. The task
- *  conversation renders the L2's replies through the same component (SPEC.md §3.3: prose, no bubble). */
-export function Prose({ text }: { text: string }) {
-  const blocks: ReactNode[] = [];
-  let code: string[] | null = null;
-  let para: string[] = [];
-  const flush = () => {
-    if (para.length > 0) {
-      blocks.push(
-        <p key={blocks.length}>
-          {para.map((line, index) => (
-            <Fragment key={index}>
-              {index > 0 ? "\n" : null}
-              {inline(line)}
-            </Fragment>
-          ))}
-        </p>,
-      );
-    }
-    para = [];
-  };
-  for (const line of text.split("\n")) {
-    if (line.trimStart().startsWith("```")) {
-      if (code) {
-        blocks.push(
-          <pre key={blocks.length} className="session-code">
-            {code.join("\n")}
-          </pre>,
-        );
-        code = null;
-      } else {
-        flush();
-        code = [];
-      }
-      continue;
-    }
-    if (code) code.push(line);
-    else if (line.trim() === "") flush();
-    else para.push(line);
-  }
-  if (code) {
-    blocks.push(
-      <pre key={blocks.length} className="session-code">
-        {(code as string[]).join("\n")}
-      </pre>,
-    );
-  }
-  flush();
-  return <div className="session-prose">{blocks}</div>;
-}
 
 /** A long prompt (the brief) opens folded to its first lines. */
 function Clamped({ text, lines = 12 }: { text: string; lines?: number }) {

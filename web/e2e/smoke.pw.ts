@@ -54,7 +54,11 @@ for (const route of routePaths) {
     expect(response?.ok()).toBe(true);
     const main = page.getByRole("main");
     await expect(main).toBeVisible();
-    if (task) {
+    if (task && route.endsWith("/report")) {
+      // The report view: its own heading, and the crumb back to the task (SPEC §3.4 links).
+      await expect(main.getByRole("heading", { name: "Report", exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: task.title || task.slug, exact: false })).toBeVisible();
+    } else if (task) {
       // The phone header carries the title outside main; the desktop header inside it (SPEC §3.10).
       await expect(page.getByRole("heading", { level: 1, name: task.title || task.slug, exact: true })).toBeVisible();
       if (route.endsWith("/live")) {
@@ -72,7 +76,7 @@ for (const route of routePaths) {
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {
       await expect(page).toHaveURL(new RegExp(`${project.path}$`));
       await expect(main.getByRole("button", { name: "More actions" })).toBeVisible();
-      await expect(main.getByRole("textbox", { name: "Message L3", exact: true })).toBeVisible();
+      await expect(main.getByRole("textbox", { name: /^Message L3 about / })).toBeVisible();
     } else {
       expect(["/", "/*"], "Add a rendered-state assertion for the new route").toContain(route);
       await expect(main.getByRole("heading", { name: "Needs you", exact: true })).toBeVisible();

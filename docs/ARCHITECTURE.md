@@ -238,23 +238,42 @@ route, or a Needs you card; the theme (light by default, dark on request) persis
 rail's engine readout renders `GET /api/overview` `engines[]`, one row per configured engine with the
 display name the engine seam gives, so the web code names no provider; the same read carries the
 scan roots First run names and the operator's configured name. `POST /api/l3/start` runs the start
-turn for a managed project whose L3 never ran, from the header's Start L3. Chat is the only way to
-create a task from the web: the L3 turn creates it through `alt task new`. The composer's engine choice pins the
-project's L3 to Claude or Codex until set back to Auto; on Auto the weekly quota decides, and a turn
-stays on the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
+turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
+way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
+the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a link row
+under the reply. The composer's engine pill pins the project's L3 to one configured engine, named as
+`engines[]` reports it, until set back to Auto; on Auto the weekly quota decides, and a turn stays on
+the previous engine unless the other has clearly more headroom. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
-and trigger without copying its prompt. Chat renders that record as one thinking bubble on a fresh
-mount or reconnect; a tab already showing the same live streamed response suppresses the extra
-bubble. It never infers a turn indefinitely from `busy` or the last history role. The stream's
-completion and terminal history rows carry the turn id, so local output stays until history owns it
-and a completed assistant or error row wins over a raced active snapshot.
+and trigger without copying its prompt, and it is the conversation's only authority: the page polls
+it and never infers a turn from `busy` or the last history row. A fresh mount or reconnect renders
+the record as the typing indicator for a chat turn, or as the line "L3 is handling <what>" for a
+server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
+first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the terminal
+history rows carry the same id, so the local rows stay until history owns the turn and a stored
+assistant or error row wins over a raced active snapshot.
+
+The conversation groups `chat.jsonl` rows by `turn_id` (rows without one, from before the id, by
+adjacency). The operator's rows are bubbles on the right, L3's prose on the left, under day
+dividers, with a row's time in the gutter on hover or a long press. A server-triggered turn (report
+landed, block, incident, recovery, restart, or a system FYI row) folds to one centred 13px line: a
+dot, red for an incident, a recovery, or a fault, the last paragraph of L3's reply, and Show. The
+card behind Show carries what altd sent L3, L3's reply, and links to the task, to the report view
+at `/projects/<name>/tasks/<slug>/report`, and to the digest when the task has one. altd writes the
+landed-report prompt as a header of `Label: value` lines (Task, Verdict, Problems, Post-mortem
+signals, PRs, Spend) followed by the instruction to read the full report with `alt task report`, so
+the card shows the header as label/value rows and an older prompt as preformatted text. Consecutive
+system turns between two operator messages fold to one line, "L3 handled N system events between
+your messages", that expands to the list with each turn's own Show; a turn in progress reads "L3 is
+handling <what>" with no Show, a failed one "L3 could not handle <what>" with its error behind Show.
+A failed chat turn reads "L3 could not answer this turn." with Retry, which resends the same text.
 
 `GET /api/project/<name>` includes `repository`, the GitHub HTTPS web URL derived from the deployment checkout's SSH or HTTPS `origin`, or `null` without a GitHub origin; the task PR chip links to `<repository>/pull/<n>` in a new tab when present and stays text otherwise.
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the Send button
-reads Queue, and the message shows in the transcript as queued until its turn starts, when the queue
-row becomes the active thinking bubble. The API snapshots the queue and active record under the same
+reads Queue, and the message shows under the conversation as a muted queued row with Remove until
+its turn starts, when the row becomes the turn's bubble and typing indicator. The API snapshots the queue and active record under the same
 lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
 file in the project directory, so a reload, another device and a restart all see the same pending
@@ -262,14 +281,18 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages fold into one turn in arrival order, each on its own line, while server-triggered messages
 keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-Chat, the task page's conversation, and the project task card's quick-message panel use one controlled
-voice-capable composer. The routes retain ownership of their draft and normal submit function; the
-shared composer owns microphone permission, MediaRecorder state, a 595-second client stop below the
-server's 600-second decoded-audio limit, transcription,
-transcript review, cancellation, and focus restoration. A transcript stays separate until Burak
-chooses **Edit / insert** or explicitly sends it. Existing draft text is the prefix, separated from
-dictated text by one space when it does not already end in whitespace. Decision and reason fields
-remain ordinary form fields.
+The project conversation, the task page's conversation, and the project task card's quick-message
+panel use one composer component, `web/src/components/Composer.tsx`, with no page-specific props.
+The page owns its draft and its submit function, and a submit that throws is a refused send: the
+bubble leaves, the draft returns, and the hint reads "Not sent. Retry." The composer owns microphone
+permission, MediaRecorder state, a 595-second client stop below the server's 600-second
+decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
+draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
+prefix, separated from dictated text by one space when it does not already end in whitespace. Its
+states are the design spec's §3.6 table (idle, typing, sending at 60%, busy with Queue, listening
+with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
+phone and desktop widths in `web/e2e/conversation.pw.ts`. Decision and reason fields remain
+ordinary form fields.
 
 `POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),
@@ -317,8 +340,9 @@ The task page is the operator's conversation with the L2 beside the worker's liv
 actions with an inline confirm in place of any browser dialog, the title with its state dot, a muted
 line (attempt, when the task started or finished, context used), and chips: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
-concluded, and the merge-hold reason. The conversation shows the operator's rows as bubbles and the
-L2's and L3's rows as prose under day dividers, the decision card at the top while the task waits on
+concluded, and the merge-hold reason. The conversation uses the project conversation's bubble, prose,
+day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
+prose under day dividers, the decision card at the top while the task waits on
 the operator, and the composer while the task is running or blocked; a block waiting on L3 and a
 fault each read as one line under the chips, the fault in red with "L3 has been told". The live
 session panel is 480px inline at 1280px and wider and an overlay from the header's panel button

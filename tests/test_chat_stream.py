@@ -27,7 +27,7 @@ class TestChatStream(AltitudeCase):
         finished = threading.Event()
         seen = {"chunks": 0}
 
-        def fake_turn(project, text, *, trigger, on_text):
+        def fake_turn(project, text, *, trigger, on_text, on_start=None):
             for _ in range(400):  # far more than the socket buffers hold once the client is gone
                 on_text("x" * 20_000)
                 seen["chunks"] += 1

@@ -89,11 +89,11 @@ daemon resume, or `alt task escalate` turns it into a Needs you card for the ope
 On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
 
 Voice capture does not add a message or a lifecycle state. The browser keeps the typed draft while it
-records, uploads the bounded clip for transcription, and shows the returned text separately. **Edit /
-insert** changes only the local editable draft. The explicit **Send** action then calls the same Chat
-or L2-message endpoint as typed text, so a busy L3 durably queues that combined text at the same turn
-boundary and an L2 message follows the same checkpoint/resume rules. Cancel, discard, permission
-denial, and transcription failure create no conversation or queue record.
+records, uploads the bounded clip for transcription, and appends the returned text to the local
+editable draft; nothing else appears. The explicit **Send** action then calls the same chat or
+L2-message endpoint as typed text, so a busy L3 durably queues that combined text at the same turn
+boundary and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial, and
+transcription failure create no conversation or queue record.
 
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
@@ -165,8 +165,8 @@ blocks the task as ended without a report, exactly like a Claude session that ex
 
 ## L3 sessions and provider changes
 
-L3 stores separate Claude and Codex session records. The Chat composer's engine choice pins the
-project's L3 to Claude or Codex, for chat and server-triggered turns alike, until it is set back to
+L3 stores separate Claude and Codex session records. The conversation composer's engine pill pins
+the project's L3 to one engine, for chat and server-triggered turns alike, until it is set back to
 Auto; `alt chat --engine` pins one CLI turn. A pinned turn runs there or reports the hold, and never
 falls back. A turn started from Chat finishes and is recorded even when the page that started it
 leaves mid-stream. L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
@@ -183,10 +183,11 @@ Every direct, queued, folded, or server-triggered L3 turn publishes one process-
 while it owns the project turn lock. The record contains only a stable turn id, its start time, and
 trigger; the prompt remains in the normal private/history path. `GET /api/chat` is the UI authority
 for this state. It snapshots the waiting queue and active record under one lifecycle guard, so claiming
-a queued row and publishing its turn cannot expose an idle state between them. The initiating tab keeps its streamed response and suppresses a duplicate active
-bubble, while a newly mounted or reconnected Chat reconstructs the thinking bubble from the active
-record. Stream completion and assistant or error history rows carry the same turn id, so live local
-output remains until terminal history replaces it and suppresses any raced active snapshot. A
+a queued row and publishing its turn cannot expose an idle state between them. The initiating tab keeps its streamed response and suppresses a duplicate indicator, while a newly
+mounted or reconnected conversation reconstructs the typing indicator (a chat turn) or the "L3 is
+handling <what>" line (a server-triggered turn) from the active record. The stream's first line
+names the turn, and assistant or error history rows carry the same turn id, so live local output
+remains until terminal history replaces it and suppresses any raced active snapshot. A
 `finally` removes the record on every normal, provider-error, or exception path. If altd
 fails, the in-process turn ends and its process-local record disappears with it, so the replacement
 process cannot advertise stale work.

@@ -343,146 +343,6 @@
     font-size: 12.5px;
     overflow-wrap: anywhere;
   }
-
-  /* One composer for every operator↔L2/L3 text surface, with voice as progressive enhancement. */
-  .voice-composer {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-width: 0;
-  }
-  .voice-composer-field {
-    position: relative;
-    min-width: 0;
-  }
-  .voice-composer-textarea {
-    display: block;
-    padding-right: 58px;
-    resize: vertical;
-    font-size: 16px;
-  }
-  .voice-mic {
-    position: absolute;
-    right: 6px;
-    bottom: 6px;
-    display: inline-flex;
-    width: var(--target-min);
-    height: var(--target-min);
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: var(--radius-pill);
-    background: var(--hairline);
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-  .voice-mic:hover:not(:disabled) {
-    border-color: var(--accent-tint-border);
-    background: var(--accent-tint);
-    color: var(--accent-text);
-  }
-  .voice-mic:disabled,
-  .voice-mic[aria-disabled="true"] {
-    opacity: 0.65;
-  }
-  .voice-mic[data-recording="true"] {
-    border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-    background: color-mix(in srgb, var(--danger) 10%, var(--surface));
-    color: var(--danger);
-  }
-  .voice-mic svg {
-    width: 21px;
-    height: 21px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-  .voice-mic svg rect {
-    fill: currentColor;
-    stroke: currentColor;
-  }
-  .voice-status-row,
-  .voice-composer-actions,
-  .voice-review-actions {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 12px;
-  }
-  .voice-status-row {
-    justify-content: space-between;
-  }
-  .voice-status {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 7px;
-    margin: 0;
-    font-size: var(--text-meta);
-    overflow-wrap: anywhere;
-  }
-  .voice-status-review {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-  .voice-timer {
-    margin-right: auto;
-    font-variant-numeric: tabular-nums;
-  }
-  .voice-recording-dot {
-    width: 8px;
-    height: 8px;
-    flex: 0 0 auto;
-    border-radius: 50%;
-    background: var(--danger);
-    animation: voice-pulse 1.4s ease-in-out infinite;
-  }
-  .voice-cancel {
-    padding-inline: 10px;
-    font-size: var(--text-meta);
-  }
-  .voice-review {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-    padding: 12px;
-    border: 1px solid var(--accent-tint-border);
-    border-radius: var(--radius-input);
-    background: var(--accent-tint);
-  }
-  .voice-transcript {
-    margin: 0;
-    max-height: min(10rem, 18dvh);
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-  .voice-composer:has(.voice-review) .voice-composer-textarea {
-    height: var(--target-min);
-    min-height: var(--target-min);
-  }
-}
-
-/* A pointer that hovers is a desktop: the composer can drop the 16px that stops phone zoom. */
-@media (hover: hover) and (pointer: fine) {
-  .voice-composer-textarea {
-    font-size: var(--text-body);
-  }
 }
 
 @keyframes voice-pulse {
@@ -511,8 +371,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast,
-  .voice-recording-dot {
+  .toast {
     animation: toast-fade 160ms ease-out;
   }
   @keyframes toast-fade {
@@ -939,28 +798,6 @@
   min-height: 0;
   flex: 1;
 }
-.project-conversation {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  padding: 16px 24px;
-  overflow: hidden;
-}
-.shell[data-phone] .project-conversation {
-  padding: 12px;
-}
-/* A landscape phone has no room for a bounded transcript between the header and the tab bar: the
- * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
-@media (orientation: landscape) {
-  .shell[data-phone] .project-conversation {
-    overflow-y: auto;
-  }
-  .shell[data-phone] .project-conversation > .chat-route {
-    min-height: max-content;
-  }
-}
 .work-panel {
   display: flex;
   width: var(--panel-w);
@@ -1378,15 +1215,17 @@
   flex-direction: column;
 }
 
-/* The conversation column (§3.3): 720px, bottom-anchored, operator bubbles right, L2 prose left. */
-.task-convo {
+/* ---- The conversation (SPEC.md §3.3), shared by the project page and the task page: one column,
+ * max 720px, bottom-anchored, operator bubbles right, replies as prose left, day dividers, the time
+ * in the gutter on hover or a long press; the composer docked under it. ---- */
+.convo {
   display: flex;
   min-width: 0;
   min-height: 0;
   flex: 1;
   flex-direction: column;
 }
-.task-convo-scroll {
+.convo-scroll {
   display: flex;
   min-height: 0;
   flex: 1;
@@ -1400,17 +1239,64 @@
   width: 100%;
   max-width: 720px;
   flex-direction: column;
-  gap: 18px;
+  gap: 22px;
   margin: auto auto 0;
 }
-.convo-empty {
+.convo-dock {
+  width: 100%;
+  max-width: 720px;
+  flex: none;
+  margin: 0 auto;
+  padding: 4px 28px 16px;
+}
+.shell[data-phone] .convo-scroll {
+  padding: 12px 16px 8px;
+}
+.shell[data-phone] .convo-dock {
+  padding: 4px 12px 12px;
+}
+/* A landscape phone has no room for a bounded transcript between the header and the tab bar: the
+ * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
+@media (orientation: landscape) {
+  .shell[data-phone] .convo {
+    overflow-y: auto;
+  }
+  .shell[data-phone] .convo-scroll {
+    min-height: max-content;
+    flex: none;
+    overflow: visible;
+  }
+}
+.convo-empty,
+.convo-error {
   margin: 0;
   font-size: 15px;
+}
+.convo-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.convo-skeleton .skeleton {
+  height: 16px;
+  width: 78%;
+}
+.convo-skeleton .skeleton:nth-child(2) {
+  width: 92%;
+}
+.convo-skeleton .skeleton:nth-child(3) {
+  width: 60%;
 }
 .day-divider {
   font-size: 12px;
   color: var(--text-muted);
   text-align: center;
+}
+.turn {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
 }
 .msg-row {
   position: relative;
@@ -1437,6 +1323,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.shell[data-phone] .bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  font-size: 16px;
+}
 .reply {
   display: flex;
   max-width: 100%;
@@ -1446,8 +1337,27 @@
   font-size: 15px;
   line-height: 1.65;
 }
+.shell[data-phone] .reply {
+  font-size: 16px;
+  line-height: 1.6;
+}
 .reply .session-prose {
   gap: 12px;
+}
+.reply .session-prose ul,
+.reply .session-prose ol {
+  padding-left: 22px;
+  margin: 0;
+}
+.reply .session-prose ul {
+  list-style: disc;
+}
+.reply .session-prose ol {
+  list-style: decimal;
+}
+.reply .session-prose a {
+  color: var(--accent-text);
+  text-decoration: underline;
 }
 .reply-from {
   font-size: 12px;
@@ -1465,35 +1375,400 @@
 .msg-row[data-time-shown] .msg-time {
   opacity: 1;
 }
-
-/* The composer (§3.6) on the task page: slice 1's VoiceComposer in the §3.6 shape, hint line under it. */
-.task-composer {
+.turn-failed {
+  margin: 0;
+  font-size: var(--text-meta);
+}
+/* The typing indicator under the operator's bubble while a chat turn runs (§4.2). */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 0;
+}
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+.typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+/* A task the turn created, under the reply (the §3.5 card arrives with slice 3). */
+.turn-tasks {
   display: flex;
-  width: 100%;
-  max-width: 720px;
+  flex-direction: column;
+  gap: 8px;
+}
+.turn-task {
+  display: flex;
+  max-width: 480px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--text-primary);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  text-decoration: none;
+}
+.turn-task .text-muted {
+  margin-left: auto;
+  font-weight: 400;
+}
+/* Messages waiting for the next turn boundary (§4.2): muted rows under the conversation. */
+.queued {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.queued-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 12px;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+.queued-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- The system line (§3.4): one centred line between hairlines, a dot, the text, Show. ---- */
+.sys-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+}
+.sys-line::before,
+.sys-line::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--hairline);
+}
+.sys-dot {
+  width: 6px;
+  height: 6px;
   flex: none;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.sys-dot[data-tone="danger"] {
+  background: var(--danger);
+}
+.sys-line[data-progress] .sys-dot {
+  background: var(--accent);
+  animation: voice-pulse 1.6s ease-in-out infinite;
+}
+.sys-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sys-line .link {
+  flex: none;
+  font-size: var(--text-meta);
+}
+.sys-group {
+  display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 0 auto;
-  padding: 4px 28px 16px;
+  padding: 4px 0 0 18px;
 }
-.task-composer .voice-composer-textarea {
-  padding: 12px 58px 12px 18px;
+.sys-group .sys-line {
+  justify-content: flex-start;
+  font-size: 12.5px;
+}
+.sys-group .sys-line::before,
+.sys-group .sys-line::after {
+  display: none;
+}
+.sys-card {
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  background: var(--page);
+  color: var(--text-secondary);
+  font-size: var(--text-meta);
+  line-height: 1.5;
+}
+.sys-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sys-card-title {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.sys-card-label {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sys-card-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.sys-card-fields > div {
+  display: contents;
+}
+.sys-card-fields dt {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.sys-card-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sys-card-pre {
+  max-height: 40vh;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-input);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+.sys-card-body {
+  color: var(--text-primary);
+}
+.sys-card-body .session-prose {
+  gap: 8px;
+}
+.sys-card-error {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sys-card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.sys-card-links a {
+  color: var(--accent-text);
+}
+
+/* ---- The composer (§3.6): one rounded field with the pill, the microphone, and Send in a row under
+ * the text; a hint line under the field. Voice states live inside the field: the row carries the
+ * cancel control, the waveform, the timer, and the stop control while listening. ---- */
+.composer {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 6px;
+}
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 12px 10px 18px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-composer);
   background: var(--card);
   box-shadow: var(--shadow);
-  font-size: 15px;
 }
-.task-composer .voice-mic {
-  right: 8px;
-  bottom: 8px;
+.composer-box:focus-within {
+  border-color: var(--accent-tint-border);
+}
+.composer-field {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  max-height: 40vh;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+  line-height: 24px;
+  resize: none;
+  field-sizing: content;
+  outline: none;
+}
+.composer-field::placeholder {
+  color: var(--text-muted);
+}
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.composer-spacer {
+  flex: 1;
+}
+.composer-pill {
+  display: inline-flex;
+  align-items: center;
+}
+.composer-pill-select {
+  height: 32px;
+  padding: 0 24px 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='14' height='14'%3E%3Cpath d='M5 8l5 5 5-5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 6px center;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  appearance: none;
+  cursor: pointer;
+}
+.composer-pill-select:hover {
+  background-color: var(--hairline);
+}
+.composer-icon {
+  display: inline-flex;
   width: 36px;
   height: 36px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.composer-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.composer-icon svg rect {
+  fill: currentColor;
+  stroke: currentColor;
+}
+.composer-icon:hover:not(:disabled) {
+  background: var(--hairline);
+}
+.composer-icon:disabled {
+  color: var(--border);
+  cursor: default;
+}
+.composer-send {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.composer-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.composer-send:disabled {
+  background: var(--hairline);
+  color: var(--border);
+}
+.composer-stop {
+  background: var(--danger);
+  color: var(--on-accent);
+}
+.composer-stop:hover:not(:disabled) {
+  background: var(--danger);
+  opacity: 0.9;
+}
+.composer-queue {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--accent-tint-border);
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.composer-queue:disabled {
+  border-color: transparent;
+  background: var(--hairline);
+  color: var(--text-muted);
+  cursor: default;
+}
+.composer-voice {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+.composer-wave {
+  min-width: 0;
+  height: 24px;
+  flex: 1;
+  color: var(--accent);
+}
+.composer-voice[data-frozen] .composer-wave {
+  color: var(--text-muted);
+}
+.composer-timer {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.composer-timer[data-danger] {
+  color: var(--danger);
 }
 .composer-hint {
   margin: 0;
   padding: 0 18px;
   font-size: 12px;
+}
+.shell[data-phone] .composer-box {
+  padding: 12px 10px 8px 16px;
+  border-radius: 22px;
+}
+.shell[data-phone] .composer-field {
+  font-size: 16px;
+}
+.shell[data-phone] .composer-icon {
+  width: 40px;
+  height: 40px;
+}
+.shell[data-phone] .composer-pill-select {
+  font-size: 16px;
 }
 
 /* The live session panel (§3.10). */
@@ -1623,12 +1898,6 @@
   border-bottom-color: var(--accent);
   color: var(--accent-text);
 }
-.task-page[data-phone] .task-convo-scroll {
-  padding: 12px 16px 8px;
-}
-.task-page[data-phone] .task-composer {
-  padding: 4px 12px 12px;
-}
 .task-page[data-phone] .live-panel {
   width: auto;
   flex: 1;
@@ -1639,19 +1908,6 @@
   min-height: 44px;
   padding: 4px 8px 4px 16px;
 }
-/* A landscape phone has no room for a bounded transcript between the tabs and the tab bar: the
- * conversation scrolls as one so the composer stays reachable (the bounded transcript is portrait's). */
-@media (orientation: landscape) {
-  .task-page[data-phone] .task-convo {
-    overflow-y: auto;
-  }
-  .task-page[data-phone] .task-convo-scroll {
-    min-height: max-content;
-    flex: none;
-    overflow: visible;
-  }
-}
-
 @keyframes skeleton-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }

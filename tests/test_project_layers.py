@@ -55,7 +55,7 @@ OPERATOR_BASELINE = {
     "altitude/tasks.py": 14,
     "altitude/transcript.py": 1,
     "bin/alt": 13,
-    "docs/ARCHITECTURE.md": 6,
+    "docs/ARCHITECTURE.md": 5,
     "docs/CLI.md": 3,
     "docs/ROADMAP.md": 2,
     "docs/SESSION_LIFECYCLE.md": 5,
@@ -63,10 +63,7 @@ OPERATOR_BASELINE = {
     "personas/l2.md": 6,
     "personas/l3.md": 10,
     "web/src/data/api.ts": 1,
-    "web/src/routes/Chat.test.tsx": 7,
-    "web/src/routes/Chat.tsx": 1,
     "web/src/routes/Task.test.tsx": 1,
-    "web/src/routes/Task.tsx": 1,
 }
 
 #: Altitude-only rule files and rules that a global persona must never name.

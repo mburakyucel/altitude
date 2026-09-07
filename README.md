@@ -43,8 +43,10 @@ phase deleted.
   you, every decision across projects as cards; `/projects/<name>` is the project's L3 conversation
   with its work panel; `/projects/<name>/tasks/<slug>` is the task page, the operator's conversation
   with the L2 beside the worker's live session read as a transcript, Stop and Reject behind an inline
-  confirm, and on a phone the Conversation and Live session tabs; with no managed project every
-  project route shows First run, which starts L3 for a folder. The selected project persists per
+  confirm, and on a phone the Conversation and Live session tabs;
+  `/projects/<name>/tasks/<slug>/report` is the task's report view, linked from a landed report's
+  card in the conversation; with no managed project every project route shows First run, which
+  starts L3 for a folder. The selected project persists per
   browser, and every badge counts decisions only.
 - Deferred work is recorded in a GitHub issue and removed from the active task set. Completed and
   rejected tasks are archived immediately.
@@ -54,9 +56,14 @@ phase deleted.
   message for the project's L3, which records the learning and fixes the cause directly or creates
   one ordinary task. An incident raised by that repair task goes to Needs you instead of waking L3
   again.
-- Every conversational composer has the same optional microphone control. Stopping a recording
-  produces a transcript review without changing the draft; **Edit / insert** appends it to the
-  editable draft and **Send** uses that composer's normal behavior, including Chat's **Queue** path
+- The project conversation shows the operator's messages as bubbles and L3's replies as prose under
+  day dividers. A turn altd triggered (a landed report, a block, an incident, a recovery, a restart)
+  folds to one muted line, red-dotted for an incident, a recovery, or a fault, with **Show** opening
+  what altd sent L3, L3's reply, and links to the task, its full report, and its digest; a run of
+  them between two operator messages folds to one line that expands to the list.
+- Every conversation uses one composer with the same optional microphone control. Stopping a
+  recording transcribes it and appends the text to the editable draft with the cursor at the end;
+  nothing else appears. **Send** uses that composer's normal behavior, including the **Queue** path
   while L3 is busy. Cancel, denial, and transcription failure leave typing and the draft available.
 
 ## Repository and runtime
@@ -176,11 +183,11 @@ The browser records at most ten minutes as AAC/mp4 on iOS or opus/webm where ava
 converts the upload with `ffmpeg` in a temporary directory and sends the resulting 16 kHz mono WAV
 path to the existing local faster-whisper socket, with the loopback Whisper bridge as fallback. Raw
 audio is deleted after every success or failure and is never part of task or chat state. A recording
-is not a message: review its text, then choose **Edit / insert**, **Send** (or **Queue** while L3 is
-busy), or discard it.
+is not a message: its transcript lands in the draft, which is edited, sent (or queued while L3 is
+busy), or cleared like typed text.
 
-For a manual Safari check, open each of Chat, a task Conversation, and a project task's **Message
-L2** panel; record and stop; confirm the transcript appears separately from an existing draft; try
-both insertion and Send/Queue; then deny microphone access once and confirm the typed draft remains
-usable. If Safari reports that voice needs HTTPS, use the secure URL above and verify the local CA is
+For a manual Safari check, open each of a project conversation, a task conversation, and a project
+task's **Message L2** panel; record and stop; confirm the transcript is appended to the existing
+draft and nothing else appears; send or queue it; then deny microphone access once and confirm the
+typed draft remains usable. If Safari reports that voice needs HTTPS, use the secure URL above and verify the local CA is
 enabled under Certificate Trust Settings.

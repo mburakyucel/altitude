@@ -59,7 +59,8 @@ this machine (`CHROME=` overrides). Each board's size is read from the board its
 The boards, `wireframes.css`, and `boards.js` are written by `gen.py`; edit the generator, run
 `python3 design/wireframes/gen.py`, and commit the output with it. A new board is one `board(...)`
 call and one row in the generator's `ROUTES` table. `wireframes.css` imports the build's
-`web/design/tokens.css` and adds the redesign's departures at the top; `SPEC.md` §6 lists them.
+`web/design/tokens.css`, which carries the redesign's tokens since slice 1; `SPEC.md` §6 records
+where they departed from the earlier set.
 A change in behaviour is a change to `SPEC.md` first; the boards follow it.
 
 ## Content
