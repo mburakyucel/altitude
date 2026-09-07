@@ -15,7 +15,8 @@ export function changedText(files: string[]): string {
 /**
  * The restart banner (SPEC.md §3.13): above the header on every route while a merged change awaits
  * activation. It says what changed in words and that Altitude restarts at the next quiet moment. The
- * Restart button appears only when nothing is running (`waiting_for` is empty) and disappears once the
+ * Restart button appears when dispatch, L3 and verification are quiet (`waiting_for` is empty), even
+ * with workers running, and disappears once the
  * restart is under way; the banner leaves when the new process answers with no pending restart.
  * `restart` is `GET /api/overview`'s `restart` field, the one data source.
  */

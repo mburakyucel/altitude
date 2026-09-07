@@ -143,20 +143,22 @@ a console 404. The live service suite is the acceptance run; console errors are 
 ## Service lifecycle
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
-Altitude activates merged backend and web changes itself. A self-deploy fast-forward marks activation
+Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
+merges even while their workers run. A self-deploy fast-forward marks activation
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
-`web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it. New
-dispatches hold, and once no L2 is running, no report is waiting and no L3 turn is in flight, `altd`
-runs the guarded restart script below as a transient user unit. A restart that has not happened ten
+`web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
+Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn, or report
+verification is in flight, `altd` runs the guarded restart script below as a transient user unit.
+A restart that has not happened ten
 minutes after it was requested is a system fault for L3 and the hold lifts.
 
 To restart sooner by hand, press Restart on the web app's restart banner (the button shows only
-while nothing is running and goes once the restart is under way) or run `make restart` from the
+at that narrow quiet point, including while workers run, and goes once restart is under way) or run `make restart` from the
 deployed primary checkout. The
-command refuses another clone/worktree, a non-exact or dirty `main`, and active L2 or report work; a
-blocked task whose Claude job sits idle does not hold it, since that job survives the restart and is
-re-attached on resume.
+command refuses another clone/worktree, a non-exact or dirty `main`, and an in-flight dispatch,
+L3 turn, or report verification. Detached workers survive and are adopted after restart. Dispatch and
+L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
 web page to answer from a new process. The prior bundle is restored if verification fails. There is

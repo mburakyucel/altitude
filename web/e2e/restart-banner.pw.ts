@@ -23,7 +23,7 @@ const pending = {
   files: ["web/src/routes/Monitor.tsx", "web/src/shell/RestartBanner.tsx"],
 };
 
-test("restart banner appears above the header, offers Restart only when nothing runs, and leaves when the new process answers", async ({ page }, info) => {
+test("restart banner offers Restart at the narrow quiet point while workers run, and leaves when the new process answers (decision 11)", async ({ page }, info) => {
   // Six reloads with a full overview read each: longer than Playwright's default 30s on a slow poll.
   test.setTimeout(120_000);
   const walk = walkthrough(page, info);
@@ -42,7 +42,7 @@ test("restart banner appears above the header, offers Restart only when nothing 
 
   await restartIs(page, { ...pending, waiting_for: [] });
   await walk.open("/");
-  await walk.state("02-pending-idle-overlay", { visible: [banner, what, rule, restart], hidden: [restarting, waiting] });
+  await walk.state("02-pending-quiet-overlay", { visible: [banner, what, rule, restart], hidden: [restarting, waiting] });
   // Above the header: before the phone header in the document, first in the main pane on the desktop.
   expect(await page.evaluate(() => {
     const status = document.querySelector('[role="status"][aria-label="Restart pending"]')!;

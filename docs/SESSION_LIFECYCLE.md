@@ -195,13 +195,21 @@ process cannot advertise stale work.
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
-to Altitude's loaded backend or served web bundle inputs activates at the next quiet point: new
-dispatches hold, and once no worker is running, no report is waiting and no L3 turn is in flight, altd
-runs the guarded build-and-restart script itself.
+to Altitude's loaded backend or served web bundle inputs activates at a narrow quiet point: no dispatch
+marker or resume claim, L3 turn, or report verification in flight. Running and blocked workers do not
+hold activation, and new dispatches continue while activation is pending. The regular thirty-second
+tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
+and report verification wait only from the restart unit request until the replacement daemon is
+ready; the ten-minute restart fault releases a stuck window. altd runs the guarded build-and-restart
+script itself.
 After an
 `altd` restart, Claude is rediscovered through its job registry and Codex through its private task
 record and the state of its transient unit. A missing or failed worker without a valid completion is
 a system fault, not “still running.” Rejection and post-merge cleanup use the same provider adapter.
+
+A worker's PATH resolves `alt` to the deployment checkout's `bin/alt`, so each invocation uses the
+current CLI; L2 commands and the inbox hook use locked durable state directly and keep working while
+altd is down. The daemon reads durable completion and inbox records at the next checkpoint after startup.
 
 ## Live transcript
 
