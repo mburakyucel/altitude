@@ -517,6 +517,22 @@ def build_brief(project: str, slug: str) -> str:
         "`alt task reply \"<message>\"`. Ask directly only when the repository and brief cannot resolve the "
         "choice: checkpoint `progress.md`, reply with the question, then `alt task block \"$ALTITUDE_TASK\" "
         "--reason \"<question>\"` and stop; the answer resumes this session."
+        " Supply --recommendation '<approach>' --label '<accept action>' --why '<short rationale>' when "
+        "there is a concrete recommended approach. A conversational follow-up wakes you to discuss while "
+        "the pending question remains open: waking is not approval to implement the disputed approach. "
+        "Use the question identity/revision and original message id supplied in your inbox with "
+        "`alt task resolve` to record a clear decision before continuing. Clarify real ambiguity in chat, "
+        "without requiring an approval phrase or redundant confirmation. Close obsolete questions with "
+        "a cited superseded disposition; retain only still-relevant unanswered parts using --remaining."
+        " Use a plain question when no quick choice is useful, or one question with a recommended action "
+        "or alternatives. Ask dependent questions sequentially after their prerequisites are settled. "
+        "Ask up to three independent questions together using `alt task block \"$ALTITUDE_TASK\" "
+        "--questions-file <JSON-file>`. JSON is {\"questions\":[{\"question\":\"...\",\"options\": "
+        "[{\"key\":\"a\",\"label\":\"Short action\",\"text\":\"Chosen approach\"}],\"recommended_key\":\"a\",\"why\":\"...\"}]}. "
+        "A plain question omits options and recommended_key. Supply up to three options with one explicit "
+        "recommended_key. No default or follow-up counts as an answer. Revise existing members by adding "
+        "their id; omitted members stay open. Resolve each answered or obsolete member against the same "
+        "source message where appropriate; unrelated unanswered members remain open."
     )
     publication_contract = (
         "Every code change uses the isolated branch and a PR. Land with `alt land --message \"<message>\"`; use "
@@ -548,6 +564,8 @@ def build_brief(project: str, slug: str) -> str:
         branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
         completion_contract=completion_contract, conversation_contract=conversation_contract,
         publication_contract=publication_contract, request=request)
+    if task.get("questions"):
+        text += "\n\n" + T.group_context(task) + "\n"
     return text
 
 
@@ -806,6 +824,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     rows = claim["messages"]
     prompt = T.render_inbox(rows) or "Continue from your progress file."
+    if task.get("questions"):
+        prompt += "\n\n" + T.group_context(task)
     worker = {}
     try:
         T.update_resume_claim(project, slug, claim["id"], phase="launching")
@@ -905,7 +925,7 @@ def resume_due(project: str) -> list[str]:
             continue  # a stale claim is recovered before ordinary due times, WIP or usage holds
         after = t.get("resume_after") or ""
         inbox_due = (not after and not t.get("waiting_on") and not t.get("fault") and not t.get("resume_failed")
-                     and bool(T.pending(project, t["slug"])))
+                     and any(row.get("wake", True) for row in T.pending(project, t["slug"])))
         if (not after and not inbox_due) or after > now:
             continue
         if not t.get("agent_id") or not t.get("session_id"):

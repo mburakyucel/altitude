@@ -4,10 +4,11 @@ import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /**
- * Slice 3 (SPEC.md §3.5 task card, §3.7 work panel, §3.8 decision card, §3.9 decision page), every state
+ * Work panel and shared Needs you presentation states,
  * walked at 390 and 1440 over fictional stored tasks. Named HTTP overlays produce presentation and
  * transport states, intercepting writes in this spec. task-lifecycle.pw.ts covers actual persisted
- * decisions, messages and requested resumes through the same isolated service.
+ * decisions, messages and requested resumes through the same isolated service. The dedicated
+ * conversation-decisions spec covers the anchored chat and cited-message resolution end to end.
  */
 
 type Row = Record<string, unknown> & { slug: string; title?: string; state?: string };
@@ -41,13 +42,22 @@ function dilemma(name: string, task: Row) {
       question,
       detail: `${question} Option A: Fast-forward it; the checkout is Altitude's own deployment copy. Option B: Keep failing closed. I recommend A.`,
       asked: minutesAgo(25),
+      id: "walk-question",
+      revision: 1,
+      anchor_id: "walk-anchor",
+      status: "open",
+      audience: "operator",
+      state: "blocked",
+      resolution: null,
       since: minutesAgo(26),
       options: [
         { key: "A", label: "Fast-forward it", text: "Fast-forward it; the checkout is Altitude's own deployment copy." },
         { key: "B", label: "Keep failing closed", text: "Keep failing closed." },
       ],
+      recommended_key: "A",
       recommendation: {
-        option: "A",
+        text: "Fast-forward the owned deployment checkout.",
+        label: "Fast-forward it",
         why: "The checkout is Altitude's own deployment copy, so the move is a pure fast-forward with nothing local to lose. The race has blocked three dispatches this week.",
       },
     },
@@ -80,12 +90,15 @@ function stopped(name: string, task: Row) {
     question: "the recording upload fails at 10 minutes",
     detail: "the recording upload fails at 10 minutes",
     asked: minutesAgo(60 * 30),
+    id: "walk-stopped",
+    revision: 1,
+    anchor_id: "walk-stopped-anchor",
+    status: "open",
+    audience: "operator",
+    state: "blocked",
+    resolution: null,
     since: minutesAgo(60 * 30),
-    options: [
-      { key: "resume", label: "Resume" },
-      { key: "reject", label: "Reject" },
-    ],
-    recommendation: { option: "resume", why: "" },
+    recommendation: null,
   };
 }
 
@@ -140,8 +153,10 @@ async function overlay(page: Page, name: string, state: Overlay) {
 async function interceptWrites(page: Page, answers: { decide?: () => Promise<unknown> | unknown; decideStatus?: number; chat?: (route: Route) => Promise<void>; l2?: () => unknown }) {
   await page.route((url) => url.pathname === "/api/decide", async (route) => {
     await answers.decide?.();
+    const input = route.request().postDataJSON();
     return (answers.decideStatus ?? 200) === 200
-      ? route.fulfill({ json: { ok: true, queued: true } })
+      ? route.fulfill({ json: { question: { project: input.project, slug: input.slug, id: input.question_id, revision: input.revision,
+        status: "resolved", audience: "operator", resolution: { disposition: "answered", text: "Use the chosen approach.", by: "burak", at: minutesAgo(0) } } } })
       : route.fulfill({ status: answers.decideStatus, json: { error: "only blocked tasks need a user decision" } });
   });
   await page.route((url) => url.pathname === "/api/chat", async (route) => {
@@ -235,7 +250,7 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
     visible: [
       v.panel.getByRole("heading", { name: /^Needs you/ }),
       card,
-      card.getByText("L3 asks", { exact: true }),
+      card.getByText("L3 brought this to you", { exact: true }),
       card.getByRole("button", { name: "Fast-forward it", exact: true }),
       active.getByRole("link", { name: `${queued.title} · Queued · waits for a slot · WIP limit 1 reached for ${project.name} (1 running)`, exact: true }),
       active.getByRole("link", { name: `${waitsL3.title} · Waits for L3`, exact: true }),
@@ -250,7 +265,7 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
   });
   await walk.state("04-deciding-overlay", {
     action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
-    visible: [card.locator(".spinner"), card.getByRole("button", { name: "Keep failing closed", disabled: true })],
+    visible: [card.getByRole("button", { name: "Recording…", disabled: true })],
     hidden: [],
   });
   const movedRow = active.getByRole("link", { name: startsWith(`${title} · `) });
@@ -265,12 +280,12 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
   state.queue = [decision];
   state.project = (json) => ({ ...json, tasks: (json.tasks as Row[]).map((t) => (t.slug === base.slug ? { ...t, state: "blocked", waiting_on: "burak" } : t)) });
   await overlay(page, project.name, state);
-  await interceptWrites(page, { decideStatus: 409 });
+  await interceptWrites(page, { decideStatus: 503 });
   await walk.open(projectRoute(project.path, v.phone));
   await v.openPanel();
   await walk.state("06-decide-failed-overlay", {
-    action: () => card.getByRole("button", { name: "Keep failing closed", exact: true }).click(),
-    visible: [card.getByText("Could not record the decision."), card.getByRole("button", { name: "Retry", exact: true }), card.getByRole("button", { name: "Fast-forward it", exact: true })],
+    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
+    visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
     hidden: [card.locator(".spinner")],
   });
 
@@ -293,7 +308,7 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
   });
 });
 
-test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, error, loading", async ({ page, request }, info) => {
+test("Needs you: empty, recommendation and chat entry, deciding, decided, failed, error, loading", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const { tasks } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
@@ -331,34 +346,27 @@ test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, er
   });
   await walk.open("/");
   const card = v.card(title);
-  const thread = card.getByLabel("Follow-ups", { exact: true });
   await walk.state("02-cards-overlay", {
     visible: [
       v.main.getByText(/^2 things wait on you/),
       card,
-      card.getByText("L3 asks", { exact: true }),
+      card.getByText("L3 brought this to you", { exact: true }),
       card.locator(".chip", { hasText: project.name }),
       card.getByText(decision.question, { exact: true }),
       card.getByRole("button", { name: "Fast-forward it", exact: true }),
-      card.getByRole("link", { name: "More context", exact: true }),
+      card.getByRole("link", { name: "Open L2 chat", exact: true }),
       v.card(second.title),
       v.card(second.title).getByText("Stopped mid-task", { exact: true }),
       v.main.getByText(/^That is everything/),
     ],
     hidden: [v.main.getByText("Nothing needs you.", { exact: true })],
   });
-  await walk.state("03-follow-ups-mirrored-overlay", {
-    visible: [
-      thread.getByText("Why not keep failing closed for everything?"),
-      thread.getByText("Fail-closed protects checkouts Altitude does not own; this one it owns."),
-      thread.getByText("And on a fresh install?"),
-      thread.getByText("· queued for L3"),
-    ],
-    hidden: [],
-  });
+  await expect(card.getByLabel("Follow-ups", { exact: true })).toHaveCount(0);
+  await expect(card.getByText("Why not keep failing closed for everything?")).toHaveCount(0);
+  await expect(v.card(second.title).getByRole("button")).toHaveCount(0);
   await walk.state("04-deciding-overlay", {
     action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
-    visible: [card.locator(".spinner"), card.getByRole("button", { name: "Keep failing closed", disabled: true })],
+    visible: [card.getByRole("button", { name: "Recording…", disabled: true })],
     hidden: [],
   });
   const oneLeft = v.main.getByText(/^One thing waits on you/);
@@ -371,11 +379,11 @@ test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, er
   await clearRoutes(page);
   state.queue = [decision, second];
   await overlay(page, project.name, state);
-  await interceptWrites(page, { decideStatus: 409 });
+  await interceptWrites(page, { decideStatus: 503 });
   await walk.open("/");
   await walk.state("06-decide-failed-overlay", {
-    action: () => card.getByRole("button", { name: "Keep failing closed", exact: true }).click(),
-    visible: [card.getByText("Could not record the decision."), card.getByRole("button", { name: "Retry", exact: true })],
+    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
+    visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
     hidden: [card.locator(".spinner")],
   });
 
@@ -395,156 +403,5 @@ test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, er
   await walk.state("08-loading-overlay", {
     visible: [v.main.getByLabel("Loading", { exact: true })],
     hidden: [v.main.getByText("Nothing needs you.", { exact: true })],
-  });
-});
-
-test("the decision page: ready, follow-up in flight and answered, to the L2, deciding, decided, gone, error, loading", async ({ page, request }, info) => {
-  const project = await fixtureProject(request);
-  const { tasks, repository } = await liveRows(request, project.name);
-  const running = tasks.find((t) => t.state === "running");
-  expect(running, "The walkthrough needs one running task").toBeTruthy();
-  const base = await record(request, project.name, (running as Row).slug);
-  const walk = walkthrough(page, info);
-  const v = views(page, info);
-  const { decision, blocked } = dilemma(project.name, base);
-  const route = `/projects/${encodeURIComponent(project.name)}/decisions/${encodeURIComponent(base.slug)}`;
-  const taskPath = `/projects/${encodeURIComponent(project.name)}/tasks/${encodeURIComponent(base.slug)}`;
-
-  const state: Overlay = { queue: [decision], task: { [base.slug]: blocked } };
-  await overlay(page, project.name, state);
-  let l2Sent = 0;
-  await interceptWrites(page, {
-    decide: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
-      state.queue = [];
-      state.task = { [base.slug]: { ...blocked, state: "running", decision: { key: "A", option: "Fast-forward it", note: "Only Altitude's own checkout.", at: minutesAgo(0), by: "burak" }, events: [...(blocked.events as Row[]), { at: minutesAgo(0), kind: "decided", key: "A", option: "Fast-forward it", note: "Only Altitude's own checkout.", by: "burak" }] } };
-    },
-    chat: async (route) => {
-      const body = route.request().postDataJSON() as { text: string; slug?: string };
-      expect(body.slug, "a follow-up to L3 carries the decision's slug").toBe(base.slug);
-      await new Promise((resolve) => setTimeout(resolve, 2_500));
-      state.chat = (view) => ({
-        ...view,
-        history: [
-          ...((view.history as unknown[]) ?? []),
-          { at: minutesAgo(0), role: "user", text: body.text, trigger: "chat", turn_id: "walk-c2", slug: base.slug },
-          { at: minutesAgo(0), role: "assistant", text: "Nothing local is lost: the checkout is Altitude's own deployment copy.", trigger: "chat", turn_id: "walk-c2", slug: base.slug },
-        ],
-      });
-      const lines = ['{"turn":{"id":"walk-c2","started_at":"2026-09-07T09:14:00+00:00","trigger":"chat","slug":"' + base.slug + '"}}', '{"t":"Nothing local is lost."}', '{"done":{"turn_id":"walk-c2"}}'];
-      return route.fulfill({ status: 200, contentType: "application/x-ndjson", body: `${lines.join("\n")}\n` });
-    },
-    l2: () => {
-      l2Sent += 1;
-      state.task = { [base.slug]: { ...blocked, messages: [{ id: "walk-m1", at: minutesAgo(0), role: "burak", text: "Is anything uncommitted there?" }], events: [...(blocked.events as Row[]), { at: minutesAgo(0), kind: "task-message", message_id: "walk-m1", role: "burak", by: "burak" }] } };
-    },
-  });
-
-  // Desktop opens from the project (the crumb leads back there); the phone opens from Needs you.
-  if (v.phone) {
-    await walk.open("/");
-    await v.card(decision.title).getByRole("link", { name: "More context", exact: true }).click();
-  } else {
-    await walk.open(route);
-  }
-  const composer = v.main.getByRole("textbox", { name: "Ask a follow-up", exact: true });
-  const recipient = v.main.getByRole("combobox", { name: "Recipient", exact: true });
-  const timeline = v.main.getByRole("list", { name: "Where this came from", exact: true });
-  const evidence = v.main.getByRole("region", { name: "Evidence", exact: true });
-  const options = v.main.locator(".decision-options-page");
-  const col = v.main.locator(".decision-col");
-  await walk.state("01-ready-overlay", {
-    visible: [
-      v.main.getByRole("heading", { level: 1, name: decision.question, exact: true }),
-      page.getByRole("link", { name: "Open task", exact: true }),
-      ...(v.phone ? [page.getByRole("button", { name: "Back", exact: true }), page.getByRole("heading", { level: 1, name: "Needs you", exact: true })] : [v.main.getByRole("link", { name: `‹ ${project.name}`, exact: true })]),
-      v.main.locator(".decision-chips").getByText("L3 asks", { exact: true }),
-      options.getByRole("button", { name: "Fast-forward it", exact: true }),
-      options.getByRole("button", { name: "Keep failing closed", exact: true }),
-      options.getByPlaceholder("Add a note for the L2 (optional)"),
-      v.main.getByRole("heading", { name: "Why L3 recommends Fast-forward it", exact: true }),
-      col.getByText(/^The checkout is Altitude's own deployment copy/),
-      timeline.getByText("asked L3", { exact: false }),
-      timeline.getByText("Dispatch found the deployment checkout two commits behind origin/main.", { exact: false }),
-      timeline.getByText(/^L3 escalated to you: /),
-      timeline.getByText("The task is blocked until you choose.", { exact: true }),
-      evidence.getByRole("link", { name: "Task conversation", exact: true }),
-      evidence.getByRole("link", { name: "Live session at the failing step", exact: true }),
-      ...(repository ? [evidence.getByRole("link", { name: "PR #140", exact: true })] : []),
-      composer,
-      recipient,
-      v.main.getByText("Your question and the answer appear here and on the card. The L2 stays blocked until you choose.", { exact: true }),
-      ...(v.phone ? [] : [v.panel, v.card(decision.title, v.panel)]),
-    ],
-    hidden: [v.main.getByRole("status"), v.main.getByLabel("Loading", { exact: true })],
-  });
-  if (!v.phone) await expect(v.card(decision.title, v.panel)).toHaveAttribute("data-selected", "true");
-  await expect(page.getByRole("link", { name: "Open task", exact: true })).toHaveAttribute("href", taskPath);
-
-  await walk.state("02-follow-up-in-flight-overlay", {
-    action: async () => {
-      await recipient.selectOption("l3");
-      await composer.fill("Why not keep failing closed for everything?");
-      await v.main.getByRole("button", { name: "Send", exact: true }).click();
-    },
-    visible: [v.main.getByText("L3 is answering…", { exact: true }), timeline.getByText("Why not keep failing closed for everything?")],
-    hidden: [timeline.getByText("L3 answered", { exact: false })],
-  });
-  await walk.state("03-follow-up-answered-overlay", {
-    visible: [timeline.getByText("L3 answered", { exact: false }), timeline.getByText("Nothing local is lost: the checkout is Altitude's own deployment copy.")],
-    hidden: [v.main.getByText("L3 is answering…", { exact: true })],
-  });
-  await walk.state("04-follow-up-to-the-l2-overlay", {
-    action: async () => {
-      await recipient.selectOption("l2");
-      await composer.fill("Is anything uncommitted there?");
-      await v.main.getByRole("button", { name: "Send", exact: true }).click();
-    },
-    visible: [timeline.getByText("asked the L2", { exact: false }), timeline.getByText("Is anything uncommitted there?")],
-    hidden: [v.main.getByText("L3 is answering…", { exact: true })],
-  });
-  expect(l2Sent, "one task message, intercepted").toBe(1);
-
-  await walk.state("05-deciding-overlay", {
-    action: async () => {
-      await options.getByPlaceholder("Add a note for the L2 (optional)").fill("Only Altitude's own checkout.");
-      await options.getByRole("button", { name: "Fast-forward it", exact: true }).click();
-    },
-    visible: [options.locator(".spinner"), options.getByRole("button", { name: "Keep failing closed", disabled: true })],
-    hidden: [],
-  });
-  const decidedBanner = v.main.getByRole("status").filter({ hasText: "Decided just now: Fast-forward it · Only Altitude's own checkout." });
-  await walk.state("06-decided-overlay", {
-    // The banner follows the decide's reply and two live re-reads through the overlay.
-    action: settles(decidedBanner),
-    visible: [decidedBanner, timeline.getByText("You chose Fast-forward it", { exact: false })],
-    hidden: [options, composer, timeline.getByText("The task is blocked until you choose.", { exact: true })],
-  });
-
-  await clearRoutes(page);
-  await overlay(page, project.name, { queue: [], task: { [base.slug]: { ...blocked, state: "done", events: [...(blocked.events as Row[]), { at: minutesAgo(1), kind: "state", from: "blocked", to: "done", by: "altd" }] } } });
-  await walk.open(route);
-  await walk.state("07-task-gone-overlay", {
-    visible: [v.main.getByRole("status").filter({ hasText: "This task was done." }), v.main.getByRole("link", { name: "Open the archived task", exact: true })],
-    hidden: [options, composer],
-  });
-
-  await clearRoutes(page);
-  await overlay(page, project.name, { queue: [], taskFail: true });
-  await walk.open(route);
-  const decisionError = v.main.getByText(/^Could not read the decision\./);
-  await walk.state("08-error-overlay", {
-    action: settles(decisionError),
-    visible: [decisionError, v.main.getByRole("button", { name: "Retry", exact: true })],
-    hidden: [options, composer],
-  });
-
-  await clearRoutes(page);
-  await overlay(page, project.name, { overviewDelay: 4_000 });
-  await walk.open(route);
-  await walk.state("09-loading-overlay", {
-    // The page column's skeleton; on desktop the work panel beside it may still be loading too.
-    visible: [v.main.getByLabel("Loading", { exact: true }).first()],
-    hidden: [options, composer],
   });
 });

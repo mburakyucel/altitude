@@ -8,6 +8,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
@@ -119,18 +120,19 @@ class TestOfflineJourneys(AltitudeCase):
     def test_decision_resume_keeps_session_and_late_http_message_for_next_checkpoint(self):
         task = self.launch(self.queue("Resume with steering"))
         slug = task["slug"]
-        T.block(self.project, slug, "Use the conservative default?", actor="l2", updates={"waiting_on": "burak"})
+        question = T.block(self.project, slug, "Use the conservative default?", actor="l2",
+                           updates={"waiting_on": "burak"}, recommendation="Use the conservative default")["questions"][-1]
         self.assertEqual(T.decisions(self.project)[0]["slug"], slug)
         # This arrives after the durable resume claim took its inbox snapshot.
         self.engine.on_resume = lambda: self.request("/api/l2/message", {
             "project": self.project, "slug": slug, "text": "Also retain the old format"})
         self.request("/api/decide", {"project": self.project, "slug": slug,
-                                      "option": "resume", "note": "Use the conservative default"})
+                                      "question_id": question["id"], "revision": question["revision"]})
         resumed = self.wait_state(slug, "running")
         self.assertEqual(resumed["session_id"], task["session_id"])
         self.assertEqual(resumed["attempt"], task["attempt"])
         self.assertNotEqual(resumed["agent_id"], task["agent_id"])
-        self.assertEqual(resumed["daemon_request"]["status"], "done")
+        self.assertFalse(resumed.get("resume_claim"))
         self.assertEqual(T.decisions(self.project), [])
         self.assertIn("Use the conservative default", self.engine.calls[-1]["prompt"])
         self.assertNotIn("Also retain", self.engine.calls[-1]["prompt"])
@@ -142,7 +144,8 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual([row["text"] for row in delivered], ["Also retain the old format"])
         self.assertEqual(T.take_inbox(self.project, slug), [])
         self.assertEqual([row["text"] for row in T.task_messages(self.project, slug)],
-                         ["Use the conservative default", "Also retain the old format"])
+                         ["Use the conservative default?", "Use this approach and continue: Use the conservative default",
+                          "Also retain the old format"])
 
     def test_question_block_survives_old_inbox_and_exit_until_a_new_answer(self):
         # I-20260908-045037: pre-block steering must not relaunch a worker waiting on a new question.
@@ -220,6 +223,84 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual((stopped["state"], stopped["fault"]), ("blocked", "l2-died"))
         self.assertEqual(S.task_dir(self.project, task["slug"]).parent, S.tasks_dir(self.project))
 
+    def test_acceptance_recovers_a_lost_immediate_wake_and_coalesces_timer_and_http_retries(self):
+        task = self.launch(self.queue("One acceptance wake"))
+        slug = task["slug"]
+        question = T.block(self.project, slug, "Use the existing index?", actor="l2",
+                           updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Use the existing index.")["questions"][-1]
+        body = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": 1}
+        with mock.patch.object(server, "spawn", return_value=False):
+            accepted = self.request("/api/decide", body)
+        self.assertIn(slug, dispatch.resume_due(self.project), "the durable request survives a lost immediate scheduler call")
+        started, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def hold_resume():
+            started.set()
+            release.wait(5)
+
+        self.engine.on_resume = hold_resume
+        try:
+            self.assertTrue(server.request_task_resume(self.project, slug))
+            self.assertTrue(started.wait(5))
+            retried = self.request("/api/decide", body)
+            self.assertEqual(retried["decision"], accepted["decision"])
+            self.assertFalse(server.request_task_resume(self.project, slug), "timer and HTTP share the active resume claim")
+        finally:
+            release.set()
+        resumed = self.wait_state(slug, "running")
+        self.assertEqual((resumed["session_id"], resumed["attempt"]), (task["session_id"], task["attempt"]))
+        self.assertEqual(len(self.engine.calls), 2, "one initial launch and one resume")
+        self.assertEqual(T.pending(self.project, slug), [])
+        operator_rows = [row for row in T.task_messages(self.project, slug) if row["role"] == T.OPERATOR_MESSAGE_ROLE]
+        self.assertEqual([row["id"] for row in operator_rows], [accepted["decision"]["message_id"]])
+
+    def test_requeued_question_remains_discussable_and_reaches_the_fresh_attempt_with_its_inbox(self):
+        for accept in (False, True):
+            with self.subTest(accept=accept):
+                task = self.launch(self.queue(f"Retained question {accept}"))
+                slug = task["slug"]
+                question = T.block(self.project, slug, "How long should we retain the index?", actor="l2",
+                                   updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Keep fourteen days.")["questions"][-1]
+                T.resume(self.project, slug)
+                T.block(self.project, slug, "The execution window is exhausted.", actor="altd",
+                        updates={"resume_after": "2099-01-01T00:00:00+00:00"})
+                engines.remove_l2_worker(task["l2_engine"], task["agent_id"],
+                                         job_root=dispatch.l2_job_root(self.project, slug))
+                T.requeue(self.project, slug, clear_worker=True)
+                target = {"project": self.project, "slug": slug,
+                          "question_id": question["id"], "revision": question["revision"]}
+                with mock.patch.object(server, "request_task_resume", side_effect=AssertionError("queued work uses normal dispatch")):
+                    if accept:
+                        response = self.request("/api/decide", target)
+                        self.assertEqual(self.request("/api/decide", target)["decision"], response["decision"])
+                        message_id = response["decision"]["message_id"]
+                    else:
+                        response = self.request("/api/l2/message", {**target, "text": "Can we roll back after day fourteen?"})
+                        message_id = response["message"]["id"]
+                queued = S.load_task(self.project, slug)
+                self.assertEqual(queued["state"], "queued")
+                self.assertFalse(queued.get("resume_after") or queued.get("resume_request"))
+                self.assertEqual(queued["questions"][-1]["status"], "resolved" if accept else "open")
+                self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [message_id])
+                self.request("/api/task/action", {"project": self.project, "slug": slug, "action": "dispatch"})
+                fresh = self.wait_state(slug, "running")
+                self.assertEqual(fresh["attempt"], task["attempt"] + 1)
+                self.assertNotEqual(fresh["agent_id"], task["agent_id"])
+                self.assertIn(question["id"], self.engine.calls[-1]["prompt"])
+                self.assertIn(question["detail"], self.engine.calls[-1]["prompt"])
+                self.assertIn("is resolved" if accept else question["detail"], self.engine.calls[-1]["prompt"])
+                # This is the existing checkpoint consumption used by native inbox delivery.
+                delivered = T.take_inbox(self.project, slug)
+                self.assertEqual([row["id"] for row in delivered], [message_id])
+                self.assertIn("Keep fourteen days." if accept else "Can we roll back after day fourteen?",
+                              T.render_inbox(delivered))
+                self.assertEqual(T.take_inbox(self.project, slug), [])
+                if accept:
+                    self.assertEqual(self.request("/api/decide", target)["decision"], response["decision"])
+                    self.assertEqual(T.pending(self.project, slug), [])
+                T.reject(self.project, slug, "Fixture complete")
+
     def test_failed_launch_records_fault_and_explicit_retry_creates_only_one_worker(self):
         task = self.queue("Retry failed launch")
         self.engine.outcomes.append({"returncode": 0, "agent": None})
@@ -231,8 +312,8 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual(self.engine.workers, {})
         server.dispatch_waiting(self.project)
         self.assertEqual(len(self.engine.calls), 1)
-        self.request("/api/decide", {"project": self.project, "slug": task["slug"],
-                                      "option": "resume", "note": "The local launch fixture is ready"})
+        self.request("/api/task/action", {"project": self.project, "slug": task["slug"],
+                                          "action": "resume", "reason": "The local launch fixture is ready"})
         self.wait_state(task["slug"], "queued")
         running = self.launch(task)
         self.assertEqual(running["attempt"], 1, "the failed unbound launch consumed no attempt")

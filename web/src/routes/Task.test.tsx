@@ -62,6 +62,7 @@ const stuck = {
 };
 
 const decision = {
+  id: "q-timer", revision: 1, anchor_id: "m-2", status: "open", audience: "operator",
   project: "altitude",
   slug: "fix-timer",
   kind: "asks",
@@ -70,11 +71,7 @@ const decision = {
   question: "Should the timer keep the old default?",
   asked: ago(3),
   since: ago(3),
-  options: [
-    { key: "A", label: "Keep it" },
-    { key: "B", label: "Change it" },
-  ],
-  recommendation: { option: "A", why: "" },
+  recommendation: { text: "Keep the default.", label: "Keep it", why: "" },
 };
 
 const askingL3 = { ...stuck, waiting_on: "l3", blocked_reason: "which suite covers the timer" };
@@ -293,17 +290,17 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
   });
 
-  it("puts the decision card at the top of the conversation when the task waits on the operator", async () => {
-    stub(stuck, { overview: { ...overview, queue: [decision] } });
+  it("puts the question at its durable conversation anchor with preceding context", async () => {
+    stub({ ...stuck, question: decision, questions: [decision] }, { overview: { ...overview, queue: [decision] } });
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Blocked")).toBeInTheDocument();
     const convo = screen.getByRole("region", { name: "Task conversation" });
-    const card = within(convo).getByRole("article", { name: "Fix the timer" });
+    const card = convo.querySelector("[data-question-id=\"q-timer\"]")!;
     expect(card).toHaveTextContent("Should the timer keep the old default?");
     expect(convo.firstElementChild?.firstElementChild).toHaveClass("convo-col");
-    expect(convo.querySelector(".convo-col > :first-child")).toHaveClass("task-decision");
+    expect(card.closest(".conversation-question")?.previousElementSibling).toHaveTextContent("Keep the change focused.");
     expect(document.querySelector(".task-line")).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
   });

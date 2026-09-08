@@ -219,10 +219,17 @@ def regen_state_md(project: str) -> str:
     by = {s: [t for t in tasks if t["state"] == s] for s in STATES}
     lines = [f"# STATE — {project}", "",
              f"*Regenerated {now()} from `status.json` files. Never edit by hand; never trust memory over this file.*", ""]
-    pending = [t for t in by["blocked"] if not t.get("resume_after")]
-    lines += ["## Needs user input", ""]
-    lines += [f"- **{t['slug']}** ({age(t['updated'])}): {short[:200]}"
-              for t in pending if (short := str(t.get("blocked_reason") or "blocked"))] or ["- none"]
+    pending = [(t, q) for t in tasks for q in t.get("questions", []) if q["status"] == "open"]
+    legacy = [t for t in by["blocked"] if not t.get("questions") and not t.get("resume_after")]
+    for audience, heading in (("operator", "Needs user input"), ("l3", "Needs L3 input")):
+        lines += [f"## {heading}", ""]
+        lines += ([f"- **{t['slug']}** ({age(t['updated'])}; question {q['id']} revision {q['revision']}): "
+                   f"{q['question'][:200]}"
+                   + (f" Recommended: {q['recommendation']['text'][:200]}" if q.get("recommendation") else "")
+                   for t, q in pending if q["audience"] == audience]
+                  + [f"- **{t['slug']}** ({age(t['updated'])}): {str(t.get('blocked_reason') or 'blocked')[:200]}"
+                     for t in legacy if (t.get("waiting_on") == "l3") == (audience == "l3")]) or ["- none"]
+        lines.append("")
     lines += ["", "## Tasks", ""]
     for s in ("blocked", "running", "reported", "queued"):
         ts = by[s]

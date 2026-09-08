@@ -1,290 +1,235 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
-import { TaskMessageSchema } from "../data/api";
+import { DecisionSchema, QuestionGroupSchema, TaskMessageSchema, TaskViewSchema } from "../data/api";
 
-const OPERATOR = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3") ?? "";
-
-function jsonResponse(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
-}
-
-function streamResponse(lines: string[]): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const line of lines) controller.enqueue(encoder.encode(`${line}\n`));
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200 });
-}
-
-const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-
-const decision = {
-  project: "altitude",
-  slug: "fix-timer",
-  title: "Fix the timer",
-  kind: "asks",
-  asked_by: "l2",
-  question: "Keep the portrait rule everywhere or allow landscape on tablets?",
-  detail: "",
-  asked: ago(9),
-  since: ago(10),
-  options: [
-    { key: "A", label: "Keep the portrait rule", text: "Keep the portrait rule everywhere." },
-    { key: "B", label: "Allow landscape", text: "Allow landscape on tablets only." },
-  ],
-  recommendation: { option: "A", why: "Portrait first keeps the boards honest, and nothing on tablets needs landscape yet." },
-};
-
-const task = {
-  slug: "fix-timer",
-  state: "blocked",
-  title: "Fix the timer",
-  session_id: "sess-1",
-  engine: "alpha",
-  model: "opus",
-  prs: [140],
-  files: { conversation: "/x/conversation.jsonl" },
-  messages: [],
-  events: [
-    { at: ago(60), kind: "new", by: "l3" },
-    { at: ago(50), kind: "state", from: "queued", to: "running", by: "altd" },
-    { at: ago(10), kind: "state", from: "running", to: "blocked", by: "l2", reason: "Which orientation rule should stand? A: Keep the portrait rule. B: Allow landscape." },
-    { at: ago(9), kind: "escalated", by: "l3", question: "Keep the portrait rule everywhere or allow landscape on tablets? A is what the boards say." },
-  ],
-};
-
-const project = {
-  name: "altitude",
-  tasks: [{ ...task, updated: ago(9) }],
-  archive: [],
-  repository: "https://github.com/ada/altitude",
-};
-
-const overview = {
-  projects: [{ name: "altitude", managed: true, counts: { running: 0 } }],
-  queue: [decision],
-  wip: { per_project: {}, machine: 0, waiting: [] },
-  quota: { known: false },
-  engines: [{ engine: "alpha", label: "Alpha", week: 10, known: true, stale: false, at: ago(1) }],
-  roots: ["~/Projects"],
-};
-
-type Fixtures = { overview?: unknown; task?: unknown; chat?: unknown; decideStatus?: number };
-
-function mockFetch(fixtures: Fixtures = {}) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.includes("/api/overview")) return jsonResponse(fixtures.overview ?? overview);
-    if (url.includes("/api/project/altitude")) return jsonResponse(project);
-    if (url.includes("/api/task/altitude/fix-timer")) return jsonResponse(fixtures.task ?? task);
-    if (url.includes("/api/chat/")) return jsonResponse(fixtures.chat ?? { history: [], queued: [], active: null, busy: false });
-    if (url.endsWith("/api/chat") && init?.method === "POST") {
-      return streamResponse(['{"turn":{"id":"c9","started_at":"2026-09-07T09:14:00+00:00","trigger":"chat","slug":"fix-timer"}}', '{"t":"Because the boards say so."}', '{"done":{"turn_id":"c9"}}']);
+const operator = TaskMessageSchema.shape.role.options.find((role) => role !== "l2" && role !== "l3")!;
+const at = "2026-09-08T02:00:00Z";
+const question = DecisionSchema.parse({ project: "atlas", slug: "index", title: "Index rollout", id: "q-index", revision: 1,
+  anchor_id: "question-message", status: "open", audience: "operator", asked_by: "l3", asked: at,
+  question: "How long should we retain the old index?", recommendation: { text: "Keep it for seven days.", label: "Use 7 days & resume", why: "This covers the rollback window." } });
+const initial = TaskViewSchema.parse({ slug: "index", title: "Index rollout", state: "blocked", question, questions: [question],
+  messages: [
+    { id: "before", role: "l2", text: "The rollback plan needs a retention period.", at },
+    { id: "question-message", role: "l3", text: question.question, at },
+    { id: "after", role: "l2", text: "I also checked the current index size.", at },
+  ], events: [{ kind: "tool", text: "Later technical activity" }] });
+function json(body: unknown, status = 200) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
+function setup({ archived = false, denied = false, missing = false } = {}) {
+  let task = structuredClone(initial);
+  if (archived) task = { ...task, state: "done", question: { ...question, status: "resolved" }, questions: [{ ...question, status: "resolved" }] };
+  if (missing) task = { ...task, question: null, questions: [] };
+  let refuse = denied;
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: task.question?.status === "open" ? [task.question] : [], wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
+    if (path === "/api/project/atlas") return json({ name: "atlas", tasks: [], repository: "https://github.com/example/atlas" });
+    if (path === "/api/task/atlas/index") return json(task);
+    if (path === "/api/decide") {
+      if (refuse) return json({ error: "Access denied" }, 403);
+      const closed = { ...question, status: "resolved", resolution: { disposition: "answered", text: "Use seven days.", by: operator, at, message_id: "answer" } };
+      task = { ...task, state: "running", question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: "Use seven days.", at }] };
+      return json({ question: closed });
     }
-    if (url.includes("/api/l2/message")) return jsonResponse({ ok: true, message: { id: "m9", at: ago(0), role: OPERATOR, text: "x" } });
-    if (url.includes("/api/decide")) {
-      return (fixtures.decideStatus ?? 200) === 200
-        ? jsonResponse({ ok: true })
-        : jsonResponse({ error: "only blocked tasks need a user decision" }, fixtures.decideStatus);
+    if (path === "/api/l2/message") {
+      const body = JSON.parse(String(init?.body));
+      const message = { id: "followup", role: operator, text: body.text, at };
+      task = { ...task, state: "running", messages: [...task.messages!, message] };
+      return json({ message });
     }
-    return jsonResponse({ error: "not found" }, 404);
+    return json({ error: "unavailable" }, 404);
   });
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+  vi.stubGlobal("fetch", fetch);
+  return { fetch, permit: () => { refuse = false; }, update: (value: typeof task) => { task = value; } };
+}
+const path = "/projects/atlas/tasks/index?question=q-index&revision=1";
+const convo = () => screen.getByRole("region", { name: "Task conversation" });
+
+function setupGroup() {
+  let group = QuestionGroupSchema.parse({ id: "rollout", revision: 1, anchor_id: question.anchor_id, questions: [
+    { ...question, group_id: "rollout", group_revision: 1, recommended_key: "seven", options: [
+      { key: "seven", label: "7 days", text: "Keep the index for seven days." },
+      { key: "fourteen", label: "14 days", text: "Keep the index for fourteen days." },
+    ] },
+    { ...question, id: "q-region", anchor_id: "region-message", group_id: "rollout", group_revision: 1,
+      question: "Which region should host the backup?", recommendation: null, options: [], recommended_key: null },
+  ] });
+  const messages = [...initial.messages!, { id: "region-message", role: "l2" as const, text: "Which region should host the backup?", at }];
+  const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const route = String(input);
+    if (route === "/api/overview") return json({ projects: [{ name: "atlas", managed: true }], queue: group.questions.filter((q) => q.status === "open"), wip: { per_project: {}, machine: 0, waiting: [] }, quota: { known: false } });
+    if (route === "/api/project/atlas") return json({ name: "atlas", tasks: [] });
+    if (route === "/api/task/atlas/index") return json({ ...initial, question_group: group, question: group.questions.find((q) => q.status === "open"), questions: group.questions, messages });
+    if (route === "/api/decide") {
+      const body = JSON.parse(String(init?.body));
+      const answers = body.answers ?? [body];
+      group = { ...group, revision: group.revision + 1, questions: group.questions.map((q) => {
+        const chosen = answers.find((answer: { question_id: string }) => answer.question_id === q.id);
+        return { ...q, group_revision: group.revision + 1, ...(chosen ? { status: "resolved", resolution: { disposition: "answered", text: q.options!.find((o) => o.key === chosen.option_key)!.text, by: operator, at } } : {}) };
+      }) };
+      return json({ question: group.questions[0], question_group: group });
+    }
+    if (route === "/api/l2/message") {
+      const body = JSON.parse(String(init?.body));
+      return json({ message: { id: "group-reply", role: operator, text: body.text, at } });
+    }
+    return json({}, 404);
+  });
+  vi.stubGlobal("fetch", fetch);
+  return { fetch, update: (change: (value: typeof group) => typeof group) => { group = change(group); } };
 }
 
-function posted(fetchMock: ReturnType<typeof vi.fn>, path: string) {
-  const call = fetchMock.mock.calls.find(([u, init]) => String(u).includes(path) && (init as RequestInit | undefined)?.method === "POST");
-  return call ? JSON.parse(String((call[1] as RequestInit | undefined)?.body)) : null;
-}
-
-const route = "/projects/altitude/decisions/fix-timer";
-
-/** The page's own column; the work panel beside it repeats the card's buttons and labels. */
-function page() {
-  const col = document.querySelector(".decision-col");
-  if (!col) throw new Error("the decision page has no column");
-  return within(col as HTMLElement);
-}
-
-describe("Decision page", () => {
-  it("shows the chips, question, options, why, timeline, and evidence with the panel card selected", async () => {
-    mockFetch();
-    setViewport(1440);
-    renderApp({ route });
-
-    expect(await screen.findByRole("heading", { level: 1, name: decision.question })).toHaveClass("decision-title");
-    expect(screen.getByRole("link", { name: "‹ altitude" })).toHaveAttribute("href", "/projects/altitude?tab=work");
-    expect(screen.getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
-    const chips = page().getByText("The L2 asks").closest(".decision-chips");
-    expect(chips).toHaveTextContent("altitude");
-    expect(chips).toHaveTextContent("Fix the timer");
-    expect(chips).toHaveTextContent("9 min ago");
-
-    expect(page().getByRole("button", { name: "Keep the portrait rule" })).toHaveClass("btn-primary");
-    expect(page().getByRole("button", { name: "Allow landscape" })).not.toHaveClass("btn-primary");
-    expect(page().getByPlaceholderText("Add a note for the L2 (optional)")).toBeInTheDocument();
-    const why = page().getByRole("region", { name: "Why L3 recommends" });
-    expect(within(why).getByRole("heading", { name: "Why L3 recommends Keep the portrait rule" })).toBeInTheDocument();
-    expect(why).toHaveTextContent("Portrait first keeps the boards honest");
-    expect(why).toHaveTextContent("Allow landscape: Allow landscape on tablets only.");
-
-    const timeline = page().getByRole("list", { name: "Where this came from" });
-    const items = within(timeline).getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent("The L2 (Opus on Alpha) asked L3");
-    expect(items[0]).toHaveTextContent("Which orientation rule should stand?");
-    expect(items[1]).toHaveTextContent("L3 escalated to you: Keep the portrait rule everywhere or allow landscape on tablets?");
-    expect(items[1]).not.toHaveTextContent("A is what the boards say.");
-    expect(items[2]).toHaveTextContent("now");
-    expect(items[2]).toHaveTextContent("The task is blocked until you choose.");
-    expect(items).toHaveLength(3);
-
-    const evidence = page().getByRole("region", { name: "Evidence" });
-    expect(within(evidence).getByRole("link", { name: "Task conversation" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
-    expect(within(evidence).getByRole("link", { name: "Live session at the failing step" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer/live");
-    expect(within(evidence).getByRole("link", { name: "PR #140" })).toHaveAttribute("href", "https://github.com/ada/altitude/pull/140");
-
-    expect(screen.getByText("Your question and the answer appear here and on the card. The L2 stays blocked until you choose.")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Recipient" })).toHaveValue("l2");
-
-    const panel = screen.getByRole("region", { name: "Work" });
-    expect(within(panel).getByRole("article", { name: "Fix the timer" })).toHaveAttribute("data-selected");
+describe("Independent questions in one conversation", () => {
+  it("uses an immediate choice consistently when only one group member remains unanswered", async () => {
+    const server = setupGroup();
+    server.update((g) => ({ ...g, questions: g.questions.map((q) => q.id === "q-region" ? { ...q, status: "resolved" } : q) }));
+    const { user } = renderApp({ route: path });
+    await user.click(await screen.findByRole("button", { name: "14 days" }));
+    await screen.findByText("Decision recorded");
+    const call = server.fetch.mock.calls.find(([url]) => url === "/api/decide")!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", question_id: "q-index", revision: 1, option_key: "fourteen" });
+    expect(screen.queryByRole("button", { name: "Send 1 answer" })).toBeNull();
   });
 
-  it("records the option with the note and then reads as decided", async () => {
-    const fixtures: Fixtures = {};
-    const fetchMock = mockFetch(fixtures);
-    setViewport(1440);
-    const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: decision.question });
-    await user.type(page().getByLabelText("Note for the L2"), "Tablets only.");
-    fixtures.overview = { ...overview, queue: [] };
-    fixtures.task = {
-      ...task,
-      state: "running",
-      decision: { key: "B", option: "Allow landscape", note: "Tablets only.", at: ago(0), by: "ada" },
-      events: [...task.events, { at: ago(0), kind: "decided", key: "B", option: "Allow landscape", note: "Tablets only.", by: "ada" }],
-    };
-    await user.click(page().getByRole("button", { name: "Allow landscape" }));
-
-    await waitFor(() =>
-      expect(posted(fetchMock, "/api/decide")).toEqual({ project: "altitude", slug: "fix-timer", option: "B", note: "Tablets only." }),
-    );
-    expect(await screen.findByRole("status")).toHaveTextContent("Decided just now: Allow landscape · Tablets only.");
-    expect(page().queryByRole("button", { name: "Allow landscape" })).toBeNull();
-    expect(screen.queryByLabelText("Ask a follow-up")).toBeNull();
-    expect(page().getByRole("heading", { level: 1, name: decision.question })).toBeInTheDocument();
-    const timeline = page().getByRole("list", { name: "Where this came from" });
-    expect(timeline).toHaveTextContent("You chose Allow landscape");
-    expect(timeline).not.toHaveTextContent("The task is blocked until you choose.");
+  it("opens the whole group at either question and stages an alternative before sending only that answer", async () => {
+    const { fetch } = setupGroup();
+    const { user, queryClient } = renderApp({ route: "/projects/atlas/tasks/index?question=q-region&revision=1" });
+    const choice = await screen.findByRole("button", { name: "14 days" });
+    expect(choice).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "7 days" })).toHaveAttribute("aria-pressed", "false");
+    expect(document.activeElement).toHaveTextContent("Which region should host the backup?");
+    expect(within(convo()).getAllByText("Which region should host the backup?")).toHaveLength(1);
+    expect(screen.queryByText("This question has been replaced.")).toBeNull();
+    await user.click(choice);
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Use recommendations" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
+    await screen.findByText("Decision recorded");
+    const call = fetch.mock.calls.find(([url]) => url === "/api/decide")!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", group_id: "rollout", group_revision: 1, answers: [{ question_id: "q-index", revision: 1, option_key: "fourteen" }] });
+    expect(convo()).toHaveTextContent("1 question to answer");
+    expect(screen.queryByRole("button", { name: "14 days" })).toBeNull();
+    expect(queryClient.getQueryData<{ queue: { id: string }[] }>(["overview"])?.queue.map((q) => q.id)).toEqual(["q-region"]);
   });
 
-  it("keeps the options with one line and a Retry when the decision fails", async () => {
-    mockFetch({ decideStatus: 409 });
-    setViewport(1440);
-    const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: decision.question });
-    await user.click(page().getByRole("button", { name: "Keep the portrait rule" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not record the decision.");
-    await user.click(page().getByRole("button", { name: "Retry" }));
-    expect(page().queryByRole("alert")).toBeNull();
-    expect(page().getByRole("button", { name: "Keep the portrait rule" })).toBeEnabled();
+  it("sends ordinary discussion with the group context and never accepts any answer on send", async () => {
+    const { fetch } = setupGroup();
+    const { user } = renderApp({ route: path });
+    await user.type(await screen.findByRole("textbox", { name: "Message the L2" }), "Why seven days, and which region is closest?");
+    await user.click(within(convo()).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fetch.mock.calls.some(([url]) => url === "/api/l2/message")).toBe(true));
+    const call = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Why seven days, and which region is closest?", group_id: "rollout", group_revision: 1 });
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
+    expect(convo()).toHaveTextContent("2 questions to answer");
   });
 
-  // §5.2 note 6 / §4.3: a follow-up to L3 carries the slug; the answer lands in the timeline.
-  it("sends a follow-up to L3 with the slug and lands the answer in the timeline", async () => {
-    const fixtures: Fixtures = {};
-    const fetchMock = mockFetch(fixtures);
+  it("discards staged picks after the model changes the group instead of applying them to new choices", async () => {
+    const server = setupGroup();
+    const { user, queryClient } = renderApp({ route: path });
+    await user.click(await screen.findByRole("button", { name: "14 days" }));
+    server.update((g) => ({ ...g, revision: 2, questions: g.questions.map((q) => ({ ...q, group_revision: 2 })) }));
+    await act(() => queryClient.invalidateQueries({ queryKey: ["task", "atlas", "index"] }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Send 1 answer" })).toBeNull());
+    expect(screen.getByRole("button", { name: "14 days" })).toHaveAttribute("aria-pressed", "false");
+    expect(server.fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
+  });
+});
+
+describe("Conversation-first decisions", () => {
+  it("replaces a saved decision URL with the anchored L2 conversation and keeps evidence folded", async () => {
     setViewport(1440);
-    const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: decision.question });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Recipient" }), "l3");
-    fixtures.chat = {
-      history: [
-        { at: ago(0), role: "user", text: "Why not both?", trigger: "chat", turn_id: "c9", slug: "fix-timer" },
-        { at: ago(0), role: "assistant", text: "Because the boards say so.", trigger: "chat", turn_id: "c9", slug: "fix-timer" },
-      ],
-      queued: [],
-      active: null,
-      busy: false,
-    };
-    await user.type(screen.getByLabelText("Ask a follow-up"), "Why not both?");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-
-    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Why not both?", slug: "fix-timer" }));
-    const timeline = page().getByRole("list", { name: "Where this came from" });
-    await waitFor(() => expect(timeline).toHaveTextContent("You asked L3"));
-    expect(timeline).toHaveTextContent("Why not both?");
-    expect(timeline).toHaveTextContent("L3 answered");
-    expect(timeline).toHaveTextContent("Because the boards say so.");
-    expect(screen.queryByText("L3 is answering…")).toBeNull();
-    expect(page().getByRole("button", { name: "Keep the portrait rule" })).toBeEnabled();
+    setup();
+    const { router } = renderApp({ route: "/projects/atlas/decisions/index" });
+    await screen.findByText("How long should we retain the old index?");
+    expect(router.state.location.pathname + router.state.location.search).toBe(path);
+    expect(convo()).toHaveTextContent("The rollback plan needs a retention period.");
+    expect(convo()).toHaveTextContent("L3 brought this question to the L2");
+    expect(document.activeElement).toHaveClass("conversation-question");
+    expect(document.querySelector("details")).not.toHaveAttribute("open");
+    expect(screen.queryByPlaceholderText("Add a note for the L2 (optional)")).toBeNull();
+    expect(screen.queryByText("Where this came from")).toBeNull();
+    expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("sends a follow-up to the L2 through the task conversation when the L2 asked", async () => {
-    const fetchMock = mockFetch();
-    setViewport(1440);
-    const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: decision.question });
-    await user.type(screen.getByLabelText("Ask a follow-up"), "Is the old scorer still wired?");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() =>
-      expect(posted(fetchMock, "/api/l2/message")).toEqual({ project: "altitude", slug: "fix-timer", text: "Is the old scorer still wired?" }),
-    );
+  it("sends a follow-up with its question identity and leaves the dilemma open", async () => {
+    const { fetch } = setup();
+    const { user, queryClient } = renderApp({ route: path });
+    const field = await screen.findByRole("textbox", { name: "Message the L2" });
+    await user.type(field, "Can we roll back after day seven?");
+    await user.click(within(convo()).getByRole("button", { name: "Send" }));
+    await within(convo()).findByText("Can we roll back after day seven?");
+    expect(within(convo()).getByRole("button", { name: "Use 7 days & resume" })).toBeEnabled();
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/decide")).toHaveLength(0);
+    const sent = fetch.mock.calls.find(([url]) => url === "/api/l2/message")!;
+    expect(JSON.parse(String(sent[1]?.body))).toEqual({ project: "atlas", slug: "index", text: "Can we roll back after day seven?", question_id: "q-index", revision: 1 });
+    expect(queryClient.getQueryData<{ queue: unknown[] }>(["overview"])?.queue).toHaveLength(1);
   });
 
-  it("says the task was archived and links to it", async () => {
-    mockFetch({ overview: { ...overview, queue: [] }, task: { ...task, state: "done", events: [...task.events, { at: ago(1), kind: "state", from: "blocked", to: "done", by: "altd" }] } });
-    setViewport(1440);
-    renderApp({ route });
-
-    expect(await screen.findByRole("status")).toHaveTextContent("This task was done.");
-    expect(page().getByRole("link", { name: "Open the archived task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
-    expect(page().queryByRole("button", { name: "Keep the portrait rule" })).toBeNull();
-    expect(screen.queryByLabelText("Ask a follow-up")).toBeNull();
+  it("positions the question when its conversation anchor arrives after the initial read", async () => {
+    const server = setup();
+    server.update({ ...initial, messages: initial.messages!.filter((row) => row.id !== question.anchor_id) });
+    const { queryClient } = renderApp({ route: path });
+    await within(await screen.findByRole("region", { name: "Task conversation" })).findByText("I also checked the current index size.");
+    expect(document.activeElement).not.toHaveClass("conversation-question");
+    server.update(initial);
+    await act(() => queryClient.invalidateQueries({ queryKey: ["task", "atlas", "index"] }));
+    await waitFor(() => expect(document.activeElement).toHaveClass("conversation-question"));
+    expect(document.activeElement).toHaveTextContent(question.question!);
   });
 
-  it("shows one line and a Retry when the task cannot be read", async () => {
-    mockFetch({ overview: { ...overview, queue: [] } });
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/overview")) return jsonResponse({ ...overview, queue: [] });
-      if (url.includes("/api/task/")) return jsonResponse({ error: "state file unreadable" }, 500);
-      if (url.includes("/api/project/")) return jsonResponse(project);
-      if (url.includes("/api/chat/")) return jsonResponse({ history: [], queued: [], active: null, busy: false });
-      return jsonResponse({ error: "not found" }, 404);
-    });
-    setViewport(1440);
-    renderApp({ route });
-
-    await screen.findByText(/Could not read the decision\./);
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  it("records quick acceptance once and renders the saved outcome without another confirmation", async () => {
+    const { fetch } = setup();
+    const { user } = renderApp({ route: path });
+    await user.click(await screen.findByRole("button", { name: "Use 7 days & resume" }));
+    await within(convo()).findByText("Decision recorded");
+    expect(within(convo()).queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
+    expect(within(convo()).getByText("Work resumed")).toBeInTheDocument();
+    const calls = fetch.mock.calls.filter(([url]) => url === "/api/decide");
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]![1]?.body))).toEqual({ project: "atlas", slug: "index", question_id: "q-index", revision: 1, option_key: "recommended" });
   });
 
-  it("pushes over Needs you on the phone with Back, the crumb, and Open task", async () => {
-    mockFetch();
+  it("closes an obsolete dilemma with its reason and removes acceptance when the owner records changed direction", async () => {
+    const server = setup();
+    const { queryClient } = renderApp({ route: path });
+    await screen.findByRole("button", { name: "Use 7 days & resume" });
+    const closed = { ...question, status: "resolved", resolution: { disposition: "superseded", text: "No old index is needed after choosing the simpler rollout.", by: operator, at } };
+    server.update({ ...initial, state: "running", question: closed, questions: [closed] });
+    await act(() => queryClient.invalidateQueries({ queryKey: ["task", "atlas", "index"] }));
+    await within(convo()).findByText("Question closed");
+    expect(convo()).toHaveTextContent("No old index is needed after choosing the simpler rollout.");
+    expect(within(convo()).queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
+    expect(within(convo()).queryByText("Decision recorded")).toBeNull();
+  });
+
+  it("keeps acceptance and sending denied together until an explicit refreshed read", async () => {
+    const server = setup({ denied: true });
+    const { user } = renderApp({ route: path });
+    await user.click(await screen.findByRole("button", { name: "Use 7 days & resume" }));
+    await screen.findByText("You cannot send or record a decision here.");
+    expect(screen.getByRole("textbox", { name: "Message the L2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Use 7 days & resume" })).toBeDisabled();
+    server.permit();
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message the L2" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Use 7 days & resume" })).toBeEnabled();
+  });
+
+  it("keeps an unavailable historical question explicit while the ordinary task stays readable", async () => {
+    setup({ missing: true });
+    renderApp({ route: path });
+    await screen.findByText("This question is unavailable. The task conversation is below.");
+    expect(convo()).toHaveTextContent("The rollback plan needs a retention period.");
+    expect(screen.queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
+  });
+
+  it("renders archived question history read-only on the phone", async () => {
     setViewport(390);
-    const { router, user } = renderApp({ route: "/" });
-    await screen.findByRole("article", { name: "Fix the timer" });
-    await router.navigate(route, { state: { from: "needs", tab: "needs" } });
-
-    await screen.findByRole("heading", { level: 1, name: decision.question });
-    expect(screen.getByRole("heading", { level: 1, name: "Needs you" })).toHaveClass("phone-title");
-    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
-    const bar = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(bar).getByRole("link", { name: /Needs you$/ })).toHaveAttribute("aria-current", "page");
-    expect(screen.queryByRole("region", { name: "Work" })).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    setup({ archived: true });
+    renderApp({ route: path });
+    await within(await screen.findByRole("region", { name: "Task conversation" })).findByText("Question closed");
+    expect(screen.queryByRole("textbox", { name: "Message the L2" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
   });
 });

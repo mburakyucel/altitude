@@ -32,6 +32,7 @@ class ChatCase(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         task.update({"state": "blocked", "blocked_reason": reason})
         S.save_task(self.project, task)
+        S.append_event(self.project, self.slug, "state", frm="running", to="blocked", by="l2", reason=reason)
 
     def quiet_launch(self):
         """One resume launches nothing real: base check, worktree validation and the holds are stubbed out."""
@@ -96,8 +97,10 @@ class TestTaskConversation(ChatCase):
         result = self.resume(seen)
 
         self.assertEqual(result["agent"]["id"], "agent-new")
-        self.assertTrue(seen["prompt"].startswith("Message from Burak ("), seen["prompt"])
-        self.assertTrue(seen["prompt"].endswith("\nUse the existing API."), seen["prompt"])
+        self.assertIn("Message from Burak (", seen["prompt"])
+        self.assertIn("\nUse the existing API.", seen["prompt"])
+        self.assertIn("Pending task question", seen["prompt"])
+        self.assertIn("does not authorize", seen["prompt"])
         self.assertEqual((seen["name"], seen["session_id"], seen["cwd"]),
                          (f"{self.project}/{self.slug}-1", "session-old", str(self.worktree)))
         self.assertEqual((seen["env"]["ALTITUDE_ATTEMPT"], seen["env"]["ALTITUDE_SESSION_KEY"]),
@@ -107,7 +110,9 @@ class TestTaskConversation(ChatCase):
                          ("running", "agent-new", "session-new", 1))
         self.assertIsNone(task["blocked_reason"])
         self.assertEqual(T.pending(self.project, self.slug), [], "delivered messages leave the inbox")
-        self.assertEqual([m["text"] for m in T.task_messages(self.project, self.slug)], ["Use the existing API."])
+        self.assertEqual([m["text"] for m in T.task_messages(self.project, self.slug)],
+                         ["Need one decision.", "Use the existing API."])
+        self.assertEqual(T.decisions(self.project)[0]["status"], "open")
 
     def worker_env(self):
         return {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
@@ -134,7 +139,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], "burak")
         cards = T.decisions(self.project)
         self.assertEqual([(c["kind"], c["asked_by"], c["question"]) for c in cards], [("asks", "l2", "Which colour?")])
-        self.assertEqual([o["label"] for o in cards[0]["options"]], ["Resume", "Reject"])
+        self.assertIsNone(cards[0]["recommendation"])
         self.assertEqual(len(self.l3_queue()), 1, "a block flagged for Burak does not wake L3")
 
     def test_l3_answers_a_block_or_escalates_it_as_one_dilemma(self):
@@ -152,7 +157,8 @@ class TestTaskConversation(ChatCase):
         T.message(self.project, self.slug, "l3", "Keep it; the brief says no breaking changes.")
         seen = {}
         self.resume(seen)
-        self.assertTrue(seen["prompt"].startswith("Message from L3 ("), seen["prompt"])
+        self.assertIn("Message from L3 (", seen["prompt"])
+        self.assertIn("Keep the old API (recommended) or break it now?", seen["prompt"])
         task = S.load_task(self.project, self.slug)
         self.assertEqual(task["state"], "running")
         for key in ("waiting_on", "escalated", "fault"):
@@ -165,7 +171,8 @@ class TestTaskConversation(ChatCase):
         self.block()
         seen = {}
         self.resume(seen)
-        self.assertEqual(seen["prompt"], "Continue from your progress file.")
+        self.assertTrue(seen["prompt"].startswith("Continue from your progress file."))
+        self.assertIn("Need one decision.", seen["prompt"])
 
     def test_current_l2_cli_can_reply_but_a_human_shell_cannot_impersonate_it(self):
         self.setenv("ALTITUDE_ACTOR", "l2")

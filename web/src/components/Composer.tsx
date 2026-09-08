@@ -3,7 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { transcribeVoice } from "../data/api";
 
 /*
- * The one composer (SPEC.md §3.6): project chat, decision follow-up, task conversation. The page owns
+ * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
  * the draft and the send; the composer owns the states in the §3.6 table: Idle, Typing, Sending (the
  * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
  * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
@@ -32,7 +32,7 @@ export interface ComposerProps {
   busy?: boolean;
   /** The hint under the field when no state claims it (12px muted). */
   hint?: ReactNode;
-  /** The left pill: the engine pin on the L3 chat, the recipient pill on a decision page, none on a task. */
+  /** The left pill: the engine pin on L3 chat; none on a task. */
   pill?: ReactNode;
   disabled?: boolean;
   autoFocus?: boolean;

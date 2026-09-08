@@ -92,22 +92,25 @@ test("missing, pending and failed repository metadata keep prose readable withou
   await walk.state("04-failed-metadata-overlay", { visible: [prose, error], hidden: [prose.getByRole("link", { name: "PR #250", exact: true })] });
 });
 
-test("decision cards, timeline and report fields share repository reference rendering", async ({ page, service }, info) => {
+test("decision cards, anchored L2 discussion and report fields share repository reference rendering", async ({ page, service }, info) => {
   const walk = walkthrough(page, info);
   await walk.open(`${service}/`);
   const card = page.getByRole("article", { name: "Reference decision", exact: true });
-  await expect(card.getByRole("link", { name: "PR #250", exact: true })).toHaveAttribute("href", `${repository}/pull/250`);
-  await expect(card.getByRole("link", { name: "PR #272", exact: true })).toHaveAttribute("href", `${repository}/pull/272`);
+  const pullLinks = card.getByRole("link", { name: "PR #250", exact: true });
+  await expect(pullLinks).toHaveCount(2); // Question and explicit recommendation share the renderer.
+  for (const link of await pullLinks.all()) await expect(link).toHaveAttribute("href", `${repository}/pull/250`);
+  await expect(card.getByRole("link", { name: "PR #272", exact: true })).toHaveCount(0);
   await expect(card.getByRole("link", { name: "issue #904", exact: true })).toHaveCount(0);
   await walk.state("01-decision-card-and-saved-answer", { visible: [card], hidden: [card.getByRole("link", { name: "issue #904", exact: true })] });
-  await card.getByRole("link", { name: "More context", exact: true }).click();
-  const title = page.getByRole("heading", { level: 1, name: /^Should PR #250/ });
+  await card.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const title = conversation.locator('[data-status="open"]');
   await expect(title.getByRole("link", { name: "issue #247", exact: true })).toHaveAttribute("href", `${repository}/issues/247`);
   await walk.state("02-decision-question", { visible: [title], hidden: [page.getByLabel("Loading", { exact: true })] });
-  const timeline = page.getByRole("list", { name: "Where this came from", exact: true });
-  await expect(timeline.getByRole("link", { name: "other/repo#273", exact: true })).toHaveAttribute("href", "https://github.com/other/repo/issues/273");
-  await timeline.getByRole("link", { name: "PR #272", exact: true }).scrollIntoViewIfNeeded();
-  await walk.state("03-decision-timeline-answer", { visible: [timeline], hidden: [timeline.getByRole("link", { name: "issue #904", exact: true })] });
+  await expect(conversation.getByRole("link", { name: "other/repo#273", exact: true })).toHaveAttribute("href", "https://github.com/other/repo/issues/273");
+  const answerLink = conversation.getByRole("link", { name: "PR #272", exact: true });
+  await answerLink.scrollIntoViewIfNeeded();
+  await walk.state("03-decision-discussion-answer", { visible: [answerLink], hidden: [conversation.getByRole("link", { name: "issue #904", exact: true })] });
   await walk.open(`${service}/projects/alpha/tasks/reference-task/report`);
   const report = page.locator(".report-page");
   for (const [label, href] of [["PR #260", `${repository}/pull/260`], ["issue #261", `${repository}/issues/261`], ["PR #262", `${repository}/pull/262`], ["other/repo#263", "https://github.com/other/repo/issues/263"], ["issue #264", `${repository}/issues/264`], ["#265", `${repository}/issues/265`], ["PR #270", `${repository}/pull/270`], ["issue #271", `${repository}/issues/271`]]) {

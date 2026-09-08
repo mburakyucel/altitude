@@ -166,12 +166,30 @@ for the running worker's next checkpoint. An explicit question block supersedes 
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
 authorizes another turn. An L2's block goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
-The operator's choice (`POST /api/decide` with an option and an optional note) is recorded on the task as its `decision`
-and a `decided` event; a reject option rejects the task with the note as the reason, any other option appends a task
-message naming the choice and the note and requests the daemon resume, so the L2 reads the answer as its inbox at the
-next checkpoint. A follow-up sent before choosing goes to the asker: to L3 as a chat turn that carries the task's slug
-(the prompt tells L3 the task stays blocked), or to the L2 as an ordinary task message, which resumes it like any
-other. An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
+A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
+L3 escalations publish one question or up to three independent questions into the owning human conversation;
+the model chooses plain questions, one recommended action, or up to three explicit quick choices.
+the inbox handoff names its stable ID/revision and the IDs of the actual source messages.
+
+Quick acceptance names the question ID, revision and chosen option. Grouped answers name the group
+ID/revision and each selected question/revision/option; the server validates the whole selection
+before saving one operator message and its resolutions. Only selected questions close, and delivery
+uses the existing inbox/resume path. Retries reuse the saved receipt and return current group state;
+stale revisions cannot approve a replacement. A recorded decision may wait for capacity without
+requiring a second answer. Typed replies are ordinary messages: the same L2 answers or clarifies,
+then uses the cited-message [`resolve` operation](CLI.md#conversational-decisions) for a clear decision.
+A typed group reply retains the viewed member references; the owner can cite that one message to
+resolve several independent questions. A follow-up alone never resolves the dilemma. A partial answer leaves the relevant remainder open;
+a changed direction can make the old question unnecessary and close it with a recorded reason.
+After replying to a follow-up, the L2 parks with the same question and retains its recommendation
+and required decision-maker. Report handoff closes the prior dilemma without accepting its approach;
+the report review can raise its own question.
+Neither operational resume nor closing an obsolete question approves its abandoned recommendation.
+The provider conversation, attempt, engine and model remain under the ordinary continuity rules.
+When those rules queue a fresh attempt after a provider limit, an existing dilemma still accepts
+replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;
+dispatch and delivery use the existing paths, and the UI says the message waits for the L2 to start.
+An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
 On start, altd queues one message per project listing its active tasks and unresolved faults. L3
 resumes only after observing that the cause is gone. A workerless `main-unpushed` task passes the
 checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,

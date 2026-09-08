@@ -349,7 +349,7 @@ def _active_turn(project: str, trigger: str, claim=None, slug: str | None = None
 
 @contextmanager
 def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
-    # A follow-up on a decision names its task, so the card can show the turn in flight (SPEC.md §5.2 note 6).
+    # A task-linked project turn retains its task reference through queueing and history.
     turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger, **_slug_meta(slug)}
     lifecycle_guard = _lifecycle_guard(project)
     with lifecycle_guard:
@@ -455,7 +455,7 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat":  # a follow-up on a decision keeps its own turn
+            if rows[0].get("trigger") == "chat":  # task-linked chat keeps its own turn
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
                        and rows[take].get("slug") == rows[0].get("slug")):
                     take += 1
@@ -491,11 +491,24 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
              f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)}"]
     if fresh:
         lines.append("[altitude] Fresh provider session. Read the state file first; it is durable project memory.")
-    if slug:  # SPEC.md §4.3: a follow-up on a decision is answered from the record and never decides
-        lines.append(f"[altitude] This is a follow-up on the decision waiting on task `{slug}`. Read "
+    lines.append("[altitude] Task dilemmas belong in the owning L2 conversation. For operator judgment, "
+                 "use alt task escalate <slug> --question '<dilemma>' with --recommendation/--label/--why, "
+                 "or --questions-file - with JSON on stdin: {\"questions\":[{\"id\":\"existing question id\","
+                 "\"question\":\"...\",\"options\":[{\"key\":\"a\",\"label\":\"Short action\","
+                 "\"text\":\"Approach\"}],\"recommended_key\":\"a\",\"why\":\"...\"}]}. "
+                 "Use up to three independent questions and up to three options each, with one explicit "
+                 "recommended key if options exist. Plain questions omit options and recommended_key. "
+                 "Omit id for a new question; preserve existing ids when reframing. Missing members stay "
+                 "open. File paths are refused by the L3 boundary. Relayed decisions cite the original "
+                 "operator message; L3 prose and follow-ups are not operator authorization.")
+    if slug:
+        lines.append(f"[altitude] This project conversation concerns task `{slug}`. Read "
                      f"`alt task show {slug}` and `alt task messages {slug}` and answer from the record in plain "
-                     "sentences. Do not resume, reject, or decide the task: it stays blocked until the operator "
-                     "chooses an option.")
+                     "sentences. Decisions are discussed in the owning L2 conversation. A follow-up does not "
+                     "authorize implementation or close a question. When relaying an explicit operator decision "
+                     "to the owner, cite its original project conversation turn id; coordinator-authored prose "
+                     "does not become operator approval. The owner records resolution against the actual source "
+                     "message. Existing task authority and merge holds remain unchanged.")
     return "\n".join(lines) + "\n\n"
 
 
@@ -534,8 +547,8 @@ def _select(project: str, engine: str | None = None, *, model: str | None = None
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
          on_text=None, on_start=None, model: str | None = None, slug: str | None = None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
-    a provider. Each provider resumes only its own transcript. `slug` marks a follow-up on that task's
-    decision: the turn's rows carry it, so the decision card mirrors the exchange."""
+    a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
+    a task-linked project conversation and its queued turn."""
     requested = engine
     with _turn_scope(project, trigger, slug) as active_turn:
         if active_turn is None:

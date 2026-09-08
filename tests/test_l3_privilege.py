@@ -923,7 +923,9 @@ class TestL3DaemonOperations(AltitudeCase):
             f"task-operation:{self.project}:{task['slug']}", dispatch.run_task_operation,
             self.project, task["slug"])
 
-        blocked = self.task(state="blocked", title="Browser resume note")
+        blocked = self.task(title="Browser resume note")
+        question = T.block(self.project, blocked["slug"], "Which value?", actor="l2",
+                           updates={"waiting_on": "burak"}, recommendation="Use the approved value.")["questions"][-1]
         server.Handler._seen_clients.clear()
         httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         thread = server.threading.Thread(target=httpd.serve_forever, daemon=True); thread.start()
@@ -931,12 +933,12 @@ class TestL3DaemonOperations(AltitudeCase):
 
         def scheduled(*_args):
             self.assertEqual([row["text"] for row in T.pending(self.project, blocked["slug"])],
-                             ["Use the approved value."],
+                             ["Use this approach and continue: Use the approved value."],
                              "Burak's note exists before the daemon resume runner can start")
             return True
 
-        body = json.dumps({"project": self.project, "slug": blocked["slug"], "option": 0,
-                           "note": "Use the approved value."}).encode()
+        body = json.dumps({"project": self.project, "slug": blocked["slug"], "question_id": question["id"],
+                           "revision": question["revision"]}).encode()
         request = urllib.request.Request(f"http://127.0.0.1:{httpd.server_port}/api/decide", data=body,
                                          headers={"Content-Type": "application/json"}, method="POST")
         with mock.patch.object(server, "spawn", side_effect=scheduled):

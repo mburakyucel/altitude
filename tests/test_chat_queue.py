@@ -33,6 +33,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
                      "l2_engine": "codex", "worktree": str(self.worktree), "blocked_reason": "Need an answer.",
                      "waiting_on": "l3"})
         S.save_task(self.project, task)
+        S.append_event(self.project, self.slug, "state", frm="running", to="blocked", by="l2", reason="Need an answer.")
         self.setenv("ALTITUDE_ACTOR", "l3")
 
     def test_l3_cli_saves_the_message_when_git_metadata_is_unavailable(self):
@@ -134,7 +135,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
                          ("running", 1, "thread-old"))
         self.assertEqual([message["id"] for message in T.pending(self.project, self.slug)], [late["id"]])
         self.assertEqual([message["id"] for message in T.task_messages(self.project, self.slug)],
-                         [first["id"], late["id"]])
+                         [task["questions"][0]["anchor_id"], first["id"], late["id"]])
         self.assertEqual(dispatch.resume(self.project, self.slug), {"already_running": True})
         self.assertEqual(len(calls), 1, "a stale daemon wake is an idempotent no-op")
 
@@ -165,7 +166,8 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertNotIn("resume_claim", task)
         self.assertIsNone(task["dispatching"])
         self.assertEqual(T.pending(self.project, self.slug), [])
-        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)], [message["id"]])
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)],
+                         [task["questions"][0]["anchor_id"], message["id"]])
 
     def test_restart_with_ambiguous_provider_launch_fails_closed_without_a_duplicate(self):
         message = T.message(self.project, self.slug, "l3", "Do not deliver me twice.", by="l3")
@@ -226,7 +228,11 @@ class TestTaskMessageResumeQueue(AltitudeCase):
                 self.assertFalse(task.get("resume_claim"))
                 self.assertFalse(task.get("dispatching"))
                 self.assertEqual(dispatch.resume_due(self.project), [])
-                self.assertEqual(len(T.pending(self.project, self.slug)), index)
+                rows = T.pending(self.project, self.slug)
+                self.assertEqual([row["text"] for row in rows if row.get("wake", True)], ["Earlier steering"] * index)
+                [handoff] = [row for row in rows if row.get("wake") is False]
+                self.assertEqual(handoff["text"], "A newer scope decision?")
+                self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
 
     def test_restart_discards_a_launched_claim_superseded_by_a_new_question(self):
         earlier = T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
@@ -242,7 +248,11 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         self.assertEqual((task["state"], task["blocked_reason"]), ("blocked", "A newer scope decision?"))
         self.assertFalse(task.get("resume_claim"))
-        self.assertEqual(T.pending(self.project, self.slug), [earlier])
+        rows = T.pending(self.project, self.slug)
+        self.assertEqual([row for row in rows if row.get("wake", True)], [earlier])
+        [handoff] = [row for row in rows if row.get("wake") is False]
+        self.assertEqual(handoff["text"], "A newer scope decision?")
+        self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
         self.assertEqual(dispatch.resume_due(self.project), [])
 
     def test_background_resume_cancellation_preserves_the_question(self):
@@ -355,7 +365,11 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
         self.assertFalse(task.get("fault"))
         self.assertTrue(task.get("resume_after"))
-        self.assertEqual([r["text"] for r in T.pending(self.project, self.slug)], ["Earlier steering", "New answer"])
+        rows = T.pending(self.project, self.slug)
+        self.assertEqual([row["text"] for row in rows if row.get("wake", True)], ["Earlier steering", "New answer"])
+        [handoff] = [row for row in rows if row.get("wake") is False]
+        self.assertEqual(handoff["text"], "New question")
+        self.assertIn(task["questions"][-1]["id"], handoff["question_context"])
         self.assertIn("l2-resume", incidents.FAULTS.read_text())
 
     def test_old_resume_error_cannot_borrow_a_new_claims_block_identity(self):
@@ -436,7 +450,8 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertNotIn("resume_claim", task)
         self.assertIsNone(task["dispatching"])
         self.assertEqual(T.pending(self.project, self.slug), [])
-        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)], [message["id"]])
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, self.slug)],
+                         [task["questions"][0]["anchor_id"], message["id"]])
 
 
 class TestChatQueue(AltitudeCase):

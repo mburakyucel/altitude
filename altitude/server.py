@@ -266,6 +266,13 @@ def _l3_verb_request(project: str, request: dict) -> dict:
         if any(arg.split("=", 1)[0] in project_options | file_options
                or arg.startswith("-p") and not arg.startswith("--") for arg in args):
             raise ValueError("the L3 socket fixes the project and accepts input only on stdin")
+        for index, arg in enumerate(args):
+            # argparse abbreviations must obey the same stdin-only boundary as the full flag.
+            flag, _, inline = arg.partition("=")
+            if flag.startswith("--q") and "--questions-file".startswith(flag) and flag != "--question":
+                value = inline if "=" in arg else (args[index + 1] if index + 1 < len(args) else None)
+                if value != "-":
+                    raise ValueError("L3 questions-file input is accepted only on stdin (-)")
         _validate_l3_alt_args(args)
         if args[:2] == ["task", "hold-merge"] and any(arg.split("=", 1)[0] == "--approval" for arg in args[3:]):
             options = merge_approval_parser().parse_args(args[2:])
@@ -1258,33 +1265,26 @@ class Handler(BaseHTTPRequestHandler):
                 remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
             if api == "decide":
-                # SPEC.md §5.2 note 5: the option (a label, key, or index) and the note are recorded on the
-                # task before the lifecycle acts; the L2 reads the choice when it resumes.
                 project, slug = o["project"], o["slug"]
-                t = S.load_task(project, slug)
-                if t["state"] != "blocked":
-                    return self._json({"error": "only blocked tasks need a user decision"}, 409)
                 try:
-                    decision = T.decide(project, slug, o.get("option"), o.get("note"))
+                    if "answers" in o or "group_id" in o or "group_revision" in o:
+                        result = T.accept_questions(project, slug, o.get("group_id"), o.get("group_revision"), o.get("answers"))
+                    else:
+                        result = T.accept_question_result(project, slug, o.get("question_id"), o.get("revision"), o.get("option_key"))
                 except T.TransitionError as exc:
-                    return self._json({"error": str(exc)}, 400)
-                if decision["key"] == "reject":
-                    request_daemon_task_operation(project, slug, "reject",
-                                                  decision["note"] or "rejected by Burak", actor="burak")
-                else:
-                    if decision["message"]:
-                        # Persist the answer without its ordinary timer wake; the following durable request
-                        # becomes the only resume owner before a runner can start.
-                        T.message(project, slug, "burak", decision["message"], wake_blocked=False)
-                    request_daemon_task_operation(project, slug, "resume",
-                                                  decision["message"] or "resumed by Burak", actor="burak")
-                return self._json({"ok": True, "queued": True, "decision": decision,
+                    return self._json({"error": str(exc)}, 409)
+                if S.load_task(project, slug).get("state") == "blocked":
+                    request_task_resume(project, slug)
+                return self._json({"ok": True, "queued": True, **result,
+                                   "decision": result["question"]["resolution"],
                                    "state": S.load_task(project, slug)["state"]})
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by Burak"
                 if action == "reject":
                     request_daemon_task_operation(project, slug, "reject", reason, actor="burak")
+                elif action == "resume":
+                    request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE)
                 elif action == "done":
                     T.done(project, slug, actor="burak")
                 elif action == "stop":
@@ -1300,7 +1300,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     return self._json({"error": "empty task message"}, 400)
                 try:
-                    message = T.message(project, slug, "burak", text)
+                    message = T.message(project, slug, "burak", text,
+                                        question_id=o.get("question_id"), revision=o.get("revision"),
+                                        group_id=o.get("group_id"), group_revision=o.get("group_revision"))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 if S.load_task(project, slug).get("state") == "blocked":
@@ -1696,10 +1698,13 @@ def project_view(name: str) -> dict:
 
 
 def task_view(project: str, slug: str) -> dict:
+    questions = T.question_views(project, slug)
     t = S.load_task(project, slug)
     d = S.task_dir(project, slug)
     files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
-    return {**t, "files": files, "messages": T.task_messages(project, slug),
+    return {**t, "question": questions[-1] if questions else None, "questions": questions,
+            "question_group": T.question_group_view(project, t),
+            "files": files, "messages": T.task_messages(project, slug),
             "events": S.read_events(project, slug),
             "report_json": S.read_json(d / "report.json"), "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 

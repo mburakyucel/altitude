@@ -1,6 +1,7 @@
-/* Generated from conversation_first.py by gen.py. */
+/* Generated from conversation_first.py. */
 
 .cf{height:100%;display:grid;grid-template-columns:260px minmax(0,1fr);font-size:15px}
+.cf [hidden]{display:none!important}
 .cf *{min-width:0}.cf button,.cf textarea{font:inherit}.cf a,.cf button,.cf summary{touch-action:manipulation}
 .cf a:focus-visible,.cf button:focus-visible,.cf textarea:focus-visible,.cf summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .cf button{cursor:pointer}.cf button:disabled{cursor:default;opacity:.55}.cf .rail{gap:6px}
@@ -43,3 +44,5 @@
 .cf-tabbar a{min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);gap:2px;min-width:64px}.cf-tabbar a.on{color:var(--accent-text)}
 .cf-phone .cf-keyboard{display:block;background:var(--bubble);height:230px;padding:14px 8px 24px;flex-shrink:0}.cf-keyboard .keys{display:flex;justify-content:center;gap:5px;margin-bottom:9px}.cf-keyboard span{border-radius:5px;background:var(--card);box-shadow:0 1px 1px var(--text-muted);font-size:18px;text-align:center;padding:7px 9px}.cf-keyboard .space{width:170px;font-size:14px}
 .cf-keyboard-open .cf-phone .cf-tabbar{display:none}.cf-phone .cf-empty{padding:64px 10px}.cf-phone .cf-prototype{margin-left:auto;font-size:10px}
+
+.cf-group{padding:16px}.cf-group h2{font-size:17px;margin:3px 0 7px}.cf-group-item{padding:12px 0;border-bottom:1px solid var(--hairline)}.cf-group-item:last-of-type{border-bottom:0}.cf-group-item p{font-size:13px;margin:0 0 6px}.cf-choices{display:flex;gap:6px;flex-wrap:wrap}.cf-choices button{min-height:40px;padding:8px 12px;font-size:13px}.cf-choices [aria-pressed=true]{border-color:var(--accent);background:var(--accent-tint);color:var(--accent-text)}.cf-group-footer{display:flex;gap:8px;flex-wrap:wrap;padding-top:12px}.cf-group-note{font-size:12px;color:var(--text-muted);margin-top:8px}.cf-open-count{font-size:13px;color:var(--text-muted)}.cf-closed{font-size:14px;border-left:2px solid var(--success-text);padding-left:12px}.cf-closed p{margin:4px 0}.cf-phone .cf-group{padding:12px}.cf-phone .cf-group h2{font-size:16px}.cf-phone .cf-group-item{padding:10px 0}.cf-phone .cf-group .cf-actions{margin-top:8px}.cf-phone .cf-group-footer .cf-button{font-size:13px;padding:8px 10px}.cf-phone .cf-head{padding-top:10px;padding-bottom:8px}

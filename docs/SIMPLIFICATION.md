@@ -89,6 +89,14 @@ click and where to go from the design itself, without feeling lost. This is a ce
 tenet; its practical [review expectations](../design/wireframes/SPEC.md#11-standing-design-tenet)
 live in the UI specification and apply through the existing [UI walkthrough](../CLAUDE.md#ui).
 
+For a major UX change, settle the user-facing decisions before finalizing implementation or
+migrating tests. Present a concise proposal and a small set of reviewable wireframes; discuss
+unresolved behavior with the operator at that level. Positive overall feedback does not settle
+questions the operator is still clarifying. Record the agreed scope and behavior before proceeding.
+Independent code review and passing checks support implementation review; they do not replace the
+operator's UX decision. Check the durable task conversation before moving past a review checkpoint.
+This learning follows the operator's 2026-09-08 correction during conversation-first decision design.
+
 ## Working rules that still apply to every PR
 
 1. Deletion first. A PR reduces production lines, or is a bug fix under fifty lines. No foundations,

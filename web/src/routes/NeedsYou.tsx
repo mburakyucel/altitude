@@ -1,6 +1,7 @@
 import { useOverview } from "../data/api";
 import type { Decision } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
+import { decisionGroups } from "../data/decisions";
 
 /** The subtitle: how much waits, across how many projects. */
 export function needsSummary(queue: Decision[]): string {
@@ -22,25 +23,26 @@ export default function NeedsYou() {
           <p className="needs-sub text-muted">{needsSummary(overview.data.queue)}</p>
         ) : null}
       </div>
+      {overview.isError && overview.data ? <p className="text-danger" role="alert">Showing saved questions. Refresh before deciding. <button className="link" onClick={() => overview.refetch()}>Refresh</button></p> : null}
       {overview.isPending ? (
         <div className="flex flex-col gap-3" aria-label="Loading">
           <div className="skeleton h-28" />
           <div className="skeleton h-28" />
         </div>
-      ) : overview.isError ? (
+      ) : overview.isError && !overview.data ? (
         <p className="text-danger">
           Could not read what needs you.{" "}
           <button type="button" className="link" onClick={() => overview.refetch()}>
             Retry
           </button>
         </p>
-      ) : overview.data.queue.length === 0 ? (
+      ) : overview.data!.queue.length === 0 ? (
         <p className="text-muted">Nothing needs you.</p>
       ) : (
         <>
           <div className="needs-list" aria-label="Decisions">
-            {overview.data.queue.map((d) => (
-              <DecisionCard key={`${d.project}:${d.slug}`} decision={d} chip from="needs" />
+            {decisionGroups(overview.data!.queue).map((group) => (
+              <DecisionCard key={`${group[0]!.project}:${group[0]!.slug}:${group[0]!.group_id || group[0]!.id}`} decision={group[0]!} decisions={group} chip from="needs" disabled={overview.isError || (!overview.isFetchedAfterMount && overview.isFetching)} />
             ))}
           </div>
           <p className="calm text-muted">

@@ -83,11 +83,14 @@ current hold and unchanged PR before recording the release. The owner then reche
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.
   Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
   Shared-file changes still need rebasing and reconciliation by their owners.
-- **Selective attention.** Needs you collects escalated questions across projects, one card each
-  with who asks, the question, why the asker recommends an option, and the options as buttons;
-  More context opens the decision page with where the question came from, the evidence, and a
-  follow-up composer addressed to L3 or to the L2. Your choice, with an optional note for the L2,
-  is recorded on the task and resumes or rejects it; a follow-up never decides. L3 handles
+- **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
+  shows one question or a small group together. The model can ask a plain question, offer one
+  recommended quick action, or offer two to three choices with a recommendation. A single quick
+  choice takes one click; grouped selections send together, with nothing preselected. Open the item to
+  discuss the actual question in its owning L2 conversation. A follow-up leaves it open; a clear
+  answer is enough for the L2 to record your decision and continue. Answering part of a group leaves
+  only its unanswered, relevant questions open. A changed direction can close
+  a question that is no longer relevant, with the reason retained in chat. L3 handles
   questions the record settles and receives faults for recovery, and its FYIs are system rows in
   the project's conversation. Monitor shows engine routing, usage windows and observed sessions,
   including missing or stale readings.

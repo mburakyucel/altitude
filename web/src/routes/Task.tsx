@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { NavLink, useLocation, useMatch, useParams } from "react-router";
+import { Link, NavLink, useLocation, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
+import { ApiError, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
-import { ProseRepository } from "../components/Prose";
+import { InlineProse, ProseRepository } from "../components/Prose";
 import { agoText, when } from "../data/observed";
+import { questionPath } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
-import { DecisionCard } from "../components/DecisionCard";
+import { Question, QuestionSet } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
@@ -63,6 +64,7 @@ interface Facts {
   finished: boolean;
   canMessage: boolean;
   canStop: boolean;
+  canResume: boolean;
   canReject: boolean;
   /** The composer's hint line for this state. */
   hint: string;
@@ -137,11 +139,14 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     blocked: waitsOnL3 ? `Waits for L3's answer${reason ? ` · ${reason}` : ""}` : null,
     engineLabel,
     finished,
-    canMessage: state === "running" || state === "blocked",
+    canMessage: state === "running" || state === "blocked" || (state === "queued" && Boolean(task.question)),
     canStop: state === "running",
+    canResume: state === "blocked" && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     hint:
-      state === "running"
+      state === "queued"
+        ? "Delivered when Altitude starts the L2."
+        : state === "running"
         ? "Reaches the L2 at its next checkpoint."
         : held
           ? "Delivered when Altitude resumes the L2."
@@ -151,54 +156,93 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
-function TaskConversation({
-  project,
-  task,
-  facts,
-  decision,
-}: {
-  project: string;
-  task: TaskView;
-  facts: Facts;
-  decision: Decision | undefined;
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending }: {
+  project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
+  draft: string; setDraft: (value: string) => void; pending: string | null; setPending: (value: string | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const questionId = params.get("question");
+  const revision = params.get("revision");
+  const questions = task.questions ?? (task.question ? [task.question] : []);
+  const group = task.question_group;
+  const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
+  const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
+  const current = task.question?.status === "open" ? task.question : undefined;
   const scroller = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
-  const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const anchors = useRef(new Map<string, HTMLDivElement>());
+  const followedAnchor = useRef("");
+  const following = useRef(!questionId);
+  const [latest, setLatest] = useState(false);
+  const [questionOffscreen, setQuestionOffscreen] = useState(false);
+  const [denied, setDenied] = useState(false);
+  const [accessRefresh, setAccessRefresh] = useState(0);
   const messages = task.messages ?? [];
+  const anchorKey = `${location.key}:${questionId ?? ""}:${revision ?? ""}`;
+  const jumpTo = useCallback((question: Decision) => {
+    const node = anchors.current.get(`${question.id}:${question.revision}`);
+    const container = scroller.current;
+    if (!node || !container) return false;
+    const history = node.querySelector<HTMLDetailsElement>("details.question-history");
+    if (history) history.open = true;
+    following.current = false;
+    // Leave a little of the preceding explanation visible; never jump to the latest tool event.
+    container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 80;
+    node.focus({ preventScroll: true });
+    setQuestionOffscreen(false);
+    return true;
+  }, []);
+  useLayoutEffect(() => {
+    if (!target || followedAnchor.current === anchorKey) return;
+    if (jumpTo(target)) followedAnchor.current = anchorKey;
+  }, [anchorKey, target, messages, jumpTo]);
   useEffect(() => {
     const node = scroller.current;
     const column = node?.firstElementChild;
     if (!node || !column || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (following.current) node.scrollTop = node.scrollHeight;
+      setLatest(!following.current && node.scrollHeight - node.scrollTop - node.clientHeight > 48);
     });
     observer.observe(column);
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
-
-  // The bubble shows at once at 60%; accepted, it is the stored row at full opacity; refused, it leaves
-  // and the composer brings the draft back with "Not sent. Retry." (SPEC.md §3.6).
   const send = async (text: string) => {
+    const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
+    const bounds = scroller.current?.getBoundingClientRect();
+    const currentBounds = currentNode?.getBoundingClientRect();
+    const viewingCurrent = bounds && currentBounds && Math.min(bounds.bottom, currentBounds.bottom) - Math.max(bounds.top, currentBounds.top) >= 48;
+    // A historical URL does not keep replies attached to an old revision after the reader scrolls
+    // to the current question. Merely having a newer record offscreen does not retarget a reply.
+    const context = following.current || viewingCurrent ? current ?? target : target ?? current;
     following.current = true;
+    setLatest(false);
     setPending(text);
     try {
-      const row = await sendL2Message({ project, slug: task.slug, text });
+      const row = await sendL2Message({ project, slug: task.slug, text,
+        ...(group && group.questions.length > 1 && context && inGroup(context)
+          ? { group_id: group.id, group_revision: group.revision }
+          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
-        cached ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
+        cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
       );
       void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
-    } finally {
-      setPending(null);
-    }
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    } catch (error) {
+      if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+      throw error;
+    } finally { setPending(null); }
   };
-
   const rows: ReactNode[] = [];
+  const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
   let lastDay = "";
   messages.forEach((message, index) => {
+    const question = questions.find((q) => q.anchor_id === message.id);
+    const atGroup = Boolean(group?.anchor_id && group.anchor_id === message.id);
+    // The current group occupies one stable discussion anchor. Old revisions retain their receipts.
+    if (!atGroup && question && inGroup(question)) return;
     const at = when(message.at);
     const day = at != null ? dayLabel(at) : "";
     if (day && day !== lastDay) {
@@ -206,52 +250,70 @@ function TaskConversation({
       lastDay = day;
     }
     const key = message.id || `${message.at ?? "message"}-${index}`;
-    rows.push(
-      !REPLIERS.has(message.role) ? (
-        <Bubble key={key} text={message.text} at={message.at} />
-      ) : (
-        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />
-      ),
-    );
+    if (question && (!atGroup || !inGroup(question))) {
+      const historical = Boolean(group && !inGroup(question));
+      const content = <>
+        <p className="text-meta text-muted">{question.asked_by === "l3" ? "L3 brought this question to the L2" : "L2"}</p>
+        <Question key={`${question.id}:${question.revision}:${accessRefresh}`} decision={question} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+      </>;
+      rows.push(<div key={`${key}-question`} className="conversation-question" data-historical={historical || undefined} tabIndex={-1} ref={(node) => {
+        const id = `${question.id}:${question.revision}`;
+        if (node) anchors.current.set(id, node); else anchors.current.delete(id);
+      }}>
+        {historical ? <details className="question-history" open={target?.id === question.id && target?.revision === question.revision}>
+          <summary>Earlier question · {question.resolution?.disposition === "answered" ? "decision recorded" : "closed"}</summary>
+          {content}
+        </details> : content}
+      </div>);
+    }
+    if (atGroup && group) {
+      rows.push(<div key={`${key}-group`} className="conversation-question" tabIndex={-1} ref={(node) => {
+        group.questions.forEach((q) => {
+          const id = `${q.id}:${q.revision}`;
+          if (node) anchors.current.set(id, node); else anchors.current.delete(id);
+        });
+      }}>
+        <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p>
+        <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+      </div>);
+    } else if (!question) {
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} /> :
+        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />);
+    }
   });
-
   return (
     <section className="convo" aria-label="Task conversation">
-      <div
-        className="convo-scroll"
-        ref={scroller}
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
-        }}
-      >
+      {(readOnly || denied) ? <p className="conversation-notice" role="alert">
+        {denied ? "You cannot send or record a decision here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
+        <button className="link" onClick={restoreAccess}>Refresh</button>
+      </p> : null}
+      {questionId && !target ? <p className="conversation-notice" role="status">This question is unavailable. The task conversation is below.</p> : null}
+      {target && current && !inGroup(target) && (target.id !== current.id || target.revision !== current.revision) ? <p className="conversation-notice">This question has been replaced. <Link to={questionPath(current)} state={location.state} replace>View current question</Link></p> : null}
+      <div className="convo-scroll" ref={scroller} onScroll={(event) => {
+        const node = event.currentTarget;
+        following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+        setLatest(!following.current);
+        const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
+        setQuestionOffscreen(Boolean(anchor && (anchor.getBoundingClientRect().bottom < node.getBoundingClientRect().top || anchor.getBoundingClientRect().top > node.getBoundingClientRect().bottom)));
+      }}>
         <div className="convo-col">
-          {decision ? (
-            <div className="task-decision">
-              <DecisionCard decision={decision} />
-            </div>
-          ) : null}
-          {messages.length === 0 && !pending ? (
-            <p className="convo-empty text-muted">
-              {facts.finished ? "No messages on this task." : "No messages yet."}
-            </p>
-          ) : null}
+          {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
           {pending ? <Bubble text={pending} at={new Date().toISOString()} pending /> : null}
+          {task.question?.status === "resolved" && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
+          {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
+            <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
+            {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
+          </details> : null}
         </div>
       </div>
-      {facts.canMessage ? (
-        <div className="convo-dock">
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSubmit={send}
-            ariaLabel="Message the L2"
-            placeholder="Message the L2"
-            hint={facts.hint}
-          />
-        </div>
-      ) : null}
+      {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
+        {current && questionOffscreen ? <button type="button" className="link" onClick={() => jumpTo(current)}>View question</button> : null}
+        {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
+      </div> : null}
+      {facts.canMessage ? <div className="convo-dock"><Composer value={draft} onChange={setDraft} onSubmit={send}
+        ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
+        hint={task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
     </section>
   );
 }
@@ -285,13 +347,15 @@ function useTaskActions(project: string, slug: string) {
     const text = reason.trim();
     act.mutate({ project, slug, action: confirm, ...(confirm === "reject" && text ? { reason: text } : {}) });
   };
-  return { confirm, open, reason, setReason, run, pending: act.isPending, error: act.isError };
+  const resume = () => act.mutate({ project, slug, action: "resume", reason: "Resume requested from the task conversation" });
+  return { confirm, open, reason, setReason, run, resume, pending: act.isPending, error: act.isError };
 }
 
 function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<typeof useTaskActions> }) {
   if (!facts.canStop && !facts.canReject) return null;
   return (
     <>
+      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}>{actions.pending ? "Resuming…" : "Resume"}</button> : null}
       {facts.canStop ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("stop")}>
           Stop
@@ -395,26 +459,36 @@ function TaskPage({
   task,
   overview,
   liveRoute,
+  readOnly,
+  checking,
+  refresh,
 }: {
   project: string;
   task: TaskView;
   overview: Overview | undefined;
   liveRoute: boolean;
+  readOnly: boolean;
+  checking: boolean;
+  refresh: () => void;
 }) {
   const { phone, panelInline } = useViewport();
   const location = useLocation();
   const back = useTaskBack(project);
   const projectQuery = useProject(project);
   const facts = taskFacts(task, overview, project, projectQuery.data?.repository);
-  const decision = overview?.queue.find((d) => d.project === project && d.slug === task.slug);
+  const decision = task.question?.status === "open" ? task.question : undefined;
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
   // A block on the operator shows its card; the reason line stands in until the row has loaded.
   const blockFacts =
     facts.state === "blocked" && !decision && !facts.fault && !facts.blocked && !facts.waiting && overview
       ? { ...facts, blocked: str(task["blocked_reason"]) || "Blocked" }
       : facts;
   const actions = useTaskActions(project, task.slug);
+  const resumeError = facts.canResume && actions.error && !actions.confirm
+    ? <p className="task-line text-danger" role="alert">Could not resume. Try again.</p> : null;
   // Inline at the panel width, open by default; below it an overlay the operator opens (SPEC.md §2.2 rule).
-  const [panelOpen, setPanelOpen] = useState(panelInline || liveRoute);
+  const [panelOpen, setPanelOpen] = useState(liveRoute || (panelInline && !new URLSearchParams(location.search).has("question")));
   useEffect(() => {
     if (liveRoute) setPanelOpen(true);
   }, [liveRoute]);
@@ -423,7 +497,7 @@ function TaskPage({
   const title = task.title || task.slug;
 
   const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} /></ProseRepository>;
-  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} decision={decision} /></ProseRepository>;
+  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} /></ProseRepository>;
 
   if (phone) {
     return (
@@ -442,14 +516,15 @@ function TaskPage({
             <ActionButtons facts={facts} actions={actions} />
           </div>
           <ConfirmRow actions={actions} />
+          {resumeError}
           <BlockLines facts={blockFacts} />
           <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
         </div>
         <nav className="task-tabs" aria-label="Task views">
-          <NavLink className="task-tab" to={base} replace state={location.state} end>
+          <NavLink className="task-tab" to={`${base}${location.search}`} replace state={location.state} end>
             Conversation
           </NavLink>
-          <NavLink className="task-tab" to={`${base}/live`} replace state={location.state}>
+          <NavLink className="task-tab" to={`${base}/live${location.search}`} replace state={location.state}>
             Live session
           </NavLink>
         </nav>
@@ -486,6 +561,7 @@ function TaskPage({
         <Chips chips={facts.chips} />
         <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
         <ConfirmRow actions={actions} />
+        {resumeError}
         <BlockLines facts={blockFacts} />
       </header>
       <div className="task-body">
@@ -543,7 +619,7 @@ export default function Task() {
   const overview = useOverview();
   const { phone } = useViewport();
   if (task.isPending) return <TaskSkeleton phone={phone} />;
-  if (task.isError) {
+  if (task.isError && !task.data) {
     return (
       <div className="page">
         <p className="text-danger">
@@ -556,6 +632,6 @@ export default function Task() {
     );
   }
   return (
-    <TaskPage key={`${project}:${slug}`} project={project} task={task.data} overview={overview.data} liveRoute={liveRoute} />
+    <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview.data} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => { void task.refetch(); }} />
   );
 }

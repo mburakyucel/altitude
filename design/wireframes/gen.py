@@ -336,16 +336,6 @@ def tcard(title, meta, dot="dot"):
         f'<div class="tm">{meta}</div></div><span class="go">{I("chev-r","i sm")}</span></div>'
     )
 
-def decision_card(kind, kind_cls, task, age, q, why, b1, b2, disc, big=False, project=None, mobile=False):
-    proj = f'<span class="chip proj">{project}</span>' if project else ""
-    return (
-        f'<article class="card"><div class="kind">{proj}<b class="{kind_cls}">{kind}</b>'
-        f'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{task}</span><span class="age">{age}</span></div>'
-        f'<h3 class="q{" big" if big else ""}">{q}</h3><p class="why">{why}</p>'
-        f'<div class="opts"><span class="btn primary{" lg" if big else ""}">{b1}</span><span class="btn{" lg" if big else ""}">{b2}</span></div>'
-        f'<div class="foot"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a><span style="display:flex;gap:14px"><a href="#">Ask a follow-up</a><a href="#">Open task</a></span></div></article>'
-    )
-
 def work_panel(selected=None):
     s1 = " sel" if selected == 1 else ""
     s2 = " sel" if selected == 2 else ""
@@ -357,11 +347,11 @@ def work_panel(selected=None):
         '<h3 class="q">Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?</h3>'
         '<p class="why">L3 recommends fast-forwarding; this race blocked three dispatches this week.</p>'
         '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>'
-        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a></div></article>'
+        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
         f'<article class="card tight{s2}"><div class="kind"><b class="h">Ready for review</b><span class="age">8 min</span></div>'
         '<h3 class="q">PR #176 is green and held: the wireframe set, desktop and iPhone.</h3>'
-        '<div class="opts"><span class="btn primary">Open PR #176</span><span class="btn">Ask the L2</span></div>'
-        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a></div></article>'
+        '<div class="opts"><span class="btn primary">Open PR #176</span></div>'
+        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
         '</div></div>'
         '<div><div class="sh">Active <span>3</span></div>'
         '<div class="trow"><span class="dot held"></span><div><div class="tt">Design wireframes for the simplified product</div><div class="tm">Fable on Claude · PR #176 green · held for you</div></div></div>'
@@ -440,31 +430,6 @@ def desktop_project(with_panel=True):
     return inner
 
 board("Project", 1440, 900, desktop_project(True))
-
-# Desktop 2: Needs you (cross-project)
-needs_inner = (
-    '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">'
-    + rail("needs") +
-    '<main class="pane">'
-    '<header class="ph" style="height:auto;padding-top:34px;padding-bottom:10px"><div style="width:100%;max-width:760px;margin:0 auto">'
-    '<h1 style="font-size:24px">Needs you</h1><div class="sub" style="font-size:14px">Three things wait on you across two projects. Everything else runs on its own.</div></div></header>'
-    '<div style="padding:18px 28px 0"><div class="list">'
-    + decision_card("L3 asks", "", "Fast-forward a self-deploy checkout at dispatch", "25 min",
-                    "When Altitude’s own checkout is behind origin/main at dispatch, should it fast-forward itself or keep failing closed?",
-                    "L3 recommends fast-forwarding: the checkout is Altitude’s, the move is a pure fast-forward, and this race has blocked three dispatches this week.",
-                    "Fast-forward it", "Keep failing closed", "Why L3 recommends this", big=True, project="altitude")
-    + decision_card("Ready for your review", "h", "Design wireframes for the simplified product", "8 min",
-                    "PR #176 is green and held: 16 boards, desktop and iPhone.",
-                    "Held because the boards are a design draft and taste is your call. The L2 reports nothing else needs a decision.",
-                    "Open PR #176", "Ask the L2", "What the L2 assumed", big=True, project="altitude")
-    + decision_card("L3 asks", "", "Score pronunciation per phoneme", "yesterday",
-                    "Score pronunciation per phoneme, or keep the per-word score and ship the tutor loop first?",
-                    "L3 recommends per-word first: it is what the current lesson flow uses, and per-phoneme scoring needs a new alignment model.",
-                    "Per-word first", "Per-phoneme now", "Why L3 recommends this", big=True, project="voice-tutor")
-    + '<div class="calm"><b>That is everything.</b>Running work stays in each project. FYIs from L3 appear in that project’s chat.</div>'
-    '</div></div></main></div>'
-)
-board("NeedsYou", 1440, 900, needs_inner)
 
 # Desktop 3: task page — L2 conversation beside the live session
 live = (
@@ -590,12 +555,12 @@ mobile_work = (
     '<div><div class="sh">Needs you <span>2</span></div>'
     '<article class="card"><div class="kind"><b class="h">Ready for your review</b><span class="age">8 min</span></div>'
     '<h3 class="q">PR #176 is green and held: the wireframe set, desktop and iPhone.</h3>'
-    '<div class="opts"><span class="btn primary">Open PR #176</span><span class="btn">Ask the L2</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a><a href="#">Open task</a></div></article>'
+    '<div class="opts"><span class="btn primary">Open PR #176</span></div>'
+    f'<div class="foot"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
     '<article class="card" style="margin-top:10px"><div class="kind"><b>L3 asks</b><span class="age">25 min</span></div>'
     '<h3 class="q">Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?</h3>'
     '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a><a href="#">Open task</a></div></article></div>'
+    f'<div class="foot"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article></div>'
     '<div><div class="sh">Active <span>3</span></div>'
     '<div class="trow"><span class="dot held"></span><div><div class="tt">Design wireframes for the simplified product</div><div class="tm">Fable on Claude · PR #176 green · held for you</div></div></div>'
     '<div class="trow"><span class="dot"></span><div><div class="tt">Fast-forward a self-deploy checkout at dispatch</div><div class="tm">Opus on Claude · waiting on your answer</div></div></div>'
@@ -604,25 +569,6 @@ mobile_work = (
     '</div><div></div>' + tabbar("work") + '</div>'
 )
 board("MobileWork", 390, 844, mobile_work)
-
-mobile_needs = (
-    '<div class="m"><div></div>' + mheader_global() +
-    '<div class="mbody top">'
-    '<div><h1 class="mtitle">Needs you</h1><div class="msub">Three things wait on you. Everything else runs on its own.</div></div>'
-    '<article class="card"><div class="kind"><span class="chip proj">altitude</span><b>L3 asks</b><span class="age">25 min</span></div>'
-    '<h3 class="q">Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?</h3>'
-    '<p class="why">L3 recommends fast-forwarding: the move is a pure fast-forward, and this race blocked three dispatches this week.</p>'
-    '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a><a href="#">Open task</a></div></article>'
-    '<article class="card"><div class="kind"><span class="chip proj">altitude</span><b class="h">Ready for review</b><span class="age">8 min</span></div>'
-    '<h3 class="q">PR #176 is green and held: the wireframe set, desktop and iPhone.</h3>'
-    '<div class="opts"><span class="btn primary">Open PR #176</span><span class="btn">Ask the L2</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a><a href="#">Open task</a></div></article>'
-    '<article class="card"><div class="kind"><span class="chip proj">voice-tutor</span><b>L3 asks</b><span class="age">yesterday</span></div>'
-    '<h3 class="q">Score pronunciation per phoneme, or keep per-word and ship the tutor loop first?</h3></article>'
-    '</div><div></div>' + tabbar("needs") + '</div>'
-)
-board("MobileNeedsYou", 390, 844, mobile_needs)
 
 # =====================================================================
 # Composer states sheet
@@ -684,98 +630,7 @@ board("ComposerStates", 1200, 1380, sheet_inner)
 
 
 # =====================================================================
-# Decision page (desktop, in the main pane; work panel stays with the card selected)
-def decision_body(mobile=False):
-    big = "" if mobile else " big"
-    opts = (
-        '<div class="opts" style="margin-top:0">'
-        f'<span class="btn primary{"" if mobile else " lg"}"' + (' style="flex:1"' if mobile else '') + '>Fast-forward it</span>'
-        f'<span class="btn{"" if mobile else " lg"}"' + (' style="flex:1"' if mobile else '') + '>Keep failing closed</span>'
-        + ('' if mobile else '<span class="field">Add a note for the L2 (optional)</span>') +
-        '</div>'
-        + ('<div class="field" style="margin-top:8px;height:44px;border-radius:var(--radius-card);font-size:14px">Add a note for the L2 (optional)</div>' if mobile else '')
-    )
-    return (
-        '<div class="kind"><span class="chip proj">altitude</span><b>L3 asks</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Fast-forward a self-deploy checkout at dispatch</span><span class="age">25 min</span></div>'
-        f'<h1 class="q" style="font-size:{"20px" if mobile else "22px"};line-height:1.35;margin:10px 0 14px">When Altitude’s own checkout is behind origin/main at dispatch, should it fast-forward itself or keep failing closed?</h1>'
-        + opts +
-        '<div><div class="dsh">Why L3 recommends fast-forwarding</div>'
-        '<p class="dp">The checkout is Altitude’s own deployment copy, so the move is a pure fast-forward with nothing local to lose. The fail-closed rule protects checkouts Altitude does not own; this one it owns.</p>'
-        '<p class="dp">The race has blocked three dispatches this week, each cleared by a manual restart. Fast-forwarding removes that step and changes nothing for other projects.</p></div>'
-        '<div><div class="dsh">Where this came from</div><div class="tl">'
-        '<div class="tli"><span class="t">09:16</span><span class="mk"><i></i></span><div class="b"><b>The L2</b> (Opus on Claude) asked L3'
-        '<q>Dispatch found the deployment checkout two commits behind origin/main. The brief says fail closed. Should I fast-forward instead?</q></div></div>'
-        '<div class="tli"><span class="t">09:17</span><span class="mk"><i></i></span><div class="b"><b>L3</b> checked the record: no decision covers Altitude’s own checkout, so it escalated to you with a recommendation.</div></div>'
-        '<div class="tli"><span class="t">now</span><span class="mk"><i class="you"></i></span><div class="b">The task is blocked until you choose. Nothing else waits on it.</div></div>'
-        '</div></div>'
-        '<div><div class="dsh">Evidence</div><div class="links">'
-        f'<span class="lnk">{I("chat","i sm")}Task conversation</span>'
-        f'<span class="lnk">{I("pulse","i sm")}Live session at the failing step</span>'
-        f'<span class="lnk">{I("work","i sm")}The three blocked dispatches</span>'
-        f'<span class="lnk">{I("ext","i sm")}Decision 36 in the record</span>'
-        '</div></div>'
-    )
-
-decision_desktop = (
-    '<div style="display:grid;grid-template-columns:260px minmax(0,1fr) 340px;height:100%">'
-    + rail("altitude") +
-    '<main class="pane">'
-    f'<header class="ph" style="height:auto;padding:16px 28px 0"><div class="crumb">{I("chev-l","i sm")}altitude</div>'
-    f'<div class="acts"><span class="btn ghost">Open task</span><span class="ib on">{I("panel")}</span></div></header>'
-    '<div style="flex:1;min-height:0;padding:10px 28px 0"><div class="col" style="gap:22px">' + decision_body() + '</div></div>'
-    '<div style="padding:0 28px">'
-    + composer("Ask a follow-up before you decide", engine=False, to="L3",
-               hint="Your question and the answer appear here and on the card. The L2 stays blocked until you choose.") +
-    '</div></main>' + work_panel(selected=1) + '</div>'
-)
-board("Decision", 1440, 900, decision_desktop)
-
-decision_mobile = (
-    '<div class="m"><div></div>'
-    f'<header class="mh"><span class="name" style="font-size:15px;font-weight:500;color:var(--accent-text);padding-left:0">{I("chev-l")}Needs you</span><span class="sp"></span>'
-    f'<span class="btn ghost" style="height:40px">Open task</span></header>'
-    '<div class="mbody top" style="gap:18px">' + decision_body(mobile=True) + '</div>'
-    '<div class="mcomp">' + composer("Ask a follow-up before you decide", engine=False, to="L3", mobile=True) + '</div>'
-    + tabbar("needs") + '</div>'
-)
-board("MobileDecision", 390, 844, decision_mobile)
-
-# Decision card states (what appears and disappears)
-def dcard(kind, kind_cls, age, q, extra="", opts=True, foot=True):
-    o = '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>' if opts else ''
-    f = f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">More context{I("chev-r","i sm")}</a></div>' if foot else ''
-    return (f'<article class="card tight" style="box-shadow:none"><div class="kind"><b class="{kind_cls}">{kind}</b><span class="age">{age}</span></div>'
-            f'<h3 class="q">{q}</h3>{extra}{o}{f}</article>')
-
-Q = "Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?"
-dstates = (
-    state("Waiting on you", "the card as it lands; the options are the whole action",
-          dcard("L3 asks", "", "25 min", Q, '<p class="why">L3 recommends fast-forwarding; this race blocked three dispatches this week.</p>'))
-    + state("Follow-up sent", "your question is quoted on the card; the options stay",
-          dcard("L3 asks", "", "26 min", Q,
-                '<div class="fu" style="margin:4px 0 10px"><b>You asked L3</b><span>Which three dispatches, and were they all this task?</span></div>'
-                f'<div class="status" style="margin-bottom:10px">{I("spin","i sm")}L3 is answering</div>'))
-    + state("Answer arrived", "the answer sits under your question; decide from here",
-          dcard("L3 asks", "", "28 min", Q,
-                '<div class="fu wait" style="margin:4px 0 6px"><b style="color:var(--text-secondary)">You</b><span>Which three dispatches, and were they all this task?</span></div>'
-                '<div class="fu" style="margin:0 0 10px"><b>L3</b><span>All three were this task’s dispatch at 09:02, 09:14 and 09:20. Nothing else was affected.</span></div>'))
-    + state("Asked by the L2 directly", "the recipient follows the asker; the follow-up goes to the L2",
-          dcard("L2 asks", "", "4 min", "Rename the redirect route or keep the old path and add the new one beside it?",
-                '<p class="why">Design wireframes for the simplified product · Fable on Claude. The brief lets the L2 flag you directly on naming.</p>'
-                ).replace("Fast-forward it", "Keep both paths").replace("Keep failing closed", "Rename it"))
-    + state("Decided", "the card leaves Needs you; the chat and the task row carry the outcome",
-          '<div style="display:flex;flex-direction:column;gap:14px">'
-          '<div class="sys"><span class="ln"></span><span>You chose Fast-forward it · the L2 resumed</span><a href="#">Show</a><span class="ln"></span></div>'
-          '<div class="card tight" style="box-shadow:none;padding:6px 12px"><div class="trow"><span class="dot"></span><div><div class="tt">Fast-forward a self-deploy checkout at dispatch</div><div class="tm">Opus on Claude · resumed after your answer · 1 min</div></div></div></div>'
-          '</div>')
-)
-dstates_inner = (
-    '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Decision card states</h1>'
-    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:820px">A decision is one card wherever it appears: the work panel, Needs you, and the phone. Tapping the question or More context opens its page with the reasoning, where it came from, the evidence, and a follow-up composer addressed to whoever asked. Follow-ups and answers accumulate on the card so the decision can be made without leaving it.</p></div>'
-    f'<div class="stgrid">{dstates}</div>'
-)
-board("DecisionStates", 1200, 880, dstates_inner)
-
+# Decisions use the current conversation boards below; obsolete standalone forms are removed.
 
 # =====================================================================
 # System turns in chat: folded by default, one line each
@@ -805,7 +660,7 @@ sys_states = (
           '<div class="kv"><b>Verdict</b><span>ok</span><b>Problems</b><span>none</span><b>Signals</b><span>one post-mortem note: a flaky test was retried</span><b>PRs</b><span>#178 merged</span><b>Spend</b><span>14 turns, 2 subagent launches</span></div>'
           '<div class="lbl">L3 replied</div>'
           '<p class="rp">Closed the task as done and recorded the flaky test in the digest. Nothing waits on you.</p>'
-          f'<div class="ft"><a href="#">Open task</a><a href="#">Full report</a><a href="#">Digest</a></div></div>')
+          f'<div class="ft"><a href="#">Full report</a><a href="#">Digest</a></div></div>')
     + state("In progress", "the active turn stays outside the completed group",
           '<div style="display:flex;flex-direction:column;gap:14px;padding:6px 0">'
           + sysline("L3 handled 2 system events between your messages")
@@ -964,8 +819,6 @@ ROUTES = [
     ("Project: chat with L3, work panel beside it", "Project", "MobileProject"),
     ("Project switcher (phone)", None, "MobileSwitcher"),
     ("Project work (phone)", None, "MobileWork"),
-    ("Needs you, across projects", "NeedsYou", "MobileNeedsYou"),
-    ("Decision page", "Decision", "MobileDecision"),
     ("Task page: L2 conversation and live session", "Task", "MobileTask"),
     ("Task live session (phone)", None, "MobileTaskLive"),
     ("Task live panel overlay below 1280px", "TaskOverlay", None),
@@ -976,12 +829,13 @@ ROUTES = [
     ("Restart banner states", "RestartStates", None),
     ("First run", "FirstRun", None),
     ("Composer states, voice included", "ComposerStates", None),
-    ("Decision card states", "DecisionStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
+for obsolete in ("Decision", "MobileDecision", "DecisionStates", "NeedsYou", "MobileNeedsYou"):
+    (OUT / (obsolete + ".html")).unlink(missing_ok=True)
 sizes = {name: (w, h) for name, w, h in BOARDS}
 listed = {n for _, d, m in ROUTES for n in (d, m) if n}
 assert listed == set(sizes), sorted(listed ^ set(sizes))

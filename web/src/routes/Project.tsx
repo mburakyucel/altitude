@@ -5,6 +5,7 @@ import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRem
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText, when } from "../data/observed";
 import { DecisionCard } from "../components/DecisionCard";
+import { decisionGroups } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
@@ -108,11 +109,11 @@ export function WorkPanel({
                 Needs you <span className="text-muted">({decisions.length})</span>
               </h3>
               <div className="wp-cards">
-                {decisions.map((d) => (
+                {decisionGroups(decisions).map((group) => { const d = group[0]!; return (
                   <div key={`${d.project}:${d.slug}`} className="wp-row" data-moved={moved.has(d.slug) || undefined}>
-                    <DecisionCard decision={d} selected={selected === d.slug} from="project" />
+                    <DecisionCard decision={d} decisions={group} selected={selected === d.slug} from="project" />
                   </div>
-                ))}
+                ); })}
               </div>
             </section>
           ) : null}

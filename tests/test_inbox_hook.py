@@ -50,6 +50,19 @@ class InboxHook(AltitudeCase):
         self.assertIn("One more thing before you finish.", out["reason"])
         self.assertEqual(T.pending(self.project, self.slug), [])
 
+    def test_quick_acceptance_reaches_the_running_owner_once_through_the_existing_hook(self):
+        question = T.block(self.project, self.slug, "How long?", actor="l2",
+                           updates={"waiting_on": "burak"}, recommendation="Keep fourteen days.")["questions"][-1]
+        T.resume(self.project, self.slug)
+        receipt = T.accept_question(self.project, self.slug, question["id"], question["revision"])
+        done = self.run_hook("PostToolUse")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Keep fourteen days.", context)
+        self.assertIn(receipt["resolution"]["message_id"], context)
+        T.accept_question(self.project, self.slug, question["id"], question["revision"])
+        self.assertEqual(self.run_hook("Stop").stdout, "")
+
     def test_silent_when_nothing_waits_or_the_task_is_not_running(self):
         self.assertEqual((self.run_hook("PostToolUse").returncode, self.run_hook("Stop").stdout), (0, ""))
 
