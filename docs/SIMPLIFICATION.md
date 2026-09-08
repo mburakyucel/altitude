@@ -62,6 +62,15 @@ feature; it does not change periodic fetch, deployment, or worker authority.
 
 ## The two rule layers
 
+Operator decision — delivery-linked issue completion (issue #269): authorization to fully implement
+an identified issue includes its closure through the reviewed PR's native GitHub closing relationship,
+without a separate routine closure request. Owners verify scope and use `alt land --closes-issue N`
+with the closing keyword in the PR body. Partial work, design-only progress, pending operator acceptance
+and unrelated mentions do not close issues; merge holds and checks remain binding. L3 reconciles
+already merged complete deliveries through `alt issue close N --reason completed` on evidence from
+the owner. L2 retains no direct issue-write authority. This is delivery completion, not autonomous
+backlog selection or cleanup, and adds no polling or issue registry.
+
 The personas in `personas/` are the global layer: how anyone works under Altitude on any project.
 They carry no project-specific rule. The repository's own instructions file is the project layer,
 owned by the operator per project: `CLAUDE.md`, or `AGENTS.md` where an engine reads that instead.

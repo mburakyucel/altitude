@@ -52,6 +52,13 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
+When authorized implementation fully resolves an identified issue, its reviewed PR includes a native
+GitHub closing keyword and the owner verifies the link with `alt land --closes-issue N`. GitHub closes
+the issue when the PR merges into the default branch; another routine closure request is unnecessary.
+Partial work, design-only progress and pending operator acceptance keep issues open. Merge holds stay
+in force. This completes authorized deliveries without selecting or cleaning up unrelated backlog.
+See [issue delivery and reconciliation](docs/CLI.md#delivery-linked-issue-completion).
+
 An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
 Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
 The owner inspects and incorporates its history in the task worktree first. Adoption records that

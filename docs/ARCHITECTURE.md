@@ -234,6 +234,19 @@ their own sections. If main moves, the owner runs `git rebase origin/main` in th
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
 
+Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
+text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
+issue scope with the authorized delivery. For a complete resolution it supplies native closing
+keywords through `--pr-body-file` and repeats `--closes-issue N` on landing and resumed merge calls.
+The PR body is the durable closing link. Landing reads GitHub's `closingIssuesReferences` after PR
+creation or edit and immediately before merge, refusing a missing or foreign-repository declared
+link or a target other than GitHub's actual default branch. A merged retry validates declared links
+too and routes missing historical linkage to L3. GitHub owns closure on default-branch merge.
+No task issue registry or closure poller exists.
+Reports verify delivery and retain closure evidence in FYIs, or route reconciliation to L3 through
+follow-ups. Task archival alone does not close issues. Partial scope, design-only work, pending
+operator acceptance and unrelated mentions do not warrant closing keywords; holds still gate merge.
+
 For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
 records one immutable `adopted_pr` on the task and a `pr-adopted` event under the project lock.
 The current owner or operator can adopt; another active task cannot own that PR or branch.
@@ -332,8 +345,11 @@ re-applies the L3 command door, accepts only flat task identifiers and stdin, an
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
 `alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the CLAUDE.md boundary, and record one project event with actor, title, and URL.
-`alt issue close <number> --reason completed|not-planned` uses the same boundary for operator-requested
-closure; L3 does not close backlog autonomously. The CLI and coordinator share an exact parser; the
+`alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
+or verified completion of an authorized delivery missing its closing link. L2 supplies the issue,
+merged PR and complete-scope evidence through its reply and report follow-ups; L3 verifies and closes
+with `completed` without another routine request. Unrelated backlog cleanup remains unauthorized.
+The CLI and coordinator share an exact parser; the
 operator's `/api/issue` endpoint and coordinator share operation and field validation. Close requires a
 positive issue number and an explicit reason, accepts no body or publishing options, and passes
 `not-planned` to GitHub as `not planned`. After GitHub succeeds, altd returns the checkout-origin issue

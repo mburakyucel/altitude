@@ -53,7 +53,8 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
             origin = _need(_git(cwd, "config", "--get", "remote.origin.url"), "origin URL")
             match = github_intake._REMOTE.fullmatch(origin)
             if match:
-                args = [*args, "--repo", f"{match['owner']}/{match['repo']}"]
+                repository = f"{match['owner']}/{match['repo']}"
+                args = [*args, *([repository] if args[1:3] == ["repo", "view"] else ["--repo", repository])]
         return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
     except (subprocess.SubprocessError, OSError) as e:
         raise LandError(f"{' '.join(args[:3])}: {e}") from e
@@ -219,7 +220,7 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
 
 def _pr_view(root: Path, target: str) -> dict | None:
     p = _run(["gh", "pr", "view", target, "--json",
-              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision"], root)
+              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision,closingIssuesReferences"], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():
@@ -234,6 +235,31 @@ def _pr_view(root: Path, target: str) -> dict | None:
 def _pr_files(root: Path, base: str) -> list[str]:
     p = _git(root, "diff", "--name-only", f"origin/{base}...HEAD")
     return sorted(x for x in (p.stdout or "").splitlines() if x) if p.returncode == 0 else []
+
+
+def _require_closing_issues(root: Path, number: int, issues: list[int]) -> None:
+    """#269: a mention is not GitHub's closing relationship; scope is the owner's explicit assertion."""
+    if not issues:
+        return
+    pr = _pr_view(root, str(number)) or {}
+    repository = str(pr.get("url") or "").rsplit("/pull/", 1)[0]
+    linked = {str(issue.get("url") or "").lower() for issue in pr.get("closingIssuesReferences") or []}
+    missing = [n for n in issues if f"{repository}/issues/{n}".lower() not in linked]
+    if missing:
+        if pr.get("state") == "MERGED":
+            raise LandError(f"PR #{number} already merged without closing links for {missing}; send full-scope "
+                            "evidence via `alt task reply` and report follow_ups to L3 for `alt issue close N --reason completed`")
+        raise LandError(f"PR #{number} lacks GitHub closing links for {missing}; put `Closes #N` for each "
+                        "fully resolved issue in --pr-body-file and target the repository's default branch. "
+                        "Re-run if GitHub is still updating the links")
+    # #269: manual closing references can also exist on a nondefault target, which will not close issues.
+    info = _need(_run(["gh", "repo", "view", "--json", "defaultBranchRef"], root), "GitHub default branch")
+    try:
+        default_branch = json.loads(info)["defaultBranchRef"]["name"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LandError("cannot determine GitHub's default branch for issue closure") from exc
+    if not default_branch or pr.get("baseRefName") != default_branch:
+        raise LandError(f"PR #{number} must target GitHub's default branch {default_branch!r} to close issues")
 
 
 def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base: str,
@@ -636,10 +662,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
          merge: bool = False, wait: int = 600, paths: str | None = None, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
          authority: dict | None = None, adopt_pr: int | None = None,
-         expected_head: str | None = None, reason: str | None = None) -> dict:
+         expected_head: str | None = None, reason: str | None = None,
+         closes_issues: list[int] | None = None) -> dict:
     """Run the whole sequence from the current worktree; returns the JSON-ready result object."""
     if not message.strip():
         raise LandError("--message is empty")
+    closes_issues = list(dict.fromkeys(closes_issues or []))
+    if any(type(n) is not int or n <= 0 for n in closes_issues):
+        raise LandError("--closes-issue requires a positive issue number in this repository")
     if adopt_pr is not None:
         if adopt_pr <= 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_head or "") or not (reason or "").strip():
             raise LandError("--adopt-pr requires a positive PR number, full --expected-head SHA, and --reason")
@@ -733,6 +763,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if groups:
             raise LandError(f"PR #{pr.get('number')} for {branch!r} is already merged — this branch has landed; "
                             f"refusing to commit new changes onto it, start a new task branch")
+        _require_closing_issues(root, pr.get("number"), closes_issues)
         _note(f"PR #{pr.get('number')} already merged — nothing to push, not resurrecting the branch")
         ahead = _git(root, "rev-list", "--count", f"origin/{branch}..HEAD")
         if ahead.returncode == 0 and ahead.stdout.strip() not in ("", "0"):
@@ -776,6 +807,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     while checks == "pending" and time.monotonic() < deadline:
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
         checks = _checks_value(root, number, pair)
+    _require_closing_issues(root, number, closes_issues)
     merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
     def before_merge():
         if adoption:
@@ -791,6 +823,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _require_current_publisher(project, slug, current, authority)
         if current.get("hold_merge"):
             raise LandError(f"task carries a merge hold: {current['hold_merge']}")
+        _require_closing_issues(root, number, closes_issues)
     if merge and not merged:
         if checks == "none-configured":
             merged, main_run, local_tests = _merge_on_local_suite(

@@ -233,6 +233,7 @@ def main(argv=None) -> None:
     pl = sub.add_parser("poll")
     ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--paths", help="comma-separated lease override"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="full local suite used only when the pinned PR pair configures no CI"); ln.add_argument("--dry-run", action="store_true")
     ln.add_argument("--adopt-pr", type=int, help="adopt an existing same-repository PR, preserving its branch and history")
+    ln.add_argument("--closes-issue", type=int, action="append", default=[], help="require a GitHub closing link for this fully resolved issue in the project repository (repeatable)")
     ln.add_argument("--expected-head", help="full observed PR head SHA required with --adopt-pr")
     ln.add_argument("--reason", help="why this task is authorized to adopt the PR; required with --adopt-pr")
     ch = sub.add_parser("chat"); ch.add_argument("text", nargs="?", default="-"); ch.add_argument("--trigger", default="chat"); ch.add_argument("--engine", choices=config.ENGINES, help="pin this turn to one engine")
@@ -440,7 +441,8 @@ def main(argv=None) -> None:
             out(land.land(args.message, project=args.project, pr_title=args.pr_title, pr_body_file=args.pr_body_file,
                           merge=args.merge, wait=args.wait, paths=args.paths, base=args.base,
                           test_cmd=args.test_cmd, dry_run=args.dry_run,
-                          adopt_pr=args.adopt_pr, expected_head=args.expected_head, reason=args.reason))
+                          adopt_pr=args.adopt_pr, expected_head=args.expected_head, reason=args.reason,
+                          closes_issues=args.closes_issue))
         except land.EmptyLeaseError as e:
             sys.exit(str(e))
         except land.LandError as e:
