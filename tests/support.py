@@ -128,6 +128,25 @@ def fail(message, code=1):
     print(message, file=sys.stderr)
     sys.exit(code)
 
+def remote_oid(ref):
+    found = subprocess.run(["git", "ls-remote", "--heads", "origin", ref], capture_output=True, text=True)
+    return found.stdout.split()[0] if found.returncode == 0 and found.stdout.strip() else None
+
+def pull_request(target):
+    body = json.loads(read("prs.json", "{}")).get(str(target))
+    if body is None:
+        body = json.loads(read("pr.json", "null"))
+    if body is None:
+        fail("no pull requests found for branch " + str(target))
+    body.setdefault("headRefName", "worktree-fix-x")
+    body.setdefault("baseRefName", "main")
+    body.setdefault("headRefOid", remote_oid(body["headRefName"]))
+    body.setdefault("baseRefOid", remote_oid(body["baseRefName"]))
+    return body
+
+def connection(nodes):
+    return {"nodes": nodes, "totalCount": len(nodes), "pageInfo": {"hasNextPage": False}}
+
 if read("fail.txt") is not None:
     fail("fake gh failure", 2)
 cmd = tuple(args[:2])
@@ -141,15 +160,7 @@ if cmd == ("pr", "view"):
     if args[2] in canned:
         print(json.dumps(canned[args[2]]))
     elif read("pr.json") is not None:  # the branch's PR; its tips come from the fake remote
-        body = json.loads(read("pr.json") or "{}")
-        def remote_oid(ref):
-            found = subprocess.run(["git", "ls-remote", "--heads", "origin", ref], capture_output=True, text=True)
-            return found.stdout.split()[0] if found.returncode == 0 and found.stdout.strip() else None
-        body.setdefault("headRefName", "worktree-fix-x")
-        body.setdefault("baseRefName", "main")
-        body.setdefault("headRefOid", remote_oid(body["headRefName"]))
-        body.setdefault("baseRefOid", remote_oid(body["baseRefName"]))
-        print(json.dumps(body))
+        print(json.dumps(pull_request(args[2])))
     else:
         fail("no pull requests found for branch " + args[2])
 elif cmd == ("pr", "create"):
@@ -162,6 +173,39 @@ elif cmd == ("pr", "checks"):
     if not body.strip():
         fail("no checks reported on the 'x' branch")
     print(body)
+elif cmd == ("api", "graphql"):
+    variables = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args[:-1]) if arg in ("-F", "-f"))
+    if read("graphql_response.json") is not None:
+        print(read("graphql_response.json"))
+    elif "expression" in variables:
+        # Workflow evidence is read at the exact requested Git revision, never the working tree.
+        source = subprocess.run(["git", "show", variables["expression"]], capture_output=True, text=True)
+        blob = {"text": source.stdout, "isTruncated": False} if source.returncode == 0 else None
+        if read("workflow_blob.json") is not None:
+            blob = json.loads(read("workflow_blob.json"))
+        print(json.dumps({"data": {"repository": {"object": blob}}}))
+    elif read("check_evidence.json") is not None:
+        print(json.dumps({"data": {"repository": json.loads(read("check_evidence.json"))}}))
+    else:
+        body = pull_request(variables["number"])
+        head = body["headRefOid"]
+        conclusions = {"pass": "SUCCESS", "fail": "FAILURE", "skipping": "SKIPPED", "cancel": "CANCELLED"}
+        checks = json.loads(read("checks.json", '[{"bucket": "pass"}]') or "[]")
+        contexts = [{"__typename": "CheckRun", "name": item.get("name", "fixture-check-" + str(i)),
+                     "status": "IN_PROGRESS" if item["bucket"] == "pending" else "COMPLETED",
+                     "conclusion": conclusions.get(item["bucket"]), "isRequired": False,
+                     "checkSuite": {"commit": {"oid": head}, "app": {"databaseId": 1, "slug": "fixture-ci"},
+                                    "branch": {"name": body["headRefName"]}, "workflowRun": None,
+                                    "matchingPullRequests": connection([{"number": body["number"],
+                                        "baseRefName": body["baseRefName"], "headRefName": body["headRefName"]}])}}
+                    for i, item in enumerate(checks)]
+        commit = {"oid": head, "statusCheckRollup": {"contexts": connection(contexts)} if contexts else None}
+        body.update(baseRef={"target": {"oid": remote_oid(body["baseRefName"])},
+                             "branchProtectionRule": None, "rules": connection([])},
+                    commits={"nodes": [{"commit": commit}]}, potentialMergeCommit=None)
+        repository = {"nameWithOwner": variables["owner"] + "/" + variables["repo"], "pullRequest": body}
+        open(os.path.join(d, "last_check_evidence.json"), "w").write(json.dumps(repository))
+        print(json.dumps({"data": {"repository": repository}}))
 elif cmd == ("pr", "merge"):
     body = json.loads(read("pr.json", "{}") or "{}")
     if read("merge_git.txt") is not None:

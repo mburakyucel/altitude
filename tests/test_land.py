@@ -3,6 +3,7 @@ stands in for GitHub's git side, and the fixture's fake `gh` first on PATH answe
 checks/merge/run-list from canned JSON while recording every argv it was called with. The no-CI
 merge gate also logs the exact candidate directory in which its fake test runner executes."""
 import contextlib
+import copy
 import io
 import json
 import os
@@ -31,9 +32,15 @@ class TestLand(AltitudeCase):
         make_repo(self.repo)
         git("checkout", "-q", "-b", "worktree-fix-x", cwd=self.repo)
         self.remote = self.tmp / "origin.git"
+        self.git("config", f"url.{self.remote}.insteadOf", "https://github.com/team/demo.git")
+        self.git("remote", "set-url", "origin", "https://github.com/team/demo.git")
 
     def git(self, *args):
         return git(*args, cwd=self.repo)
+
+    def gh_log(self):
+        # Keep legacy command assertions readable; repository-binding tests inspect the raw log.
+        return [args[:-2] if args[-2:] == ["--repo", "team/demo"] else args for args in super().gh_log()]
 
     def clone(self, name):
         """A second checkout of the same remote: the base or the branch moving under this worktree."""
@@ -764,6 +771,42 @@ class TestLand(AltitudeCase):
         self.assertIn("checks changed", result["local_tests"]["error"])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
+    def test_required_gate_appearing_during_local_suite_cannot_use_no_ci_fallback(self):
+        self.leased_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 4 tests in 0.1s\n\nOK\n")
+        real = land._local_suite
+
+        def require_gate_after_suite(cwd, command):
+            result = real(cwd, command)
+            evidence = json.loads((self.ghdir / "last_check_evidence.json").read_text())
+            evidence["pullRequest"]["baseRef"]["branchProtectionRule"] = {
+                "requiredStatusChecks": [{"context": "new-required-gate", "app": None}]}
+            S.write_json(self.ghdir / "check_evidence.json", evidence)
+            return result
+
+        self.patch(land, "_local_suite", side_effect=require_gate_after_suite)
+        result = land.land("fix: required gate race", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertIn("checks changed", result["local_tests"]["error"])
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_first_adoption_during_ordinary_checks_cannot_change_the_merge_target(self):
+        self.leased_change()
+        real = land._checks_state
+
+        def adopt_after_checks(root, number):
+            result = real(root, number)
+            task = S.load_task("demo", "fix-x")
+            task["adopted_pr"] = {"number": 102, "branch": "proposal/other"}
+            S.save_task("demo", task)
+            return result
+
+        self.patch(land, "_checks_state", side_effect=adopt_after_checks)
+        with self.assertRaisesRegex(land.LandError, "task adoption changed"):
+            land.land("fix: ordinary target", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
     def test_candidate_has_the_single_parent_history_of_a_squash_merge(self):
         runner = ("import subprocess\n"
                   "parents = subprocess.check_output(['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], "
@@ -1084,6 +1127,339 @@ class TestLand(AltitudeCase):
             land.land("fix: undeclared", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
         self.assertEqual(self.gh_log(), [])
+
+
+class TestCheckEvidence(AltitudeCase):
+    """#266: real Git candidates and immutable workflow blobs through the shared GitHub transport."""
+    git = TestLand.git
+    clone = TestLand.clone
+    advance_base = TestLand.advance_base
+    leased_change = TestLand.leased_change
+    workflow_path = ".github/workflows/checks.yml"
+    condition = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    source = ("on: [pull_request, push]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
+              "    steps:\n      - run: echo tests\n  deploy:\n    if: " + condition
+              + "\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n")
+
+    def setUp(self):
+        super().setUp()
+        self.ghdir = self.fake_gh()
+        self.register("demo", path=self.repo)
+        make_repo(self.repo)
+        self.remote = self.tmp / "origin.git"
+        self.git("config", f"url.{self.remote}.insteadOf", "https://github.com/team/demo.git")
+        self.git("remote", "set-url", "origin", "https://github.com/team/demo.git")
+        workflow = self.repo / self.workflow_path
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(self.source)
+        self.git("add", self.workflow_path)
+        self.git("commit", "-q", "-m", "Initial workflow")
+        self.git("push", "-q", "origin", "main")
+        self.git("checkout", "-q", "-b", "worktree-fix-x")
+        S.save_task("demo", {"slug": "fix-x", "state": "running", "paths": ["src", ".github/workflows"]})
+        for key, value in {"ALTITUDE_PROJECT": "demo", "ALTITUDE_TASK": "fix-x",
+                           "ALTITUDE_ACTOR": "burak", "ALTITUDE_ATTEMPT": ""}.items():
+            self.setenv(key, value)
+        self.leased_change()
+        self.refresh()
+
+    @staticmethod
+    def connection(nodes):
+        return {"nodes": nodes, "totalCount": len(nodes), "pageInfo": {"hasNextPage": False}}
+
+    def refresh(self):
+        (self.ghdir / "check_evidence.json").unlink(missing_ok=True)
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "pass"}])
+        land.land("fixture candidate", cwd=self.repo, wait=0)
+        self.evidence = json.loads((self.ghdir / "last_check_evidence.json").read_text())
+        self.pr = self.evidence["pullRequest"]
+        self.head, self.base = self.pr["headRefOid"], self.pr["baseRef"]["target"]["oid"]
+        self.pair = {"number": 101, "base": "main", "branch": "worktree-fix-x",
+                     "base_sha": self.base, "head_sha": self.head}
+
+    def contexts(self):
+        return self.pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]
+
+    def classify(self):
+        S.write_json(self.ghdir / "check_evidence.json", self.evidence)
+        return land._checks_value(self.repo, 101, self.pair)
+
+    def optional_deploy(self, *, required=False, event="pull_request", revision=None):
+        check = copy.deepcopy(self.contexts()["nodes"][0])
+        check.update(name="deploy", conclusion="SKIPPED", isRequired=required)
+        check["checkSuite"].update(app={"databaseId": 15368, "slug": "github-actions"}, workflowRun={
+            "event": event, "file": {"path": self.workflow_path, "repositoryName": "team/demo",
+                "repositoryFileUrl": f"https://github.com/team/demo/blob/{revision or self.head}/{self.workflow_path}"}})
+        self.contexts().update(self.connection([self.contexts()["nodes"][0], check]))
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "pass"}, {"bucket": "skipping"}])
+        return check
+
+    def merge_candidate(self, *, checks=True):
+        tree = self.git("merge-tree", "--write-tree", self.base, self.head).strip()
+        oid = self.git("commit-tree", tree, "-p", self.base, "-p", self.head, "-m", "Hosted test merge").strip()
+        contexts = copy.deepcopy(self.contexts()["nodes"]) if checks else []
+        for check in contexts:
+            check["checkSuite"]["commit"]["oid"] = oid
+        merge = {"oid": oid, "parents": {"totalCount": 2, "nodes": [{"oid": self.base}, {"oid": self.head}]},
+                 "statusCheckRollup": {"contexts": self.connection(contexts)}}
+        self.pr["potentialMergeCommit"] = merge
+        return merge
+
+    def diverge_base(self):
+        self.advance_base("src/base.py")
+        self.git("fetch", "-q", "origin", "main")
+        self.base = self.git("rev-parse", "origin/main").strip()
+        self.pair["base_sha"] = self.base
+        self.pr["baseRef"]["target"]["oid"] = self.base
+
+    def test_stale_base_metadata_with_incorporated_main_and_exact_merge_checks_lands(self):
+        original_base = self.base
+        self.diverge_base()
+        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main\n\nAltitude-Task: demo/fix-x")
+        saved = json.loads((self.ghdir / "pr.json").read_text())
+        saved["baseRefOid"] = original_base
+        S.write_json(self.ghdir / "pr.json", saved)
+        self.refresh()
+        merge = self.merge_candidate()
+        self.assertEqual(self.pr["baseRefOid"], original_base)
+        self.assertNotEqual(self.base, original_base)
+        self.assertEqual([p["oid"] for p in merge["parents"]["nodes"]], [self.base, self.head])
+        self.assertEqual(self.classify(), "pass")
+        self.assertTrue(land.land("checked current base", cwd=self.repo, wait=0, merge=True)["merged"])
+
+    def test_real_base_movement_still_refuses(self):
+        self.advance_base("src/moved.py")
+        with self.assertRaisesRegex(land.LandError, "moved"):
+            self.classify()
+
+    def test_graphql_ref_head_and_pr_identity_must_match_pinned_refs(self):
+        original = copy.deepcopy(self.evidence)
+        for field in ("base", "head", "number", "branch"):
+            with self.subTest(field=field):
+                self.evidence = copy.deepcopy(original)
+                self.pr = self.evidence["pullRequest"]
+                if field == "base":
+                    self.pr["baseRef"]["target"]["oid"] = "0" * 40
+                else:
+                    self.pr[{"head": "headRefOid", "number": "number", "branch": "headRefName"}[field]] = "wrong"
+                with self.assertRaisesRegex(land.LandError, "moved"):
+                    self.classify()
+
+    def test_head_checks_require_current_base_ancestry(self):
+        self.diverge_base()
+        with self.assertRaisesRegex(land.LandError, "head checks do not include"):
+            self.classify()
+
+    def test_exact_test_merge_checks_cover_divergent_head(self):
+        self.diverge_base()
+        self.merge_candidate()
+        self.assertEqual(self.classify(), "pass")
+
+    def test_successful_merge_candidate_checks_supersede_failed_or_pending_head_checks(self):
+        self.diverge_base()
+        self.merge_candidate()
+        check = self.contexts()["nodes"][0]
+        for bucket, status, conclusion in (("fail", "COMPLETED", "FAILURE"), ("pending", "IN_PROGRESS", None)):
+            with self.subTest(bucket=bucket):
+                check.update(status=status, conclusion=conclusion)
+                S.write_json(self.ghdir / "checks.json", [{"bucket": bucket}])
+                self.assertEqual(self.classify(), "pass")
+
+    def test_test_merge_parents_must_be_exact_ordered_base_and_head(self):
+        merge = self.merge_candidate()
+        for parents in ([self.head, self.base], ["0" * 40, self.head], [self.base, self.head, self.base]):
+            with self.subTest(parents=parents):
+                merge["parents"] = {"totalCount": len(parents), "nodes": [{"oid": sha} for sha in parents]}
+                with self.assertRaisesRegex(land.LandError, "test merge checks"):
+                    self.classify()
+
+    def test_check_runs_and_status_contexts_bind_the_exact_candidate_commit(self):
+        self.contexts()["nodes"][0]["checkSuite"]["commit"]["oid"] = "0" * 40
+        with self.assertRaisesRegex(land.LandError, "unrelated"):
+            self.classify()
+        status = {"__typename": "StatusContext", "context": "legacy-tests", "state": "SUCCESS",
+                  "isRequired": False, "commit": {"oid": "0" * 40}}
+        self.contexts().update(self.connection([status]))
+        with self.assertRaisesRegex(land.LandError, "unrelated"):
+            self.classify()
+        status["commit"]["oid"] = self.head
+        self.assertEqual(self.classify(), "pass")
+
+    def test_workflow_event_branch_and_related_pr_must_match(self):
+        self.optional_deploy()
+        original = copy.deepcopy(self.evidence)
+        for field in ("event", "number", "baseRefName", "headRefName", "push_branch"):
+            with self.subTest(field=field):
+                self.evidence = copy.deepcopy(original)
+                self.pr = self.evidence["pullRequest"]
+                suite = self.contexts()["nodes"][-1]["checkSuite"]
+                if field == "event":
+                    suite["workflowRun"]["event"] = "workflow_dispatch"
+                elif field == "push_branch":
+                    suite["workflowRun"]["event"] = "push"
+                    suite["branch"]["name"] = "unrelated"
+                else:
+                    suite["matchingPullRequests"]["nodes"][0][field] = "unrelated"
+                with self.assertRaisesRegex(land.LandError, "workflow run does not belong"):
+                    self.classify()
+
+    def test_existing_pull_request_target_success_is_still_accepted(self):
+        check = self.optional_deploy(event="pull_request_target")
+        check.update(name="Remote tests / Python", conclusion="SUCCESS")
+        self.contexts().update(self.connection([check]))
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "pass"}])
+        self.assertEqual(self.classify(), "pass")
+
+    def test_missing_required_check_is_blocked_for_classic_and_ruleset_policy(self):
+        base = self.pr["baseRef"]
+        for classic in (True, False):
+            with self.subTest(classic=classic):
+                base["branchProtectionRule"] = {"requiredStatusChecks": [{"context": "absent", "app": None}]} if classic else None
+                base["rules"] = self.connection([] if classic else [{"type": "REQUIRED_STATUS_CHECKS",
+                    "parameters": {"requiredStatusChecks": [{"context": "absent", "integrationId": None}]}}])
+                self.assertEqual(self.classify(), "skipped")
+
+    def test_required_app_and_requiredness_are_enforced(self):
+        check = self.contexts()["nodes"][0]
+        self.pr["baseRef"]["branchProtectionRule"] = {
+            "requiredStatusChecks": [{"context": check["name"], "app": {"databaseId": 2}}]}
+        check["isRequired"] = True
+        self.assertEqual(self.classify(), "skipped")
+        check["checkSuite"]["app"]["databaseId"] = 2
+        self.assertEqual(self.classify(), "pass")
+        check["isRequired"] = False
+        self.assertEqual(self.classify(), "skipped")
+        check.pop("isRequired")
+        with self.assertRaisesRegex(land.LandError, "incomplete"):
+            self.classify()
+
+    def test_optional_canonical_push_only_job_does_not_block_successful_pr_checks(self):
+        self.optional_deploy()
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["checks"], "pass")
+        query_calls = [a for a in self.gh_log() if a[:2] == ["api", "graphql"]]
+        self.assertTrue(query_calls)
+        self.assertTrue(all("owner=team" in a and "repo=demo" in a for a in query_calls))
+
+    def test_required_or_non_actions_skipped_job_remains_blocked(self):
+        check = self.optional_deploy(required=True)
+        self.assertEqual(self.classify(), "skipped")
+        check["isRequired"] = False
+        check["checkSuite"]["app"]["slug"] = "unrelated-app"
+        self.assertEqual(self.classify(), "skipped")
+
+    def test_unsupported_or_ambiguous_job_source_cannot_prove_inapplicability(self):
+        cases = {
+            "unknown condition": self.source.replace(self.condition, "needs.tests.result == 'success'"),
+            "condition true": self.source.replace(self.condition, "github.event_name == 'pull_request'"),
+            "disjunction": self.source.replace(self.condition, self.condition + " || true"),
+            "continued scalar": self.source.replace(self.condition, self.condition + "\n      || true"),
+            "step condition": self.source.replace("    if:", "    steps:\n      - if:"),
+            "custom name": self.source.replace("  tests:\n", "  tests:\n    name: deploy\n"),
+            "duplicate if": self.source.replace("    runs-on: ubuntu-latest\n", "    if: true\n    runs-on: ubuntu-latest\n"),
+            "duplicate jobs": self.source + self.source[self.source.index("jobs:"):],
+            "yaml merge": self.source.replace("  deploy:\n", "  deploy:\n    <<: *defaults\n"),
+            "matrix": self.source.replace("  deploy:\n", "  deploy:\n    strategy:\n      matrix: {os: [ubuntu-latest]}\n"),
+            "job alias": self.source.replace("  deploy:\n", "  deploy: *other\n"),
+            "quoted root jobs": self.source.replace("jobs:", '"jobs":'),
+            "complex root jobs": self.source.replace("jobs:", "? jobs\n:"),
+            "fake jobs inside quoted scalar": 'name: "A workflow name\njobs:\n  deploy:\n    if: ' + self.condition
+                + '\n"\non: pull_request\njobs: {deploy: {runs-on: ubuntu-latest, if: false, steps: [{run: echo hi}]}}\n',
+        }
+        for label, source in cases.items():
+            with self.subTest(source=label):
+                (self.repo / self.workflow_path).write_text(source)
+                self.refresh()
+                self.optional_deploy()
+                self.assertEqual(self.classify(), "skipped")
+
+    def test_complete_expression_wrapper_is_supported(self):
+        (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "${{ " + self.condition + " }}"))
+        self.refresh()
+        self.optional_deploy()
+        self.assertEqual(self.classify(), "pass")
+
+    def test_unpinned_foreign_or_wrong_workflow_source_is_not_proof(self):
+        check = self.optional_deploy()
+        original = copy.deepcopy(check["checkSuite"]["workflowRun"]["file"])
+        cases = [{"repositoryName": "other/demo"}, {"path": ".github/workflows/other.yml"},
+                 {"repositoryFileUrl": f"https://github.com/team/demo/blob/main/{self.workflow_path}"},
+                 {"repositoryFileUrl": f"https://github.com/team/demo/blob/{'0' * 40}/{self.workflow_path}"},
+                 {"repositoryFileUrl": f"https://github.com/other/demo/blob/{self.head}/{self.workflow_path}"},
+                 {"repositoryFileUrl": None}]
+        for changed in cases:
+            with self.subTest(source=changed):
+                check["checkSuite"]["workflowRun"]["file"] = {**original, **changed}
+                self.assertEqual(self.classify(), "skipped")
+
+    def test_working_tree_cannot_replace_the_executed_workflow_condition(self):
+        (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "true"))
+        self.refresh()
+        self.optional_deploy()
+        (self.repo / self.workflow_path).write_text(self.source)
+        self.assertEqual(self.classify(), "skipped")
+
+    def test_missing_or_truncated_workflow_blob_cannot_prove_inapplicability(self):
+        self.optional_deploy()
+        for blob in (None, {"text": self.source}, {"text": self.source, "isTruncated": True}):
+            with self.subTest(blob=blob):
+                S.write_json(self.ghdir / "workflow_blob.json", blob)
+                self.assertEqual(self.classify(), "skipped")
+
+    def test_merge_candidate_skip_needs_its_own_source_when_base_and_head_diverge(self):
+        self.diverge_base()
+        self.optional_deploy()
+        merge = self.merge_candidate()
+        self.assertEqual(self.classify(), "skipped")
+        skipped = merge["statusCheckRollup"]["contexts"]["nodes"][-1]
+        skipped["checkSuite"]["workflowRun"]["file"]["repositoryFileUrl"] = (
+            f"https://github.com/team/demo/blob/{merge['oid']}/{self.workflow_path}")
+        self.assertEqual(self.classify(), "pass")
+
+    def test_truncated_connections_never_hide_other_gates(self):
+        self.optional_deploy()
+        original = copy.deepcopy(self.evidence)
+        for target in ("rules", "contexts", "related"):
+            for marker in ("next_page", "count"):
+                with self.subTest(target=target, marker=marker):
+                    self.evidence = copy.deepcopy(original)
+                    self.pr = self.evidence["pullRequest"]
+                    connection = (self.pr["baseRef"]["rules"] if target == "rules" else self.contexts() if target == "contexts"
+                                  else self.contexts()["nodes"][-1]["checkSuite"]["matchingPullRequests"])
+                    if marker == "next_page":
+                        connection["pageInfo"]["hasNextPage"] = True
+                    else:
+                        connection["totalCount"] += 1
+                    with self.assertRaisesRegex(land.LandError, "truncated"):
+                        self.classify()
+
+    def test_empty_merge_rollup_keeps_valid_head_checks(self):
+        self.merge_candidate(checks=False)
+        self.assertEqual(self.classify(), "pass")
+
+    def test_all_inapplicable_jobs_do_not_become_a_green_gate(self):
+        skipped = self.optional_deploy()
+        self.contexts().update(self.connection([skipped]))
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "skipping"}])
+        self.assertEqual(self.classify(), "skipped")
+
+    def test_buckets_without_candidate_evidence_cannot_enter_no_ci_fallback(self):
+        self.pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
+        for bucket in ("pass", "skipping"):
+            with self.subTest(bucket=bucket):
+                S.write_json(self.ghdir / "checks.json", [{"bucket": bucket}])
+                with self.assertRaisesRegex(land.LandError, "no evidence"):
+                    self.classify()
+
+    def test_graphql_errors_and_partial_responses_refuse(self):
+        for response in ({"data": {"repository": self.evidence}, "errors": [{"message": "missing permission"}]},
+                         {"data": {"repository": None}}, {"data": {}}, "invalid JSON"):
+            with self.subTest(response=type(response).__name__):
+                S.write_json(self.ghdir / "graphql_response.json", response)
+                with self.assertRaises(land.LandError):
+                    self.classify()
 
 
 if __name__ == "__main__":

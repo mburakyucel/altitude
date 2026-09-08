@@ -269,13 +269,23 @@ follow-ups. Task archival alone does not close issues. Partial scope, design-onl
 operator acceptance and unrelated mentions do not warrant closing keywords; holds still gate merge.
 
 For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
-records one immutable `adopted_pr` on the task and a `pr-adopted` event under the project lock.
+records the active immutable receipt in `adopted_pr` and a `pr-adopted` event under the project lock.
 The current owner or operator can adopt; another active task cannot own that PR or branch.
 Adoption requires the registered isolated worktree, a same-repository open PR targeting main,
 and agreement between its observed head and origin. GitHub operations select the origin repository
 explicitly. Original commits and the complete PR diff must fit the landing lease, including
 rename sources and reverted original changes. The local branch must contain the remote head.
 Dry-run checks this evidence without recording adoption, committing or publishing.
+
+An explicitly authorized sequence uses the same command with each next PR's observed head and
+assignment reason. Before switching, landing verifies the previous PR's merge and original/latest
+head ancestry on current main. It retains the previous receipt unchanged in `adoption_history`,
+records the verified previous merge in the new receipt, and atomically selects the next active PR.
+Retries preserve receipts; incomplete deliveries, reactivation of earlier receipts and concurrent
+target changes refuse. Landing, resume provenance and recorded hold approval use the active receipt.
+The history grants no additional provenance exceptions or authority over unrelated PRs.
+If recorded approval released the previous PR's hold, the next adoption restores it with a fresh
+hold generation. A later explicit task-wide release remains effective.
 
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
 Only unowned ancestors of that original head are exempt from task trailers; foreign task trailers
@@ -284,8 +294,14 @@ The task keeps its local branch and publishes a fast-forward refspec to the orig
 adopted pushes never retry with force. To incorporate main, the owner makes a merge commit with the
 task trailer, preserving the adopted history. Adoption cannot be widened to a later external head.
 The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
-and the live task owner/hold are rechecked before merging. Configured checks remain mandatory;
-without CI, the full local suite runs on a clean two-parent merge candidate. Adopted PRs use a
+and the live task owner/hold/active receipt are rechecked before merging. The fetched base branch
+is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
+current GitHub base target/head and exact candidate association, with real movement refusing merge.
+Required checks from branch protection and active rules remain mandatory, including missing or
+skipped checks. A nonrequired skipped job is exempt only when its immutable executed workflow and
+PR event prove the supported main-push-only condition false; ambiguous source or association refuses.
+At least one applicable check must actually pass. Without CI,
+the full local suite runs on a clean two-parent merge candidate. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
 Operator authority also travels through a recorded task reply. L3's project-bound
