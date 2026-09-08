@@ -200,7 +200,7 @@ def main(argv=None) -> None:
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
     st.add_argument("slug"); st.add_argument("--reason", required=True)
-    pc = ts.add_parser("preserve-checkout", help="ask altd to stash dirty main for an unlaunched blocked task")
+    pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
     pc.add_argument("slug"); pc.add_argument("--reason", required=True)
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")

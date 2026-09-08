@@ -127,8 +127,10 @@ avoid duplicates; L3's GitHub read broker remains project-local.
 main checkout for an existing blocked task that has never launched. It is available to the
 operator and project-bound L3, and denied to L2. It needs neither a worker nor a free task slot.
 The CLI queues a durable request; `alt task status <slug>` shows `daemon_request.status`, its
-outcome note, and `preserved_checkout` once a stash is saved. `alt task events <slug> --json` includes the
-request's actor/reason and the `checkout-preserved` commit ID.
+outcome note, and `checkout_archive: {"branch": "archive/checkout-<request-id>", "sha": "<SHA>"}`
+once the snapshot is saved. `alt task events <slug> --json` includes the request's actor/reason and
+the `checkout-preserved` branch and immutable SHA. Branches are local, uniquely named and never
+overwritten, automatically pushed or deleted. Retention ends only with explicit operator removal.
 
 For a fictional `example` project with dirty main exactly at `origin/main`:
 
@@ -137,26 +139,52 @@ For a fictional `example` project with dirty main exactly at `origin/main`:
    unlaunched blocked task; `--source recovery` controls fault notifications, not Git privileges.
 2. Run `alt --project example task preserve-checkout reconcile-edits --reason "Preserve existing edits for review in the task PR"`.
 3. Wait for `alt --project example task status reconcile-edits` to show the completed request and
-   its `preserved_checkout` SHA. A successful preservation leaves clean main at `origin/main` and
-   keeps the task blocked. It does not drop the stash or commit/publish any file.
-4. Give the owner the SHA and reconciliation scope with
-   `alt --project example task message reconcile-edits "Review preserved checkout <SHA>; apply with git stash apply --index <SHA> in your task worktree and deliver the reviewed changes through your PR."`
+   its `checkout_archive` branch and SHA. A successful preservation leaves clean main at `origin/main`
+   and keeps the task blocked. Snapshot commits live only on the local archive branch.
+4. Give the owner the branch, SHA and reconciliation scope with
+   `alt --project example task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
    This message requests resume. Ensure the task's lease covers the intended changes using
    `alt task paths` if needed. The owner inspects the snapshot before staging and publishing it.
    Resume any other blocked task separately with `alt task resume <slug> --reason "Checkout is clean after preservation"`.
 
+In the owner's isolated worktree, inspect and apply using the recorded immutable SHA:
+
+```sh
+git log --oneline -2 <SHA>
+git diff --stat <SHA>~2 <SHA>
+git diff <SHA>~2 <SHA>       # complete working changes
+git diff <SHA>~2 <SHA>^     # staged content, including versions overwritten or deleted in working files
+archive_patch="$(mktemp /tmp/checkout-review.XXXXXX)"
+git diff --binary <SHA>~2 <SHA> > "$archive_patch"
+git apply --check --index "$archive_patch"
+git apply --index "$archive_patch"
+```
+
+Review scope before applying; inspect individual staged versions
+with `git show <SHA>^:<path>`. The archive has two ordinary commits: the staged checkpoint on
+original main, then the working snapshot. Applying the net diff preserves final file content and
+flattens staging intent; staged-only versions remain available in the parent commit. Reconcile
+conflicts in the task worktree and commit only reviewed, leased changes through the normal PR path.
+
 Git preserves staged and unstaged content, tracked deletions and untracked files. Ignored files
-remain in place; dirty submodules and nested repositories can still prevent a clean checkout.
+remain in place; an ignored file obstructing a tracked path refuses cleanup with the archive retained.
+Dirty submodules and changed gitlinks/nested repositories refuse preservation.
 Off-main, ahead, behind or diverged checkouts are refused without preservation. This command does
 not reconcile local commits. L2 never gains permission to write the deployment checkout.
 
-If Git saves a stash but cleanup fails, its SHA remains recorded and the task stays blocked.
+If cleanup fails, the branch and SHA remain recorded and the task stays blocked.
 If altd exits while the request executes, it refuses automatic replay and names the request ID;
-inspect `git log -g --format='%H %gs' refs/stash` for that marker and `alt task status` before deciding
-whether to retry with a fresh reason. This is available through L3's existing read-only Git door;
-it does not grant Git writes in the deployment checkout. Never use `stash pop`,
-`stash drop`, `reset --hard` or `clean` as a recovery shortcut. Retain the stash until its contents
-have been reviewed and accounted for; any eventual removal is an explicit operator action.
+inspect `git log archive/checkout-<request-id>` and task status/events before deciding whether to
+retry with a fresh reason. The branch can exist even if interruption prevented writing the task
+receipt. Main may be partially cleaned; preserve the archive and inspect both before proceeding.
+Inspection uses L3's existing read-only Git door and grants no checkout writes.
+
+Legacy `preserved_checkout` string SHAs identify retained stashes. They remain unchanged even when
+the task creates an archive; inspect with `git stash show --include-untracked <SHA>` and apply with
+`git stash apply --index <SHA>` in the owner's worktree. For an interrupted legacy request, inspect
+`git log -g --format='%H %gs' refs/stash` for its request ID. Existing stashes are never silently
+deleted or converted. Never use `stash pop`, `stash drop`, `reset --hard` or `clean` as a recovery
+shortcut; archive or stash removal requires an explicit operator action.
 A restart alone does not resolve the fault, and unsuccessful resume leaves it reported.
 
 ## Project lifecycle

@@ -284,7 +284,8 @@ def run_task_operation(project: str, slug: str) -> dict:
             if operation == "resume" and status == "executing" and state in DAEMON_TASK_OPERATIONS[operation]["done"]:
                 terminal = ("done", "resume already reached its target state")
             elif operation == "preserve-checkout" and status == "executing":
-                terminal = ("refused", f"preservation interrupted; inspect git log -g refs/stash for {request_id} before retrying")
+                terminal = ("refused", f"preservation interrupted; inspect archive/checkout-{request_id}, "
+                            f"task events and legacy git log -g refs/stash for {request_id} before retrying")
             elif identity_changed:
                 terminal = ("refused", "worker identity changed")
             elif state in DAEMON_TASK_OPERATIONS[operation]["done"] and operation != "stop":
@@ -352,18 +353,16 @@ def preserve_checkout(project: str, slug: str, request: dict) -> str:
         if not state.determinate or state.branch != "main" or state.head != origin or not state.dirty:
             raise T.TransitionError("preserve-checkout requires dirty main at origin/main; inspect alt repo")
         label = f"Altitude {project}/{slug} preserve-checkout {request['id']}"
-        try:
-            result = git_policy._run(repo, "stash", "push", "--include-untracked", "-m", label)
-        finally:  # Git can save the stash successfully and then fail while cleaning the checkout.
-            sha = git_policy._output(git_policy._run(repo, "stash", "list", "--format=%H", f"--grep={request['id']}"), label)
-            if sha:
-                task["preserved_checkout"] = sha
-                S.save_task(project, task)
-                S.append_event(project, slug, "checkout-preserved", sha=sha, request_id=request["id"],
-                               reason=request["reason"], by=request["actor"])
-        git_policy._output(result, label)
+        branch = f"archive/checkout-{request['id']}"
+        with git_policy.archive_checkout(repo, origin, branch, label) as (sha, index_env):
+            task["checkout_archive"] = {"branch": branch, "sha": sha}
+            S.save_task(project, task)
+            S.append_event(project, slug, "checkout-preserved", branch=branch, sha=sha, request_id=request["id"],
+                           reason=request["reason"], by=request["actor"])
+            git_policy.clean_archived_checkout(repo, sha, origin, index_env)
         git_policy.fetch_and_require_exact_base(repo)
-        return f"Preserved checkout in stash {sha}; apply --index in the task worktree; retain the stash"
+        return (f"Preserved {branch} at {sha}; inspect the archive; apply its binary diff SHA~2..SHA "
+                "with git apply --index in the task worktree, review and deliver a PR; retain until operator removal")
 
 
 def settle_deploy_checkout(project: str, slug: str) -> None:

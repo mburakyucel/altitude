@@ -55,17 +55,23 @@ and the rule excluding home paths and private incident evidence from published t
 A dirty deployment checkout blocks normal and recovery task dispatch. Use the
 [dirty-checkout recovery procedure](CLI.md#dirty-checkout-recovery): select an unlaunched blocked
 task, pause edits to main, and request `alt task preserve-checkout <slug> --reason "…"` as L3 or
-the operator. Altd preserves staged, unstaged and untracked files in a retained Git stash, records
-its immutable SHA on the task, and requires the checkout to pass the normal guard. Ignored files
+the operator. Altd preserves staged, unstaged and untracked files on a local archive branch, records
+its branch and immutable snapshot SHA in `checkout_archive` before cleanup, and requires the checkout
+to pass the normal guard. The snapshot's parent retains staged-only content. Ignored files
 remain in place. This needs no task slot, service restart or privileged worker.
 
-Inspect `alt task status <slug>` for the request result and snapshot SHA before sending the owner
-its reconciliation instructions. The owner applies with `git stash apply --index <SHA>` inside
-its isolated worktree, reviews the contents against its lease and publication rules, and delivers
-through a PR. Resume other tasks separately once the checkout is clean. An interrupted request
-is not replayed: inspect the request marker in the stash list first. Stash cleanup failures and
-remaining submodule/nested-repository changes keep dispatch blocked; preserve the stash and fault
-evidence. Restart notices retain unresolved faults and require observed resolution before resume.
+Inspect `alt task status <slug>` for the request result, branch and SHA before sending the owner
+its reconciliation instructions. The owner inspects the two archive commits and applies the net
+binary diff from `<SHA>~2` to `<SHA>` inside its isolated worktree, as the CLI procedure describes.
+This flattens staging intent; staged content remains inspectable in `<SHA>^`. Review the contents
+against the lease and publication rules and deliver through a PR. Resume other tasks separately
+once the checkout is clean. Archives remain local until explicit operator removal; Altitude never
+pushes or deletes them. An interrupted request is not replayed: inspect
+`archive/checkout-<request-id>` and task events first, even if no task snapshot receipt exists.
+Cleanup failures, ignored obstructions and submodule/nested-repository dirt keep dispatch blocked;
+retain the snapshot and fault evidence. Legacy `preserved_checkout` stash SHAs stay readable and
+apply with `git stash apply --index <SHA>` in the owner's worktree; existing stashes remain untouched.
+Restart notices retain unresolved faults and require observed resolution before resume.
 
 ## Service lifecycle
 

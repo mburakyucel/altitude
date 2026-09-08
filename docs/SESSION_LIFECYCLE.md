@@ -57,11 +57,16 @@ informational overlaps; the lease remains the staging boundary enforced by `alt 
 Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
-unstaged and untracked changes in a retained Git stash, and records `preserved_checkout` and a
-`checkout-preserved` event with its commit ID. Ignored files remain untouched. The operation uses
+unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records
+`checkout_archive` and a `checkout-preserved` event with its branch and immutable snapshot SHA
+before cleanup. The snapshot's parent retains staged content, including versions absent from the
+working files; applying the complete snapshot flattens staging intent. Ignored files remain untouched.
+Archives stay local until explicit operator removal and are never automatically pushed or deleted.
+Legacy `preserved_checkout` stash SHAs and their stashes remain readable and recoverable. The operation uses
 the existing reason-bearing daemon request and identity fence and leaves the task blocked;
-an interrupted request refuses replay so it cannot accidentally stash later edits. The owner
-receives the snapshot ID through task status or an L3 message, applies it in the isolated worktree,
+an interrupted request refuses replay so it cannot accidentally archive later edits. Cleanup failure
+retains the snapshot and fault. The owner receives the branch and SHA through status or an L3 message,
+inspects and applies it in the isolated worktree,
 reviews the changes and delivers a PR. See [the recovery procedure](CLI.md#dirty-checkout-recovery).
 
 A project stores a WIP cap only when explicitly configured. The first registry load removes legacy

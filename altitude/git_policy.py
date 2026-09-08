@@ -7,11 +7,14 @@ and side-effect free; callers that need a current answer must explicitly use
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Any, Sequence
 
 
@@ -43,13 +46,14 @@ class RepositoryState:
         return asdict(self)
 
 
-def _run(repo: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run(repo: Path, *args: str, timeout: int = 120, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             ["git", "-C", str(repo), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise GitPolicyError(f"git {' '.join(args[:3])}: {exc}") from exc
@@ -202,6 +206,57 @@ def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> 
     if state.head != origin_sha:
         raise GitPolicyError(f"dispatch refused: {base} is not exactly origin/{base}")
     return origin_sha
+
+
+@contextmanager
+def archive_checkout(repo: Path, base_sha: str, branch: str, label: str):
+    """Preserve index and working content on a local branch before touching the checkout.
+
+    Issue #247, operator archive decision: two ordinary commits retain staged-only versions in
+    the snapshot's parent; the diff from its grandparent is the complete working change.
+    """
+    with tempfile.TemporaryDirectory(prefix="alt-checkout-", dir=_git_dir(repo)) as temp:
+        index = Path(temp) / "index"
+        shutil.copyfile(_git_dir(repo) / "index", index)
+        env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+
+        def git(*args: str) -> str:
+            return _output(_run(repo, *args, env=env), label)
+
+        staged_tree = git("write-tree")
+        git("add", "--all", "--", ".")
+        # #247: a gitlink cannot preserve the files inside a dirty submodule or nested repo.
+        changes = git("diff", "--raw", "--ignore-submodules=none", base_sha)
+        changes += "\n" + git("diff", "--cached", "--raw", "--ignore-submodules=none", base_sha)
+        if any(row.startswith(":160000 ") or " 160000 " in row[:15] for row in changes.splitlines()):
+            raise GitPolicyError("preserve-checkout refuses changed submodules or nested repositories")
+        tree = git("write-tree")
+        staged = git("commit-tree", staged_tree, "-p", base_sha, "-m", f"{label}: staged content")
+        sha = git("commit-tree", tree, "-p", staged, "-m", f"{label}: working snapshot")
+        # Empty old value means create only: even a colliding request must never overwrite an archive.
+        git("update-ref", f"refs/heads/{branch}", sha, "")
+        yield sha, env
+
+
+def clean_archived_checkout(repo: Path, sha: str, base_sha: str, env: dict) -> None:
+    """Clean only after the branch and task receipt are durable; never recurse into gitlinks."""
+    def paths(*args: str) -> set[Path]:
+        result = _run(repo, *args)
+        _output(result, "inspect restoration paths")
+        return {Path(p) for p in result.stdout.split("\0") if p}
+
+    ignored = paths("ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+    tracked = paths("ls-tree", "-r", "--name-only", "-z", base_sha)
+    # #247 archive review: restore can silently replace an ignored file/directory obstructing HEAD.
+    if (ignored & tracked or ignored.intersection(p for f in tracked for p in f.parents)
+            or tracked.intersection(p for f in ignored for p in f.parents)):
+        raise GitPolicyError("archive retained; ignored files obstruct checkout restoration; inspect before retrying")
+    _output(_run(repo, "diff", "--cached", "--quiet", f"{sha}^", "--"),
+            "index changed since archive capture; archive retained")
+    # Use the captured index's stat data: a later edit refuses the merge instead of being overwritten.
+    _output(_run(repo, "read-tree", "-m", "-u", "--no-recurse-submodules", sha, base_sha, env=env),
+            "clean preserved checkout")
+    _output(_run(repo, "read-tree", base_sha), "restore base index")
 
 
 def service_preflight(repo: str | Path, base: str = DEFAULT_BASE) -> RepositoryState:
