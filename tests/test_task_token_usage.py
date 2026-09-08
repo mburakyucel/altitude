@@ -1,4 +1,5 @@
 """Task accounting persists evidence, never depends on a worker's claimed spend or a UI poll."""
+import json
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -17,6 +18,7 @@ class TaskTokenUsage(AltitudeCase):
         super().setUp()
         self.slug = T.new(self.project, "Token usage", "Count local evidence")["slug"]
         self.observations = {}
+        self.native_observe = engines.observe_token_usage
         self.observe = self.patch(engines, "observe_token_usage", side_effect=self.collect, create=True)
         self.patch(engines, "remove_l2_worker", return_value="stopped")
 
@@ -157,3 +159,88 @@ class TaskTokenUsage(AltitudeCase):
         self.patch(engines, "codex_worker", return_value={"usage": {"input_tokens": 5_000_000}})
         row = next(row for row in server.monitor.sessions() if row.get("slug") == self.slug)
         self.assertIsNone(row["context_percent"])
+
+    def test_native_helper_audit_survives_attempts_passive_reads_failures_and_archive(self):
+        home = self.tmp / "provider"
+        self.patch(engines, "_TOKEN_ROLLOUT_INDEX", {})
+        self.observe.side_effect = lambda engine, sid, cursor=None, **kw: self.native_observe(engine, sid, cursor, home=home, **kw)
+        self.launch(engine="codex")
+        for sid, parent in (("first", None), ("helper", "first"), ("nested", "helper")):
+            path = home / f"sessions/2026/09/07/rollout-{sid}.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"type": "session_meta", "payload": {"id": sid, "parent_thread_id": parent}}) + "\n")
+        engines._TOKEN_ROLLOUT_INDEX.clear()
+        task = S.load_task(self.project, self.slug)
+        usage.capture(self.project, task)
+        # Register the same concrete owner in another attempt: context expands, helper count does not.
+        task["attempt"] = 2
+        usage.capture(self.project, task)
+        S.save_task(self.project, task)
+        snapshot = task["token_usage"]
+        helpers = snapshot["helpers"]
+        self.assertEqual((helpers["observed_count"], helpers["direct_count"], helpers["descendant_count"]), (2, 1, 1))
+        self.assertIsNone(helpers["total_tokens"])
+        self.assertEqual([row["attempts"] for row in helpers["sessions"]], [[1, 2], [1, 2]])
+        self.assertNotIn("Earlier attempt identities or usage are unavailable.", snapshot["notes"])
+        calls = self.observe.call_count
+        monitor_row = next(row for row in server.monitor.sessions() if row.get("slug") == self.slug)
+        self.assertEqual(monitor_row["token_usage"], snapshot)
+        self.assertEqual(server.task_view(self.project, self.slug)["token_usage"], snapshot)
+        self.assertEqual(status.status(self.project, self.slug)["token_usage"], snapshot)
+        self.assertEqual(self.observe.call_count, calls)
+        self.observe.side_effect = OSError("unavailable local telemetry")
+        T.report(self.project, self.slug, {"verdict": "ok", "spend": {"helpers": 9999}})
+        final = T.done(self.project, self.slug)["token_usage"]
+        self.assertEqual(final["helpers"], helpers)
+        self.assertEqual(status.task_report(self.project, self.slug)["token_usage"], final)
+        self.assertTrue((S.archive_dir(self.project) / self.slug / "token-usage.json").exists())
+
+    def test_helper_request_summary_is_separate_from_task_and_unsplit_provider_totals(self):
+        self.launch()
+        owner = reading("first", total=1000, role="provider")
+        helpers = [{**reading("helper", total=70, parent="first", role="delegated"),
+                    "owner_session_id": "first", "depth": 1, "provider_total_tokens": 500},
+                   {**reading("nested", total=50, parent="helper", role="delegated"),
+                    "owner_session_id": "first", "depth": 2, "observed_at": "2026-09-07T11:00:00+00:00"}]
+        self.observe.side_effect = lambda *args, **kw: {"cursor": {}, "sessions": [owner], "helpers": helpers,
+                                                       "helper_status": "partial", "status": "partial"}
+        task = S.load_task(self.project, self.slug)
+        usage.capture(self.project, task)
+        snapshot = task["token_usage"]
+        self.assertEqual(snapshot["total_tokens"], 1000)
+        self.assertEqual(snapshot["helpers"]["total_tokens"], 120)
+        self.assertEqual(snapshot["helpers"]["observed_count"], 2)
+        self.assertEqual(snapshot["helpers"]["sessions"][0]["provider_total_tokens"], 500)
+        self.assertEqual(snapshot["observed_at"], "2026-09-07T11:00:00+00:00")
+
+    def test_helper_unknown_and_observed_empty_are_distinct(self):
+        task = S.load_task(self.project, self.slug)
+        usage.capture(self.project, task)
+        self.assertIsNone(task["token_usage"]["helpers"]["observed_count"])
+        self.launch()
+        task = S.load_task(self.project, self.slug)
+        self.observe.side_effect = lambda *args, **kw: {"cursor": {}, "sessions": [], "helpers": [], "helper_status": "partial"}
+        usage.capture(self.project, task)
+        self.assertEqual(task["token_usage"]["helpers"]["observed_count"], 0)
+        self.assertEqual(task["token_usage"]["helpers"]["status"], "partial")
+        self.assertIsNone(task["token_usage"]["helpers"]["total_tokens"])
+
+    def test_same_helper_identity_on_two_engines_and_unknown_depth_remain_distinct(self):
+        self.launch()
+        task = S.load_task(self.project, self.slug)
+        usage.remember(task)
+        task.update(l2_engine="two", session_id="second", attempt=2)
+        def collect(engine, sid, cursor=None, **kwargs):
+            helper = {**reading("same-id", parent=sid, role="delegated"), "owner_session_id": sid,
+                      "depth": None, "parentage": "owner"}
+            return {"cursor": {}, "sessions": [reading(sid), helper], "helpers": [helper], "helper_status": "partial"}
+        self.observe.side_effect = collect
+        usage.capture(self.project, task)
+        helper_summary = task["token_usage"]["helpers"]
+        self.assertEqual(helper_summary["observed_count"], 2)
+        self.assertEqual(helper_summary["unclassified_count"], 2)
+        self.assertIsNone(helper_summary["direct_count"])
+        self.assertIsNone(helper_summary["descendant_count"])
+        self.assertEqual(helper_summary["total_tokens"], 240)
+        self.assertEqual([(row["engine"], row["attempts"]) for row in helper_summary["sessions"]],
+                         [("one", [1]), ("two", [2])])

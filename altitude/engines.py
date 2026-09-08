@@ -746,17 +746,19 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
             for name, meta in index.items():
                 if meta["session_id"] in wanted:
                     sid = meta["session_id"]
-                    register(sid, meta["parent"], **{key: meta[key] for key in ("forked", "fork_time", "fork_ordinal")})
+                    register(sid, meta["parent"], parentage="thread",
+                             **{key: meta[key] for key in ("forked", "fork_time", "fork_ordinal")})
                     sources.append((Path(name), sid, "rollout"))
         elif engine == "claude":
             root = home or config.HOME / ".claude"
             for sid in state["owners"]:
                 for path in root.glob(f"projects/*/{sid}.jsonl"):
                     sources.append((path, sid, "messages"))
-                    for child in path.with_suffix("").glob("subagents/agent-*.jsonl"):
-                        child_id = f"{sid}/{child.stem}"
-                        register(child_id, sid)
-                        sources.append((child, child_id, "messages"))
+                for child in root.glob(f"projects/*/{sid}/subagents/agent-*.jsonl"):
+                    child_id = f"{sid}/{child.stem}"
+                    # The directory binds a helper to its owner, not necessarily its spawning helper.
+                    register(child_id, sid, parentage="owner")
+                    sources.append((child, child_id, "messages"))
         else:
             notes.append("This engine has no local token accounting adapter.")
         # Owned stdout survives archive and supplies a provider aggregate if transcript/rollout
@@ -853,7 +855,7 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         notes.append("Some local usage evidence could not be read.")
 
     score = lambda values: (values.get("input_tokens") or 0) + (values.get("output_tokens") or 0)
-    visited = set()
+    visited, helpers = set(), []
 
     def project(sid):
         # A subtree's lower bound is the larger of its ambiguous provider aggregate and its
@@ -891,6 +893,20 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
                   **values, "total_tokens": total, "observed_at": row["observed_at"],
                   "status": "unknown" if total is None and not records else
                             "partial" if row_notes or total is None else "observed", "notes": row_notes}
+        if sid not in state["owners"]:
+            ancestor, chain, depth = sid, set(), 0
+            while ancestor not in state["owners"] and ancestor in state["sessions"] and ancestor not in chain:
+                chain.add(ancestor)
+                link = state["sessions"][ancestor]
+                depth = depth + 1 if depth is not None and link.get("parentage") == "thread" else None
+                ancestor = link["parent_session_id"]
+            if ancestor in state["owners"]:
+                own_total = score(own) if any(own.get(key) is not None for key in ("input_tokens", "output_tokens")) else None
+                helpers.append({**public, **own, "role": "delegated", "total_tokens": own_total,
+                                "status": "unknown" if own_total is None else public["status"],
+                                "owner_session_id": ancestor, "depth": depth,
+                                "parentage": row.get("parentage"),
+                                "provider_total_tokens": score(aggregate) if score(aggregate) else None})
         return (values, [public]) if use_aggregate else (disjoint, [public, *(item for _, rows in children for item in rows)])
 
     sessions = []
@@ -899,7 +915,12 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         if sid not in visited:
             _, rows = project(sid)
             sessions.extend(rows)
-    return {"cursor": state, "sessions": sessions, "pending": bool(pending),
+    # An unconditional owner registration is not evidence of zero helpers. Retained native file
+    # observations can establish an empty observed set, but discovery never proves exhaustive spawns.
+    helper_status = "partial" if helpers or any(file.get("kind") != "stdout" and file.get("offset", 0) > 0
+                                                for file in state["files"].values()) else "unknown"
+    return {"cursor": state, "sessions": sessions, "helpers": helpers, "helper_status": helper_status,
+            "pending": bool(pending),
             "status": "partial" if any(row["total_tokens"] is not None for row in sessions) else "unknown", "notes": notes}
 
 

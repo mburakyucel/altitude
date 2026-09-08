@@ -92,6 +92,14 @@ show coverage and freshness: missing records stay unknown or partial, and native
 only when local parentage supports attribution. Provider aggregates that cannot split helper usage
 say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
 
+**L1** means an engine-native helper used by an L2, not a separately managed Altitude role. The L2
+remains accountable; delegation suits bounded independent work and is optional for small tasks.
+Expand **L2 usage details** in Monitor to see observed unique helpers across recorded attempts,
+their attributable tokens, and per-helper identity and owner attempt context. Direct helpers and
+descendants are distinguished when native parentage supports it; otherwise depth stays unknown.
+Counts include observed identities without token counters and remain partial, never a definitive
+total spawned. The same breakdown stays available in task and report details after archival.
+
 ## Configure concurrency
 
 Running tasks default to **8 per project and 80 across the machine**. Both limits are persistent

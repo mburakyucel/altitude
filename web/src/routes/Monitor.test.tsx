@@ -183,6 +183,30 @@ describe("Monitor", () => {
     expect(screen.getByText("Fable 5.1 · context 16%")).toBeInTheDocument();
   });
 
+  it("keeps task accounting behind each L2 disclosure, parses helper evidence, and removes it on collapse", async () => {
+    const fetch = mockFetch({ ...monitor, sessions: monitor.sessions.map((session) => ({ ...session, token_usage: {
+      total_tokens: 500, status: "partial", helpers: { status: "partial", observed_count: 1, direct_count: 1, descendant_count: 0, total_tokens: 100,
+        sessions: [{ engine: "other-engine", session_id: "native-helper", owner_session_id: session.session_id, parent_session_id: session.session_id, parentage: "thread", depth: 1, attempts: [1, 2], role: "delegated", status: "observed", total_tokens: 100 }],
+      },
+    } })) });
+    const { user } = renderApp({ route: "/monitor" });
+    const disclosure = await screen.findByRole("button", { name: "L2 usage details" });
+    expect(screen.getAllByRole("button", { name: "L2 usage details" })).toHaveLength(1);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText("L1 helpers observed")).not.toBeInTheDocument();
+    const calls = fetch.mock.calls.length;
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("500 observed tokens")).toBeVisible();
+    expect(screen.getByText("Session native-helper")).toBeVisible();
+    expect(screen.getByText("Owner attempt context: 1, 2.")).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    await user.click(disclosure);
+    expect(screen.queryByText("Session native-helper")).not.toBeInTheDocument();
+    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+  });
+
   it("keeps an aged figure visible and labels it stale", async () => {
     mockFetch({
       ...monitor,

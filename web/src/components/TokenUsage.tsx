@@ -19,11 +19,41 @@ function Counters({ usage }: { usage: Partial<TaskTokenUsage> }) {
   ))}</dl>;
 }
 
+function Helpers({ helpers, label }: {
+  helpers: TaskTokenUsage["helpers"];
+  label: (engine: string) => string;
+}) {
+  return <section className="token-helpers" aria-label="L1 helpers observed">
+    <h3>L1 helpers observed</h3>
+    <dl className="token-counters">
+      <div><dt>Unique helpers</dt><dd>{count(helpers?.observed_count)}</dd></div>
+      <div><dt>Direct helpers</dt><dd>{count(helpers?.direct_count)}</dd></div>
+      <div><dt>Descendants</dt><dd>{count(helpers?.descendant_count)}</dd></div>
+      <div><dt>Attributable helper tokens</dt><dd>{count(helpers?.total_tokens)}</dd></div>
+    </dl>
+    {(helpers?.unclassified_count ?? 0) > 0 ? <p>{count(helpers?.unclassified_count)} owner-linked · depth unknown.</p> : null}
+    {helpers?.observed_count === 0 ? <p>No helpers observed.</p> : null}
+    {!helpers || helpers.status === "unknown" ? <p>Helper evidence unavailable.</p> : <p>Partial discovery: observed identities across attempts; resumed helpers count once. Helpers with unavailable counters still count.</p>}
+    <p>Attributable helper tokens are a lower bound included in task totals.</p>
+    {helpers?.sessions.map((session) => <section className="token-session" key={`${session.engine}:${session.session_id}`} aria-label={`Helper session ${session.session_id}`}>
+      <h4 className="token-session-label">{label(session.engine)} · {session.depth === 1 ? "Direct helper" : session.depth == null ? "Owner-linked helper · depth unknown" : `Descendant helper · depth ${session.depth}`} · {session.total_tokens == null ? "tokens unknown" : `${count(session.total_tokens)} tokens`} · {coverage(session.status)}</h4>
+      <Counters usage={session} />
+      {session.provider_total_tokens != null ? <p>Unsplit provider total: {count(session.provider_total_tokens)} tokens · may include descendants; not attributable to this helper alone.</p> : null}
+      <p className="token-session-id">Session {session.session_id}</p>
+      <p className="token-session-id">{session.parentage === "owner" ? "Owner linkage" : "Parent"} {session.parent_session_id ?? "unknown"} · L2 owner {session.owner_session_id ?? "unknown"}</p>
+      <p>Owner attempt context: {session.attempts.length ? session.attempts.join(", ") : session.attempt ?? "unknown"}.</p>
+      {session.notes.map((note, index) => <p key={index}>{note}</p>)}
+    </section>)}
+  </section>;
+}
+
 /** Reads the server's observed sum; never substitutes report spend or guesses missing helpers. */
-export function TokenUsage({ usage, running = false, engines = [] }: {
+export function TokenUsage({ usage, running = false, engines = [], disclosureLabel }: {
   usage: TaskTokenUsage | null | undefined;
   running?: boolean;
   engines?: Pick<EngineReadout, "engine" | "label">[];
+  /** Monitor keeps even task totals behind its L2 disclosure. */
+  disclosureLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [, tick] = useState(0);
@@ -42,16 +72,23 @@ export function TokenUsage({ usage, running = false, engines = [] }: {
   for (const session of usage?.sessions ?? []) {
     byEngine.set(session.engine, [...(byEngine.get(session.engine) ?? []), session]);
   }
+  const engineLabel = (engine: string) => engines.find((e) => e.engine === engine)?.label ?? engine;
+  const helperIds = new Set(usage?.helpers?.sessions.map((s) => `${s.engine}:${s.session_id}`));
+  const summary = <>
+    <span className="token-summary-value">{usage?.total_tokens == null ? "Token usage unknown" : `${count(usage.total_tokens)} observed tokens`}</span>
+    <span className="token-coverage">{coverage(usage?.status)}</span>
+    <span className="token-freshness" title={exactTime(usage?.finalized_at || usage?.checked_at)}>{freshness}</span>
+  </>;
 
   return (
     <section className="token-usage" aria-label="Task token usage">
-      <button type="button" className="token-summary" aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen(!open)}>
-        <span className="token-summary-value">{usage?.total_tokens == null ? "Token usage unknown" : `${count(usage.total_tokens)} observed tokens`}</span>
-        <span className="token-coverage">{coverage(usage?.status)}</span>
-        <span className="token-freshness" title={exactTime(usage?.finalized_at || usage?.checked_at)}>{freshness}</span>
+      <button type="button" className="token-summary" aria-label={disclosureLabel} aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen(!open)}>
+        {disclosureLabel ? <span className="token-summary-value">{disclosureLabel}</span> : summary}
         <span className="token-toggle">{open ? "Hide details" : "Details"}</span>
       </button>
       {open ? <div className="token-details" id={detailsId}>
+        {disclosureLabel ? <div className="token-readout">{summary}</div> : null}
+        <Helpers helpers={usage?.helpers} label={engineLabel} />
         <p>Observed input + output. Cache is counted once in input; reasoning is included in output.</p>
         {usage?.status === "partial" ? <p>Partial totals sum available counters and are a lower bound.</p> : null}
         <Counters usage={usage ?? {}} />
@@ -61,9 +98,9 @@ export function TokenUsage({ usage, running = false, engines = [] }: {
         {!usage || usage.sessions.length === 0 ? <p>No attributable session counters available.</p> : null}
         {Array.from(byEngine, ([engine, sessions]) => {
           const totals = sessions.map((s) => s.total_tokens).filter((n): n is number => n != null);
-          return <section className="token-engine" key={engine} aria-label={`${engines.find((e) => e.engine === engine)?.label ?? engine} usage`}>
-            <h3>{engines.find((e) => e.engine === engine)?.label ?? engine} <span>{totals.length ? `${count(totals.reduce((a, b) => a + b, 0))} observed tokens` : "Token usage unknown"}</span></h3>
-            {sessions.map((session) => <div className="token-session" key={`${session.attempt}:${session.session_id}`}>
+          return <section className="token-engine" key={engine} aria-label={`${engineLabel(engine)} usage`}>
+            <h3>{engineLabel(engine)} <span>{totals.length ? `${count(totals.reduce((a, b) => a + b, 0))} observed tokens` : "Token usage unknown"}</span></h3>
+            {sessions.filter((s) => s.role === "provider" || !helperIds.has(`${s.engine}:${s.session_id}`)).map((session) => <div className="token-session" key={`${session.attempt}:${session.session_id}`}>
               <p className="token-session-label">{roles[session.role] ?? session.role} · attempt {session.attempt ?? "unknown"} · {session.total_tokens == null ? "tokens unknown" : `${count(session.total_tokens)} tokens`} · {coverage(session.status)}</p>
               <Counters usage={session} />
               <p className="token-session-id">Session {session.session_id}{session.parent_session_id ? ` · parent ${session.parent_session_id}` : ""}</p>

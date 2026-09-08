@@ -301,6 +301,25 @@ export const TokenSessionSchema = z.object({
   notes: z.array(z.string()).default([]),
 }).passthrough();
 
+// Helper identities are an audit view of accounting already included in task totals.
+export const HelperSessionSchema = TokenSessionSchema.extend({
+  owner_session_id: z.string().nullish(),
+  parentage: z.enum(["thread", "owner"]).nullish(),
+  depth: z.number().nullish(),
+  attempts: z.array(z.number()).default([]),
+  provider_total_tokens: z.number().nullish(),
+});
+
+export const HelperUsageSchema = z.object({
+  status: z.enum(["partial", "unknown"]),
+  observed_count: z.number().nullable(),
+  direct_count: z.number().nullable(),
+  descendant_count: z.number().nullable(),
+  unclassified_count: z.number().nullish(),
+  total_tokens: z.number().nullable(),
+  sessions: z.array(HelperSessionSchema),
+});
+
 export const TokenUsageSchema = z.object({
   status: z.string().default("unknown"),
   ...tokenCounters,
@@ -309,6 +328,7 @@ export const TokenUsageSchema = z.object({
   finalized_at: z.string().nullish(),
   notes: z.array(z.string()).default([]),
   sessions: z.array(TokenSessionSchema).default([]),
+  helpers: HelperUsageSchema.nullish(),
 }).passthrough();
 
 export const TaskViewSchema = z
@@ -351,6 +371,7 @@ export const SessionSchema = z
     engine: z.string().nullish(),
     context_state: z.string().nullish(),
     state: z.string().nullish(),
+    token_usage: TokenUsageSchema.nullish(),
     at: z.unknown().nullish(),
   })
   .passthrough();

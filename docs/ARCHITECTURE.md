@@ -48,7 +48,7 @@ The attempt number fences every L2 command to the current attempt: an L2 may rep
 and land only its own task.
 
 Helpers are engine-native. The L2 may delegate bounded slices to its engine's own subagents
-(Claude Code's Agent tool, Codex's equivalent); Altitude does not track them, and ownership never
+(Claude Code's Agent tool, Codex's equivalent); Altitude does not supervise them, and ownership never
 transfers. Helper customization lives in engine-native files (agent definitions, skills, hooks). The
 L2 persona carries brief delegation and context-hygiene guidance and asks for a small `progress.md`
 (goal, done, next, how to verify) refreshed at milestones, never kept as a log.
@@ -419,6 +419,15 @@ and finalization times. Lost logs and collection failures retain earlier evidenc
 never prevent delivery. A final read drains only a bounded backlog; unread evidence stays partial.
 See [the engine counting semantics](SESSION_LIFECYCLE.md#task-token-accounting).
 
+The snapshot's `helpers` contains the observed unique identity count, known direct/descendant counts,
+unclassified depth count, attributable request token sum, and all helper rows. It is independent of
+the non-overlapping accounting `sessions`: an unsplit provider total can suppress overlapping rows
+from that sum without suppressing their helper identities. Helper rows carry engine, native identity,
+parentage kind, owning session, depth when known, and the owning session's recorded attempts. Per-helper
+request counters and optional unsplit provider totals remain separate; neither is added again to
+task totals. Missing native evidence yields null counts; a readable native source with no discovered
+helpers yields an observed empty set with partial coverage. No spawn-completeness claim is made.
+
 The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make check`
 runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2e/*.pw.ts` suite.
 Python fixtures isolate runtime/provider homes and replace external engine execution and GitHub
@@ -622,7 +631,11 @@ for a turn started now, in `pick_engine`'s own words. It explains the selected t
 unknown quota, continuity and skipped options; no eligible option gives an actionable installation,
 authentication, reset or configuration explanation. The
 sessions the monitor knows follow, each with its task, its engine and the model when the API reports
-one, its context meter and the age of its snapshot; no session is one muted sentence. Loading is a
+one, its context meter and the age of its snapshot. L2 rows carry their persisted `token_usage` in
+the same read and offer **L2 usage details**: the task total, observed helper counts and attributable
+tokens, then per-helper parentage and owner attempt context. All helper detail stays behind the
+disclosure; expansion starts no collection or separate request. Archived evidence remains in task
+and report reads. No session is one muted sentence. Loading is a
 skeleton in the page's shape, and a failed read is one sentence with Retry.
 
 The task page is the operator's conversation with the L2 beside the worker's live session

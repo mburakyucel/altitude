@@ -1,5 +1,6 @@
 import { useMonitor, useOverview } from "../data/api";
-import type { MonitorSeat, RoutingRow, Session } from "../data/api";
+import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
+import { TokenUsage } from "../components/TokenUsage";
 import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
@@ -210,7 +211,7 @@ function kindLabel(kind: string): string {
   return /^l[23]$/.test(kind) ? kind.toUpperCase() : capitalize(kind);
 }
 
-function SessionRow({ session, label }: { session: Session; label: (engine: unknown) => string }) {
+function SessionRow({ session, label, engines }: { session: Session; label: (engine: unknown) => string; engines: EngineReadout[] }) {
   const project = str(session.project);
   const slug = str(session.slug);
   const cwd = str(session["cwd"]);
@@ -248,6 +249,7 @@ function SessionRow({ session, label }: { session: Session; label: (engine: unkn
       </div>
       <p className="monitor-muted">{meta.join(" · ")}</p>
       {context == null ? null : <Meter percent={context} stale={stale} />}
+      {session.kind === "l2" ? <TokenUsage usage={session.token_usage} running={session.state === "running"} engines={engines} disclosureLabel="L2 usage details" /> : null}
     </li>
   );
 }
@@ -308,7 +310,7 @@ export default function Monitor() {
             ) : (
               <ul className="monitor-sessions">
                 {monitor.data.sessions.map((session, i) => (
-                  <SessionRow key={`${session.kind}-${str(session.session_id)}-${i}`} session={session} label={label} />
+                  <SessionRow key={`${session.kind}-${str(session.session_id)}-${i}`} session={session} label={label} engines={engines} />
                 ))}
               </ul>
             )}
