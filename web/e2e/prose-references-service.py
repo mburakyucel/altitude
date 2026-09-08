@@ -6,6 +6,7 @@ from altitude import config, l3, state as S, tasks
 
 def prose(who):
     return (f"Saved {who} references: PR #250, issue #247, #248, other/repo#12.\n\n"
+            "Upstream example/altitude#247 and https://github.com/example/altitude/issues/247\n\n"
             "Existing [review](https://github.com/example/project/pull/251) and "
             "https://github.com/example/project/issues/252\n\n"
             "Code `PR #900`.\n\n~~~\nissue #901\n~~~")

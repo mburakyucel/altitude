@@ -11,6 +11,18 @@ function destinations() {
 }
 
 describe("project-aware GitHub references", () => {
+  it.each(["reply", "compact", "folded"])("preserves same-number upstream and local issues in %s prose", (surface) => {
+    const text = "Local issue #42; upstream example/altitude#42 and https://github.com/example/altitude/issues/42";
+    const content = surface === "reply" ? <Prose text={text} /> :
+      <InlineProse text={surface === "folded" ? lastParagraph(`Earlier context.\n\n${text}`) : text} />;
+    render(<ProseRepository value={repository}>{content}</ProseRepository>);
+    expect(destinations()).toEqual([
+      ["issue #42", `${repository}/issues/42`],
+      ["example/altitude#42", "https://github.com/example/altitude/issues/42"],
+      ["https://github.com/example/altitude/issues/42", "https://github.com/example/altitude/issues/42"],
+    ]);
+  });
+
   it("links explicit, bare, cross-repository, bold, list and heading references", () => {
     prose("PR #250, pull request #251, ISSUE #247; (#248).\n\n**PR #252**\n\n- other/repo#12\n- PR someone/.github#13\n\n### #249", `${repository}/`);
     expect(destinations()).toEqual([

@@ -206,6 +206,10 @@ with `project`, `operation: "upstream"`, `title` and `body` (the same JSON strin
 remain denied. Success returns the issue URL and writes one `issue-upstream` event with actor,
 title and URL in the calling project's log, without the report body. Failures name configuration,
 GitHub authentication/access, or an unconfirmed result without echoing GitHub's private error output.
+Use the returned full URL or `owner/repo#number` whenever mentioning the upstream issue in replies,
+briefs or summaries. Bare `#number` identifies the calling project's repository; do not infer an
+upstream repository for ambiguous historical text.
+
 With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`, `failed`, and
 `uncertain` carry an actionable reason. `alt incident list` and project API incident rows include an
 `upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded

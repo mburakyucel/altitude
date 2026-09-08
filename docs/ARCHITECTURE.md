@@ -644,6 +644,9 @@ boundaries exclude code in full prose, compact mirrors, and folded summaries. An
 visible labels and use the app's focus styling, underlines, and new-tab `noopener noreferrer`
 behavior. Rendering never changes stored messages or performs per-reference requests or model calls.
 Missing/loading/failed repository metadata leaves unqualified references as text until available.
+Both personas and every L3 turn's guidance preserve upstream identity in generated replies, briefs
+and summaries as full URLs or `owner/repo#number`. The renderer keeps bare references local and does
+not infer an upstream repository from ambiguous historical text.
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the hint reads "L3 is mid-turn · runs next", and the message shows as a muted queued row with Remove until
