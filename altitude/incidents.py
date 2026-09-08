@@ -49,8 +49,8 @@ def _fault_lock():
 
 
 def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
-                         expected_block_id: object = T._UNSET) -> tuple[bool, bool]:
-    """Block the task a fault belongs to. Returns (newly blocked by this fault, is a repair task).
+                         expected_block_id: object = T._UNSET) -> tuple[bool | None, bool]:
+    """Return (changed blocker, is a repair task); None means no applicable task observation.
 
     The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
     card. A task that had already blocked itself is tagged the same way; a finished or missing task stays as it
@@ -59,13 +59,13 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
     try:
         task = S.load_task(project, slug)
     except (KeyError, OSError, ValueError):
-        return False, False
+        return None, False
     tag = {"waiting_on": "l3", "fault": kind}
-    touched = False
+    touched = None
     if task.get("state") in ("queued", "running", "reported"):
         try:
             T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag,
-                    expected_block_id=expected_block_id)
+                    expected_block_id=task.get("block_id") if expected_block_id is T._UNSET else expected_block_id)
             touched = True
         except T.TransitionError:
             pass
@@ -74,9 +74,11 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
             task = S.load_task(project, slug)
             if (task.get("state") == "blocked"
                     and (expected_block_id is T._UNSET or task.get("block_id") == expected_block_id)):
-                touched = task.get("fault") != kind
-                task.update(tag)
-                S.save_task(project, task)
+                touched = task.get("fault") != kind or task.get("blocked_reason") != reason
+                if touched:
+                    T._supersede_resume(task)
+                    task.update(tag, blocked_reason=reason)
+                    S.save_task(project, task)
     return touched, task.get("source") == "recovery"
 
 
@@ -86,12 +88,12 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
 
     Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
     registered `altitude`, or only the fault ledger if absent. Repair tasks never wake L3 again.
-    A repeat notifies L3 only when it newly blocks a non-repair task; otherwise it returns None.
+    Saved unchanged blockers stay quiet; new tasks and changed observations notify their L3.
     """
     from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
-    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind, expected_block_id)
+    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail}", kind, expected_block_id)
                        if project and task else (False, False))
     target = project or ("altitude" if "altitude" in config.load_projects() else None)
     key = json.dumps([project, kind])
@@ -100,23 +102,25 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         # The 2026-09-07 project leak left unscoped records pointing to another project's evidence.
         # Preserve those records, but never reuse them for deduplication or incident references.
         rec = faults.get(key) or {}
+        changed = touched if project and task else rec.get("detail") != detail
         recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
                   and rec.get("incident"))
         rec = {**rec, "first": rec.get("first") or S.now(), "last": S.now(),
                "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
-               "detail": detail[:500], "project": project, "task": task}
+               "detail": detail, "project": project, "task": task}
         faults[key] = rec
         S.write_json(FAULTS, faults)
-        if recent or not target:
-            if not (recent and touched and target and not repair):
+        if recent or (rec.get("incident") and changed is False) or not target:
+            if not (changed and target and not repair):
                 return None
             # 2026-09-03 08:10Z: a second task blocked by the day's main-unpushed fault sat waiting on L3, which
             # was never told. One incident per project/kind still holds; a newly blocked task is one more line.
-            where = f"{project}/{task}"
-            T.fyi(target, task, f"SYSTEM FAULT [{kind}] again — {detail[:300]} — blocking {where}; incident "
+            where = f"{project}/{task}" if project and task else project or target
+            T.fyi(target, task, f"SYSTEM FAULT [{kind}] changed — {detail[:300]} — in {where}; incident "
                   f"{target}/{rec['incident']} holds the evidence.", actor="altd")
-            l3.queue_message(target, f"System fault [{kind}] again, now blocking {where}: {detail[:600]}\n\n"
-                             f"Incident {target}/{rec['incident']} from earlier today already holds the evidence; amend it only if this "
+            l3.queue_message(target, f"System fault [{kind}] changed in {where}: {detail[:600]}\n\n"
+                             f"Incident {target}/{rec['incident']} holds the evidence. Inspect current task status for the full "
+                             "blocker and amend the incident only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
                              "the cause is gone. Answer in one or two plain sentences.\n\n"
                              + upstream_summary(target), trigger="incident")

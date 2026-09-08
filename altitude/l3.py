@@ -625,6 +625,14 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     lines.append("[altitude] In replies, briefs and summaries, preserve upstream references as full URLs "
                  "or owner/repo#number. Bare #number refers to the current project; never guess the "
                  "repository of ambiguous historical text.")
+    lines.append("[altitude] Saved blockers in state or restart inventory are observations, not new failures. "
+                 "Do not re-report or repeat waiting nudges for unchanged blockers on restart or incidental events. "
+                 "New affected tasks, new blockers and changed details need reconciliation in their originating project. "
+                 "Notification receipt, issue closure and unrelated restart never prove repair. Check public delivery "
+                 "evidence and local observations that the actual cause is gone, then use "
+                 "`alt task resume <slug> --reason '<verified fix and local observation>'`. "
+                 "Coordinator messages to faulted tasks are non-waking; human discussion remains available. "
+                 "Keep the original session and all landing checks and merge holds.")
     if fresh:
         lines.append("[altitude] Fresh provider session. Then read the state file; it is durable project memory.")
     lines.append('[altitude] For earlier decisions beyond the handoff, use `alt l3 search "literal text"` '

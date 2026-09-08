@@ -1,10 +1,11 @@
 """Fault evidence and notifications stay with the owning project, including repeated kinds."""
 import json
+import subprocess
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from tests.support import AltitudeCase, fyi_rows
+from tests.support import AltitudeCase, fyi_rows, git, make_repo
 from altitude import config, state as S, incidents, l3, verify, engines, dispatch, tasks as T
 
 PROJECT = "altitude"
@@ -32,7 +33,7 @@ class TestSystemFault(AltitudeCase):
         self.assertIn("system fault [test-kind]", blocked["blocked_reason"])
         self.assertEqual([row["trigger"] for row in self.queued()], ["incident"])
         self.assertIn(first["incident"], self.queued()[0]["text"])
-        again = incidents.system_fault("test-kind", "something broke again", project=PROJECT)
+        again = incidents.system_fault("test-kind", "something broke", project=PROJECT)
         self.assertIsNone(again, "same kind within 24h must not file a second incident")
         faults = S.read_json(incidents.FAULTS)
         self.assertEqual(faults[json.dumps([PROJECT, "test-kind"])]["count"], 2)
@@ -57,6 +58,134 @@ class TestSystemFault(AltitudeCase):
         # the same fault on the task that is already blocked by it adds nothing
         self.assertIsNone(incidents.system_fault("test-kind", "main behind origin", project=PROJECT, task=second_task["slug"]))
         self.assertEqual(len(self.queued()), 2)
+
+    def test_saved_blockers_stay_quiet_across_restarts_and_incident_windows(self):
+        from altitude import server
+        task = T.new(PROJECT, "persistent fault", "request")
+        first = incidents.system_fault("checkout", "local cause still present", project=PROJECT, task=task["slug"])
+        saved = S.load_task(PROJECT, task["slug"])
+        for day in (1, 3, 6):
+            with self.subTest(day=day), mock.patch.object(S, "now", return_value=f"2030-01-{day:02d}T00:00:00+00:00"), \
+                 mock.patch.object(dispatch, "_seconds_since", return_value=day * 86400), \
+                 mock.patch.object(server, "log"):
+                server.restart_notice()
+                self.assertIsNone(incidents.system_fault("checkout", "local cause still present",
+                                                        project=PROJECT, task=task["slug"]))
+                self.assertEqual(S.load_task(PROJECT, task["slug"]), saved)
+                self.assertEqual(dispatch.resume_due(PROJECT), [])
+        self.assertEqual(len(incidents.index(PROJECT)), 1)
+        self.assertEqual([row["trigger"] for row in self.queued()], ["incident", "restart", "restart", "restart"])
+        self.assertEqual(len(self.inbox_texts()), 1)
+        self.assertEqual(S.read_json(incidents.FAULTS)[json.dumps([PROJECT, "checkout"])]["incident"], first["incident"])
+
+    def test_changed_full_details_and_new_blockers_remain_actionable_per_task(self):
+        tasks = [T.new(PROJECT, title, "request") for title in ("first affected", "second affected")]
+        details = ["shared diagnostic prefix " + "x" * 900 + suffix for suffix in ("cause A", "cause B")]
+        first = incidents.system_fault("checkout", details[0], project=PROJECT, task=tasks[0]["slug"])
+        second = incidents.system_fault("checkout", details[1], project=PROJECT, task=tasks[1]["slug"])
+        self.assertEqual(first["incident"], second["incident"])
+        for task, detail in zip(tasks * 2, details * 2):
+            self.assertIsNone(incidents.system_fault("checkout", detail, project=PROJECT, task=task["slug"]))
+        self.assertEqual(len(self.queued()), 2, "alternating task observations do not generate new nudges")
+        original = S.load_task(PROJECT, tasks[0]["slug"])
+        changed = incidents.system_fault("checkout", details[1], project=PROJECT, task=tasks[0]["slug"])
+        self.assertEqual(changed["incident"], first["incident"])
+        saved = S.load_task(PROJECT, tasks[0]["slug"])
+        self.assertEqual(saved["blocked_reason"], f"system fault [checkout]: {details[1]}")
+        self.assertNotEqual(saved["block_id"], original["block_id"])
+        self.assertEqual(len(self.queued()), 3)
+        self.assertIn(tasks[0]["slug"], self.queued()[-1]["text"])
+        self.assertIsNone(incidents.system_fault("checkout", details[1], project=PROJECT, task=tasks[0]["slug"]))
+        other = incidents.system_fault("different-kind", "a different blocker", project=PROJECT, task=tasks[0]["slug"])
+        self.assertNotEqual(other["incident"], first["incident"])
+        self.assertEqual(len(self.queued()), 4)
+
+    def test_changed_project_observation_notifies_without_duplicate_incident(self):
+        first = incidents.system_fault("tick", "x" * 900 + "cause A", project=PROJECT)
+        changed = incidents.system_fault("tick", "x" * 900 + "cause B", project=PROJECT)
+        self.assertEqual(changed["incident"], first["incident"])
+        self.assertEqual(len(self.queued()), 2)
+        self.assertIsNone(incidents.system_fault("tick", "x" * 900 + "cause B", project=PROJECT))
+        self.assertEqual(S.read_json(incidents.FAULTS)[json.dumps([PROJECT, "tick"])]["detail"], "x" * 900 + "cause B")
+
+    def test_unchanged_fault_preserves_its_escalated_operator_question(self):
+        task = T.new(PROJECT, "fault awaiting operator", "request")
+        incidents.system_fault("environment", "Original failed operation", project=PROJECT, task=task["slug"])
+        T.escalate(PROJECT, task["slug"], "Approve using an alternative environment?")
+        saved = S.load_task(PROJECT, task["slug"])
+        self.assertEqual(saved["blocked_reason"], "system fault [environment]: Original failed operation")
+        self.assertEqual(saved["waiting_on"], T.OPERATOR_MESSAGE_ROLE)
+        self.assertEqual(T.question_views(PROJECT, task["slug"])[0]["question"], "Approve using an alternative environment?")
+        self.assertIsNone(incidents.system_fault("environment", "Original failed operation",
+                                                project=PROJECT, task=task["slug"]))
+        self.assertEqual(S.load_task(PROJECT, task["slug"]), saved)
+        self.assertEqual(len(self.queued()), 1)
+        self.assertEqual(dispatch.resume_due(PROJECT), [])
+
+    def test_reporting_receipt_closure_and_unrelated_restart_do_not_repair_originating_task(self):
+        from altitude import server
+        source = self.project
+        make_repo(self.repo)
+        checkout = self.tmp / "development"
+        make_repo(checkout)
+        git("remote", "set-url", "origin", "https://github.com/fictional/altitude.git", cwd=checkout)
+        self.register(PROJECT, path=checkout)
+        self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "fictional/altitude")
+        task = T.new(source, "affected task", "Keep its original session", hold_merge="Operator review")
+        task.update(state="running", attempt=2, session_id="original-session", agent_id="original-worker",
+                    l2_engine=config.ENGINES[0], launch_model="original-model")
+        S.save_task(source, task)
+        incident = incidents.system_fault("checkout", "Local cause still present", project=source, task=task["slug"])
+        saved = S.load_task(source, task["slug"])
+        url = "https://github.com/fictional/altitude/issues/42"
+        github = []
+        run = subprocess.run
+
+        def github_result(args, **kwargs):
+            if args[0] != "gh":
+                return run(args, **kwargs)
+            github.append(args[1:3])
+            return subprocess.CompletedProcess(args, 0, url + "\n", "")
+
+        with mock.patch.object(server.subprocess, "run", side_effect=github_result):
+            server.issue_write(source, "upstream", json.dumps({
+                "expected": "The toy task resumes after repair", "actual": "The toy task waits",
+                "reproduction": "Block a fictional task and inspect its status"}), actor="l3",
+                incident=incident["incident"], title="Fictional recovery defect")
+            self.assertEqual(S.load_task(source, task["slug"]), saved)
+            self.assertEqual(len(self.queued()), 1)
+            with mock.patch.object(l3, "_select", return_value={"engine": "claude", "why": "fixture"}), \
+                 mock.patch.object(engines, "claude_print", return_value={
+                     "text": "Issue received; no work assigned.", "session_id": "receiving-session", "usage": {}}):
+                self.assertTrue(l3.deliver_queued(PROJECT)["completed"])
+            server.issue_write(source, "upstream", "", actor="l3", incident=incident["incident"])
+            outcome = incidents.upstream_delivery(source, incident["incident"])
+            self.assertEqual((outcome["status"], outcome["notification"]["status"]), ("confirmed", "received"))
+            server.issue_write(PROJECT, "close", "", actor="l3", number=42, reason="completed")
+        self.assertEqual(github, [["issue", "create"], ["issue", "close"]])
+        with mock.patch.object(server, "log"):
+            server.restart_notice()
+        self.assertIsNone(incidents.system_fault("checkout", "Local cause still present", project=source, task=task["slug"]))
+        T.message(source, task["slug"], "l3", "The upstream issue is closed; local verification still fails.")
+        self.assertEqual(S.load_task(source, task["slug"]), saved)
+        self.assertEqual(dispatch.resume_due(source), [])
+        self.assertEqual(dispatch.pending_task_operations(source), [])
+        self.assertEqual(S.list_tasks(PROJECT), [])
+        self.assertEqual([r["trigger"] for r in self.queued(source)], ["incident", "restart"])
+
+    def test_late_rejected_fault_retains_evidence_without_retagging_newer_question(self):
+        task = T.new(PROJECT, "changed question", "request")
+        first = incidents.system_fault("checkout", "first fault", project=PROJECT, task=task["slug"])
+        old_id = S.load_task(PROJECT, task["slug"])["block_id"]
+        T.resume(PROJECT, task["slug"])
+        T.block(PROJECT, task["slug"], "operator decision still needed", actor="l2")
+        saved = S.load_task(PROJECT, task["slug"])
+        with mock.patch.object(dispatch, "_seconds_since", return_value=3 * 86400):
+            late = incidents.system_fault("checkout", "late failure evidence", project=PROJECT,
+                                          task=task["slug"], expected_block_id=old_id)
+        self.assertIsNotNone(late)
+        self.assertNotEqual(late["incident"], first["incident"])
+        self.assertEqual(S.load_task(PROJECT, task["slug"]), saved)
 
     def test_identical_faults_and_task_slugs_stay_in_each_project(self):
         self.register("demo")
@@ -87,9 +216,9 @@ class TestSystemFault(AltitudeCase):
                 repeat = incidents.system_fault("main-unpushed", f"{project} still refused",
                                                 project=project, task=task["slug"])
                 self.assertEqual((repeat["repeat"], repeat["incident"]), (True, iid))
-                self.assertIsNone(incidents.system_fault("main-unpushed", "same blocked task",
+                self.assertIsNone(incidents.system_fault("main-unpushed", f"{project} still refused",
                                                         project=project, task=task["slug"]))
-                self.assertIsNone(incidents.system_fault("main-unpushed", "same project", project=project))
+                self.assertIsNone(incidents.system_fault("main-unpushed", f"{project} still refused", project=project))
                 rows = self.queued(project)
                 self.assertEqual([r["trigger"] for r in rows], ["incident", "incident"])
                 for text in [r["text"] for r in rows] + self.inbox_texts(project):
@@ -112,7 +241,7 @@ class TestSystemFault(AltitudeCase):
             filed = incidents.system_fault(kind, "checkout refused", project=project)
             self.assertIsNotNone(filed)
             self.assertEqual(len(self.queued(project)), 1)
-            self.assertIsNone(incidents.system_fault(kind, "checkout still refused", project=project))
+            self.assertIsNone(incidents.system_fault(kind, "checkout refused", project=project))
         self.assertEqual(len(S.read_json(incidents.FAULTS)), 2)
 
     def test_unscoped_misrouted_record_never_supplies_another_projects_evidence(self):
@@ -137,8 +266,8 @@ class TestSystemFault(AltitudeCase):
         machine = incidents.system_fault("tick", "machine fault")
         project = incidents.system_fault("tick", "project fault", project=PROJECT)
         self.assertNotEqual(machine["incident"], project["incident"])
-        self.assertIsNone(incidents.system_fault("tick", "machine fault again"))
-        self.assertIsNone(incidents.system_fault("tick", "project fault again", project=PROJECT))
+        self.assertIsNone(incidents.system_fault("tick", "machine fault"))
+        self.assertIsNone(incidents.system_fault("tick", "project fault", project=PROJECT))
         self.assertEqual(len(self.queued()), 2)
         self.assertEqual(self.queued("demo"), [])
         faults = S.read_json(incidents.FAULTS)

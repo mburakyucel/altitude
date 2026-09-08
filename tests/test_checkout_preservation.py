@@ -192,15 +192,21 @@ class TestCheckoutPreservation(AltitudeCase):
         self.apply_snapshot(sha, other)
         self.assertEqual((other / "draft.bin").read_bytes(), b"\x00\xfffictional\n")
 
-    def test_message_resume_preserves_fault_and_consumes_only_the_attempted_wake(self):
+    def test_explicit_resume_preserves_fault_and_consumes_only_the_attempted_wake(self):
         self.refuse_dispatch(self.slug)
         message = T.message(self.project, self.slug, "l3", "Check after restart", by="l3")
-        self.assertIn(self.slug, dispatch.resume_due(self.project))
-        with self.assertRaises(dispatch.ResumeFailure):
-            dispatch.resume(self.project, self.slug)
+        self.assertNotIn(self.slug, dispatch.resume_due(self.project))
+        requested = dispatch.request_task_operation(self.project, self.slug, "resume",
+                                                    "Check the affected checkout after repair", actor="l3")
+        with self.assertRaisesRegex(dispatch.ResumeFailure, "checkout fault remains unresolved"):
+            dispatch.run_task_operation(self.project, self.slug)
         task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["daemon_request"]["id"], requested["request"]["id"])
+        self.assertEqual(task["daemon_request"]["status"], "failed")
+        self.assertIn("checkout fault remains unresolved", task["daemon_request"]["note"])
         self.assertEqual((task["state"], task["fault"]), ("blocked", "main-unpushed"))
         self.assertNotIn(self.slug, dispatch.resume_due(self.project))
+        self.assertNotIn(self.slug, dispatch.pending_task_operations(self.project))
         self.assertEqual(T.pending(self.project, self.slug)[0]["id"], message["id"])
 
     def test_nested_repository_is_not_removed_or_declared_recovered(self):

@@ -118,6 +118,10 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         if _ensure_question(project, task):
             S.save_task(project, task)
         row = {"id": uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
+        # #277: a coordinator's waiting update is discussion, not evidence that the fault is repaired.
+        wake_blocked = wake_blocked and not (role == "l3" and task.get("fault"))
+        if not wake_blocked:
+            row["wake"] = False
         groups = _groups(task)
         explicit_question = question_id is not None or revision is not None
         if explicit_question and (group_id is not None or group_revision is not None):
@@ -253,12 +257,15 @@ def mark_resume_held(project: str, slug: str, hold: str, *,
         if task.get("state") != "blocked":
             raise TransitionError(f"{slug}: expected blocked, found {task.get('state')}")
         after = retry_at or task.get("resume_after") or S.now()
-        if task.get("resume_after") == after and task.get("blocked_reason") == f"waiting: {hold}":
+        reason = task.get("blocked_reason") if task.get("fault") else f"waiting: {hold}"
+        previous = next((ev for ev in reversed(S.read_events(project, slug)) if ev.get("kind") == "resume-held"), {})
+        if (task.get("resume_after") == after and task.get("blocked_reason") == reason
+                and (previous.get("block_id"), previous.get("hold")) == (task.get("block_id"), hold)):
             return task
         task["resume_after"] = after
-        task["blocked_reason"] = f"waiting: {hold}"
+        task["blocked_reason"] = reason
         S.save_task(project, task)
-        S.append_event(project, slug, "resume-held", hold=hold)
+        S.append_event(project, slug, "resume-held", hold=hold, block_id=task.get("block_id"))
         return task
 
 
@@ -1327,7 +1334,8 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
             raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
         _supersede_resume(task)
         _ensure_question(project, task)
-        task.update({"waiting_on": "burak", "escalated": True, "blocked_reason": question})
+        task.update({"waiting_on": "burak", "escalated": True,
+                     "blocked_reason": task.get("blocked_reason") if task.get("fault") else question})
         current = _publish_block_questions(task, question, actor, questions, recommendation,
                                            recommendation_label, recommendation_why)
         S.save_task(project, task)

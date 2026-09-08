@@ -45,7 +45,8 @@ L2 receives the request, repository context, lease, worktree, branch, and merge 
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; an explicit Stop aborts a worker. Appending a message to a blocked
-task also persists a due `resume_after` request. An L3 CLI process stops there: altd coalesces that
+task also persists a due `resume_after` request, except non-waking coordinator discussion on a
+faulted task. An L3 CLI process stops there: altd coalesces that
 request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
@@ -203,7 +204,7 @@ globally freeze the other. Blocked is a persisted wait/intervention state: an L2
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
 first, which answers from the record or escalates a dilemma to the operator. The durable dilemma
 stays in Needs you while its answer is still needed, independently of the worker running or waiting. After a restart L3 receives the active tasks and resumes
-the ones a fault had stopped. Deferral is not an active
+faulted tasks only after verifying that their actual cause is gone. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
 Project registration stores `wip` only when explicitly supplied; the gate reads that override or
@@ -441,8 +442,14 @@ event. A Claude usage-window stop is recorded once for the machine, because the 
 machine-wide; Codex reports its limits per turn. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
 window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind
-blocking another task in the project adds one line for L3, not a new incident. The machine fault
-ledger keys records by the JSON-encoded pair `[project, kind]` (`null` for a projectless fault);
+blocking another task or changing its details adds one line for L3 within that window. Full fault
+reasons are the task-local observations: unchanged blockers stay quiet even after the incident window
+expires, including alternating observations from tasks sharing a kind. Changed observations update
+the saved reason and supersede pending recovery based on the earlier block. Capacity or quota
+waits during recovery retain the fault reason;
+their existing resume receipt, event and due time carry the wait. Escalation retains the fault
+reason while its independently saved question carries the dilemma. The machine fault
+ledger retains full details and keys records by the JSON-encoded pair `[project, kind]` (`null` for a projectless fault);
 incident references include their owning project. Unscoped historical records remain evidence and do not suppress
 notifications. Machine faults without a project notify registered `altitude`; when it is absent,
 they only update the machine fault ledger. An L2 that meets an environment fault (a sandbox, host, or tool refusing
@@ -452,6 +459,14 @@ is available; L3 records the learning on the incident and fixes the cause direct
 ordinary task. An incident raised by that repair task (`--source recovery`) stays in the project's inbox instead
 of waking L3 again. A task blocked before any launch goes back to the queue when it is resumed.
 Incident records are evidence only and never create tasks, personas, or follow-up work.
+Restart inventories and incidental events do not turn saved blockers into new failures. Every L3
+turn receives this guidance, including resumed provider sessions. The originating L3 checks public
+delivery evidence and relevant local observations that the cause is gone before the existing
+reason-bearing resume. Notification receipt, issue closure or unrelated restart is insufficient.
+Coordinator messages to faulted tasks use the existing non-waking inbox marker; they remain in the
+conversation and reach the worker on a later supported resume. Operator discussion still uses its
+ordinary wake path. The original attempt, provider session, launch model, worktree and merge holds
+remain under the existing dispatch and landing rules.
 Project-local repairs remain owned by the affected project. Its L3 reports Altitude implementation
 defects with [`alt issue upstream`](CLI.md#upstream-altitude-defects), a create-only exception to the
 project-local issue verbs. The daemon owns the product target seam: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`

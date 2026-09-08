@@ -354,6 +354,15 @@ deleted or converted. Never use `stash pop`, `stash drop`, `reset --hard` or `cl
 shortcut; archive or stash removal requires an explicit operator action.
 A restart alone does not resolve the fault, and unsuccessful resume leaves it reported.
 
+For upstream defects, the originating L3 checks public delivery evidence and local observations
+that the actual cause is gone before `alt task resume <slug> --reason "<verified fix and observation>"`.
+Notification receipt, issue closure and unrelated restart do not establish repair. Saved unchanged
+blockers do not generate repeated recovery nudges; new affected tasks, new blockers and changed
+details remain actionable. `alt task message` from L3 to a faulted task records non-waking discussion;
+use the explicit reason-bearing resume after verification. Operator messages retain their ordinary
+discussion wake. Resume preserves the original attempt/session/model and the guarded landing path,
+including any merge hold.
+
 ## Project lifecycle
 
 `alt project remove <name>` is operator-only. Removing a project from Altitude means detaching its
@@ -482,7 +491,8 @@ For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local d
 worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.
 A repeated reason after a genuine later lifecycle creates a new request against that lifecycle's identity.
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
-worker in the caller. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
+worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
+the explicit reason-bearing resume. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
 
 ### Conversational decisions
