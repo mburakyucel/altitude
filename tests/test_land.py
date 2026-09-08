@@ -229,6 +229,128 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "create"]]), 1)
 
+    def closing_link_fixture(self, links, *, remove_during_checks=False):
+        """Script GitHub's relationship response; Git, bodies and landing remain real."""
+        real = land._run
+        self.pr_bodies = []
+        self.observed_checks = False
+
+        def answer(args):
+            if args[:3] == ["gh", "repo", "view"]:
+                return subprocess.CompletedProcess(args, 0, '{"defaultBranchRef":{"name":"main"}}', "")
+            if args[:3] == ["gh", "pr", "checks"]:
+                self.observed_checks = True
+            if args[:3] in (["gh", "pr", "create"], ["gh", "pr", "edit"]) and "--body-file" in args:
+                self.pr_bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
+            if args[:3] != ["gh", "pr", "view"]:
+                return None
+            response = real(args, self.repo)
+            if response.returncode == 0:
+                pr = json.loads(response.stdout)
+                pr["url"] = "https://github.com/acme/widget/pull/101"
+                pr["closingIssuesReferences"] = ([] if remove_during_checks and self.observed_checks else links)
+                response.stdout = json.dumps(pr)
+            return response
+
+        return self.record_commands(answer)
+
+    def test_complete_issue_delivery_creates_reuses_and_merges_linked_pr(self):
+        self.set_current_l2()
+        self.leased_change()
+        commands = self.closing_link_fixture([
+            {"url": "https://github.com/acme/widget/issues/42"},
+            {"url": "https://github.com/acme/widget/issues/43"},
+        ])
+        body = self.tmp / "pr-body.md"
+        body.write_text("Both acceptance scopes verified.\n\nCloses #42\nCloses #43\n")
+        opened = land.land("fix: complete issues", cwd=self.repo, wait=0,
+                           pr_body_file=str(body), closes_issues=[42, 43, 42])
+        self.assertFalse(opened["merged"])
+        self.assertEqual(self.pr_bodies, [body.read_text()])
+        original_body = body.read_text()
+        body.write_text("Both acceptance scopes verified after review.\n\nCloses #42\nCloses #43\n")
+        updated = land.land("fix: complete issues", cwd=self.repo, wait=0,
+                            pr_body_file=str(body), closes_issues=[42, 43])
+        self.assertFalse(updated["merged"])
+        self.assertEqual(self.pr_bodies, [original_body, body.read_text()])
+        # A resumed owner repeats the declared scope; the existing PR retains its body.
+        merged = land.land("fix: complete issues", cwd=self.repo, wait=0,
+                           closes_issues=[42, 43], merge=True)
+        self.assertTrue(merged["merged"])
+        self.assertEqual(self.pr_bodies, [original_body, body.read_text()])
+        self.assertFalse(any(args[:2] == ["gh", "issue"] for args in commands))
+
+    def test_mentions_and_partial_work_do_not_declare_closure(self):
+        self.leased_change()
+        commands = self.closing_link_fixture([])
+        (S.task_dir("demo", "fix-x") / "request.md").write_text("Design one part of GitHub issue #42.")
+        body = self.tmp / "partial.md"
+        body.write_text("Addresses #42; remaining implementation and operator acceptance are pending.\n")
+        result = land.land("docs: partial design", cwd=self.repo, wait=0, pr_body_file=str(body), merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.pr_bodies, [body.read_text()])
+        self.assertFalse(any(args[:2] == ["gh", "issue"] for args in commands))
+
+    def test_missing_or_foreign_closing_links_refuse_merge(self):
+        self.leased_change()
+        links = []
+        commands = self.closing_link_fixture(links)
+        for response in ([], [{"url": "https://github.com/other/widget/issues/42"}],
+                         [{"url": "https://github.com/acme/widget/issues/43"}]):
+            links[:] = response
+            with self.subTest(response=response), self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
+                land.land("fix: missing link", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+        self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
+
+    def test_removed_closing_link_during_checks_refuses_merge(self):
+        self.leased_change()
+        commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}],
+                                             remove_during_checks=True)
+        with self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
+            land.land("fix: scope changed", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+        self.assertTrue(self.observed_checks)
+        self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
+
+    def test_merged_retry_routes_missing_closure_to_l3(self):
+        self.leased_change()
+        commands = self.closing_link_fixture([])
+        landed = land.land("fix: historical delivery", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(landed["merged"])
+        commands.clear()
+        with self.assertRaisesRegex(land.LandError, "already merged without closing links.*L3"):
+            land.land("fix: historical delivery", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+        self.assertFalse(any(args[:3] in (["gh", "pr", "merge"], ["gh", "pr", "edit"])
+                             or args[:2] == ["gh", "issue"] for args in commands))
+
+    def test_manual_closing_link_on_nondefault_target_refuses_merge(self):
+        self.git("push", "origin", "HEAD:refs/heads/release")
+        self.leased_change()
+        commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}])
+        with self.assertRaisesRegex(land.LandError, "must target GitHub's default branch"):
+            land.land("fix: release only", cwd=self.repo, wait=0, base="release", closes_issues=[42], merge=True)
+        self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
+
+    def test_closing_link_does_not_bypass_hold_or_failed_checks(self):
+        self.leased_change()
+        commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}])
+        (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
+        result = land.land("fix: linked but red", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+        self.assertFalse(result["merged"])
+        self.hold_merge()
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("fix: held", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
+        self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
+
+    def test_closes_issue_cli_rejects_invalid_numbers_before_publication(self):
+        self.leased_change()
+        for number in ("0", "-1", "42"):
+            result = subprocess.run([str(ALT), "land", "--message", "fix: linked", "--wait", "0",
+                                     "--closes-issue", number, "--merge"], cwd=self.repo,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("lacks GitHub closing links" if number == "42" else "positive issue number", result.stderr)
+        self.assertFalse(any(args[:2] == ["pr", "merge"] for args in self.gh_log()))
+
     def test_rebased_push_retries_with_recorded_tip_lease_exactly_once(self):
         self.leased_change("src/original.py")
         self.git("add", "src/original.py")

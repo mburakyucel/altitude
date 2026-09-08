@@ -4,6 +4,17 @@ The persistent L3 conversation coordinates the project across task lifetimes. Ea
 task, with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
+
+An authorized delivery that fully satisfies an identified project issue includes `Closes #N` in its
+reviewed PR body and passes `--closes-issue N` to `alt land`, including resumed merge calls. The
+explicit flag checks GitHub's project-local closing relationship and actual default branch after PR
+creation/edit and before merge; the PR retains that relationship and GitHub closes on that merge.
+A merged retry validates its declared links too, routing missing historical linkage to L3.
+The owner verifies the closed issue alongside the merged delivery. Intake's issue snapshot and task
+archival imply no closure themselves. Partial work, design-only progress and explicitly pending
+operator acceptance keep the issue open without closing keywords; merge holds remain in force.
+Missing links on already merged complete deliveries go to L3 via `alt task reply` and report
+`follow_ups`, naming the issue, merged PR and full-scope evidence. No periodic issue cleanup runs.
 The operator can also steer an L2 directly while other tasks continue.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
@@ -274,8 +285,9 @@ write commands are absent; `alt issue new` and `alt issue comment` publish reque
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
 an issue URL or an actionable failure; the successful receipt stays in the calling project's log.
-L3 may use `alt issue close <number> --reason completed|not-planned` only for operator-requested closure,
-never autonomous backlog cleanup. It follows the same coordinator/socket boundary, publishes no text,
+L3 may use `alt issue close <number> --reason completed|not-planned` for requested closure or to
+reconcile verified completion of an authorized delivery with `completed`, without another routine
+operator request. Unrelated autonomous backlog cleanup remains unauthorized. It follows the same coordinator/socket boundary, publishes no text,
 and records the actor, issue number, closure reason, and URL in the project log after GitHub succeeds.
 L2 remains unable to mutate issues. Claude's native Bash
 sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its

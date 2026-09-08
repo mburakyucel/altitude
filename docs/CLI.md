@@ -52,8 +52,9 @@ alt issue comment <number> -
 alt issue close <number> --reason completed|not-planned
 ```
 
-L3 and the operator use these verbs through altd; L2 cannot mutate issues. L3 files requested backlog
-and closes an issue only when the operator asks for that closure, never as autonomous backlog cleanup.
+L3 and the operator use these verbs through altd; L2 cannot mutate issues directly. L3 files requested
+backlog and closes issues for requested closure or verified completion of authorized delivery,
+without another routine request. This does not authorize unrelated autonomous backlog cleanup.
 The repository comes from the selected project's checkout origin; issue numbers must be positive
 integers, and URLs or repository overrides are refused. The L3 socket fixes the project.
 
@@ -71,6 +72,37 @@ The operator CLI uses `POST /api/issue` with
 `body` may be omitted or empty. Both paths apply the same operation validation and return the issue
 URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful closure appends an
 `issue-close` project event with actor, number, reason, title, and URL; failed calls record no success.
+
+### Delivery-linked issue completion
+
+For authorized implementation that fully satisfies an identified issue, write `Closes #42` in the
+reviewed PR body and land with:
+
+```sh
+alt land --message "fix: satisfy the issue" --pr-body-file /tmp/pr.md --closes-issue 42
+alt land --message "fix: satisfy the issue" --closes-issue 42 --merge
+```
+
+`--closes-issue` is a repeatable positive issue number in the project's repository. It asserts the
+owner's verified full-scope resolution; it validates the link, and does not insert a keyword or infer
+scope from the task. Repeat the flag on every invocation, including a resumed merge. GitHub's PR body
+retains the link when reused without a replacement body. A replacement body must retain every intended
+closing keyword. Landing checks `closingIssuesReferences` and the repository's actual default branch
+after creation/edit and again before merge; missing links, a same-number link to another repository,
+or a nondefault target refuse landing. Supply one closing keyword per issue. A retry on an already
+merged PR also validates the declared links and routes a missing historical link to L3. See
+[GitHub's supported closing relationship](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue).
+
+`Addresses #42` is a mention, not a closing link. Partial work, design-only progress and explicitly
+pending operator acceptance use mentions with the remaining scope explained. Rejected or unmerged PRs
+do not complete issues. Merge holds and all applicable checks still apply. Verify the issue state
+after merge and record the evidence in the task report's `fyi`.
+
+For an already merged delivery with a missing link, L2 sends `alt task reply` and a report `follow_ups`
+entry naming the issue, merged PR and proof that all acceptance scope is satisfied, requesting
+`alt issue close 42 --reason completed`. L3 verifies that evidence and uses the documented issue verb
+in the owning project. An issue umbrella remains open if only a part shipped. This reconciliation
+completes authorized work; it grants no automatic backlog intake or general L2 issue-write authority.
 
 ### Upstream Altitude defects
 
