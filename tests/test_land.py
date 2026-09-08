@@ -229,14 +229,16 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "create"]]), 1)
 
-    def closing_link_fixture(self, links, *, remove_during_checks=False):
+    def closing_link_fixture(self, links, *, remove_after_validation=False):
         """Script GitHub's relationship response; Git, bodies and landing remain real."""
         real = land._run
         self.pr_bodies = []
         self.observed_checks = False
+        self.validated_links = False
 
         def answer(args):
             if args[:3] == ["gh", "repo", "view"]:
+                self.validated_links = True
                 return subprocess.CompletedProcess(args, 0, '{"defaultBranchRef":{"name":"main"}}', "")
             if args[:3] == ["gh", "pr", "checks"]:
                 self.observed_checks = True
@@ -248,7 +250,7 @@ class TestLand(AltitudeCase):
             if response.returncode == 0:
                 pr = json.loads(response.stdout)
                 pr["url"] = "https://github.com/acme/widget/pull/101"
-                pr["closingIssuesReferences"] = ([] if remove_during_checks and self.observed_checks else links)
+                pr["closingIssuesReferences"] = ([] if remove_after_validation and self.validated_links else links)
                 response.stdout = json.dumps(pr)
             return response
 
@@ -302,13 +304,14 @@ class TestLand(AltitudeCase):
                 land.land("fix: missing link", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
-    def test_removed_closing_link_during_checks_refuses_merge(self):
+    def test_removed_closing_link_before_merge_refuses_merge(self):
         self.leased_change()
         commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}],
-                                             remove_during_checks=True)
+                                             remove_after_validation=True)
         with self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
             land.land("fix: scope changed", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
         self.assertTrue(self.observed_checks)
+        self.assertTrue(self.validated_links)
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_merged_retry_routes_missing_closure_to_l3(self):
