@@ -40,9 +40,14 @@ policy system. Engine-native customization stays in skills, hooks, and agent def
   conversation. It may implement directly or delegate bounded slices to its engine's own subagents;
   Altitude does not track them, and delegation never transfers ownership.
 
-For large or ambiguous work, L2's first output is a short proposal and it blocks for the operator's
-go before writing code. L3 dispatches concrete requests without a separate scoping or research stage.
+For large or ambiguous implementation, L2's first output is a short proposal and it blocks for the
+operator's go before writing code. L3 dispatches concrete requests without a separate scoping or research stage.
 Module-level calls belong to the implementing session and are reported in the PR.
+Prefer small, safely mergeable increments for large or complex issues as described in the
+[delivery guidance](docs/CLI.md#incremental-issue-delivery). Splitting work does not bypass unresolved
+operator decisions, this proposal checkpoint, merge holds, or the deletion-first/no-dormant-code rule.
+A bounded rollout needs agreement for the concrete feature; discussion of disabled paths or limited
+development/admin exposure grants no new privilege model, generic flag framework, or dormant foundations.
 
 ## Boundaries
 
@@ -55,7 +60,8 @@ Module-level calls belong to the implementing session and are reported in the PR
 - Merge when applicable checks and appropriate review pass, unless a recorded hold applies. Major
   UX changes, cost-accruing infrastructure, identity, or security changes hold for operator review.
   A hold report explains the strategy and decisions made. Explicit task authorization governs the hold.
-- Authorized implementation that fully satisfies an identified project issue closes it through the
+- Authorized implementation whose cumulative delivered evidence fully satisfies an identified project
+  issue, including required operator acceptance, closes it through the
   reviewed PR's native closing relationship and `alt land --closes-issue N`; verify closure after merge.
   Partial work, design-only progress, pending operator acceptance, and unrelated mentions leave issues
   open. Missing links on already merged complete deliveries go to L3 for evidence-based reconciliation;
@@ -64,7 +70,8 @@ Module-level calls belong to the implementing session and are reported in the PR
   and optional merge path.
 - Do not turn an incident or review finding into another task or session. Record evidence;
   L3 and Burak decide any later work.
-- If work should be deferred, create or update a GitHub issue and reject/archive the active task.
+- If agreed task scope must be deferred, route it to L3 for authorized issue tracking and task rejection/archive.
+  Completing an agreed increment completes that task; outstanding parent-issue scope stays recorded and open.
 - Never publish credentials, tokens, private incident evidence, or security-sensitive operational
   details.
 
