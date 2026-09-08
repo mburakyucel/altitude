@@ -5,7 +5,7 @@ import subprocess
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase, git, make_repo
-from altitude import server, state as S, tasks as T
+from altitude import land, server, state as S, tasks as T
 
 
 class TestRecordedMergeApproval(AltitudeCase):
@@ -121,6 +121,45 @@ class TestRecordedMergeApproval(AltitudeCase):
                 self.assertEqual(task["merge_approval"], receipt)
                 self.assertEqual(receipt["approval"], self.approval["id"])
                 self.assertEqual((self.directory / "conversation.jsonl").read_bytes(), conversation)
+
+    def test_sequential_adoption_requires_approval_of_the_new_active_pr(self):
+        authority = {"actor": T.OPERATOR_MESSAGE_ROLE}
+        first, _ = land._record_adoption(self.project, self.slug,
+            {"number": 235, "url": self.pull["url"], "branch": "proposal/first", "head": "d" * 40},
+            authority, previous=None, dry_run=False)
+        self.pull["headRefName"] = first["branch"]
+        released = json.loads(self.request()["stdout"])
+        old_release = [e for e in S.read_events(self.project, self.slug) if e["kind"] == "release-merge"]
+        self.at = "2026-09-07T20:06:00+00:00"
+        second, hold = land._record_adoption(self.project, self.slug,
+            {"number": 236, "url": "https://github.com/team/project/pull/236",
+             "branch": "proposal/second", "head": "e" * 40}, authority, previous=first, dry_run=False)
+        self.assertEqual(hold, "Review the story")
+        self.assertEqual(S.load_task(self.project, self.slug)["adoption_history"], [first])
+        self.refused("stale")  # The previous approval cannot authorize this fresh hold.
+
+        # Even a fresh approval of the old PR cannot release the active PR's hold.
+        self.at = "2026-09-07T20:07:00+00:00"
+        T.message(self.project, self.slug, "l2", first["url"])
+        self.at = "2026-09-07T20:08:00+00:00"
+        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Good to merge", wake_blocked=False)
+        self.refused("adopted PR")
+
+        self.pull.update(number=236, url=second["url"], headRefName=second["branch"], headRefOid=second["head"],
+                         updatedAt="2026-09-07T20:09:00Z")
+        self.at = "2026-09-07T20:10:00+00:00"
+        T.message(self.project, self.slug, "l2", second["url"])
+        self.at = "2026-09-07T20:11:00+00:00"
+        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Good to merge", wake_blocked=False)
+        self.at = "2026-09-07T20:12:00+00:00"
+        accepted = T.apply_merge_approval(self.project, self.slug, self.approval["id"], self.pull,
+                                         head=second["head"], reason="Approve the second PR", actor="l3")
+        self.assertEqual((accepted["pr"], accepted["head"]), (236, second["head"]))
+        self.assertNotEqual(accepted["hold_id"], released["hold_id"])
+        self.assertIsNone(S.load_task(self.project, self.slug)["hold_merge"])
+        self.assertEqual([e for e in S.read_events(self.project, self.slug)
+                          if e["kind"] == "release-merge"][:1], old_release)
+        self.assertEqual(S.load_task(self.project, self.slug)["adoption_history"], [first])
 
     def test_approval_from_another_project_cannot_authorize_the_same_task_slug(self):
         self.register("foreign")

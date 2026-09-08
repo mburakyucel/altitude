@@ -61,6 +61,149 @@ class TestAdoption(AltitudeCase):
     def receipt(self):
         return S.load_task("demo", "fix-x").get("adopted_pr")
 
+    def next_pr(self):
+        """Finish the first hosted PR, then incorporate a separately assigned external PR."""
+        (self.ghdir / "merge_git.txt").touch()
+        self.adopt(merge=True)
+        previous = land._pr_view(self.repo, "101")
+        S.write_json(self.ghdir / "prs.json", {"101": previous})
+        self.git("merge", "--ff-only", "origin/main")
+        head = self.commit("src/second.py", "Second external proposal")
+        self.git("push", "-q", "origin", "HEAD:proposal/second")
+        self.pull = {**self.pull, "number": 102, "url": "https://github.com/team/demo/pull/102",
+                     "state": "OPEN", "headRefName": "proposal/second"}
+        self.write_pr()
+        return {"adopt_pr": 102, "expected_head": head, "reason": "This task is also assigned PR 102"}
+
+    def test_sequential_authorized_adoption_preserves_receipts_and_targets_active_pr(self):
+        next_pr = self.next_pr()
+        first = self.receipt()
+        event = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"][0]
+        commands = self.record_commands()
+        result = land.land("second proposal", cwd=self.repo, wait=0, dry_run=True, **next_pr)
+        self.assertEqual(result["adopted_pr"]["number"], 102)
+        self.assertEqual(self.receipt(), first)
+        self.assertNotIn("adoption_history", S.load_task("demo", "fix-x"))
+        result = land.land("second proposal", cwd=self.repo, wait=0, **next_pr)
+        self.assertEqual(result["pr"], 102)
+        second = self.receipt()
+        task = S.load_task("demo", "fix-x")
+        self.assertEqual(task["adoption_history"], [first])
+        self.assertEqual(task["prs"], [101, 102])
+        self.assertEqual(second["previous_merge"], self.git("rev-parse", "origin/main").strip())
+        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
+                                        git_policy.capture_origin_sha(self.repo), require_clean=True)
+        land.land("retry second proposal", cwd=self.repo, wait=0, **next_pr)
+        self.assertEqual(self.receipt(), second)
+        events = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0], event)
+        with self.assertRaisesRegex(land.LandError, "earlier adoption"):
+            self.adopt()
+        merged = land.land("merge second proposal", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((merged["pr"], merged["merged"]), (102, True))
+        self.git("merge-base", "--is-ancestor", first["head"], "origin/main")
+        self.git("merge-base", "--is-ancestor", second["head"], "origin/main")
+        self.assertEqual(S.load_task("demo", "fix-x")["adoption_history"], [first])
+        for args in commands:
+            if args[:2] == ["git", "push"]:
+                self.assertIn("refs/heads/worktree-fix-x:refs/heads/proposal/second", args)
+                self.assertFalse(any("--force" in arg for arg in args))
+
+    def test_continuation_refuses_incomplete_or_unverified_previous_delivery(self):
+        self.adopt()
+        first = self.receipt()
+        for update in ({"state": "OPEN"}, {"state": "CLOSED"}, {"state": "MERGED"},
+                       {"state": "MERGED", "mergeCommit": {"oid": "0" * 40}}):
+            with self.subTest(update=update):
+                self.write_pr(**update)
+                with self.assertRaisesRegex(land.LandError, "previous adoption"):
+                    land.land("next", cwd=self.repo, adopt_pr=102, expected_head=self.original, reason="assigned")
+                self.assertEqual(self.receipt(), first)
+                self.assertNotIn("adoption_history", S.load_task("demo", "fix-x"))
+
+    def test_failed_next_adoption_and_concurrent_transition_keep_receipts(self):
+        next_pr = self.next_pr()
+        first = self.receipt()
+        self.leased_change("outside.txt")
+        with self.assertRaisesRegex(land.LandError, "outside the lease"):
+            land.land("next", cwd=self.repo, wait=0, **next_pr)
+        self.assertEqual(self.receipt(), first)
+        (self.repo / "outside.txt").unlink()
+        real = land._record_adoption
+        def race(*args, **kwargs):
+            task = S.load_task("demo", "fix-x")
+            task["adopted_pr"] = {**first, "number": 103}
+            S.save_task("demo", task)
+            return real(*args, **kwargs)
+        with mock.patch.object(land, "_record_adoption", side_effect=race), self.assertRaisesRegex(
+                land.LandError, "adoption changed"):
+            land.land("next", cwd=self.repo, wait=0, **next_pr)
+        self.assertNotIn("adoption_history", S.load_task("demo", "fix-x"))
+
+    def test_continuation_preserves_hold_and_refuses_later_unowned_history(self):
+        next_pr = self.next_pr()
+        task = S.load_task("demo", "fix-x")
+        task["hold_merge"] = "Review the next PR"
+        S.save_task("demo", task)
+        land.land("next", cwd=self.repo, wait=0, **next_pr)
+        self.assertEqual(S.load_task("demo", "fix-x")["hold_merge"], "Review the next PR")
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("merge next", cwd=self.repo, wait=0, merge=True)
+        self.commit("src/unowned.py", "Unassigned later update")
+        with self.assertRaisesRegex(land.LandError, "without exact"):
+            land.land("next", cwd=self.repo, wait=0)
+        with self.assertRaisesRegex(T.TransitionError, "without exact"):
+            dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
+                                            git_policy.capture_origin_sha(self.repo), require_clean=True)
+
+    def test_previous_pr_approval_restores_hold_on_next_adoption_even_with_merge(self):
+        next_pr = self.next_pr()
+        task = S.load_task("demo", "fix-x")
+        task.update(hold_merge=None, hold_merge_id="first-hold",
+                    merge_approval={"pr": 101, "hold_id": "first-hold", "hold": "Review each PR"})
+        S.save_task("demo", task)
+        with self.assertRaisesRegex(land.LandError, "Review each PR"):
+            land.land("next", cwd=self.repo, wait=0, merge=True, **next_pr)
+        current = S.load_task("demo", "fix-x")
+        self.assertEqual(current["adopted_pr"]["number"], 102)
+        self.assertEqual(current["hold_merge"], "Review each PR")
+        self.assertNotEqual(current["hold_merge_id"], "first-hold")
+        hold = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "hold-merge"][-1]
+        self.assertEqual(hold["hold_id"], current["hold_merge_id"])
+        T.set_hold_merge("demo", "fix-x", None, actor="burak")
+        land.land("retry", cwd=self.repo, wait=0, **next_pr)
+        self.assertIsNone(S.load_task("demo", "fix-x")["hold_merge"])
+
+    def test_explicit_later_task_wide_release_survives_next_adoption(self):
+        next_pr = self.next_pr()
+        task = S.load_task("demo", "fix-x")
+        task.update(hold_merge=None, hold_merge_id="first-hold",
+                    merge_approval={"pr": 101, "hold_id": "first-hold", "hold": "Review each PR"})
+        S.save_task("demo", task)
+        T.set_hold_merge("demo", "fix-x", None, actor="burak")
+        result = land.land("next", cwd=self.repo, wait=0, merge=True, **next_pr)
+        self.assertTrue(result["merged"])
+        self.assertIsNone(S.load_task("demo", "fix-x")["hold_merge"])
+
+    def test_stale_base_metadata_uses_current_main_and_preserves_real_history(self):
+        old_base = self.git("rev-parse", "origin/main").strip()
+        (self.project_repo / "base.txt").write_text("main advances independently\n")
+        git("add", "base.txt", cwd=self.project_repo)
+        git("commit", "-q", "-m", "Main advances", cwd=self.project_repo)
+        git("push", "-q", "origin", "main", cwd=self.project_repo)
+        self.git("fetch", "origin", "main")
+        new_base = self.git("rev-parse", "origin/main").strip()
+        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main", "-m", "Altitude-Task: demo/fix-x")
+        head = self.git("rev-parse", "HEAD").strip()
+        self.git("push", "-q", "origin", "HEAD:proposal/external")
+        self.original = head
+        self.write_pr(baseRefOid=old_base, baseRef={"target": {"oid": new_base}})
+        (self.ghdir / "merge_git.txt").touch()
+        result = self.adopt(merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{new_base} {head}")
+
     def assert_unpublished(self):
         self.assertIsNone(self.receipt())
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")

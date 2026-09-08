@@ -81,6 +81,8 @@ class TestOfflineJourneys(AltitudeCase):
         return task
 
     def test_delivery_through_http_dispatch_real_git_landing_verified_report_and_archive(self):
+        git("config", f"url.{self.tmp / 'origin.git'}.insteadOf", "https://github.com/team/demo.git", cwd=self.repo)
+        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
         task = self.launch(self.queue("Deliver one change"))
         slug = task["slug"]
         view = self.request(f"/api/task/{self.project}/{slug}")

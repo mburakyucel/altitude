@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from . import config, dispatch, git_policy, github_intake, state as S
@@ -52,7 +53,7 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
             env.pop("GH_HOST", None)
             origin = _need(_git(cwd, "config", "--get", "remote.origin.url"), "origin URL")
             match = github_intake._REMOTE.fullmatch(origin)
-            if match:
+            if match and args[1] != "api":
                 repository = f"{match['owner']}/{match['repo']}"
                 args = [*args, *([repository] if args[1:3] == ["repo", "view"] else ["--repo", repository])]
         return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
@@ -220,7 +221,7 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
 
 def _pr_view(root: Path, target: str) -> dict | None:
     p = _run(["gh", "pr", "view", target, "--json",
-              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision,closingIssuesReferences"], root)
+              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision,closingIssuesReferences,mergeCommit"], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():
@@ -264,7 +265,7 @@ def _require_closing_issues(root: Path, number: int, issues: list[int]) -> None:
 
 def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base: str,
               number: int | None, expected_head: str | None, reason: str | None) -> tuple[dict | None, dict | None]:
-    """#252: one explicitly selected PR/head, bound to this project's isolated task checkout."""
+    """Explicitly select one PR/head at a time in this project's isolated task checkout."""
     receipt = task.get("adopted_pr")
     if number is None and not receipt:
         return None, None
@@ -279,6 +280,23 @@ def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base
     match = github_intake._REMOTE.fullmatch(origin)
     if not match:
         raise LandError("adoption requires a GitHub origin")
+    previous_merge = None
+    if receipt and number is not None and number != receipt["number"]:
+        # #266: continuation requires completed, preserved history, never a wider provenance exception.
+        if any(old["number"] == number for old in task.get("adoption_history", [])):
+            raise LandError("cannot reactivate an earlier adoption receipt")
+        previous = _pr_view(root, str(receipt["number"])) or {}
+        previous_merge = (previous.get("mergeCommit") or {}).get("oid")
+        if (receipt["origin"] != origin or receipt["base"] != base or previous.get("state") != "MERGED"
+                or previous.get("number") != receipt["number"] or previous.get("url") != receipt["url"]
+                or previous.get("headRefName") != receipt["branch"] or previous.get("baseRefName") != base
+                or not previous_merge or not previous.get("headRefOid")):
+            raise LandError("previous adoption must be verified merged before selecting another PR")
+        for ancestor, descendant in ((receipt["head"], previous_merge),
+                                     (previous["headRefOid"], previous_merge), (previous_merge, f"origin/{base}")):
+            _need(_git(root, "merge-base", "--is-ancestor", ancestor, descendant),
+                  "previous adoption is not preserved in the current base")
+        receipt = None
     if receipt and (receipt["base"] != base or receipt["origin"] != origin
                     or number is not None and (number != receipt["number"] or expected_head != receipt["head"])):
         raise LandError("adopted PR identity is immutable; cannot change its PR, base, origin, or original head")
@@ -305,6 +323,8 @@ def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base
     if not receipt:
         receipt = {"number": number, "url": pr["url"], "branch": remote_branch, "base": base,
                    "head": remote_head, "origin": origin, "reason": reason.strip()}
+        if previous_merge:
+            receipt["previous_merge"] = previous_merge
     return receipt, pr
 
 
@@ -324,27 +344,38 @@ def _adoption_scope(root: Path, base: str, lease: list[str]) -> None:
         raise LandError(f"adopted PR changes outside the lease: {', '.join(outside)}")
 
 
-def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | None, *, dry_run: bool) -> None:
+def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | None, *,
+                     previous: dict | None, dry_run: bool) -> tuple[dict, str | None]:
     with S.project_lock(project):
         current = S.load_task(project, slug)
         _require_current_publisher(project, slug, current, authority)
-        if current.get("adopted_pr"):
-            if current["adopted_pr"] != receipt:
-                raise LandError("task adoption changed during landing")
+        if current.get("adopted_pr") != previous:
+            raise LandError("task adoption changed during landing")
         for other in S.list_tasks(project):
             adopted = other.get("adopted_pr") or {}
             if other["slug"] != slug and other["state"] in S.OPEN_STATES and (
                     adopted.get("number") == receipt["number"] or adopted.get("branch") == receipt["branch"]
                     or other.get("branch") == receipt["branch"] or receipt["number"] in other.get("prs", [])):
                 raise LandError(f"PR or branch already belongs to task {other['slug']}")
-        if dry_run or current.get("adopted_pr"):
-            return
+        if dry_run or previous == receipt:
+            return receipt, current.get("hold_merge")
         receipt = {**receipt, "actor": (authority or {}).get("actor") or os.environ.get("ALTITUDE_ACTOR", "operator"),
                    "attempt": current.get("attempt"), "at": S.now()}
+        if previous:
+            current.setdefault("adoption_history", []).append(previous)
+        approval = current.get("merge_approval") or {}
+        restore_hold = (previous and not current.get("hold_merge") and approval.get("pr") == previous["number"]
+                        and approval.get("hold_id") == current.get("hold_merge_id") and approval.get("hold"))
+        if restore_hold:  # #266: recorded approval releases only its presented PR, not the next adoption.
+            current.update(hold_merge=restore_hold, hold_merge_id=uuid.uuid4().hex)
         current["adopted_pr"] = receipt
-        current["prs"] = sorted(set(current.get("prs", []) + [receipt["number"]]))
+        current["prs"] = [n for n in current.get("prs", []) if n != receipt["number"]] + [receipt["number"]]
         S.save_task(project, current)
+        if restore_hold:
+            S.append_event(project, slug, "hold-merge", why=restore_hold, actor=receipt["actor"],
+                           hold_id=current["hold_merge_id"])
         S.append_event(project, slug, "pr-adopted", **receipt)
+        return receipt, current.get("hold_merge")
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
@@ -417,6 +448,194 @@ def _checks_state(root: Path, number: int) -> str:
     return "skipped" if "skipping" in buckets else "pass"
 
 
+def _check_query(root: Path, query: str, **variables) -> dict:
+    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
+    match = github_intake._REMOTE.fullmatch(origin)
+    if not match:
+        raise LandError("check evidence requires a GitHub origin")
+    args = ["gh", "api", "graphql", "-f", f"query={query}"]
+    for key, value in {"owner": match["owner"], "repo": match["repo"], **variables}.items():
+        args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
+    try:
+        result = json.loads(_need(_run(args, root), "GitHub check evidence"))
+        if result.get("errors"):
+            raise ValueError("GraphQL errors")
+        return result["data"]["repository"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LandError("GitHub check evidence is incomplete or unreadable") from exc
+
+
+def _complete_check_nodes(connection: dict) -> list[dict]:
+    # #266: a truncated response must not hide a required, failing, or skipped check.
+    try:
+        nodes = connection["nodes"]
+        if (not isinstance(nodes, list) or connection["pageInfo"]["hasNextPage"] is not False
+                or connection["totalCount"] != len(nodes)):
+            raise ValueError("incomplete connection")
+        return nodes
+    except (ValueError, KeyError, TypeError) as exc:
+        raise LandError("GitHub check evidence is truncated or incomplete") from exc
+
+
+def _push_only_job(source: str, name: str) -> bool:
+    """Recognize one ordinary job's complete push-only condition; unsupported YAML stays unknown."""
+    lines = source.splitlines()
+    if ("\t" in source or [line for line in lines if re.match(r"^jobs\s*:", line)] != ["jobs:"]
+            or any(line and not line[0].isspace() and not line.startswith("#")
+                   and not re.match(r"[A-Za-z_][\w-]*:", line) for line in lines)):
+        return False
+    for line in lines:
+        # A quoted scalar spanning lines can contain an apparent jobs block (#266 review).
+        plain = re.sub(r"'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"|#.*", "", line)
+        if "'" in plain or '"' in plain:
+            return False
+    active, job, field, seen, condition = False, None, None, set(), None
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line == "jobs:":
+            active = True
+            continue
+        if not active:
+            continue
+        if not line.startswith(" "):
+            active = False
+            continue
+        if not line.startswith("    "):
+            found = re.fullmatch(r"  ([A-Za-z_][\w-]*):(?:\s*#.*)?", line)
+            if not found or ("job", found[1]) in seen:
+                return False
+            job, field = found[1], None
+            seen.add(("job", job))
+        elif not line.startswith("     "):
+            found = re.fullmatch(r"    ([A-Za-z_][\w-]*):\s*(.*)", line)
+            if not found or not job or (job, found[1]) in seen or found[1] == "name":
+                return False
+            field = found[1]
+            seen.add((job, field))
+            if job == name and field in {"strategy", "uses"}:
+                return False
+            if job == name and field == "if":
+                condition = found[2].strip()
+        elif field is None or job == name and field == "if":
+            return False  # A continued plain scalar could change the condition's meaning.
+    if condition is None:
+        return False
+    if condition.startswith("${{") and condition.endswith("}}"):
+        condition = condition[3:-2].strip()
+    return re.fullmatch(r"github\.event_name\s*==\s*'push'\s*&&\s*"
+                        r"github\.ref\s*==\s*'refs/heads/main'", condition) is not None
+
+
+def _inapplicable_check(root: Path, check: dict, pair: dict, merge_sha: str | None, repository: str) -> bool:
+    suite = check.get("checkSuite") or {}
+    run = suite.get("workflowRun") or {}
+    file = run.get("file") or {}
+    if (check.get("isRequired") is not False or (suite.get("app") or {}).get("slug") != "github-actions"
+            or run.get("event") not in {"pull_request", "pull_request_target"}
+            or file.get("repositoryName") != repository):
+        return False
+    match = re.fullmatch(r"https://github\.com/" + re.escape(repository)
+                         + r"/blob/([0-9a-f]{40})/(\.github/workflows/[^/]+\.ya?ml)",
+                         file.get("repositoryFileUrl") or "")
+    allowed = {pair["base_sha"]} if run["event"] == "pull_request_target" else {merge_sha}
+    if run["event"] == "pull_request" and _git(
+            root, "merge-base", "--is-ancestor", pair["base_sha"], pair["head_sha"]).returncode == 0:
+        allowed.add(pair["head_sha"])
+    if not match or match[1] not in allowed or match[2] != file.get("path"):
+        return False
+    workflow = _check_query(root, """query($owner:String!,$repo:String!,$expression:String!){
+      repository(owner:$owner,name:$repo){object(expression:$expression){... on Blob{isTruncated text}}}}""",
+                            expression=f"{match[1]}:{match[2]}")
+    blob = workflow.get("object") or {}
+    return blob.get("isTruncated") is False and _push_only_job(blob.get("text") or "", check.get("name") or "")
+
+
+def _checks_evidence(root: Path, pair: dict) -> str:
+    """#266: prove the exact candidate, mandatory contexts and any optional job exclusion."""
+    query = """query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){nameWithOwner
+      pullRequest(number:$number){number state baseRefName headRefName headRefOid
+        baseRef{target{oid} branchProtectionRule{requiredStatusChecks{context app{databaseId}}}
+          rules(first:100){totalCount pageInfo{hasNextPage} nodes{type parameters{
+            ... on RequiredStatusChecksParameters{requiredStatusChecks{context integrationId}}}}}}
+        commits(last:1){nodes{commit{...CandidateChecks}}} potentialMergeCommit{...CandidateChecks}}}}
+      fragment CandidateChecks on Commit{oid parents(first:3){totalCount nodes{oid}}
+        statusCheckRollup{contexts(first:100){totalCount pageInfo{hasNextPage} nodes{__typename
+          ... on StatusContext{context state isRequired(pullRequestNumber:$number) commit{oid}}
+          ... on CheckRun{name status conclusion isRequired(pullRequestNumber:$number)
+            checkSuite{commit{oid} app{databaseId slug} branch{name}
+              matchingPullRequests(first:100){totalCount pageInfo{hasNextPage} nodes{number baseRefName headRefName}}
+              workflowRun{event file{path repositoryName repositoryFileUrl}}}}}}}}"""
+    try:
+        repository = _check_query(root, query, number=pair["number"])
+        pr = repository["pullRequest"]
+        base = pr["baseRef"]
+        identity = (pr["number"], pr["state"], pr["baseRefName"], pr["headRefName"],
+                    base["target"]["oid"], pr["headRefOid"])
+        if identity != (pair["number"], "OPEN", pair["base"], pair["branch"], pair["base_sha"], pair["head_sha"]):
+            raise LandError("PR base or head moved while reading exact check evidence")
+        required = {(item["context"], (item.get("app") or {}).get("databaseId"))
+                    for item in (base["branchProtectionRule"] or {}).get("requiredStatusChecks") or []}
+        for rule in _complete_check_nodes(base["rules"]):
+            if rule["type"] == "REQUIRED_STATUS_CHECKS":
+                required.update((item["context"], item.get("integrationId"))
+                                for item in rule["parameters"]["requiredStatusChecks"])
+            elif rule["type"] in {"WORKFLOWS", "REQUIRED_WORKFLOW_STATUS_CHECKS"}:
+                raise LandError("required workflow evidence cannot be established from status checks")
+        head = pr["commits"]["nodes"][0]["commit"]
+        if head["oid"] != pair["head_sha"]:
+            raise LandError("checks are associated with a different PR head")
+        merge = pr["potentialMergeCommit"]
+        if merge and (merge["parents"]["totalCount"] != 2 or
+                      [p["oid"] for p in merge["parents"]["nodes"]] != [pair["base_sha"], pair["head_sha"]]):
+            raise LandError("test merge checks do not belong to the pinned base/head candidate")
+        candidate = head
+        if merge and merge.get("statusCheckRollup") and _complete_check_nodes(merge["statusCheckRollup"]["contexts"]):
+            candidate = merge
+        rollup = candidate.get("statusCheckRollup")
+        contexts = _complete_check_nodes(rollup["contexts"]) if rollup else []
+        if candidate is head and contexts and _git(root, "merge-base", "--is-ancestor",
+                                                  pair["base_sha"], pair["head_sha"]).returncode != 0:
+            raise LandError("head checks do not include the pinned base; merge current main and rerun checks")
+        states, passed = set(), set()
+        for check in contexts:
+            is_run = check["__typename"] == "CheckRun"
+            if not is_run and check["__typename"] != "StatusContext":
+                raise LandError("unknown check evidence type")
+            suite = check["checkSuite"] if is_run else check
+            if suite["commit"]["oid"] != candidate["oid"] or not isinstance(check["isRequired"], bool):
+                raise LandError("check result is unrelated to the pinned candidate or lacks requiredness")
+            run = suite.get("workflowRun")
+            if run:
+                related = _complete_check_nodes(suite["matchingPullRequests"])
+                if (run["event"] not in {"push", "pull_request", "pull_request_target"}
+                        or not any((p["number"], p["baseRefName"], p["headRefName"]) ==
+                                   (pair["number"], pair["base"], pair["branch"]) for p in related)
+                        or (run["event"] == "push" and (suite.get("branch") or {}).get("name") != pair["branch"])):
+                    raise LandError("workflow run does not belong to this PR candidate")
+            status = check["conclusion"] if is_run and check["status"] == "COMPLETED" else (
+                "PENDING" if is_run else check["state"])
+            if status == "SKIPPED" and _inapplicable_check(root, check, pair, merge["oid"] if merge else None,
+                                                         repository["nameWithOwner"]):
+                continue
+            states.add(status)
+            if status == "SUCCESS":
+                passed.add((check["name"] if is_run else check["context"],
+                            (suite.get("app") or {}).get("databaseId"), check["isRequired"]))
+        if any(not any(name == check_name and needed and (app is None or app == check_app)
+                       for check_name, check_app, needed in passed) for name, app in required):
+            return "skipped"
+        if states & {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
+            return "fail"
+        if states & {"PENDING", "EXPECTED"}:
+            return "pending"
+        if states - {"SUCCESS"} or not states:
+            return "skipped" if contexts or required else "none"
+        return "pass"
+    except (KeyError, TypeError, IndexError, AttributeError) as exc:
+        raise LandError("GitHub check evidence is incomplete or unreadable") from exc
+
+
 def _fetch_rev(root: Path, ref: str) -> str:
     """Fetch and return the authoritative current tip of `origin/<ref>`."""
     fetched = _git(root, "fetch", "origin", ref, timeout=300)
@@ -435,15 +654,14 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
     if pr.get("baseRefName") != base or pr.get("headRefName") != branch:
         raise LandError(f"PR #{number} targets {pr.get('baseRefName')!r} from {pr.get('headRefName')!r}, not "
                         f"the expected {base!r} from {branch!r}")
-    base_sha, head_sha = pr.get("baseRefOid"), pr.get("headRefOid")
-    if not base_sha or not head_sha:
-        raise LandError(f"PR #{number} did not report both baseRefOid and headRefOid — refusing an unpinned gate")
-    fetched_base, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
+    # #266: baseRefOid is PR metadata and may lag the actual branch after main is incorporated.
+    base_sha, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
+    head_sha = pr.get("headRefOid")
     if head_sha != expected_head:
         raise LandError(f"PR #{number} head moved from the pushed revision {expected_head} to {head_sha} before checks")
-    if fetched_base != base_sha or fetched_head != head_sha:
+    if fetched_head != head_sha:
         raise LandError(f"PR #{number} refs moved while the merge candidate was being pinned "
-                        f"(GitHub {base_sha[:12]}/{head_sha[:12]}, origin {fetched_base[:12]}/{fetched_head[:12]})")
+                        f"(GitHub head {head_sha}, origin head {fetched_head})")
     return {"base": base, "branch": branch, "base_sha": base_sha, "head_sha": head_sha, "number": number}
 
 
@@ -452,9 +670,9 @@ def _assert_pair_current(root: Path, pair: dict) -> None:
     base_sha = _fetch_rev(root, pair["base"])
     head_sha = _fetch_rev(root, pair["branch"])
     pr = _pr_view(root, str(pair["number"])) or {}
-    actual = (base_sha, head_sha, pr.get("baseRefOid"), pr.get("headRefOid"), pr.get("state"),
+    actual = (base_sha, head_sha, pr.get("headRefOid"), pr.get("state"),
               pr.get("baseRefName"), pr.get("headRefName"))
-    expected = (pair["base_sha"], pair["head_sha"], pair["base_sha"], pair["head_sha"], "OPEN",
+    expected = (pair["base_sha"], pair["head_sha"], pair["head_sha"], "OPEN",
                 pair["base"], pair["branch"])
     if actual != expected:
         raise LandError("the PR base or head moved after the merge candidate was pinned — "
@@ -477,6 +695,10 @@ def _checks_value(root: Path, number: int, pair: dict) -> str:
     """Read checks only while GitHub and origin still name the pinned PR pair."""
     _assert_pair_current(root, pair)
     state = _checks_state(root, number)
+    evidence = _checks_evidence(root, pair)
+    if state != "none" and evidence == "none":
+        raise LandError("reported checks have no evidence on the pinned candidate")
+    state = evidence
     _assert_pair_current(root, pair)
     if state != "none":
         return state
@@ -641,6 +863,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
         return False, None, tests
     after_checks = _checks_state(root, pair["number"])
+    if after_checks == "none":
+        after_checks = _checks_evidence(root, pair)
     try:
         _assert_pair_current(root, pair)
     except LandError:
@@ -749,7 +973,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         f"staging nothing: {', '.join(outside)}")
     if adoption:
         _adoption_scope(root, base, lease)
-        _record_adoption(project, slug, adoption, authority, dry_run=dry_run)
+        adoption, hold_merge = _record_adoption(project, slug, adoption, authority,
+                                                previous=task.get("adopted_pr"), dry_run=dry_run)
     commit, staged = None, []
     if not groups:
         _note("working tree clean — nothing to commit")
@@ -821,6 +1046,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _assert_pair_current(root, pair)
         current = S.load_task(project, slug)
         _require_current_publisher(project, slug, current, authority)
+        if current.get("adopted_pr") != adoption:
+            raise LandError("task adoption changed before merge")
         if current.get("hold_merge"):
             raise LandError(f"task carries a merge hold: {current['hold_merge']}")
         _require_closing_issues(root, number, closes_issues)

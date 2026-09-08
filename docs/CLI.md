@@ -561,18 +561,38 @@ diverged, incorporate the inspected PR with a merge commit carrying the exact
 `Altitude-Task: <project>/<slug>` trailer. Never rewrite the original history. Add any reconciliation
 edits before landing; `alt land` stages only the lease and adds the trailer to its commit.
 
-The explicit command records one immutable `adopted_pr` receipt and `pr-adopted` event before
+The explicit command records the active immutable `adopted_pr` receipt and `pr-adopted` event before
 publication, visible through `alt task status` and `alt task events`. `--dry-run` fetches and
 validates the PR but records nothing and stages/pushes nothing. After adoption, ordinary
 `alt land --message "…" [--merge]` reuses that PR and its original branch. Supply `--paths` again
 if it overrides the task's declared lease. Retrying adoption with the same original PR/head is
-idempotent; selecting another head or PR is refused. Later unowned commits cannot be adopted by
+idempotent; selecting another original head for that PR is refused. Later unowned commits cannot be adopted by
 repeating the command. If origin moves, inspect and incorporate only changes belonging to this
 task; unrelated history requires a separate ownership decision, not a broader adoption receipt.
 
+For a task explicitly assigned several existing PRs, finish the active PR before adopting the next.
+Fetch main, incorporate the next inspected PR without rewriting history, then repeat `--adopt-pr`
+with its number, full observed head and a reason naming its assignment. Landing verifies the
+previous PR is merged and its original and final heads are preserved on current main. It retains
+the previous receipt unchanged in `adoption_history` and selects the new `adopted_pr` under the
+project lock. `alt task show` and `alt task events` retain the audit trail. No receipt editing is
+needed. Refused adoption validation leaves the active receipt unchanged. Once adoption is recorded,
+publication, check or hold failures retain the new active receipt for retry. Earlier receipts cannot
+be reactivated.
+Ordinary subsequent landing and recorded hold approval target the active PR. Each PR still requires
+explicit task authorization, its full lease, applicable checks and review; holds remain in force.
+A recorded approval of the previous PR restores that review hold for the next adoption. An explicit
+later task-wide `hold-merge --off` remains effective; earlier PR approval cannot release the new hold.
+
 Complete the repository's applicable review before `--merge`. Drafts, requested changes and
-outstanding required reviews block adopted merges. Configured checks must pass; absent or skipped
-configured checks are not green. Where no CI is configured, use `--test-cmd "<full suite>"` if the
+outstanding required reviews block adopted merges. Checks must belong to the pinned base/head
+candidate. Required checks, including those specified by active branch rules, must pass; missing,
+ambiguous, unrelated or required skipped checks are not green. A nonrequired skipped Actions job
+can be excluded only when its executed immutable workflow unambiguously identifies the job and
+proves its main-push-only condition false for the PR event. The supported condition is
+`github.event_name == 'push' && github.ref == 'refs/heads/main'`; unsupported expressions or
+ambiguous job/source mappings stay blocked. At least one applicable check must succeed.
+Where no CI is configured, use `--test-cmd "<full suite>"` if the
 default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
 pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
@@ -588,6 +608,8 @@ git merge --no-ff origin/main -m "Merge main for validation" \
 ```
 
 Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
+Landing pins current origin main and the PR head, confirms GitHub's authoritative base target,
+and refuses actual base/head movement. A lagging PR `baseRefOid` alone does not block that pair.
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
 

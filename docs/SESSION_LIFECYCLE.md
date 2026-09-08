@@ -310,12 +310,21 @@ through an ordinary `alt task block`, without `--fault`.
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
 then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
 Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
+After a verified history-preserving merge on main, the same task can explicitly select its next
+assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
+unchanged in `adoption_history`; `adopted_pr` selects the active landing, provenance and approval
+target. Failed or repeated transitions do not overwrite earlier receipts or expand their authority.
+A prior PR's recorded hold approval restores that hold for the next adoption unless the operator
+subsequently released it for the task as a whole.
 The original unowned ancestors are accepted during landing and resumed-session provenance checks;
 later commits still need the exact task trailer, and foreign task trailers remain refused.
 The local task branch stays unchanged in identity while fast-forward pushes update the original
 PR branch. Merge main with a task-trailed merge commit when necessary to preserve the adopted
 commits. No adopted push uses force, and adoption never expands to a later external head.
-Review blockers, required checks and merge holds apply to the reused PR; the owner and hold are
+Checks bind to the current authoritative base/head and candidate, tolerating stale `baseRefOid`
+metadata while refusing actual movement. Missing or skipped required checks remain blocked;
+only a nonrequired job whose executed workflow proves it inapplicable can be excluded.
+Review blockers, required checks and merge holds apply to the reused PR; the owner, active PR and hold are
 checked again immediately before merge. Recorded operator approval matches the adopted PR's
 number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains
 history without requesting deletion of the original branch. The normal report and archive path
