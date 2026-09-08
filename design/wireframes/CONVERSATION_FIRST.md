@@ -1,0 +1,99 @@
+# Conversation-first decisions
+
+Burak settled this UX on 2026-09-08: support one question and a small group of independent
+questions in the owning L2 chat. The model chooses a plain question, one recommended quick action,
+or two to three quick options with one recommendation. The implementation PR remains held for
+Burak's review of the resulting experience and merge.
+
+[Interactive review](conversation-first/index.html) · [Six captured examples](conversation-first/README.md) ·
+[Current specification](SPEC.md#38-decision-card)
+
+## The experience
+
+Needs you is a compact list of unanswered questions, grouped by dilemma/task. Opening an item goes
+to the relevant L2 discussion, including the question, recommendation and context brought through
+L3. It never guesses that the last technical event is the question. The list and conversation use
+the same question component. User bubbles and assistant messages remain prominent; technical
+activity and evidence are available through the existing disclosure and live session.
+
+A single question's quick choices act immediately. For up to three independent questions, choices
+start unselected. Pick answers, then **Send N answers** once. With no manual picks, **Use
+recommendations** answers the members that have an explicit recommendation. It never overwrites a
+picked alternative or answers a plain question. You can send fewer answers and leave the rest open.
+Only actual picks receive selection styling. When one question remains, its choices act immediately
+in both Needs you and chat. Longer groups scroll within the phone conversation.
+
+The normal composer is always available on an active conversation: answer one or several questions,
+propose an alternative, or ask a follow-up. Sending text only saves and delivers a message. The same
+L2 interprets it in context, records an explicit decision against that message, or clarifies actual
+ambiguity. There is no extra approval phrase, recipient selector, note form or blanket confirmation.
+A follow-up can wake the L2 to answer but does not approve implementation of the disputed approach.
+
+Answered members disappear from Needs you and retain their receipts in chat. Partially answered
+scope leaves only the relevant remainder open. A new direction closes questions it makes
+unnecessary with a short reason, without accepting their abandoned recommendations. Completion,
+rejection and report handoff remove obsolete controls; the existing merge hold remains separate.
+
+## Six review examples
+
+| Example | Desktop | Phone |
+| --- | --- | --- |
+| Questions upfront in Needs you | [Open](ConversationFirstNeedsYou.html) | [Open](MobileConversationFirstNeedsYou.html) |
+| One question with immediate quick choices | [Open](ConversationFirstQuestion.html) | [Open](MobileConversationFirstQuestion.html) |
+| Grouped picks and one send | [Open](ConversationFirstGroup.html) | [Open](MobileConversationFirstGroup.html) |
+| Follow-up exchange leaves questions open | [Open](ConversationFirstFollowup.html) | [Open](MobileConversationFirstFollowup.html) |
+| Partial answer and irrelevant-question closure | [Open](ConversationFirstPartial.html) | [Open](MobileConversationFirstPartial.html) |
+| Answers recorded and work resumed | [Open](ConversationFirstAccepted.html) | [Open](MobileConversationFirstAccepted.html) |
+
+All content is fictional. The prototype demonstrates typed answers and follow-ups with deterministic
+examples; the production L2 uses its ordinary judgment. The shared appendix covers input and
+recovery without multiplying the primary review screens or committed screenshots.
+
+## Navigation and states
+
+| Situation | Visible behavior |
+| --- | --- |
+| Open any member | Focus the group's stable discussion anchor with preceding explanation. Back returns to the originating Needs you or project tab. |
+| Later activity arrives | Keep the reading position; **Latest messages** follows the bottom and **View question** returns to an offscreen question. |
+| Phone Conversation/Live switch | Replace the same history entry and preserve its draft. Leaving the task clears the draft. |
+| Initial loading or read failure | Skeleton then Retry; no inferred count, enabled decision or writable composer from an unknown read. |
+| Cached read failure | Retain saved content, show refresh notice and disable writing until a successful read. |
+| Needs you empty | No cards or zero badge; calm **Nothing needs you.** message. |
+| Recording choices | Disable actions and show **Recording…**; save receipts before removing answered members. |
+| Choice write fails | Keep questions and explicit selections, show Retry. A lost response retries the same saved decision, without duplicate delivery. |
+| Stale group/option | Reject the whole submission. Refresh current choices and clear old staged picks; never retarget an old click. |
+| Send fails | Keep the unsent text and Retry in the familiar composer; no false saved answer. |
+| Access denied | Disable sending and deciding together; explicit Refresh after access is restored. |
+| Voice | Existing listening, cancel/stop, transcribing, unavailable and failure controls; sent text leaves no extra transcript box. |
+| Discussion | Saved user message and L2 reply; unanswered members and Needs you count remain. |
+| Decision saved, worker waiting | Saved receipt plus waiting status. **Work resumed** requires observed running state. |
+| Resolved elsewhere or historical link | Readable receipt and reason, no obsolete action; link to a current revision if present. |
+| Superseded versions | Fold under **Earlier question** so the current group stays prominent. An old-version link opens its exact history automatically. |
+| Missing question or archived task | Explicit missing-question notice with ordinary conversation, or archived read-only history with no composer. |
+
+## Supporting machinery and removal
+
+Individual question revisions stay in the existing task record. A small group stores member IDs,
+revision and one stable conversation anchor. Overview, project and task views project the same
+records; question state is independent of worker execution. Publication from L2 or L3 includes the
+actual dilemma, explicit choices and source attribution in the owning conversation.
+
+Quick submissions name exact member revisions and option keys. A group submission validates all
+selected members under the existing project lock, then saves one normal operator message and its
+receipts atomically. Identical retries retain the receipt and return current group state. Typed
+replies retain viewed question references; the owning L2 cites the original message to resolve
+answered or irrelevant scope. Its task/attempt and source authority are checked at the existing CLI
+boundary. A coordinator relay cannot impersonate operator approval.
+
+Existing inbox, wake, capacity and provider conversation rules deliver both kinds of answer. A
+queued fresh attempt still receives the current questions or receipts. There is no second model
+classifier, decision store, queue, conversation, daemon or provider reset.
+
+The separate decision workspace, option/note form, recipient selector, mirrored card conversation
+and last-event anchoring are removed. Saved decision URLs redirect into the owning chat. Obsolete
+wireframe boards and superseded captures are removed from this PR. Loading and input behavior reuse
+the familiar shared components.
+
+The process learning is recorded in [issue #271](https://github.com/mburakyucel/altitude/issues/271)
+and the project's simplification rules: settle a major UX proposal with the user before finalizing
+implementation and migrating tests. Broad positive feedback does not settle ongoing UX questions.

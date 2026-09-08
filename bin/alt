@@ -12,7 +12,7 @@ from altitude import config, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
 L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "report"), ("task", "events"), ("task", "messages"), ("task", "list"),
-               ("task", "reply"), ("task", "block"), ("task", "done")}  # the door a worker may use
+               ("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done")}  # the door a worker may use
 L3_COMMANDS = {
     ("project", "set"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
@@ -38,6 +38,23 @@ def _project(args) -> str:
     if not p:
         sys.exit("alt: --project or ALTITUDE_PROJECT required")
     return p
+
+
+def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
+    payload = None
+    if args.questions_file:
+        if any(value is not None for value in (args.recommendation, args.label, args.why)):
+            sys.exit("questions JSON supplies its own options and recommendation")
+        try:
+            text = sys.stdin.read() if args.questions_file == "-" else Path(args.questions_file).read_text()
+            payload = json.loads(text)
+            items = T._validate_questions(payload)
+        except (OSError, ValueError, T.TransitionError) as exc:
+            sys.exit(f"invalid questions JSON: {exc}")
+        reason = reason or "\n".join(item["question"] for item in items)
+    if not reason or not reason.strip():
+        sys.exit("supply a question/reason or --questions-file")
+    return payload, reason.strip()
 
 
 def _stdin_or_file(args) -> str:
@@ -78,7 +95,7 @@ def _report_text(record: dict) -> str:
 
 def _messages_text(rows: list[dict]) -> str:
     return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {row.get('role') or '?'}"
-                     f" ({row.get('by') or '?'}): {_one_line(row.get('text') or '')}" for row in rows) or "No messages."
+                     f" ({row.get('by') or '?'}, message {row.get('id') or '?'}): {_one_line(row.get('text') or '')}" for row in rows) or "No messages."
 
 
 def _events_text(rows: list[dict]) -> str:
@@ -189,11 +206,22 @@ def main(argv=None) -> None:
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     for name in ("reject", "block"):
-        x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=True)
+        x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=name == "reject")
         if name == "block":
+            x.add_argument("--questions-file", help="JSON with one to three questions; '-' reads stdin")
+            x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
             x.add_argument("--for-burak", action="store_true", help="the brief says to ask Burak here, or the call is plainly his: skip L3")
-    es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", required=True, help="one plain dilemma for Burak, with a recommendation")
+    es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", help="one plain dilemma for Burak, with a recommendation")
+    es.add_argument("--questions-file", help="JSON with one to three questions; L3 supplies '-' on stdin")
+    es.add_argument("--recommendation"); es.add_argument("--label"); es.add_argument("--why")
+    resolution = ts.add_parser("resolve", help="current L2: record a contextual decision against its original source message")
+    resolution.add_argument("slug"); resolution.add_argument("--question", required=True)
+    resolution.add_argument("--revision", required=True, type=int); resolution.add_argument("--message", required=True)
+    resolution.add_argument("--source", choices=("task", "project"), default="task")
+    resolution.add_argument("--disposition", choices=("answered", "superseded"), required=True)
+    resolution.add_argument("--reason", required=True); resolution.add_argument("--remaining")
+    resolution.add_argument("--recommendation"); resolution.add_argument("--label"); resolution.add_argument("--why")
     ts.add_parser("show", help="compatibility alias for task status --json").add_argument("slug")
     for name in ("events", "messages"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--last", type=int, default=10); x.add_argument("--json", action="store_true", dest="as_json")
@@ -328,6 +356,9 @@ def main(argv=None) -> None:
             from altitude import dispatch
             out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR))
         elif tc == "block":
+            questions, args.reason = _question_input(args, args.reason)
+            if args.fault and questions is not None:
+                sys.exit("alt task block: --fault needs --reason, not questions JSON")
             if ACTOR == "l2":
                 attempt = os.environ.get("ALTITUDE_ATTEMPT")
                 if args.slug != os.environ.get("ALTITUDE_TASK") or not attempt:
@@ -337,13 +368,18 @@ def main(argv=None) -> None:
                         sys.exit(f"alt task block: attempt {attempt} is no longer current")
                 else:
                     waiting = "burak" if args.for_burak else "l3"
-                    out(T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
-                                expected_attempt=int(attempt), updates={"waiting_on": waiting}))
-                    if waiting == "l3":  # L3 answers from the record, or hands Burak one plain dilemma
+                    blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
+                                      expected_attempt=int(attempt), updates={"waiting_on": waiting},
+                                      recommendation=args.recommendation, recommendation_label=args.label,
+                                      recommendation_why=args.why, questions=questions)
+                    out(blocked)
+                    if blocked.get("waiting_on") == "l3":  # L3 answers from the record, or hands Burak one plain dilemma
                         from altitude import l3
                         l3.queue_message(p, T.block_question(args.slug, args.reason), trigger="block")
             elif not args.fault:
-                out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": "burak"}))
+                out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": "burak"},
+                            questions=questions, recommendation=args.recommendation,
+                            recommendation_label=args.label, recommendation_why=args.why))
             if args.fault:
                 # An environment fault is Altitude's to fix, not a question for Burak: the same path as a fault
                 # altd detects itself (block, one incident per kind per day, one message for L3).
@@ -351,7 +387,18 @@ def main(argv=None) -> None:
                 out(incidents.system_fault(f"worker:{args.slug}", args.reason, project=p, task=args.slug)
                     or {"state": "blocked", "note": "this fault was already filed today; L3 was told once"})
         elif tc == "escalate":
-            out(T.escalate(p, args.slug, args.question, actor=ACTOR))
+            questions, args.question = _question_input(args, args.question)
+            out(T.escalate(p, args.slug, args.question, actor=ACTOR, recommendation=args.recommendation,
+                          recommendation_label=args.label, recommendation_why=args.why, questions=questions))
+        elif tc == "resolve":
+            attempt = os.environ.get("ALTITUDE_ATTEMPT")
+            if (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
+                    or p != os.environ.get("ALTITUDE_PROJECT") or not attempt):
+                sys.exit("alt task resolve: only the current L2 may resolve its own task question")
+            out(T.resolve_question(p, args.slug, args.question, args.revision, args.message,
+                                   expected_attempt=int(attempt), source=args.source, disposition=args.disposition,
+                                   reason=args.reason, remaining=args.remaining, recommendation=args.recommendation,
+                                   recommendation_label=args.label, recommendation_why=args.why))
         elif tc == "message":
             message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
             out(message)

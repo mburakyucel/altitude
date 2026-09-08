@@ -57,10 +57,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) {
     const main = page.getByRole("main");
     await expect(main).toBeVisible();
     if (task && route.includes("/decisions/")) {
-      // The decision page over a real task with nothing in the queue: the decided, resumed-elsewhere, or
-      // archived banner is its rendered state (SPEC §3.9); the walkthrough overlays the live states.
-      await expect(main.getByRole("status")).toBeVisible();
-      await expect(main.getByRole("heading", { name: "Where this came from", exact: true })).toBeVisible();
+      // Legacy decision links resolve to the owning human conversation, including archived tasks.
+      await expect(page).toHaveURL(new RegExp(`/projects/${project.name}/tasks/${task.slug}(\\?|$)`));
+      await expect(main.getByRole("region", { name: "Task conversation", exact: true })).toBeVisible();
     } else if (task && route.endsWith("/report")) {
       // The report view: its own heading, and the crumb back to the task (SPEC §3.4 links).
       await expect(main.getByRole("heading", { name: "Report", exact: true })).toBeVisible();

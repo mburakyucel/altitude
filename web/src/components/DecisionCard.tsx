@@ -1,168 +1,147 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
-import { useChat, useDecide, useProject, useTask } from "../data/api";
-import type { Decision, DecisionOption } from "../data/api";
-import { askerLabel, decisionKind, decisionOptions, followUpsOf, recommendedOption } from "../data/decisions";
-import type { FollowUp } from "../data/decisions";
+import { Link, useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { ApiError, useDecide, useProject } from "../data/api";
+import type { DecideInput, Decision, QuestionGroup } from "../data/api";
+import { useToast } from "../data/Toast";
+import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { InlineProse, Prose, ProseRepository } from "./Prose";
+import { InlineProse, ProseRepository } from "./Prose";
 
-/** How long the card takes to collapse after a decision lands. */
-export const LEAVE_MS = 200;
-
-/** The two option buttons, the recommended one primary (SPEC.md §3.8); shared by the card and the page. */
-export function DecisionOptions({
-  options,
-  recommended,
-  chosen,
-  deciding,
-  size,
-  onChoose,
-}: {
-  options: DecisionOption[];
-  recommended: DecisionOption;
-  chosen: string | null;
-  deciding: boolean;
-  size?: "lg";
-  onChoose: (option: DecisionOption) => void;
-}) {
-  return (
-    <>
-      {options.map((option) => (
-        <button
-          key={option.key ?? option.label}
-          type="button"
-          className={`btn${option === recommended ? " btn-primary" : ""}${size === "lg" ? " btn-lg" : ""}`}
-          disabled={deciding}
-          onClick={() => onChoose(option)}
-        >
-          {chosen === option.label && deciding ? <span className="spinner" aria-hidden /> : null}
-          {option.label}
-        </button>
-      ))}
-    </>
-  );
+type Option = { key: string; label: string; text: string };
+type Answer = { question_id: string; revision: number; option_key: string };
+function optionsFor(question: Decision): Option[] {
+  if (question.options) return question.options;
+  const recommended = question.recommendation;
+  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Accept & resume", text: recommended.text }] : [];
+}
+function recommendedKey(question: Decision) {
+  return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
 }
 
-/** The follow-ups mirrored under the why (SPEC.md §3.8 Follow-up sent, Answer arrived). */
-export function FollowUpThread({ items, compact = true }: { items: FollowUp[]; compact?: boolean }) {
-  if (items.length === 0) return null;
+type QuestionProps = {
+  disabled?: boolean; onDenied?: () => void; onRefresh?: () => void;
+  chat?: boolean; from?: "needs" | "project";
+};
+
+/** The same plain question, immediate choices, or explicit answer batch in Needs you and chat. */
+export function QuestionSet({ decisions, group, disabled = false, onDenied, onRefresh, chat = false, from = "project" }: QuestionProps & {
+  decisions: Decision[]; group?: QuestionGroup | null;
+}) {
+  const decide = useDecide();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const signature = decisions.map((q) => `${q.id}:${q.revision}:${q.status}:${q.group_revision}`).join("|");
+  useEffect(() => { setPicked({}); }, [signature]);
+  const first = decisions[0];
+  if (!first) return null;
+  const open = decisions.filter((q) => q.status !== "resolved" && q.audience !== "l3");
+  const grouped = open.length > 1;
+  const shown = chat ? decisions : decisions.filter((q) => q.status !== "resolved");
+  const denied = decide.error instanceof ApiError && [401, 403].includes(decide.error.status);
+  const stale = decide.error instanceof ApiError && decide.error.status === 409;
+  const groupId = group?.id ?? first.group_id;
+  const groupRevision = group?.revision ?? first.group_revision;
+  const unavailable = disabled || denied || stale || decide.isPending || (grouped && (!groupId || groupRevision == null));
+  const answer = (q: Decision, key: string): Answer => ({ question_id: q.id!, revision: q.revision!, option_key: key });
+  const selected = open.filter((q) => q.id && picked[q.id]).map((q) => answer(q, picked[q.id!]!));
+  const recommendations = open.filter((q) => q.id && q.revision != null && optionsFor(q).some((o) => o.key === recommendedKey(q)))
+    .map((q) => answer(q, recommendedKey(q)!));
+  const perform = (input: DecideInput) => {
+    decide.mutate(input, {
+      onSuccess: () => {
+        setPicked({});
+        if (!chat) toast.show({ message: "answers" in input && input.answers.length > 1 ? "Answers recorded" : "Decision recorded", action: { label: "Open L2 chat", onClick: () => {
+          setSelectedProject(first.project);
+          navigate(questionPath(first), { state: { from, tab: from === "needs" ? "needs" : "work" } });
+        } } });
+      },
+      onError: (error) => { if (error instanceof ApiError && [401, 403].includes(error.status)) onDenied?.(); },
+    });
+  };
+  const submit = (answers: Answer[]) => {
+    if (!answers.length || unavailable) return;
+    const single = answers[0]!;
+    if (grouped) {
+      if (!groupId || groupRevision == null) return;
+      perform({ project: first.project, slug: first.slug, group_id: groupId, group_revision: groupRevision, answers });
+    } else perform({ project: first.project, slug: first.slug, question_id: single.question_id, revision: single.revision,
+      option_key: single.option_key });
+  };
+  const refresh = () => {
+    decide.reset();
+    onRefresh?.();
+    for (const queryKey of [["overview"], ["project", first.project], ["task", first.project, first.slug]]) void queryClient.invalidateQueries({ queryKey });
+  };
   return (
-    <div className="decision-thread" aria-label="Follow-ups">
-      {items.map((item) => {
-        const who = askerLabel(item.to);
-        return (
-          <div key={item.id} className="decision-fu" data-to={item.to} data-wait={item.answer == null || undefined}>
-            <p className="decision-fu-q">
-              <b>You asked:</b> {item.question}
-              {item.answer == null ? (
-                <span className="text-muted">
-                  {" "}
-                  · {item.failed ? `${who} could not answer` : item.queued ? "queued for L3" : `waiting for ${who}`}
-                </span>
-              ) : null}
-            </p>
-            {item.answer != null ? (
-              <div className="decision-fu-a">
-                <b>{item.to === "l2" ? "The L2:" : "L3:"}</b>{" "}
-                {compact ? <InlineProse text={item.answer} /> : <Prose text={item.answer} />}
-              </div>
-            ) : null}
-          </div>
-        );
+    <div className="question-set" data-group-id={group?.id ?? first.group_id} data-grouped={grouped || undefined}>
+      {decisions.length > 1 ? <p className="text-meta text-muted">{open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer` : "Answers recorded"}</p> : null}
+      {shown.map((question) => {
+        const resolved = question.status === "resolved";
+        const options = optionsFor(question);
+        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
+          <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
+          {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
+          {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
+          {resolved ? <div className="decision-receipt" role="status">
+            <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b>
+            {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
+          </div> : question.audience !== "l3" && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
+            {options.map((option) => {
+              const recording = decide.isPending && !grouped && decide.variables && "option_key" in decide.variables && decide.variables.option_key === option.key;
+              return <button key={option.key} className={`btn ${!grouped && option.key === recommendedKey(question) ? "btn-primary" : "btn-ghost"}`} type="button"
+              aria-label={recording ? "Recording…" : option.label} aria-pressed={grouped ? picked[question.id!] === option.key : undefined}
+              disabled={unavailable || !question.id || question.revision == null}
+              onClick={() => grouped ? setPicked((old) => ({ ...old, [question.id!]: old[question.id!] === option.key ? "" : option.key })) : submit([answer(question, option.key)])}>
+              {recording ? "Recording…" : option.label}
+            </button>; })}
+          </div> : null}
+        </div>;
       })}
+      {grouped && open.length ? <div className="question-batch">
+        {selected.length ? <button type="button" className="btn btn-primary" disabled={unavailable} onClick={() => submit(selected)}>{decide.isPending ? "Recording…" : `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}`}</button>
+          : recommendations.length ? <button type="button" className="btn btn-primary" disabled={unavailable} onClick={() => submit(recommendations)}>{decide.isPending ? "Recording…" : "Use recommendations"}</button> : null}
+        <p className="text-meta text-muted">{selected.length ? "Only your selected answers will be sent." : "Choose quick answers together, or reply in the L2 chat."}</p>
+      </div> : null}
+      {decide.isError ? <p className="text-meta text-danger" role="alert">
+        {denied ? "You cannot record a decision here. Refresh after access is restored." : stale ? "These questions have changed. Refresh and review the current choices." : "Could not record the decision."}{" "}
+        {denied || stale ? (!denied || !onDenied ? <button type="button" className="link" onClick={refresh}>Refresh</button> : null) : <button type="button" className="link" onClick={() => decide.variables && perform(decide.variables)} disabled={disabled || decide.isPending}>Retry</button>}
+      </p> : null}
     </div>
   );
 }
 
-/**
- * The compact decision card (SPEC.md §3.8): kind row, question, why, the follow-ups mirrored from
- * the rows that carry the slug, the two options with the recommended one primary, More context.
- * Waiting, Follow-up sent, Answer arrived, Deciding, Decided, and Failed live here; Stale is the
- * poll dropping the row.
- */
-export function DecisionCard({
-  decision,
-  chip = false,
-  selected = false,
-  from = "project",
-}: {
-  decision: Decision;
-  chip?: boolean;
-  /** Its decision page is open beside it (§3.7): the accent border. */
-  selected?: boolean;
-  /** Where More context is opened from; the page's crumb leads back there. */
-  from?: "needs" | "project";
+export function Question({ decision, ...props }: QuestionProps & { decision: Decision }) {
+  return <QuestionSet decisions={[decision]} {...props} />;
+}
+
+export function DecisionCard({ decision, decisions = [decision], chip = false, selected = false, from = "project", disabled = false }: {
+  decision: Decision; decisions?: Decision[]; chip?: boolean; selected?: boolean;
+  from?: "needs" | "project"; disabled?: boolean;
 }) {
-  const decide = useDecide();
-  const [chosen, setChosen] = useState<string | null>(null);
-  const [leaving, setLeaving] = useState(false);
-  const [gone, setGone] = useState(false);
-  // The follow-ups: the project's chat rows and the task's messages that carry this decision (§4.3).
-  const chat = useChat(decision.project);
-  const task = useTask(decision.project, decision.slug);
   const project = useProject(decision.project);
   const kind = decisionKind(decision);
-  const options = decisionOptions(decision);
-  const recommended = recommendedOption(decision);
   const title = decision.title || decision.slug;
-  const why = decision.recommendation?.why?.trim() || "";
-  const followUps = followUpsOf(decision, chat.data?.history ?? [], chat.data?.queued ?? [], task.data?.messages ?? []);
-  const to = `/projects/${decision.project}/decisions/${decision.slug}`;
-
-  useEffect(() => {
-    if (!leaving) return;
-    const timer = setTimeout(() => setGone(true), LEAVE_MS);
-    return () => clearTimeout(timer);
-  }, [leaving]);
-
-  if (gone) return null;
-
-  const choose = (option: DecisionOption) => {
-    setChosen(option.label);
-    decide.mutate(
-      { project: decision.project, slug: decision.slug, option: option.key ?? option.label },
-      { onSuccess: () => setLeaving(true), onError: () => setChosen(null) },
-    );
-  };
-  const deciding = decide.isPending || leaving;
-  const retry = () => choose(options.find((o) => o.label === chosen) ?? recommended);
-
-  return (
-    <ProseRepository value={project.data?.repository}>
-    <article className="decision" data-leaving={leaving || undefined} data-selected={selected || undefined} aria-label={title}>
+  const to = questionPath(decision);
+  const state = { from, tab: from === "needs" ? "needs" : "work" };
+  const navigate = useNavigate();
+  const open = () => { setSelectedProject(decision.project); navigate(to, { state }); };
+  return <ProseRepository value={project.data?.repository}>
+    <article className="decision" data-selected={selected || undefined} aria-label={title} onClick={(event) => {
+      if (!(event.target as HTMLElement).closest("a,button,input,textarea,summary")) open();
+    }}>
       <div className="decision-kind" data-tone={kind.tone}>
         <span className="kind-label">{kind.label}</span>
         {chip ? <span className="chip">{decision.project}</span> : null}
-        <span className="decision-task truncate text-muted">{title}</span>
-        <span className="ml-auto text-muted" title={exactTime(decision.asked)}>
-          {ageText(decision.asked)}
-        </span>
+        <Link className="decision-task truncate" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
+        <span className="ml-auto text-muted" title={exactTime(decision.asked)}>{ageText(decision.asked)}</span>
       </div>
-      <p className="decision-question"><InlineProse text={decision.question || title} /></p>
-      {why ? <p className="decision-why"><InlineProse text={why} /></p> : null}
-      <FollowUpThread items={followUps} />
-      <div className="decision-options">
-        <DecisionOptions options={options} recommended={recommended} chosen={chosen} deciding={deciding} onChoose={choose} />
-        <Link
-          className="ml-auto text-meta"
-          to={to}
-          state={{ from, tab: from === "needs" ? "needs" : "work" }}
-          onClick={() => setSelectedProject(decision.project)}
-        >
-          More context
-        </Link>
-      </div>
-      {decide.isError && !deciding ? (
-        <p className="text-meta text-danger" role="alert">
-          Could not record the decision.{" "}
-          <button type="button" className="link" onClick={retry}>
-            Retry
-          </button>
-        </p>
-      ) : null}
+      <QuestionSet decisions={decisions} disabled={disabled} from={from} />
+      {decision.status === "open" && decision.state === "running" ? <p className="text-meta text-muted">Discussion in progress · decision still open</p> : null}
+      <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
-    </ProseRepository>
-  );
+  </ProseRepository>;
 }

@@ -1,11 +1,15 @@
 # Altitude UI specification
 
+The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
+on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
+composer boards define their existing layout and input behavior.
+
 This document and the boards beside it are the UI's source of truth, for both visual design and
 rules. They stay aligned when the build departs from them; an unresolved rule change is a question
 for the operator (§4.6). It is written for the L3 and L2 that implement it: every component lists its states,
 every behaviour names the data it reads, and §7 cuts the work into slices with acceptance criteria.
-Approved by the operator on 2026-09-05 (work panel beside the chat; decision page with follow-up to
-the asker; system turns folded in the one L3 conversation).
+The project conversation, work panel and system-turn treatment are approved on 2026-09-05;
+the owning L2 conversation handles dilemmas under the 2026-09-08 decision.
 
 Words used throughout: *the operator* is the person Altitude works for (the configured name is shown
 where a name is shown); *L3* is a project's coordinator; *an L2* owns one task; *a turn* is one L3
@@ -22,8 +26,8 @@ reviewable work. The UI shows that and nothing else. Its four principles:
    never instead of it. The chat reads like a conversation: no ids, paths, or JSON in what L3 says
    to the operator; system turns fold to one line each.
 3. **A decision is answerable where it is shown, or one click from enough context.** Every card
-   carries the asker's recommendation and two labelled options. More context opens a page with the
-   reasoning, the trail, the evidence, and a follow-up composer addressed to the asker.
+   carries an explicit recommended approach and one acceptance action. Opening it lands at the
+   actual question and surrounding discussion in its owning L2 conversation.
 4. **Same components everywhere.** One composer (voice included), one bubble pair, one card, one
    state vocabulary, on phone and desktop. A component ships with all its states or not at all.
 
@@ -53,7 +57,7 @@ requirements, including accessible control names, minimum targets, and contrast 
 | --- | --- | --- |
 | `/` | Needs you: every decision across projects | the Inbox |
 | `/projects/:name` | the project: L3 conversation, work panel | `/chat/:name` and the old project page |
-| `/projects/:name/decisions/:slug` | the decision page for the blocked task `slug` | new |
+| `/projects/:name/decisions/:slug` | redirect to the owning task conversation and current question anchor | redirect |
 | `/projects/:name/tasks/:slug` | the task page: L2 conversation, live session | unchanged |
 | `/projects/:name/tasks/:slug/live` | the same page with the live session in front (phone tab) | unchanged |
 | `/projects/:name/tasks/:slug/report` | the task's full report, with its digest at `#digest` | new |
@@ -73,7 +77,7 @@ task: today one blocked task carries one open question, and the route follows th
   unsupported and has no rules of its own. Chat and Work are the selected project's; Needs you and Monitor
   are global. The header shows the project name with a chevron on project tabs and "Altitude" on
   global tabs, so scope is always readable. The project name opens the switcher sheet (§3.11).
-- A decision page or a task page opened from a phone tab pushes over that tab with a back control
+- A task conversation opened from a phone tab pushes over that tab with a back control
   and keeps the tab bar.
 - No viewport ever scrolls horizontally; transcripts and tables scroll inside their own container.
 - The shell fills the visual viewport and never scrolls or bounces. Headers, the tab bar and composer
@@ -256,10 +260,9 @@ The same card is the row in the work panel and the card under an L3 reply that c
 
 ### 3.6 Composer
 
-One composer everywhere (project chat, decision follow-up, task conversation). Anatomy: rounded
-field (`--radius-composer`), placeholder naming the recipient ("Message L3 about <project>",
-"Ask a follow-up before you decide", "Message the L2"); a left pill (engine pin on the L3 chat:
-Auto or an engine name; recipient pill "To L3 / To the L2" on the decision page; none on the task
+One composer everywhere (project chat and task conversation). Anatomy: rounded
+field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
+"Message the L2"); a left pill (engine pin on L3 chat: Auto or an engine name; none on the task
 conversation); microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted. Phone fields are 16px so iOS does not zoom.
@@ -278,7 +281,6 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
 | Denied | mic shows disabled; hint reads "Microphone blocked in the browser. Typing works." | stays until the page reloads with permission |
 | Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, or nothing when the browser lacks recording | typing unaffected |
-| Recipient pill | To L3 (default when L3 asked), To the L2 (default when the L2 flagged the operator) | changes where the follow-up goes (§4.3) |
 | Engine pin | Auto, or an engine name | `POST /api/chat` carries the pin; it covers chat and system turns alike and stays until changed |
 
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
@@ -293,73 +295,69 @@ On the phone it is the Work tab with the same sections.
 Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project.
 
 States: loading (two card skeletons, three row skeletons); empty ("Nothing running. Ask L3 for
-something."); a card selected (accent border, while its decision page is open); a row's task
+something."); a row's task
 just changed state (the row moves sections with a 200ms fade). A task with a card under Needs you
 has no row under Active; "N active" counts the rows. Done this week holds the tasks done or
 rejected in the last seven days and is hidden when there are none.
 
 ### 3.8 Decision card
 
-Compact (panel, Needs you) and full (the decision page's top) share one anatomy: kind row (kind
-label, the task title, and the age), question (600), why (the recommendation in one or two
-sentences), the option buttons with the recommended one primary, **More context** link, which opens
-the decision page. Kind labels and colours: **L3 asks** and **The L2 asks** (`--accent-text`);
-**Ready for review** (`--data-claimed`, a green PR held for the operator; no producer records this
-kind yet); **Stopped mid-task** (a block without a question, by the operator or by altd) and
-**Fault** (`--danger`). Cards on Needs you carry a project chip. Needs you lists the cards in one
-column, newest question last, with the line "N things wait on you across N projects" above and the
-calm line below; it does not group by project.
+Needs you and the project work panel show one compact card per unresolved dilemma: task/project,
+source, one question or up to three independent questions, and **Open L2 chat**. The model can ask
+a plain question, give one recommended quick action, or offer two to three quick options with one
+recommendation and concise rationale. Single-question choices act immediately. Group choices start
+unselected; only actual picks have selection styling and remain staged until **Send N answers**.
+When only one question remains, its quick choices act immediately in both list and chat.
+With no manual picks, **Use recommendations**
+answers only questions with an explicit recommendation; it never overrides a picked alternative.
+The task title and card background open the same chat destination. Reference links remain ordinary
+external links. Plain questions use chat; no inferred default exists. Operational stops and faults open the task's
+ordinary controls. Discussions stay in chat, with no per-card follow-up fetch or mirrored exchange.
+A dilemma remains answerable while a provider limit queues a fresh attempt: acceptance records the
+choice, and the same chat queues replies with **Delivered when Altitude starts the L2.** The saved
+question or receipt travels into the fresh brief. Queuing alone never closes a relevant question.
 
-Data: `GET /api/overview` `queue[]` entries `{project, slug, kind, title, question, detail, asked,
-options}` extended in slice 3 with `recommendation` (the recommended option and why, one or two
-sentences), `asked_by` ("l3" or "l2"), and labelled `options` chosen by the asker. `POST /api/decide`
-carries `{project, slug, option, note}`.
+The recommendation body and acceptance action are the same component as the one at the question's
+message anchor in chat. Loading uses a skeleton with no inferred count; empty Needs you says
+**Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
+refresh notice and disabled acceptance. During acceptance, the control says **Recording…** and
+cannot be repeated. Saved answers disappear from the card and update counts; unresolved members
+remain together. The card disappears when none remain. A brief
+**Decision recorded** receipt links to chat. Failure keeps the question with Retry. Denied writes
+require a refreshed read; a changed question requires reviewing its current revision.
 
-| State | On the card |
-| --- | --- |
-| Waiting | as above |
-| Follow-up sent | a muted line under the why: "You asked: <text> · waiting for L3" (or the L2) |
-| Answer arrived | the answer block, prefixed "L3:" or "The L2:", appended under the follow-up; the card grows; a further question is possible |
-| Asked by an L2 | the kind row reads "The L2 asks", the follow-up defaults to the L2 |
-| Deciding | both buttons disabled, the chosen one shows a spinner |
-| Decided | the card collapses out (200ms); the task's row updates; nothing else appears |
-| Failed | buttons re-enabled; one line: "Could not record the decision. Retry." |
-| Stale | the task was resumed or rejected elsewhere (CLI, another window): the card leaves on the next poll with no message |
+### 3.9 Open the owning L2 question
 
-A follow-up to the L2 is a task-conversation message, so it resumes the blocked L2 (`docs/SESSION_LIFECYCLE.md`);
-the card leaves with the task and returns with the L2's new block if it asks again. Follow-ups
-mirror on the card only from the current window: rows since the block that raised this decision,
-so an earlier decision's exchange on the same task does not reappear.
+`/projects/:name/tasks/:slug?question=<id>&revision=<n>` opens the owning human conversation at
+that durable question's group, with preceding explanation visible. Every member link focuses the
+same stable group anchor; the conversation renders the group once. L3 escalation text stays attributed to
+L3 and contains the actual dilemma and recommendation. Later technical events do not change the
+anchor. The live session starts closed when entering a question; **Activity & evidence** reveals
+technical event summaries and the link to the existing live view.
 
-### 3.9 Decision page
+The normal composer accepts a follow-up, a simple answer such as “14 days”, or a nuanced decision.
+There is no recipient selector, note form or extra confirmation. A follow-up can wake the owner to
+answer while the dilemma remains open. The L2 records a clear decision against its source message;
+the UI never treats sending as approval. Ambiguity is clarified in conversation. A partial answer
+closes answered members and keeps only relevant unanswered members. A partially answered member
+retains its remaining scope in a new revision. A single typed reply can answer the whole group.
+If the chosen direction makes the
+remainder unnecessary, close it with a short reason instead of leaving stale questions open.
 
-Anatomy, top to bottom: crumb (back to where the page was opened from: the project or Needs you),
-**Open task**, and the panel toggle; chips (project, kind, task title) with the age; the question
-as the title; option buttons with an optional note field ("Add a note for the L2 (optional)", sent
-with the decision); **Why L3 recommends <option>** with the reasoning; **Where this came from** as
-a short timeline read from the task's events (the L2's block message, L3's escalation, "now: the
-task is blocked until you choose"); **Evidence** as chips that open the task conversation, the live
-session at the failing step, the evidence L3 cited (a PR, blocked dispatches, an issue), and the
-decision in the record; the follow-up composer with the recipient pill; a hint: "Your question and
-the answer appear here and on the card. The L2 stays blocked until you choose."
+A resolved question retains its history and reason with **Decision recorded** or **Question closed**;
+its obsolete acceptance disappears. Recorded acceptance and execution are separate observations:
+show **Waiting to resume** while waiting for capacity, and **Work resumed** only after observing the
+worker running. An old question URL stays readable and links to the current revision when one exists.
+Superseded versions fold under **Earlier question**; linking to an old version opens its history.
+An unavailable question is explicit and keeps the ordinary task conversation accessible.
 
-On the desktop the work panel stays open with the card selected. On the phone the page pushes over
-the tab it was opened from.
-
-States: loading; ready; follow-up in flight ("L3 is answering…" under the composer; the answer lands
-in the timeline and on the card); already decided ("Decided N min ago: <option>" banner, options
-gone, composer gone, the rest stays readable; a task resumed elsewhere without a recorded decision
-reads "This task was resumed elsewhere; it is <state> now."); task gone (archived: "This task was
-<archived state>." and a link to the archived task's page); error.
-
-**Why L3 recommends <option>** shows the recommendation's why and, when the asker described the
-options, each option's description on its own line. The timeline lists the task's events since the
-block that raised the decision (the L2's block as a quote, L3's escalation, the operator's stop, a
-resume, a decision, an FYI) and the follow-ups with their answers, in time order, then "now". The
-evidence chips are the task conversation, the live session when the task has one, the full report
-when one landed, each PR the task records (linked through the project's repository), and each `#N`
-the question names; the record has no web location yet, so there is no "decision in the record"
-chip.
+Opening from Needs you pushes one task entry and retains the origin tab. App Back uses the existing
+history entry and falls back to the project for a direct link. Conversation/Live session switches
+replace that entry and preserve the same-task draft. Leaving the task clears its draft; a late send
+stays bound to its original task. A new reply does not pull the reader away from the question:
+**Latest messages** follows the bottom, and **View question** returns to an offscreen open dilemma.
+Pending-question reads poll every two seconds. Stale navigation refreshes before acceptance, and
+every write names its exact question revision. Archived tasks retain history without a composer.
 
 ### 3.10 Task page
 
@@ -402,6 +400,10 @@ Actions **Stop** and **Reject** are quiet text buttons with inline confirmation;
 Stop asks "Stop this task? Its worker ends; the branch stays." with Stop and Cancel. Reject asks
 "Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
 Cancel. Stop appears while running; Reject appears while queued, running, blocked or reported.
+An operationally blocked task without an open question also offers **Resume**, using the existing
+daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
+A failed request leaves Resume available and places its error on a separate line under the actions,
+including on the phone. Resuming an operational pause records no decision.
 
 Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
@@ -443,7 +445,7 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
-operator (the decision card inline at the top of the conversation); blocked on L3 ("Waits for L3's
+operator (the question inline at its recorded message anchor); blocked on L3 ("Waits for L3's
 answer · <reason>" under the chips); blocked by a fault (a red line with the one-sentence reason
 and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
 the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
@@ -550,14 +552,15 @@ either a system line in progress (§3.4) or, for a `chat` turn, a typing indicat
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.
 
-### 4.3 Follow-ups go to the asker
+### 4.3 Discuss and decide in the owning conversation
 
-A follow-up from a decision page or card goes to whoever asked. **To L3**: a normal `chat` turn
-whose prompt is the follow-up with the decision's slug attached, so L3 answers from the record; the
-turn appears in the project conversation and its reply is mirrored on the card and the page. **To
-the L2**: a task-conversation message (`POST /api/l2/message`); the blocked L2 answers there and the
-answer is mirrored the same way. Mirroring reads the rows that carry the decision's slug; nothing is
-copied. A follow-up never decides; the L2 stays blocked until an option is chosen.
+Every dilemma opens its owning L2 chat. Follow-ups and unclear answers stay open; a clear decision
+is sufficient for the L2 to record the source, outcome and scope and proceed. Closing an obsolete
+dilemma records why it is unnecessary, without approving its abandoned recommendation. Partial
+answers keep only relevant outstanding parts. Quick acceptance records the explicit chosen option;
+grouped selections record only the named members and one normal operator message atomically, then
+use the existing wake path. Neither a discussion wake
+nor a generic resume authorizes implementation of the disputed approach or releases a merge hold.
 
 ### 4.4 Counts mean decisions
 
@@ -588,8 +591,8 @@ for the operator, asked as one plain dilemma; the answer is recorded in both bef
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, engine pin), `POST /api/chat/remove`, `POST /api/l3/reset` |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | `POST /api/decide` |
-| Decision page | the same plus `GET /api/task/<project>/<slug>` (events for the timeline) | `POST /api/decide`, `POST /api/chat` or `POST /api/l2/message` for the follow-up |
-| Task page | `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>` | `POST /api/l2/message`, `POST /api/task/action` |
+| Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
+| Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
 | Composer voice | `POST /api/transcribe` | none; audio is deleted after transcription |
 | Monitor | `GET /api/monitor` | none |
@@ -611,14 +614,18 @@ the working rules (the design decision of 2026-09-05).
    `/api/overview` are deleted with the Inbox.
 4. **Turns name the tasks they created.** The assistant chat row of a turn that created a task
    carries `tasks: [slug]`, written by the server when the turn's task creation lands.
-5. **Decisions carry their labels.** `tasks.decisions` returns `recommendation`, `asked_by`, and
-   the asker's labelled `options` (falling back to Resume and Reject for a block recorded without
-   them); `POST /api/decide` accepts `option` and `note` and records both on the task. Until an
-   escalation carries structured fields, the options and the recommendation are parsed from the
-   question text: "Option A:" / "A:" prefixes name the options, "(recommended)" or "I recommend A"
-   names the recommendation, and the label is the option's first clause.
-6. **Follow-ups carry the slug.** A `chat` row created from a decision page stores the decision's
-   slug so the page and the card can mirror the exchange.
+5. **Dilemmas have durable identity.** Task `questions` contains ID/revision, message anchor,
+   question/options/recommendation, source/audience and resolution. `question_group` projects up to
+   three current members, its revision and stable anchor. Task `question`, history and Needs you
+   project the same source independently of worker state. Blocks and escalations publish attributable
+   human context; the owner handoff names question and source-message IDs.
+6. **Resolution cites actual authority.** `POST /api/decide` accepts the exact current question/revision
+   and explicit option, or a group revision and selected member/option references. The whole batch
+   is validated before writing. `alt task resolve` cites an original operator message and records
+   the chosen scope or why a question is obsolete. Stale/conflicting writes fail; identical retries
+   reuse the receipt and repair interrupted delivery. A remainder publishes a new revision without
+   an inherited default. L3-authored prose cannot impersonate operator approval. The existing task
+   lock, inbox/resume and provider conversation remain the supporting machinery.
 
 Everything else is client rendering. No new daemon, no new store, no second conversation.
 
@@ -654,7 +661,7 @@ Order matters: each slice leaves the app usable.
 | --- | --- | --- |
 | 1 | **Shell.** Tokens (§6) into `tokens.css`; rail, phone header and tab bar, breakpoints (§2.2), scope rule (§2.3), routes and redirects (§2.1), First run (§3.12), theme toggle. The old Inbox and Projects pages are deleted; Needs you is the old Inbox's decision list restyled as §3.8 cards. | Every route renders in the new shell on 390 and 1440 with real data; the Inbox and Projects routes and their components are gone; `make test` and the web suite pass. |
 | 2 | **Conversation.** §3.3, §3.4, §3.6 on the project page; fold and group (§4.1); queue (§4.2); backend notes 1, 2, 4. | A landed report shows as one line and expands to label/value rows; consecutive system turns group; Queue works mid-turn; voice lands in the draft with no transcript box; `Chat.tsx` and the old bubble meta line are gone. |
-| 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | A decision is answerable from the panel and from Needs you; More context opens the page with timeline and evidence; a follow-up to L3 and to an L2 both mirror on the card; `digest.fyis` and the overview `fyis` field are deleted. |
+| 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | A recommendation is accepted from the panel or Needs you; its question opens the owning L2 chat, where follow-ups and decisions remain; `digest.fyis` and the overview `fyis` field are deleted. |
 | 4 | **Task page.** §3.10 on desktop and phone, Stop and Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
 | 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Seats, routing and sessions use the shell; Restart appears at the quiet point defined in §3.13. |
 

@@ -41,6 +41,7 @@ const project = {
 };
 
 const decision = {
+  id: "q-badge", revision: 1, anchor_id: "question-message", status: "open", audience: "operator",
   project: "altitude",
   slug: "add-badge",
   title: "Add the badge",
@@ -50,11 +51,7 @@ const decision = {
   detail: "The boards show accent; the old build used amber.",
   asked: ago(4),
   since: ago(4),
-  options: [
-    { key: "resume", label: "Resume" },
-    { key: "reject", label: "Reject" },
-  ],
-  recommendation: { option: "resume", why: "The boards show accent; the old build used amber." },
+  recommendation: { text: "Use accent.", label: "Resume", why: "The boards show accent; the old build used amber." },
 };
 
 const overview = {
@@ -91,7 +88,7 @@ function mockFetch(fixtures: Fixtures = {}) {
     if (url.includes("/api/l2/message")) return jsonResponse({ ok: true });
     if (url.includes("/api/l3/")) return jsonResponse({ ok: true });
     if (url.includes("/api/project/remove")) return jsonResponse({ ok: true });
-    if (url.includes("/api/decide")) return jsonResponse({ ok: true });
+    if (url.includes("/api/decide")) return jsonResponse({ ok: true, question: { ...decision, status: "resolved" } });
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -298,13 +295,13 @@ describe("Project page", () => {
 
     const panel = await screen.findByRole("region", { name: "Work" });
     const card = within(panel).getByRole("article", { name: "Add the badge" });
-    expect(within(card).getByText("L3 asks")).toBeInTheDocument();
-    expect(within(card).getByRole("link", { name: "More context" })).toHaveAttribute("href", "/projects/altitude/decisions/add-badge");
-    expect(within(panel).queryByRole("link", { name: /^Add the badge/ })).toBeNull();
+    expect(within(card).getByText("L3 brought this to you")).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
+    expect(within(panel).getByRole("link", { name: /^Add the badge/ }).closest("article")).toBe(card);
 
     fixtures.overview = { ...overview, queue: [] };
     await user.click(within(card).getByRole("button", { name: "Resume" }));
-    await waitFor(() => expect(posted(fetchMock, "/api/decide")).toEqual({ project: "altitude", slug: "add-badge", option: "resume" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/decide")).toEqual({ project: "altitude", slug: "add-badge", question_id: "q-badge", revision: 1, option_key: "recommended" }));
     await waitFor(() => expect(within(panel).queryByRole("article", { name: "Add the badge" })).toBeNull());
     const row = await within(panel).findByRole("link", { name: /^Add the badge/ });
     expect(row).toHaveAccessibleName("Add the badge · Queued · waits for dispatch");

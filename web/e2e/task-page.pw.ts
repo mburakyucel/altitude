@@ -1,6 +1,6 @@
 import { test } from "./fixtures";
 import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
-import { TaskMessageSchema } from "../src/data/api";
+import { DecisionSchema, TaskMessageSchema } from "../src/data/api";
 import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
@@ -185,7 +185,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
 });
 
-test("a blocked task: the decision card, waiting for L3, a fault", async ({ page, request }, info) => {
+test("a blocked task: the anchored question, waiting for L3, a fault", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -194,38 +194,41 @@ test("a blocked task: the decision card, waiting for L3, a fault", async ({ page
   const line = v.main.locator(".task-line");
 
   const question = "Should the timer keep the old default?";
+  const asked = new Date().toISOString();
+  const decision = DecisionSchema.parse({
+    project: project.name, slug: base.slug, title, kind: "asks", asked_by: "l3",
+    id: "timer-question", revision: 1, anchor_id: "timer-anchor", status: "open", audience: "operator",
+    state: "blocked", question, detail: question, asked,
+    recommendation: { text: "Keep the old timer default.", label: "Keep it & resume", why: "The old default is what the tests cover." },
+    resolution: null,
+  });
+  const anchor = TaskMessageSchema.parse({ id: decision.anchor_id, at: asked, role: "l3", by: "l3", text: question });
   await overlay(
     page,
     project.name,
-    { ...base, state: "blocked", live: null, resume_after: null, blocked_reason: question },
-    {
-      queue: [{
-        project: project.name,
-        slug: base.slug,
-        kind: "asks",
-        asked_by: "l3",
-        title,
-        question,
-        asked: new Date().toISOString(),
-        since: new Date().toISOString(),
-        options: [{ key: "A", label: "Keep it" }, { key: "B", label: "Change it" }],
-        recommendation: { option: "A", why: "The old default is what the tests cover." },
-      }],
-    },
+    { ...base, state: "blocked", live: null, resume_after: null, blocked_reason: question,
+      question: decision, questions: [decision], messages: [...(base.messages as unknown[]), anchor] },
+    { queue: [decision] },
   );
-  await walk.open(taskPath(project.name, base.slug));
-  const card = v.conversation.getByRole("article", { name: title, exact: true });
+  await walk.open(`${taskPath(project.name, base.slug)}?question=${decision.id}&revision=${decision.revision}`);
+  const card = v.conversation.locator(`[data-question-id="${decision.id}"]`);
+  await expect(card).toBeInViewport();
+  await expect(page.locator(`.conversation-question:has([data-question-id="${decision.id}"])`)).toBeFocused();
   await walk.state("01-blocked-on-the-operator", {
-    visible: [v.main.getByText("Blocked", { exact: true }).first(), card, card.getByText(question), v.composer, v.reject],
-    hidden: [line, v.stop],
+    visible: [v.main.getByText("Blocked", { exact: true }).first(), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, v.reject],
+    hidden: [line, v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
   await clearRoutes(page);
-  await overlay(page, project.name, { ...base, state: "blocked", live: null, resume_after: null, waiting_on: "l3", blocked_reason: "which suite covers the timer" });
-  await walk.open(taskPath(project.name, base.slug));
+  const waiting = DecisionSchema.parse({ ...decision, id: "suite-question", anchor_id: "suite-anchor", asked_by: "l2", audience: "l3", question: "which suite covers the timer", recommendation: null });
+  const waitingAnchor = TaskMessageSchema.parse({ ...anchor, id: waiting.anchor_id, role: "l2", by: "l2", text: waiting.question });
+  await overlay(page, project.name, { ...base, state: "blocked", live: null, resume_after: null, waiting_on: "l3", blocked_reason: waiting.question,
+    question: waiting, questions: [waiting], messages: [...(base.messages as unknown[]), waitingAnchor] }, { queue: [] });
+  await walk.open(`${taskPath(project.name, base.slug)}?question=${waiting.id}&revision=1`);
+  const l3Question = v.conversation.locator(`[data-question-id="${waiting.id}"]`);
   await walk.state("02-blocked-waiting-for-l3", {
-    visible: [line.getByText("Waits for L3's answer · which suite covers the timer"), v.composer],
-    hidden: [card],
+    visible: [line.getByText("Waits for L3's answer · which suite covers the timer"), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
+    hidden: [card, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
   await clearRoutes(page);
@@ -237,6 +240,8 @@ test("a blocked task: the decision card, waiting for L3, a fault", async ({ page
     waiting_on: "l3",
     fault: "sandbox",
     blocked_reason: "The sandbox refused the network socket. Tried twice with the bundled browser.",
+    question: null,
+    questions: [],
   });
   await walk.open(taskPath(project.name, base.slug));
   await walk.state("03-blocked-by-a-fault", {

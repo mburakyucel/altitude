@@ -3,11 +3,16 @@
  * a <script> tag because Chrome blocks fetch() on file:// URLs and the viewer opens from disk.
  * A listed file that is missing renders as a visible warning tile, never a blank one. */
 window.WIREFRAME_BOARDS = [
+  { label: 'Conversation · Needs you · questions upfront', desktop: 'ConversationFirstNeedsYou.html', mobile: 'MobileConversationFirstNeedsYou.html' },
+  { label: 'Conversation · One question · immediate quick choices', desktop: 'ConversationFirstQuestion.html', mobile: 'MobileConversationFirstQuestion.html' },
+  { label: 'Conversation · Choose answers · send once', desktop: 'ConversationFirstGroup.html', mobile: 'MobileConversationFirstGroup.html' },
+  { label: 'Conversation · Discuss without deciding', desktop: 'ConversationFirstFollowup.html', mobile: 'MobileConversationFirstFollowup.html' },
+  { label: 'Conversation · Keep only what still needs an answer', desktop: 'ConversationFirstPartial.html', mobile: 'MobileConversationFirstPartial.html' },
+  { label: 'Conversation · Decisions recorded · work resumed', desktop: 'ConversationFirstAccepted.html', mobile: 'MobileConversationFirstAccepted.html' },
+  { label: 'Conversation · Shared input and recovery appendix', desktop: 'ConversationFirstStates.html', mobile: 'MobileConversationFirstStates.html' },
   { label: 'Project: chat with L3, work panel beside it', desktop: 'Project.html', mobile: 'MobileProject.html' },
   { label: 'Project switcher (phone)', mobile: 'MobileSwitcher.html' },
   { label: 'Project work (phone)', mobile: 'MobileWork.html' },
-  { label: 'Needs you, across projects', desktop: 'NeedsYou.html', mobile: 'MobileNeedsYou.html' },
-  { label: 'Decision page', desktop: 'Decision.html', mobile: 'MobileDecision.html' },
   { label: 'Task page: L2 conversation and live session', desktop: 'Task.html', mobile: 'MobileTask.html' },
   { label: 'Task live session (phone)', mobile: 'MobileTaskLive.html' },
   { label: 'Task live panel overlay below 1280px', desktop: 'TaskOverlay.html', desktopSize: { w: 1100, h: 900, name: 'Sheet' } },
@@ -18,7 +23,6 @@ window.WIREFRAME_BOARDS = [
   { label: 'Restart banner states', desktop: 'RestartStates.html', desktopSize: { w: 1200, h: 540, name: 'Sheet' } },
   { label: 'First run', desktop: 'FirstRun.html' },
   { label: 'Composer states, voice included', desktop: 'ComposerStates.html', desktopSize: { w: 1200, h: 1380, name: 'Sheet' } },
-  { label: 'Decision card states', desktop: 'DecisionStates.html', desktopSize: { w: 1200, h: 880, name: 'Sheet' } },
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },

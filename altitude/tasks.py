@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import config, github_intake, state as S, usage
 
@@ -30,6 +30,10 @@ class TransitionError(Exception):
 TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
+
+
+def _conversation_time() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str | None = None,
@@ -91,7 +95,9 @@ def _rows(path: Path, what: str) -> list[dict]:
 
 
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
-            expected_attempt: int | None = None, wake_blocked: bool = True) -> dict:
+            expected_attempt: int | None = None, wake_blocked: bool = True,
+            question_id: str | None = None, revision: int | None = None,
+            group_id: str | None = None, group_revision: int | None = None) -> dict:
     """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
@@ -103,11 +109,38 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
     with S.project_lock(project):
         task = S.load_task(project, slug)
         allowed = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
+        if role != "l2" and task.get("questions"):
+            allowed += ("queued",)  # a known dilemma remains discussable while its next attempt waits
         if task.get("state") not in allowed:
             raise TransitionError(f"{slug}: cannot message the L2 in {task.get('state')} state")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
-        row = {"id": uuid.uuid4().hex, "at": S.now(), "role": role, "text": text, "by": by or role}
+        if _ensure_question(project, task):
+            S.save_task(project, task)
+        row = {"id": uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
+        groups = _groups(task)
+        explicit_question = question_id is not None or revision is not None
+        if explicit_question and (group_id is not None or group_revision is not None):
+            raise TransitionError("message context names a question or a group, not both")
+        if explicit_question:
+            target = _question_target(task, question_id, revision)
+            row.update(question_id=target["id"], question_revision=target["revision"],
+                       question_refs=[{"id": target["id"], "revision": target["revision"]}],
+                       question_context=question_context(target))
+            if groups and any((q["id"], q["revision"]) != (target["id"], target["revision"])
+                              for q in _group_members(task, groups[-1])):
+                row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
+        elif groups or group_id is not None or group_revision is not None:
+            group = (_group_target(task, group_id, group_revision)
+                     if group_id is not None or group_revision is not None else groups[-1])
+            members = _group_members(task, group)
+            row.update(group_id=group["id"], group_revision=group["revision"],
+                       question_refs=[{"id": q["id"], "revision": q["revision"]} for q in members],
+                       question_context=group_context(task, group))
+            if len(members) == 1:
+                row.update(question_id=members[0]["id"], question_revision=members[0]["revision"])
+            if groups and group["id"] != groups[-1]["id"]:
+                row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
         d = S.task_dir(project, slug)
         _append_jsonl(d / "conversation.jsonl", row)
         if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
@@ -137,6 +170,14 @@ def enqueue(project: str, slug: str, text: str, *, by: str = "altitude") -> dict
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
     """The durable task conversation."""
     rows = _rows(S.task_dir(project, slug) / "conversation.jsonl", "task conversation")
+    # Question anchors and quick-accept messages are saved atomically with their question record.
+    # Project them into the ordinary human thread without a second multi-file commit protocol.
+    for question in S.load_task(project, slug).get("questions", []):
+        rows.append(question["message"])
+        if question.get("acceptance_message"):
+            rows.append(question["acceptance_message"])
+    rows = list({row["id"]: row for row in rows}.values())
+    rows.sort(key=lambda row: row["at"])
     if any(row.get("role") not in TASK_MESSAGE_ROLES for row in rows):
         raise ValueError(f"corrupt task conversation of {project}/{slug}: invalid role")
     if limit is not None:
@@ -147,7 +188,26 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
 
 def pending(project: str, slug: str) -> list[dict]:
     """What waits for the worker's next checkpoint."""
-    return _rows(S.task_dir(project, slug) / "inbox.jsonl", "task inbox")
+    return _pending_rows(S.load_task(project, slug), S.task_dir(project, slug) / "inbox.jsonl")
+
+
+def _pending_rows(task: dict, path: Path) -> list[dict]:
+    rows = _rows(path, "task inbox")
+    if task.get("state") not in ("running", "blocked", "queued"):
+        return rows  # historical receipts do not create new delivery work after the owner hands off
+    seen = {row["id"] for row in rows}
+    for question in task.get("questions", []):
+        message = question.get("acceptance_message")
+        if message and not question.get("acceptance_delivered") and message["id"] not in seen:
+            rows.append(message)
+            seen.add(message["id"])
+    return sorted(rows, key=lambda row: row["at"])
+
+
+def _mark_acceptance_delivered(task: dict, ids: set[str]) -> None:
+    for question in task.get("questions", []):
+        if (question.get("acceptance_message") or {}).get("id") in ids:
+            question["acceptance_delivered"] = True
 
 
 def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None = None,
@@ -167,7 +227,9 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
                               expected_session_id=expected_session_id, expected_block_id=expected_block_id)
         if task.get("state") != "blocked" or task.get("resume_claim"):
             return None
-        rows = _rows(path, "task inbox")
+        _ensure_question(project, task)
+        rows = _pending_rows(task, path)
+        _mark_acceptance_delivered(task, {row["id"] for row in rows})
         claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
@@ -255,9 +317,12 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dic
     """Remove delivered messages from the inbox (all of them, or only `ids`) and return them."""
     path = S.task_dir(project, slug) / "inbox.jsonl"
     with S.project_lock(project):
-        rows = _rows(path, "task inbox")
+        task = S.load_task(project, slug)
+        rows = _pending_rows(task, path)
         taken = [row for row in rows if ids is None or row["id"] in ids]
         left = [row for row in rows if row not in taken]
+        _mark_acceptance_delivered(task, {row["id"] for row in taken})
+        S.save_task(project, task)
         if left:
             S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
         else:
@@ -267,13 +332,15 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dic
 
 def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them."""
-    return "\n\n".join(f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}):\n{row['text']}"
+    return "\n\n".join((row.get("question_context", "") + "\n\n" if row.get("question_context") else "")
+                       + f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}; message id {row['id']}):\n{row['text']}"
                        for row in rows)
 
 
-def _clear_block(task: dict) -> None:
+def _clear_block(project: str, task: dict) -> None:
+    _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor"):
         task.pop(key, None)
 
 
@@ -304,6 +371,19 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
             ) from exc
         stopped = (engine, note)
     task["state"] = to
+    if to in ("reported", "done", "rejected"):
+        _store_groups(task)
+        closed_groups = set()
+        for question in task.get("questions", []):
+            if question["status"] == "open":
+                disposition = {"reported": "superseded", "done": "completed", "rejected": "rejected"}[to]
+                reason = ("Task handed its report to review; the previous recommendation was not accepted."
+                          if to == "reported" else ev.get("reason") or f"Task {to}")
+                _close_question(question, disposition, reason, actor)
+                closed_groups.add(_group_for(task, question)["id"])
+        for group in _groups(task):
+            if group["id"] in closed_groups:
+                group["revision"] += 1
     if to in ("blocked", "reported", "done", "rejected"):
         usage.capture(project, task, final=to in ("done", "rejected"))
     if to == "running":
@@ -368,7 +448,7 @@ def reject(project: str, slug: str, reason: str, actor: str = "burak", *,
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
-        _clear_block(task)
+        _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
         S.regen_state_md(project)
@@ -417,7 +497,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
                 raise TransitionError(f"{slug}: latest block did not come from {expected_block_from}")
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
-        _clear_block(task)
+        _clear_block(project, task)
         if verified.get("prs"):
             task["prs"] = sorted(set(task.get("prs", []) + list(verified["prs"])))
         return _move(project, task, "reported", actor, verdict=verified.get("verdict"))
@@ -426,7 +506,10 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
 def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_state: str | None = None, expected_attempt: int | None = None, updates: dict | None = None,
           expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
-          expected_daemon_request: str | None = None, expected_block_id: object = _UNSET) -> dict:
+          expected_daemon_request: str | None = None, expected_block_id: object = _UNSET,
+          recommendation: str | None = None,
+          recommendation_label: str | None = None, recommendation_why: str | None = None,
+          questions: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
@@ -439,6 +522,12 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         _supersede_resume(task)
         task.update(updates or {})
         task["blocked_reason"] = reason
+        task["block_actor"] = actor
+        if questions is not None and (actor not in ("l2", "l3") or task.get("fault")):
+            raise TransitionError("structured questions require an L2/L3 human dilemma, not an operational block")
+        if actor in ("l2", "l3") and not task.get("fault"):
+            _publish_block_questions(task, reason, actor, questions, recommendation,
+                                     recommendation_label, recommendation_why)
         return _move(project, task, "blocked", actor, reason=reason)
 
 
@@ -459,7 +548,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
         if agent_id:
             usage.remember(task)
             task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
-        _clear_block(task)
+        _clear_block(project, task)
         return _move(project, task, "running", actor, **ev)
 
 
@@ -480,7 +569,7 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
         usage.capture(project, task)
         task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None, "routing": None})
-        _clear_block(task)
+        _clear_block(project, task)
         return _move(project, task, "queued", actor, **ev)
 
 
@@ -578,10 +667,6 @@ def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
     return row
 
 
-#: A block recorded without labelled options offers the two the lifecycle always has.
-FALLBACK_OPTIONS = [{"key": "resume", "label": "Resume", "text": ""},
-                    {"key": "reject", "label": "Reject", "text": ""}]
-
 #: "Option A:" / "Option 1)" anywhere, or a sentence-initial "A:" / "A (recommended, ...):".
 _OPTION_MARK = re.compile(
     r"(?:\bOption\s+(?P<key>[A-Za-z0-9])\s*(?:\((?P<note>[^)]*)\))?\s*[:)]\s+"
@@ -605,8 +690,8 @@ def option_label(text: str, key: str) -> str:
 
 
 def parse_dilemma(text: str) -> dict:
-    """The asker's options and recommendation, read from the escalation prose until an escalation carries
-    structured fields (SPEC.md §5.2 note 5). Returns ``question`` (the text before the options), ``options``
+    """Read explicitly labelled options and recommendations from human dilemma prose.
+    Structured recommendation fields take precedence when provided. Returns ``question``, ``options``
     ``[{key, label, text}]`` (empty when fewer than two parse), and ``recommendation`` ``{option, why}``."""
     text = (text or "").strip()
     marks = []
@@ -653,17 +738,538 @@ def _sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
 
 
-def decision_options(task: dict) -> list[dict]:
-    """The options a blocked task offers: the asker's, else Resume and Reject."""
-    parsed = parse_dilemma(task.get("blocked_reason") or "")
-    return parsed["options"] or [dict(o) for o in FALLBACK_OPTIONS]
+def _close_question(question: dict, disposition: str, text: str, actor: str,
+                    message_id: str | None = None, source: str | None = None) -> dict:
+    question["status"] = "resolved"
+    question["resolution"] = {"disposition": disposition, "text": text, "by": actor, "at": _conversation_time(),
+                              "message_id": message_id, "source": source}
+    return question["resolution"]
+
+
+def _groups(task: dict) -> list[dict]:
+    if "question_groups" in task:
+        return task["question_groups"]
+    groups = {}
+    for question in task.get("questions", []):
+        group = groups.setdefault(question["id"], {"id": question["id"], "revision": 1,
+                                  "member_ids": [question["id"]], "anchor_id": question["anchor_id"],
+                                  "reason": question["detail"]})
+        group["revision"] = max(group["revision"], question["revision"])
+    return list(groups.values())
+
+
+def _group_members(task: dict, group: dict) -> list[dict]:
+    latest = {q["id"]: q for q in task.get("questions", [])}
+    return [latest[identity] for identity in group["member_ids"] if identity in latest]
+
+
+def _group_for(task: dict, question: dict) -> dict:
+    return next(g for g in _groups(task) if question["id"] in g["member_ids"])
+
+
+def _store_groups(task: dict) -> list[dict]:
+    if "question_groups" not in task:
+        task["question_groups"] = _groups(task)
+    return task["question_groups"]
+
+
+def question_choices(question: dict) -> list[dict]:
+    if "options" in question:
+        return question["options"]
+    rec = question.get("recommendation")
+    return [{"key": "recommended", "label": rec["label"], "text": rec["text"]}] if rec else []
+
+
+def _recommended_key(question: dict) -> str | None:
+    return question.get("recommended_key", "recommended" if question.get("recommendation") else None)
+
+
+def _validate_questions(payload: dict) -> list[dict]:
+    if not isinstance(payload, dict) or set(payload) != {"questions"}:
+        raise TransitionError('questions JSON must contain only a "questions" array')
+    items = payload["questions"]
+    if not isinstance(items, list) or not 1 <= len(items) <= 3:
+        raise TransitionError("ask one to three independent questions")
+    normalized, ids, texts = [], set(), set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) - {"id", "question", "options", "recommended_key", "why"}:
+            raise TransitionError("question fields are id, question, options, recommended_key and why")
+        text = item.get("question")
+        if not isinstance(text, str) or not text.strip():
+            raise TransitionError("every question needs nonempty text")
+        if text.strip() in texts:
+            raise TransitionError("each independent question appears only once")
+        texts.add(text.strip())
+        identity = item.get("id")
+        if identity is not None and (not isinstance(identity, str) or not identity or identity in ids):
+            raise TransitionError("question ids must be distinct existing ids")
+        if identity:
+            ids.add(identity)
+        options, keys = item.get("options", []), set()
+        if not isinstance(options, list) or len(options) > 3:
+            raise TransitionError("a question has at most three quick options")
+        for option in options:
+            if (not isinstance(option, dict) or set(option) != {"key", "label", "text"}
+                    or any(not isinstance(option[k], str) or not option[k].strip() for k in option)):
+                raise TransitionError("each option needs a nonempty key, label and text")
+            if option["key"] in keys:
+                raise TransitionError("option keys must be distinct")
+            keys.add(option["key"])
+        recommended = item.get("recommended_key")
+        if (options and (not isinstance(recommended, str) or recommended not in keys)) or (not options and recommended is not None):
+            raise TransitionError("quick options require one explicit recommended_key; plain questions have none")
+        why = item.get("why", "")
+        if not isinstance(why, str):
+            raise TransitionError("recommendation rationale must be text")
+        normalized.append({"id": identity, "question": text.strip(), "options": options,
+                           "recommended_key": recommended, "why": why.strip(),
+                           "options_supplied": "options" in item, "why_supplied": "why" in item})
+    return normalized
+
+
+def _publish_question(task: dict, text: str, actor: str, *, recommendation: str | None = None,
+                      label: str | None = None, why: str | None = None, force_revision: bool = False,
+                      previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
+                      recommended_key: str | None = None, bump: bool = True) -> dict:
+    questions = task.setdefault("questions", [])
+    if previous is _UNSET:
+        previous = questions[-1] if questions else None
+    groups = _store_groups(task)
+    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
+    parsed = parse_dilemma(text)
+    structured = options is not None
+    selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
+    recommended = ({"text": recommendation.strip(), "label": (label or "Use recommendation & resume").strip(),
+                    "why": (why or "").strip()} if recommendation and recommendation.strip() else
+                   {"text": selected["text"], "label": selected["label"],
+                    "why": parsed["recommendation"]["why"]} if selected else None)
+    if options is not None:
+        selected = next((o for o in options if o["key"] == recommended_key), None)
+        recommended = {"text": selected["text"], "label": selected["label"], "why": why or ""} if selected else None
+    else:
+        options = [{"key": "recommended", "text": recommended["text"], "label": recommended["label"]}] if recommended else []
+        recommended_key = "recommended" if recommended else None
+    if (previous and previous["status"] == "open" and previous["detail"] == text
+            and previous["audience"] == audience and previous["recommendation"] == recommended
+            and previous["asked_by"] == actor and question_choices(previous) == options
+            and _recommended_key(previous) == recommended_key):
+        return previous
+    continuing = previous and (previous["status"] == "open" or force_revision)
+    if previous and previous["status"] == "open":
+        _close_question(previous, "superseded", "Question updated; use the current revision.", actor)
+    identity = previous["id"] if continuing else uuid.uuid4().hex
+    revision = previous["revision"] + 1 if continuing else 1
+    at, anchor = _conversation_time(), uuid.uuid4().hex
+    if group is None:
+        group = _group_for(task, previous) if continuing else {"id": uuid.uuid4().hex, "revision": 0,
+                    "member_ids": [], "anchor_id": anchor, "reason": text}
+        if not continuing:
+            groups.append(group)
+    if identity not in group["member_ids"]:
+        group["member_ids"].append(identity)
+    if not group.get("anchor_id"):
+        group["anchor_id"] = anchor
+    message = {"id": anchor, "at": at, "role": actor if actor in ("l2", "l3") else "l2", "by": actor,
+               "text": text, "question_id": identity, "question_revision": revision, "group_id": group["id"]}
+    if previous and continuing and previous["resolution"].get("message_id") is None:
+        previous["resolution"].update(message_id=anchor, source="task")
+    question = {"id": identity, "revision": revision, "anchor_id": anchor, "status": "open",
+                "audience": audience,
+                "question": (previous["question"] if previous and previous["detail"] == text
+                             else text if structured else parsed["question"]), "detail": text,
+                "recommendation": recommended, "asked_by": actor, "asked": at, "since": at,
+                "kind": "asks", "resolution": None, "message": message, "group_id": group["id"],
+                "options": options, "recommended_key": recommended_key}
+    questions.append(question)
+    if bump:
+        group["revision"] += 1
+    return question
+
+
+def _publish_questions(task: dict, payload: dict, actor: str, reason: str) -> list[dict]:
+    inputs = _validate_questions(payload)
+    groups = _store_groups(task)
+    group = groups[-1] if groups else None
+    if not group or not any(q["status"] == "open" for q in _group_members(task, group)):
+        group = {"id": uuid.uuid4().hex, "revision": 0, "member_ids": [], "anchor_id": None, "reason": reason}
+        groups.append(group)
+    members = _group_members(task, group)
+    targets, used = [], set()
+    for item in inputs:
+        previous = next((q for q in members if q["id"] == item["id"]), None) if item["id"] else next(
+            (q for q in members if q["status"] == "open" and q["detail"] == item["question"]), None)
+        if item["id"] and (not previous or previous["status"] != "open"):
+            raise TransitionError("question id must name an open member of the current group")
+        if previous and previous["id"] in used:
+            raise TransitionError("a question appears twice in the group")
+        if previous:
+            used.add(previous["id"])
+        targets.append((item, previous))
+    if len(members) + sum(previous is None for _, previous in targets) > 3:
+        raise TransitionError("a group has at most three questions; resolve existing questions before asking a new group")
+    before = len(task.get("questions", []))
+    for item, previous in targets:
+        if previous and previous["audience"] == "operator":
+            task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+        keep_options = previous and previous["detail"] == item["question"] and not item["options_supplied"]
+        options = question_choices(previous) if keep_options else item["options"]
+        recommended = _recommended_key(previous) if keep_options else item["recommended_key"]
+        why = ((previous.get("recommendation") or {}).get("why", "")
+               if keep_options and not item["why_supplied"] else item["why"])
+        _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
+                          options=options, recommended_key=recommended, why=why)
+    group["reason"] = reason
+    if len(task["questions"]) != before:
+        group["revision"] += 1
+    return _group_members(task, group)
+
+
+def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict | None,
+                             recommendation: str | None, label: str | None, why: str | None) -> list[dict]:
+    groups = _store_groups(task)
+    group = groups[-1] if groups else None
+    members = _group_members(task, group) if group else []
+    pending = [q for q in members if q["status"] == "open"]
+    if any(q["audience"] == "operator" for q in pending):
+        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    if payload is not None:
+        if any(value is not None for value in (recommendation, label, why)):
+            raise TransitionError("questions JSON supplies its own options and recommendation")
+        return _publish_questions(task, payload, actor, reason)
+    previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
+    no_replacement = all(value is None for value in (recommendation, label, why))
+    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
+    if no_replacement and group and reason.strip() == group["reason"].strip() and pending:
+        # The ordinary block verb parks the same whole group after discussing a follow-up.
+        if all(q["audience"] == audience for q in pending):
+            return members
+        for question in pending:
+            _publish_question(task, question["detail"], actor, previous=question, group=group, bump=False,
+                              options=question_choices(question), recommended_key=_recommended_key(question),
+                              why=(question.get("recommendation") or {}).get("why"))
+        group["revision"] += 1
+        return _group_members(task, group)
+    if previous is None and len(pending) > 1:
+        raise TransitionError("several questions remain open; use --questions-file with their ids or park with the saved group reason")
+    previous = previous or (pending[0] if pending else None)
+    if previous and previous["detail"].strip() == reason.strip() and no_replacement:
+        if previous["audience"] == audience:
+            return members
+        _publish_question(task, reason, actor, previous=previous, group=group,
+                          options=question_choices(previous), recommended_key=_recommended_key(previous),
+                          why=(previous.get("recommendation") or {}).get("why"))
+    else:
+        _publish_question(task, reason, actor, previous=previous, group=group if pending else None,
+                          recommendation=recommendation, label=label, why=why)
+    current_group = _groups(task)[-1]
+    current_group["reason"] = reason
+    return _group_members(task, current_group)
+
+
+def _legacy_question_origin(project: str, task: dict) -> dict | None:
+    """Read whether a legacy block has authoritative human-question evidence, without adopting it."""
+    if (task.get("questions") or task.get("state") != "blocked" or not task.get("blocked_reason")
+            or task.get("fault")):
+        return None
+    events = S.read_events(project, task["slug"])
+    block_index = next((i for i in range(len(events) - 1, -1, -1)
+                        if events[i].get("kind") == "state" and events[i].get("to") == "blocked"), -1)
+    block = events[block_index] if block_index >= 0 else {}
+    escalation = (next((event for event in reversed(events[block_index + 1:])
+                        if event.get("kind") == "escalated"), {}) if task.get("escalated") else {})
+    origin = escalation or block
+    actor = origin.get("by") or task.get("block_actor")
+    # A missing actor does not turn legacy capacity/quota holds or operator stops into an L2 question.
+    if actor not in ("l2", "l3"):
+        return None
+    return {"text": origin.get("question") or origin.get("reason") or task["blocked_reason"],
+            "actor": actor, "at": origin.get("at")}
+
+
+def _ensure_question(project: str, task: dict) -> bool:
+    """Adopt pre-feature human blocks before a read or wake can lose their durable dilemma."""
+    origin = _legacy_question_origin(project, task)
+    if not origin:
+        return False
+    question = _publish_question(task, origin["text"], origin["actor"])
+    if origin.get("at"):
+        question.update(asked=origin["at"], since=origin["at"])
+        question["message"]["at"] = origin["at"]
+    return True
+
+
+def question_context(question: dict) -> str:
+    if question["status"] == "resolved":
+        resolution = question["resolution"]
+        return (f"Task question {question['id']} revision {question['revision']} is resolved "
+                f"({resolution['disposition']}, recorded from {resolution.get('source') or 'task lifecycle'} "
+                f"by {resolution['by']}): {resolution['text']}\n"
+                f"Question: {question['detail']}\n"
+                "This closes that question only. Superseded questions do not accept their old recommendation. "
+                "Existing task scope and merge holds remain unchanged.")
+    recommendation = question.get("recommendation")
+    return (f"Pending task question {question['id']} revision {question['revision']} "
+            f"(asked by {question['asked_by']}; authority: {question['audience']}): {question['detail']}\n"
+            + (f"Recommended approach: {recommendation['text']}\n" if recommendation else "")
+            + ("Quick choices: " + "; ".join(f"{o['key']}: {o['text']}" for o in question_choices(question)) + "\n"
+               if question_choices(question) else "")
+            + "Discussing this question or waking the worker does not authorize the disputed implementation. "
+            "Answer follow-ups; clarify ambiguity conversationally. After answering a follow-up with "
+            "`alt task reply`, checkpoint progress.md and park using `alt task block \"$ALTITUDE_TASK\" "
+            "--reason '<same pending question text>'`. Omit recommendation fields to keep the saved question, "
+            "recommendation and required authority; parking leaves it unanswered. When the actual source message settles the "
+            "choice, record it before proceeding: alt task resolve \"$ALTITUDE_TASK\" "
+            f"--question {question['id']} --revision {question['revision']} --message <message-id> "
+            "--source task --disposition answered --reason '<chosen approach>'. A simple contextual answer "
+            "is sufficient; no magic approval phrase or redundant confirmation. For partial answers, add "
+            "--remaining '<only still-relevant unanswered parts>'; use --disposition superseded when a "
+            "changed direction makes the old question irrelevant, without accepting its recommendation. "
+            "For an operator decision relayed through L3 cite its original project message with --source project. "
+            "L3-authored text alone cannot settle a question requiring operator judgment. Merge holds remain unchanged.")
+
+
+def group_context(task: dict, group: dict | None = None) -> str:
+    groups = _groups(task)
+    group = group or (groups[-1] if groups else None)
+    if not group:
+        return ""
+    return (f"Task question group {group['id']} revision {group['revision']}. "
+            f"Saved group reason: {group['reason']}\n"
+            "Each question is independent. A single source message may answer several; use alt task resolve "
+            "for each actually answered or irrelevant question and leave other questions open. "
+            "After a follow-up, park the whole group using alt task block with its saved group reason. "
+            "To revise a member, use --questions-file and its id; omitted members remain unchanged.\n\n"
+            + "\n\n".join(question_context(q) for q in _group_members(task, group)))
+
+
+def question_view(project: str, task: dict, question: dict) -> dict:
+    group = _group_for(task, question)
+    return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered")},
+            "options": question_choices(question), "recommended_key": _recommended_key(question),
+            "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
+            "project": project, "slug": task["slug"], "title": task.get("title"),
+            "state": task["state"], "resume_after": task.get("resume_after"),
+            "resume_failed": task.get("resume_failed")}
+
+
+def question_group_view(project: str, task: dict, group: dict | None = None) -> dict | None:
+    groups = _groups(task)
+    group = group or (groups[-1] if groups else None)
+    if not group:
+        return None
+    return {"id": group["id"], "revision": group["revision"], "anchor_id": group["anchor_id"],
+            "questions": [question_view(project, task, q) for q in _group_members(task, group)]}
+
+
+def _group_target(task: dict, identity: str, revision: int) -> dict:
+    group = next((g for g in _groups(task) if g["id"] == identity), None)
+    if (not group or isinstance(revision, bool) or not isinstance(revision, int)
+            or group["revision"] != revision):
+        raise TransitionError("question group changed; refresh the conversation")
+    return group
+
+
+def question_views(project: str, slug: str) -> list[dict]:
+    task = S.load_task(project, slug)
+    if _legacy_question_origin(project, task):
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            if _ensure_question(project, task):
+                # A one-time durable anchor migration is not new worker or conversation activity.
+                S.write_json(S.status_path(project, slug), task)
+    return [question_view(project, task, q) for q in task.get("questions", [])]
+
+
+def _question_target(task: dict, identity: str, revision: int) -> dict:
+    if not identity or isinstance(revision, bool) or not isinstance(revision, int):
+        raise TransitionError("acceptance must name the question and its integer revision")
+    question = next((q for q in task.get("questions", [])
+                     if q["id"] == identity and q["revision"] == revision), None)
+    if not question:
+        raise TransitionError("question is unavailable; refresh the conversation")
+    return question
+
+
+def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str, *,
+                     disposition: str, reason: str, expected_attempt: int, source: str = "task",
+                     remaining: str | None = None, recommendation: str | None = None,
+                     recommendation_label: str | None = None, recommendation_why: str | None = None) -> dict:
+    """The owning L2 records semantic judgment with durable, original authority; no prose classifier."""
+    if disposition not in ("answered", "superseded") or not reason.strip():
+        raise TransitionError("resolution needs answered/superseded and a concrete reason")
+    if remaining is not None and not remaining.strip():
+        raise TransitionError("remaining question must name the still-relevant unanswered parts")
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("attempt") != expected_attempt:
+            raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
+        if task.get("state") not in ("running", "blocked"):
+            raise TransitionError("only the active task owner may resolve its question")
+        _require_daemon_fence(task, slug)
+        question = _question_target(task, identity, revision)
+        if source == "task":
+            rows = task_messages(project, slug)
+            row = next((r for r in rows if r["id"] == message_id), None)
+            authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
+                                  or (question["audience"] == "l3" and row["role"] == "l3" and row.get("by") == "l3"))
+        elif source == "project":
+            from . import l3
+            row = next((r for r in l3.chat_history(project, None)
+                        if r.get("turn_id") == message_id and r.get("role") == "user"), None)
+            authorized = row and row.get("role") == "user" and row.get("trigger", "chat") in (None, "", "chat")
+        else:
+            raise TransitionError("resolution source must be task or project")
+        if not authorized:
+            raise TransitionError("resolution must cite an original message with authority for this question")
+        if source == "task":
+            refs = row.get("question_refs")
+            if refs is not None:
+                if {"id": identity, "revision": revision} not in refs:
+                    raise TransitionError("source message discusses a different question revision")
+            elif row.get("question_id") and (row["question_id"], row.get("question_revision")) != (identity, revision):
+                raise TransitionError("source message discusses a different question revision")
+        if (row["at"][:19] < question["asked"][:19] if source == "project" else row["at"] < question["asked"]):
+            raise TransitionError("source message predates this question revision")
+        receipt = question.get("resolution") or {}
+        if question["status"] != "open":
+            if (receipt.get("message_id"), receipt.get("source"), receipt.get("disposition"), receipt.get("text"),
+                    receipt.get("remaining")) == (message_id, source, disposition, reason.strip(), remaining):
+                return question_view(project, task, question)
+            raise TransitionError("question was already resolved or superseded; refresh the conversation")
+        actor = OPERATOR_MESSAGE_ROLE if source == "project" else row.get("by") or row["role"]
+        receipt = _close_question(question, disposition, reason.strip(), actor, message_id, source)
+        receipt["remaining"] = remaining
+        _store_groups(task)
+        group = _group_for(task, question)
+        group["revision"] += 1
+        if remaining:
+            task["waiting_on"] = "l3" if question["audience"] == "l3" else OPERATOR_MESSAGE_ROLE
+            _publish_question(task, remaining.strip(), "l2", recommendation=recommendation,
+                              label=recommendation_label, why=recommendation_why, force_revision=True,
+                              previous=question, group=group, bump=False)
+        S.save_task(project, task)
+        S.append_event(project, slug, "question-resolved", question_id=identity, revision=revision, **receipt)
+        S.regen_state_md(project)
+        return question_view(project, task, question)
+
+
+def accept_question(project: str, slug: str, identity: str, revision: int, option_key: str | None = None) -> dict:
+    """Accept one explicit choice; omission selects only an explicitly recommended choice."""
+    return accept_question_result(project, slug, identity, revision, option_key)["question"]
+
+
+def accept_question_result(project: str, slug: str, identity: str, revision: int, option_key: str | None = None) -> dict:
+    return _accept_questions(project, slug, [{"question_id": identity, "revision": revision, "option_key": option_key}])
+
+
+def accept_questions(project: str, slug: str, group_id: str, group_revision: int, answers: list[dict]) -> dict:
+    """Atomically record a selected subset of a group with one normal message and wake request."""
+    if (not isinstance(group_id, str) or not group_id or isinstance(group_revision, bool)
+            or not isinstance(group_revision, int)):
+        raise TransitionError("batch acceptance must name the question group and its integer revision")
+    return _accept_questions(project, slug, answers, group_id=group_id, group_revision=group_revision)
+
+
+def _submission_response(project: str, task: dict, saved: dict) -> dict:
+    # The receipt is immutable; current group state prevents a delayed retry reviving old choices in UI caches.
+    selected = _question_target(task, saved["question_id"], saved["question_revision"])
+    return {"question_group": question_group_view(project, task),
+            "question": question_view(project, task, selected)}
+
+
+def _accept_questions(project: str, slug: str, answers: list[dict], *,
+                      group_id: str | None = None, group_revision: int | None = None) -> dict:
+    if not isinstance(answers, list) or not 1 <= len(answers) <= 3:
+        raise TransitionError("submit one to three explicit answers")
+    if any(not isinstance(answer, dict) or set(answer) != {"question_id", "revision", "option_key"}
+           for answer in answers):
+        raise TransitionError("answers require question_id, revision and option_key")
+    batch = group_id is not None or group_revision is not None
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        _store_groups(task)
+        chosen, seen = [], set()
+        for answer in answers:
+            question = _question_target(task, answer["question_id"], answer["revision"])
+            if question["id"] in seen:
+                raise TransitionError("submit each question only once")
+            seen.add(question["id"])
+            key = answer["option_key"]
+            if key is None and not batch:
+                key = _recommended_key(question)
+            option = next((o for o in question_choices(question) if o["key"] == key), None)
+            if not option:
+                raise TransitionError("this question has no explicit recommendation or matching quick option; answer in the conversation")
+            chosen.append((question, option))
+        group = _group_for(task, chosen[0][0])
+        if any(_group_for(task, q)["id"] != group["id"] for q, _ in chosen):
+            raise TransitionError("all answers must belong to the same question group")
+        canonical = {"group_id": group_id, "group_revision": group_revision,
+                     "answers": sorted([{"question_id": q["id"], "revision": q["revision"], "option_key": o["key"]}
+                                        for q, o in chosen], key=lambda answer: answer["question_id"])}
+        saved = next((s for s in group.get("submissions", []) if s["request"] == canonical), None)
+        if saved:
+            _queue_acceptance(project, task, chosen[0][0])
+            return _submission_response(project, task, saved)
+        # Compatibility with pre-group single recommendation receipts.
+        if (not batch and len(chosen) == 1 and chosen[0][0].get("acceptance_message")
+                and "question_refs" not in chosen[0][0]["acceptance_message"]
+                and chosen[0][1]["key"] == _recommended_key(chosen[0][0])):
+            _queue_acceptance(project, task, chosen[0][0])
+            return {"question": question_view(project, task, chosen[0][0]),
+                    "question_group": question_group_view(project, task)}
+        if batch:
+            checked = _group_target(task, group_id, group_revision)
+            if checked["id"] != group["id"]:
+                raise TransitionError("answers do not belong to this question group")
+        _require_daemon_fence(task, slug)
+        if (any(q["status"] != "open" or q["audience"] != "operator" for q, _ in chosen)
+                or task["state"] not in ("running", "blocked", "queued")):
+            raise TransitionError("question is no longer open for acceptance; refresh the conversation")
+        at, message_id = _conversation_time(), uuid.uuid4().hex
+        text = (f"Use this approach and continue: {chosen[0][1]['text']}" if len(chosen) == 1 else
+                "Use these answers and continue:\n" + "\n".join(f"{q['question']} — {o['text']}" for q, o in chosen))
+        row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,
+               "text": text, "group_id": group["id"], "group_revision": group["revision"],
+               "question_refs": [{"id": q["id"], "revision": q["revision"]} for q, _ in chosen]}
+        if len(chosen) == 1:
+            row.update(question_id=chosen[0][0]["id"], question_revision=chosen[0][0]["revision"])
+        for question, option in chosen:
+            question["acceptance_message"] = row
+            receipt = _close_question(question, "answered", option["text"], OPERATOR_MESSAGE_ROLE, message_id, "task")
+            receipt["option_key"] = option["key"]
+        group["revision"] += 1
+        row["question_context"] = group_context(task, group)
+        saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}
+        group.setdefault("submissions", []).append(saved)
+        # Receipt and human message share one atomic status write. Inbox delivery is recovered by pending().
+        if task["state"] == "blocked":
+            task["resume_request"] = message_id
+            task["resume_after"] = task.get("resume_after") or S.now()
+            task.pop("resume_failed", None)
+        S.save_task(project, task)
+        _queue_acceptance(project, task, chosen[0][0])
+        for question, _ in chosen:
+            S.append_event(project, slug, "question-resolved", question_id=question["id"], revision=question["revision"],
+                           **question["resolution"])
+        S.regen_state_md(project)
+        return _submission_response(project, task, saved)
+
+
+def _queue_acceptance(project: str, task: dict, question: dict) -> None:
+    """Materialize the saved message for native hooks; failed writes recover on the same acceptance retry."""
+    if task.get("state") not in ("running", "blocked", "queued") or question.get("acceptance_delivered"):
+        return
+    path = S.task_dir(project, task["slug"]) / "inbox.jsonl"
+    message = question["acceptance_message"]
+    if message["id"] not in {row["id"] for row in _rows(path, "task inbox")}:
+        _append_jsonl(path, message)
 
 
 def decision_row(project: str, task: dict) -> dict:
-    """One decision as the cards and the page read it (SPEC.md §3.8, §5.2 note 5)."""
+    """Project an operational block for navigation, without inventing a recommendation or decision action."""
     events = S.read_events(project, task["slug"])
     reason = (task.get("blocked_reason") or "no reason recorded").strip()
-    parsed = parse_dilemma(reason)
     blocks = [e for e in events if e.get("kind") == "state" and e.get("to") == "blocked"]
     escalations = [e for e in events if e.get("kind") == "escalated"]
     decided = [e for e in events if e.get("kind") == "decided"]
@@ -680,52 +1286,22 @@ def decision_row(project: str, task: dict) -> dict:
     asked = (escalations[-1]["at"] if escalated and escalations else blocks[-1]["at"] if blocks
              else task.get("updated"))
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": kind,
-            "asked_by": "l3" if escalated else "l2", "question": parsed["question"], "detail": reason,
-            "options": parsed["options"] or [dict(o) for o in FALLBACK_OPTIONS],
-            "recommendation": parsed["recommendation"], "asked": asked,
+            "asked_by": "l3" if escalated else by, "question": short_reason(reason), "detail": reason,
+            "recommendation": None, "asked": asked,
             "since": window[0] if window else floor or asked}
 
 
 def decisions(project: str) -> list[dict]:
     """Tasks blocked on the operator: an L2's block flagged for them, L3's escalation, or a block from before
     L3 saw blocks first. A block waiting on L3, or on a timed hold, is Altitude's wait, not a decision."""
-    return [decision_row(project, t) for t in S.list_tasks(project)
-            if t["state"] == "blocked" and not t.get("resume_after") and t.get("waiting_on", "burak") == "burak"]
-
-
-def decide(project: str, slug: str, option, note: str | None, actor: str = "burak") -> dict:
-    """Record the operator's choice on the task before the lifecycle acts on it (SPEC.md §5.2 note 5).
-    ``option`` is a label, a key, or an index into the task's options. Returns the record plus ``message``,
-    the text the L2 reads when it resumes (empty for a plain Resume without a note)."""
-    note = str(note or "").strip()
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task.get("state") != "blocked":
-            raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
-        options = decision_options(task)
-        chosen = None
-        if isinstance(option, bool) or option is None:
-            chosen = None
-        elif isinstance(option, int) or (isinstance(option, str) and option.strip().isdigit()):
-            index = int(option)
-            chosen = options[index] if 0 <= index < len(options) else None
-        elif isinstance(option, str):
-            wanted = option.strip().lower()
-            chosen = next((o for o in options if wanted in (o["key"].lower(), o["label"].lower())), None)
-        if chosen is None:
-            raise TransitionError(f"{slug}: option must be one of "
-                                  + ", ".join(o["label"] for o in options))
-        record = {"key": chosen["key"], "option": chosen["label"], "note": note, "at": S.now(), "by": actor}
-        task["decision"] = record
-        S.save_task(project, task)
-    S.append_event(project, slug, "decided", **record)
-    if chosen["key"] == "reject":
-        message = ""
-    elif chosen["key"] == "resume":
-        message = note
-    else:
-        message = f"Decision: {chosen['key']} ({chosen['label']})." + (f" {note}" if note else "")
-    return {**record, "message": message}
+    rows = []
+    for task in S.list_tasks(project):
+        questions = question_views(project, task["slug"])
+        rows.extend(q for q in questions if q["status"] == "open" and q["audience"] == "operator")
+        if (not questions and task["state"] == "blocked" and not task.get("resume_after")
+                and task.get("waiting_on", OPERATOR_MESSAGE_ROLE) == OPERATOR_MESSAGE_ROLE):
+            rows.append(decision_row(project, task))
+    return rows
 
 
 def block_question(slug: str, reason: str) -> str:
@@ -738,7 +1314,9 @@ def block_question(slug: str, reason: str) -> str:
             "dilemma with your recommendation>\"`. Reply in one or two plain sentences.")
 
 
-def escalate(project: str, slug: str, question: str, actor: str = "l3") -> dict:
+def escalate(project: str, slug: str, question: str, actor: str = "l3", *,
+             recommendation: str | None = None, recommendation_label: str | None = None,
+             recommendation_why: str | None = None, questions: dict | None = None) -> dict:
     """L3 hands a blocked task's question to Burak as one plain dilemma; the L2's own words stay in the events."""
     question = (question or "").strip()
     if not question:
@@ -748,8 +1326,13 @@ def escalate(project: str, slug: str, question: str, actor: str = "l3") -> dict:
         if task.get("state") != "blocked":
             raise TransitionError(f"{slug} is {task.get('state')}, not blocked")
         _supersede_resume(task)
+        _ensure_question(project, task)
         task.update({"waiting_on": "burak", "escalated": True, "blocked_reason": question})
+        current = _publish_block_questions(task, question, actor, questions, recommendation,
+                                           recommendation_label, recommendation_why)
         S.save_task(project, task)
+        handoff = {**current[-1]["message"], "question_context": group_context(task), "wake": False}
+        _append_jsonl(S.task_dir(project, slug) / "inbox.jsonl", handoff)
     S.append_event(project, slug, "escalated", by=actor, question=question)
     return task
 

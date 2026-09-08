@@ -54,7 +54,7 @@ export const routes: RouteObject[] = [
       { path: "/", element: <NeedsYou /> },
       { path: "/projects", element: <ProjectIndex /> },
       { path: "/projects/:name", element: <ProjectPage /> },
-      // The decision page (SPEC.md §3.9): the project layout with the decision in place of the conversation.
+      // Saved decision URLs replace themselves with the owning conversation and durable question anchor.
       { path: "/projects/:name/decisions/:slug", element: <DecisionPage /> },
       // One page for both: the desktop shows the conversation beside the live session, the phone
       // tabs between them and `/live` selects the second tab (SPEC.md §2.1, §3.10).

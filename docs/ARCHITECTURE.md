@@ -52,7 +52,7 @@ state and worker/session identity, refuses a stale target, and treats a retry of
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
-and land only its own task.
+resolve a dilemma against its source message, and land only its own task.
 
 Helpers are engine-native. The L2 may delegate bounded slices to its engine's own subagents
 (Claude Code's Agent tool, Codex's equivalent); Altitude does not supervise them, and ownership never
@@ -166,8 +166,8 @@ project and 80 across the machine. Overlapping declared paths are information in
 briefs; they do not hold dispatch or resume. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
-first, which answers from the record or escalates one plain dilemma to the operator; only a block flagged
-for the operator or an escalation is a Needs you card. After a restart L3 receives the active tasks and resumes
+first, which answers from the record or escalates a dilemma to the operator. The durable dilemma
+stays in Needs you while its answer is still needed, independently of the worker running or waiting. After a restart L3 receives the active tasks and resumes
 the ones a fault had stopped. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
@@ -497,14 +497,14 @@ The Python server owns state transitions and JSON APIs. The React app is one she
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as
 compact cards in one column, answered through `POST /api/decide`), the project page at
 `/projects/<name>` (the §3.2 header with its status line and overflow menu, the L3 conversation, and
-the work panel), the decision page at `/projects/<name>/decisions/<slug>`, the task page, and
+the work panel), the task conversation (including redirects from `/projects/<name>/decisions/<slug>`), and
 Monitor. `/projects` and `/chat/<name>` redirect to the project
 page, and with no managed project every project route shows First run, which lists the folders under
 the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
 first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
 narrower is the phone: a 54px header and an 84px tab bar (Chat, Work, Needs you, Monitor), where
-the header names the selected project and opens the switcher sheet, and a task or decision page
+the header names the selected project and opens the switcher sheet, and a task conversation
 pushes over its tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
 selected project is browser state under `localStorage`, set by the rail, the switcher, a project
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
@@ -573,7 +573,7 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages fold into one turn in arrival order, each on its own line, while server-triggered messages
 keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-The project conversation, the task page's conversation, and the decision page's follow-up use one
+The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.
 The page owns its draft and its submit function, and a submit that throws is a refused send: the
 bubble leaves, the draft returns, and the hint reads "Not sent. Retry." The composer owns microphone
@@ -606,23 +606,65 @@ tasks and the overview queue filtered to the project: the queue's decisions as c
 Needs you, every other active task as a row under Active, and the tasks done or rejected in the last
 seven days folded under Done this week; a task that changes section fades in where it now belongs.
 
-A decision (spec §3.8, §3.9) is one card wherever it appears. `GET /api/overview` `queue[]` carries,
-per blocked task waiting on the operator, `kind` (`asks`, `stopped`, or `fault`), `asked_by` (`l3`
-for an escalation, `l2` for a block the L2 flagged for the operator), the question, labelled
-`options`, the `recommendation` (the option and why), `asked`, and `since`, the time the current
-block began. Until escalations carry structured fields, `tasks.parse_dilemma` reads the options and
-the recommendation from the question text ("Option A:" or "A:" prefixes, "(recommended)", "I
-recommend A"), and a block recorded without options offers Resume and Reject. `POST /api/decide`
-takes `{project, slug, option, note}`, where `option` is the key, the label, or the index; the server
-records `{key, option, note, at, by}` as the task's `decision` and a `decided` event, then rejects the
-task (the note as the reason) or resumes it with a task message that names the choice and the note,
-so the L2 reads the answer at its next checkpoint. The decision page reads the task's events for its
-timeline and evidence; a follow-up to L3 is a chat turn posted with the decision's `slug`, which the
-server stores on the turn's rows and reports on the active turn, and a follow-up to the L2 is a task
-message; the card and the page mirror the rows that carry the slug or sit in the task conversation
-since `since`, so nothing is copied. An FYI (`tasks.fyi`) is a chat row `{role: "system", trigger:
-"fyi", slug, text}` in the project's conversation; there is no project inbox file and no `fyis` in the
-digest or the overview.
+A dilemma (spec §3.8–3.10) lives in the owning task conversation. The task record's `questions`
+contains versioned question text, zero to three explicit options and a recommendation key,
+source/audience, stable ID and message anchor, and an open or resolved status. A question group
+contains up to three independently answerable members, a group revision, and one stable discussion
+anchor. `task_view` projects `question_group` with current member records, `question` as the first
+open member (or latest receipt), and individual revision history;
+`GET /api/overview` and the project view project the same unresolved operator questions. Question
+state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
+records a decision. Existing stopped/fault cards link to their ordinary task controls; an operational
+pause with no open question offers Resume through the existing daemon operation.
+If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and
+acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
+or its recorded resolution. A queued task without a question retains its ordinary initial state.
+
+A direct L2 block publishes its question into that human thread. An L3 escalation publishes the
+actual dilemma and recommendation with L3 attribution, and supplies it to the owner's next normal
+checkpoint without launching a worker just to announce it. Explicit `--recommendation`, `--label`
+and `--why` fields name a single approach; `--questions-file` publishes a small group or explicit
+quick alternatives. The model chooses the suitable form. Existing labelled recommendation prose is understood, but an
+unmarked first option never becomes an acceptance button. Pending older blocks are materialized
+before a resume can clear their operational block fields.
+
+`POST /api/decide` takes `{project, slug, question_id, revision, option_key}` for an immediate choice;
+omitting the key explicitly selects the recorded recommendation. A group sends
+`{project, slug, group_id, group_revision, answers: [{question_id, revision, option_key}]}`.
+Under the existing project lock, the whole batch is validated before any write. Only named members
+close; omitted questions remain open. One ordinary operator message and the resolutions are saved
+together, then delivered once through the existing inbox/resume path. Nothing is preselected in the
+UI. An identical retry returns its saved receipt plus the current group and repairs interrupted
+delivery; stale or conflicting submissions fail together. The UI updates Needs you and chat from
+the authoritative group, then refreshes their reads.
+**Decision recorded** means persisted; **Work resumed** requires observed running state.
+
+Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or
+`group_id`/`group_revision` as context. The saved message retains the viewed member references so
+one conversational answer can settle several questions independently.
+The same L2 answers follow-ups, clarifies uncertainty, or uses [`alt task resolve`](CLI.md#conversational-decisions)
+to record an actual decision against its original message. Task/attempt ownership and source-message
+authority are checked at the existing command boundary; L3 prose cannot stand in for operator approval.
+A partial answer retains only the relevant remaining question in a new revision, without inheriting
+an unapproved recommendation. A change of direction can close the obsolete dilemma with its reason.
+The resolution preserves the source, author, time and chosen scope, without accepting an abandoned
+recommendation. Report handoff, rejection and completion close obsolete controls without accepting
+their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
+
+The shared question component appears on Needs you and at its conversation anchor. Single choices
+act immediately. Group choices remain staged until **Send N answers**; **Use recommendations** is
+available when no manual picks exist and answers only members with explicit recommendations.
+`/projects/<name>/tasks/<slug>?question=<id>&revision=<n>` focuses that question's group
+and surrounding prose, suppressing the initial scroll to latest. Historical revisions remain
+readable under **Earlier question**, opened automatically by an old-version link; stale controls
+cannot act on a replacement. Following the bottom resumes ordinary chat
+scrolling. Pending questions poll every two seconds, and new replies offer **Latest messages**
+without moving a reader away from the question. Technical activity and reference links stay behind
+**Activity & evidence** and the existing live session view. A saved decision URL redirects into this
+conversation; no separate form, recipient selector or mirrored follow-up thread exists.
+
+An FYI (`tasks.fyi`) is a chat row `{role: "system", trigger: "fyi", slug, text}` in the project's
+conversation; there is no project inbox file and no `fyis` in the digest or overview.
 
 `POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),
@@ -680,11 +722,11 @@ line (attempt, when the task started or finished, context used), and chips: the 
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and the merge-hold reason. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
-prose under day dividers, the decision card at the top while the task waits on
-the operator, and the composer while the task is running or blocked; a block waiting on L3 and a
+prose under day dividers, the question component at its recorded message anchor, and the composer
+while the task is running, blocked, or queued with an existing question; a block waiting on L3 and a
 fault each read as one line under the chips, the fault in red with "L3 has been told". The live
-session panel is 480px inline at 1280px and wider and an overlay from the header's panel button
-below that; it reads the worker's own session log (Claude's session JSONL, or every turn of the
+session panel is closed when entering a question. When opened, it is 480px inline at 1280px and
+wider and an overlay from the header's panel button below that; it reads the worker's own session log (Claude's session JSONL, or every turn of the
 Codex thread) together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
 as thin separators with subtle timestamps, hidden reasoning never shown, and Raw events behind a

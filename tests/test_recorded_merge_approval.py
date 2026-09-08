@@ -16,6 +16,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.gh = self.fake_gh()
         self.at = "2026-09-07T20:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
+        self.patch(T, "_conversation_time", side_effect=lambda: self.at)
         task = T.new(self.project, "Review narrative", "Revise the narrative", hold_merge="Review the story")
         self.slug = task["slug"]
         self.at = "2026-09-07T20:01:00+00:00"

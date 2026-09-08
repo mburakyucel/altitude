@@ -22,10 +22,6 @@ const decision = {
   question: "Which upload limit should stand?",
   asked: ago(4),
   since: ago(4),
-  options: [
-    { key: "resume", label: "Resume" },
-    { key: "reject", label: "Reject" },
-  ],
   recommendation: { option: "resume", why: "" },
 };
 

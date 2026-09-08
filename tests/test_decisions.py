@@ -68,19 +68,20 @@ class TestDecisions(AltitudeCase):
         S.save_task(self.project, task)
         return T.block(self.project, task["slug"], reason, actor=actor, updates={"waiting_on": waiting_on})
 
-    def test_an_escalation_carries_kind_asker_labelled_options_and_its_window(self):
+    def test_an_escalation_carries_its_explicit_recommendation_and_durable_anchor(self):
         task = self.blocked("Landscape rule", "Which rule applies in landscape?", waiting_on="l3")
-        first_block = S.read_events(self.project, task["slug"])[-1]["at"]
+        first_question = task["questions"][-1]
         T.escalate(self.project, task["slug"], DILEMMA)
         [row] = T.decisions(self.project)
         self.assertEqual((row["kind"], row["asked_by"], row["title"]), ("asks", "l3", "Landscape rule"))
         self.assertEqual(row["question"], "Slice 2 is green; one spec gap needs your call before merge.")
-        self.assertEqual([o["label"] for o in row["options"]],
-                         ["The conversation scrolls as one page", "Keep the portrait rule everywhere"])
-        self.assertEqual(row["recommendation"]["option"], "A")
+        self.assertEqual(row["recommendation"]["label"], "The conversation scrolls as one page")
         self.assertEqual(row["detail"], DILEMMA)
-        self.assertEqual(row["asked"], S.read_events(self.project, task["slug"])[-1]["at"])
-        self.assertEqual(row["since"], first_block, "the follow-up window opens at the first block of this decision")
+        self.assertEqual((row["id"], row["revision"]), (first_question["id"], 2))
+        anchor = next(m for m in T.task_messages(self.project, task["slug"]) if m["id"] == row["anchor_id"])
+        self.assertEqual((anchor["role"], anchor["text"]), ("l3", DILEMMA))
+        self.assertEqual(T.pending(self.project, task["slug"])[0]["id"], anchor["id"])
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("resume_after"))
 
     def test_an_l2_question_is_asked_by_the_l2_and_a_stop_or_fault_keeps_its_kind(self):
         asked = self.blocked("Asked", "Which colour should the dot be?")
@@ -90,35 +91,40 @@ class TestDecisions(AltitudeCase):
         self.assertEqual((rows[asked["slug"]]["kind"], rows[asked["slug"]]["asked_by"]), ("asks", "l2"))
         self.assertEqual(rows[stopped["slug"]]["kind"], "stopped")
         self.assertEqual(rows[faulty["slug"]]["kind"], "fault")
-        self.assertEqual([o["label"] for o in rows[asked["slug"]]["options"]], ["Resume", "Reject"])
+        self.assertIsNone(rows[asked["slug"]]["recommendation"])
+        for operational in (stopped, faulty):
+            self.assertIsNone(rows[operational["slug"]]["recommendation"])
+            self.assertNotIn("options", rows[operational["slug"]])
 
-    def test_a_decision_window_restarts_after_the_last_recorded_decision(self):
+    def test_a_new_question_has_a_new_identity_after_the_prior_question_is_resolved(self):
         task = self.blocked("Twice", "First question?")
-        T.decide(self.project, task["slug"], "Resume", "go on")
+        question = task["questions"][-1]
+        answer = T.message(self.project, task["slug"], "burak", "go on")
+        T.resolve_question(self.project, task["slug"], question["id"], 1, answer["id"],
+                           disposition="answered", reason="Continue", expected_attempt=1)
         T.resume(self.project, task["slug"], actor="altd")
         T.block(self.project, task["slug"], "Second question?", actor="l2", updates={"waiting_on": "burak"})
         [row] = T.decisions(self.project)
-        events = S.read_events(self.project, task["slug"])
-        decided = next(e["at"] for e in events if e.get("kind") == "decided")
-        self.assertGreaterEqual(row["since"], decided)
-        self.assertEqual(row["since"], events[-1]["at"])
+        self.assertNotEqual(row["id"], question["id"])
+        self.assertEqual(row["revision"], 1)
+        self.assertEqual(T.question_views(self.project, task["slug"])[0]["status"], "resolved")
 
-    def test_decide_records_the_choice_and_the_l2_reads_it_on_resume(self):
+    def test_accept_records_the_explicit_recommendation_once_and_survives_delivery(self):
         task = self.blocked("Landscape rule", DILEMMA)
-        record = T.decide(self.project, task["slug"], "keep the portrait rule everywhere", "Portrait first.")
-        self.assertEqual((record["key"], record["option"], record["note"], record["by"]),
-                         ("B", "Keep the portrait rule everywhere", "Portrait first.", "burak"))
-        self.assertEqual(record["message"], "Decision: B (Keep the portrait rule everywhere). Portrait first.")
-        saved = S.load_task(self.project, task["slug"])["decision"]
-        self.assertEqual((saved["key"], saved["option"], saved["note"]), ("B", "Keep the portrait rule everywhere", "Portrait first."))
-        self.assertEqual(S.read_events(self.project, task["slug"])[-1]["kind"], "decided")
-        by_index = T.decide(self.project, task["slug"], 0, "")
-        self.assertEqual((by_index["key"], by_index["message"]), ("A", "Decision: A (The conversation scrolls as one page)."))
-        with self.assertRaisesRegex(T.TransitionError, "option must be one of"):
-            T.decide(self.project, task["slug"], "Reject", "")
+        question = task["questions"][-1]
+        record = T.accept_question(self.project, task["slug"], question["id"], 1)
+        self.assertEqual(record["resolution"]["text"], question["recommendation"]["text"])
+        self.assertEqual(T.decisions(self.project), [])
+        [answer] = T.pending(self.project, task["slug"])
+        self.assertEqual((answer["role"], answer["id"]), ("burak", record["resolution"]["message_id"]))
+        self.assertEqual(T.accept_question(self.project, task["slug"], question["id"], 1), record)
+        self.assertEqual(T.take_inbox(self.project, task["slug"]), [answer])
+        T.accept_question(self.project, task["slug"], question["id"], 1)
+        self.assertEqual(T.pending(self.project, task["slug"]), [])
+        self.assertEqual(len(T.task_messages(self.project, task["slug"])), 2)
         plain = self.blocked("Plain", "Which colour?")
-        self.assertEqual(T.decide(self.project, plain["slug"], "resume", "Blue.")["message"], "Blue.")
-        self.assertEqual(T.decide(self.project, plain["slug"], 1, "")["key"], "reject")
+        with self.assertRaisesRegex(T.TransitionError, "no explicit recommendation"):
+            T.accept_question(self.project, plain["slug"], plain["questions"][-1]["id"], 1)
 
     def test_fyi_is_a_system_chat_row_and_the_inbox_file_is_gone(self):
         task = T.new(self.project, "Probe", "Do it.", actor="burak")
@@ -191,33 +197,31 @@ class TestDecisionApi(AltitudeCase):
         S.save_task(self.project, task)
         return T.block(self.project, task["slug"], reason, actor="l2", updates={"waiting_on": "burak"})
 
-    def test_decide_accepts_a_label_and_a_note_and_hands_the_lifecycle_the_answer(self):
+    def test_decide_accepts_the_exact_recommendation_and_requests_an_ordinary_wake(self):
         task = self.blocked(DILEMMA)
-        with mock.patch.object(server, "request_daemon_task_operation") as op:
+        question = task["questions"][-1]
+        with mock.patch.object(server, "request_task_resume") as op:
             status, payload = self.request("POST", "/api/decide", {
-                "project": self.project, "slug": task["slug"], "option": "Keep the portrait rule everywhere",
-                "note": "Portrait first."})
+                "project": self.project, "slug": task["slug"], "question_id": question["id"], "revision": 1})
         self.assertEqual(status, 200, payload)
         body = json.loads(payload)
-        self.assertEqual((body["queued"], body["decision"]["key"]), (True, "B"))
-        op.assert_called_once_with(self.project, task["slug"], "resume",
-                                   "Decision: B (Keep the portrait rule everywhere). Portrait first.", actor="burak")
-        self.assertEqual([m["text"] for m in T.pending(self.project, task["slug"])],
-                         ["Decision: B (Keep the portrait rule everywhere). Portrait first."])
-        self.assertEqual(S.load_task(self.project, task["slug"])["decision"]["note"], "Portrait first.")
+        self.assertEqual((body["queued"], body["decision"]["disposition"]), (True, "answered"))
+        op.assert_called_once_with(self.project, task["slug"])
+        self.assertEqual(T.pending(self.project, task["slug"])[0]["id"], body["decision"]["message_id"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["questions"][-1]["status"], "resolved")
 
-    def test_decide_by_index_still_rejects_and_an_unknown_option_is_refused(self):
+    def test_legacy_unfenced_options_and_absent_recommendations_are_refused(self):
         task = self.blocked("Which colour?")
         with mock.patch.object(server, "request_daemon_task_operation") as op:
             status, _ = self.request("POST", "/api/decide", {
                 "project": self.project, "slug": task["slug"], "option": 1, "note": "Not now."})
-        self.assertEqual(status, 200)
-        op.assert_called_once_with(self.project, task["slug"], "reject", "Not now.", actor="burak")
+        self.assertEqual(status, 409)
+        op.assert_not_called()
         with mock.patch.object(server, "request_daemon_task_operation") as op:
             status, payload = self.request("POST", "/api/decide", {
-                "project": self.project, "slug": task["slug"], "option": "Maybe"})
-        self.assertEqual(status, 400)
-        self.assertIn("option must be one of Resume, Reject", json.loads(payload)["error"])
+                "project": self.project, "slug": task["slug"], "question_id": task["questions"][-1]["id"], "revision": 1})
+        self.assertEqual(status, 409)
+        self.assertIn("no explicit recommendation", json.loads(payload)["error"])
         op.assert_not_called()
 
     def test_a_follow_up_carries_the_decision_slug_on_its_rows_and_the_active_turn(self):
@@ -252,8 +256,10 @@ class TestDecisionApi(AltitudeCase):
         history = l3.chat_history(self.project)
         self.assertEqual([(row["role"], row.get("slug")) for row in history[-2:]],
                          [("user", task["slug"]), ("assistant", task["slug"])])
-        self.assertIn(f"follow-up on the decision waiting on task `{task['slug']}`", prompts[0])
-        self.assertIn("it stays blocked until the operator chooses", prompts[0])
+        self.assertIn(f"project conversation concerns task `{task['slug']}`", prompts[0])
+        self.assertIn("original project conversation turn id", prompts[0])
+        self.assertIn("A follow-up does not authorize implementation or close a question", prompts[0])
+        self.assertNotIn("chooses an option", prompts[0])
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "blocked", "a follow-up never decides")
 
     def test_a_queued_follow_up_keeps_its_slug_and_its_own_turn(self):

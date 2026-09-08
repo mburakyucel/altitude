@@ -330,8 +330,8 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--paths a.py,b/] [--hold-merge <reason>] -
 alt task message <slug> <text>
 alt task reply <text>
-alt task block <slug> --reason <reason> [--for-burak | --fault]  # current L2 only
-alt task escalate <slug> --question <question>
+alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
+alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # Burak alone may use --off
 alt task done <slug> --digest <text>
@@ -349,6 +349,73 @@ A repeated reason after a genuine later lifecycle creates a new request against 
 A message to a blocked task uses its durable inbox and `resume_after` handoff instead of launching a
 worker in the caller. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
+
+### Conversational decisions
+
+`block` is the current L2's question to L3; its operator flag uses the operator audience. L3 can
+`escalate` the actual dilemma and explicit recommendation. Both publish into the owning L2 human
+conversation with their source attribution. The model chooses a plain question, one recommended
+quick action, or two to three explicit options with one recommendation. A fault is operational and
+uses `--fault`, without inventing a recommended choice.
+
+For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
+`escalate`. Use `--questions-file -` with JSON on stdin when calling through the L3 broker; the
+broker never reads a server file supplied by the caller. The single `--reason` / `--question`
+flags remain available for one question. A grouped payload has this form:
+
+```json
+{"questions":[
+  {"question":"How long should we retain the old index?","options":[
+    {"key":"seven","label":"7 days","text":"Keep it for seven days."},
+    {"key":"fourteen","label":"14 days","text":"Keep it for fourteen days."}
+  ],"recommended_key":"seven","why":"Covers the rollback window."},
+  {"question":"Who should receive the report?"}
+]}
+```
+
+Options have stable keys, short button labels and explicit answer text. A question may omit options;
+multiple options require a recommendation key. Nothing becomes an operator answer by default.
+Include an existing question `id` to revise that member. Omitted unresolved members remain open;
+close obsolete questions explicitly rather than dropping them from a later publication. A group
+stays together while its members are discussed, answered or revised.
+The limit is three total members in that group; answered members retain their receipts. Start the
+next group after the current relevant questions settle. Dependent questions wait for their prerequisites.
+For an unchanged existing question, omitted options preserve its saved choices; `options: []`
+explicitly removes them. Changed question text with omitted options becomes a plain question.
+
+The worker handoff names the pending question ID/revision and each task message ID. The owning L2
+judges the reply in context: discuss a follow-up, clarify genuine uncertainty, or record a clear
+decision and continue. No special approval phrase or extra confirmation is required.
+One typed reply can answer several members. Its saved question references name what the operator
+was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
+Only unresolved, still-relevant questions remain in Needs you. Quick selections can also be sent
+together as one batch; a stale member prevents the whole batch from writing.
+After answering a follow-up, checkpoint and park with the same `block --reason` text. Omitting
+replacement recommendation fields keeps the saved question and approach. Parking or revising an
+unresolved operator dilemma preserves its required decision-maker.
+
+```text
+alt task resolve <slug> --question <id> --revision <n> --message <source-id> \
+  --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
+  [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
+```
+
+`--source task` (default) cites a durable task message ID. `--source project` cites the original
+operator chat `turn_id`, available from the project's recorded chat; an L3-authored relay is not an
+operator source. The existing CLI door checks owning task and attempt, and the resolution checks
+source provenance, question/revision and actual authority. An L3 answer from recorded task authority
+can settle an L3-audience question, but cannot approve an operator-audience dilemma.
+
+Use `answered` for the operator's chosen approach. Use `superseded` when their new direction makes
+the question irrelevant; the reason names that change, without claiming acceptance of the old
+recommendation. With `--remaining`, the operation preserves the resolved scope and publishes a new
+revision containing only the relevant unanswered parts. That remainder has no inherited default;
+provide a recommendation only when it applies to the remaining question. Follow-ups alone require
+no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
+resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
+When a provider limit queues a fresh attempt, existing question replies and quick acceptance wait
+in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
+resolution remains an operation of the running or blocked owning L2.
 
 ### Adopt an existing PR
 

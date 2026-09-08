@@ -118,21 +118,7 @@ export const RoutingRowSchema = z
   })
   .passthrough();
 
-/** One option the asker offered (tasks.py parse_dilemma): `key` is what the L2 reads back ("A", "resume"). */
-export const DecisionOptionSchema = z
-  .object({
-    key: z.string().nullish(),
-    label: z.string(),
-    /** The option's full description when the asker wrote one; empty for Resume and Reject. */
-    text: z.string().nullish(),
-  })
-  .passthrough();
-
-/**
- * Rows for tasks blocked on the operator (tasks.py decisions(), SPEC.md §3.8): `kind` is "asks",
- * "stopped", "fault" or "review"; `asked_by` says who raised it; `recommendation` names the recommended
- * option's key and the why; `since` opens the follow-up window the card mirrors (§4.3).
- */
+/** The same durable dilemma is projected into Needs you and the owning task conversation. */
 export const DecisionSchema = z
   .object({
     project: z.string(),
@@ -140,18 +126,38 @@ export const DecisionSchema = z
     kind: z.string().nullish(),
     asked_by: z.string().nullish(),
     title: z.string().nullish(),
+    id: z.string().nullish(),
+    revision: z.number().nullish(),
+    anchor_id: z.string().nullish(),
+    group_id: z.string().nullish(),
+    group_revision: z.number().nullish(),
+    group_anchor_id: z.string().nullish(),
+    options: z.array(z.object({ key: z.string(), label: z.string(), text: z.string() })).nullish(),
+    recommended_key: z.string().nullish(),
+    status: z.string().nullish(),
+    audience: z.string().nullish(),
+    state: z.string().nullish(),
+    resume_after: z.string().nullish(),
     question: z.string().nullish(),
     context: z.string().nullish(),
     detail: z.string().nullish(),
     asked: z.string().nullish(),
     since: z.string().nullish(),
-    options: z.array(DecisionOptionSchema).nullish(),
     recommendation: z
-      .object({ option: z.string().nullish(), why: z.string().nullish() })
+      .object({ text: z.string().nullish(), label: z.string().nullish(), why: z.string().nullish() })
       .passthrough()
       .nullish(),
+    resolution: z.object({
+      disposition: z.string(), text: z.string(), by: z.string(), at: z.string(),
+      message_id: z.string().nullish(), source: z.string().nullish(),
+    }).passthrough().nullish(),
   })
   .passthrough();
+
+export const QuestionGroupSchema = z.object({
+  id: z.string(), revision: z.number(), anchor_id: z.string().nullish(),
+  questions: z.array(DecisionSchema),
+}).passthrough();
 
 /**
  * /api/project's `decisions` are the same rows as the overview queue (altitude/tasks.py decisions()),
@@ -339,6 +345,9 @@ export const TaskViewSchema = z
     resume_after: z.string().nullish(),
     files: z.record(z.string(), z.string()).nullish(),
     messages: z.array(TaskMessageSchema).nullish(),
+    question: DecisionSchema.nullish(),
+    questions: z.array(DecisionSchema).nullish(),
+    question_group: QuestionGroupSchema.nullish(),
     events: z.array(z.record(z.string(), z.unknown())).nullish(),
     report_json: z.unknown().nullish(),
     token_usage: TokenUsageSchema.nullish(),
@@ -452,7 +461,6 @@ export const VoiceTranscriptSchema = z.object({ text: z.string() }).passthrough(
 export type MonitorSeat = z.infer<typeof MonitorSeatSchema>;
 export type RoutingRow = z.infer<typeof RoutingRowSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
-export type DecisionOption = z.infer<typeof DecisionOptionSchema>;
 export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 export type Wip = z.infer<typeof WipSchema>;
 export type ProjectRow = z.infer<typeof ProjectRowSchema>;
@@ -511,7 +519,7 @@ export function useTask(project: string, slug: string) {
   return useQuery({
     queryKey: ["task", project, slug],
     queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
-    refetchInterval: pollInterval,
+    refetchInterval: (query) => query.state.data?.question?.status === "open" || query.state.data?.question_group?.questions.some((q) => q.status === "open") ? 2_000 : pollInterval(),
     enabled: Boolean(project && slug),
   });
 }
@@ -569,20 +577,44 @@ export function useChat(project: string, limit = 60, enabled = true) {
 
 // ---- mutation hooks --------------------------------------------------------------------
 
-export interface DecideInput {
+export type DecideInput = {
   project: string;
   slug: string;
-  /** The chosen option's label or key (the server also accepts an index into the options). */
-  option: string | number;
-  /** The optional note for the L2, sent with the decision (SPEC.md §3.9). */
-  note?: string;
-}
+} & ({ question_id: string; revision: number; option_key?: string }
+  | { group_id: string; group_revision: number; answers: { question_id: string; revision: number; option_key: string }[] });
+
+export type QuestionGroup = z.infer<typeof QuestionGroupSchema>;
 
 export function useDecide() {
   const queryClient = useQueryClient();
-  return useMutation<unknown, Error, DecideInput>({
-    mutationFn: (input) => post("/api/decide", input),
-    // The card collapses first (200ms), then the next read drops the row and moves the task.
+  return useMutation<{ question: Decision; question_group?: QuestionGroup | null }, Error, DecideInput>({
+    mutationFn: async (input) => {
+      const out = await post<{ question: unknown; question_group?: unknown }>("/api/decide", input);
+      return { question: DecisionSchema.parse(out.question), question_group: out.question_group ? QuestionGroupSchema.parse(out.question_group) : null };
+    },
+    // Publish the saved receipt to every view before polling again. A send never uses this path.
+    onSuccess: async ({ question, question_group: group }, input) => {
+      for (const queryKey of [["overview"], ["project", input.project], ["task", input.project, input.slug]]) {
+        await queryClient.cancelQueries({ queryKey });
+      }
+      const updated = group ? [...group.questions.filter((q) => q.id !== question.id || q.revision !== question.revision), question] : [question];
+      const same = (row: { id?: string | null; revision?: number | null }) => updated.some((q) => row.id === q.id && row.revision === q.revision);
+      const belongs = (row: { id?: string | null; group_id?: string | null }) => group
+        ? row.group_id === group.id || (question.group_id && row.group_id === question.group_id) || updated.some((q) => row.id === q.id)
+        : row.id === question.id;
+      const open = updated.filter((q) => q.status === "open" && q.audience === "operator");
+      queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
+        ...cached, queue: [...cached.queue.filter((row) => !(row.project === input.project && row.slug === input.slug && belongs(row))), ...open],
+      });
+      queryClient.setQueryData<ProjectView>(["project", input.project], (cached) => cached && {
+        ...cached, decisions: [...(cached.decisions?.filter((row) => !(row.slug === input.slug && belongs(row))) ?? []), ...open],
+      });
+      queryClient.setQueryData<TaskView>(["task", input.project, input.slug], (cached) => cached && {
+        ...cached, question: group ? group.questions.find((q) => q.status === "open") ?? group.questions.at(-1) : cached.question && same(cached.question) ? question : cached.question,
+        ...(group ? { question_group: group } : {}),
+        questions: [...(cached.questions?.filter((row) => !same(row)) ?? []), ...updated],
+      });
+    },
     onSettled: (_out, _error, input) => {
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
       void queryClient.invalidateQueries({ queryKey: ["project", input.project] });
@@ -666,6 +698,10 @@ export interface L2MessageInput {
   project: string;
   slug: string;
   text: string;
+  question_id?: string;
+  revision?: number;
+  group_id?: string;
+  group_revision?: number;
 }
 
 /** The task page's message to the L2 (SPEC.md §3.10): the page owns the bubble and the "Not sent.
