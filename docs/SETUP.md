@@ -145,6 +145,7 @@ remains available without them. See [operations](OPERATIONS.md) for those steps 
   authentication rejections affect that engine. A strict pin must itself become usable or be changed.
 - **A task cannot start or land:** inspect its reason, the clean `main`/`origin/main` checkout,
   Git guards, GitHub authentication and applicable check results. Do not bypass a guard.
+  For a dirty checkout, see [Recovering dirty main](OPERATIONS.md#recovering-dirty-main).
 - **Usage is unknown:** inspect Monitor's explanation and the optional telemetry setup above.
 
 Report setup friction with the command, environment, commit and sanitized error through
