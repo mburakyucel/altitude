@@ -3,9 +3,11 @@
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
 and receives their questions and reports needing follow-up. Several tasks can proceed in isolated
-worktrees while that conversation continues. Model judgment chooses how much
-decomposition a request needs; code enforces task ownership, isolation, launch holds, and the PR
-boundary.
+worktrees while that conversation continues. Model judgment favors small, safely mergeable increments
+for large or complex issues when practical; code enforces task ownership, isolation, launch holds, and
+the PR boundary. L3 maintains the issue breakdown from L2 replies and reports. Briefs name the increment,
+acceptance, parent issue and remaining scope; completing a task need not complete that issue. See
+[incremental delivery](CLI.md#incremental-issue-delivery).
 
 ```text
 Burak
@@ -285,8 +287,9 @@ session, worktree, branch and merge hold; the owner rechecks the lease before co
 
 Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
 text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
-issue scope with the authorized delivery. For a complete resolution it supplies native closing
-keywords through `--pr-body-file` and repeats `--closes-issue N` on landing and resumed merge calls.
+issue scope and required acceptance with cumulative authorized deliveries. For a complete resolution it
+supplies native closing keywords through `--pr-body-file` and repeats `--closes-issue N` on landing and
+resumed merge calls.
 The PR body is the durable closing link. Landing reads GitHub's `closingIssuesReferences` after PR
 creation or edit and immediately before merge, refusing a missing or foreign-repository declared
 link or a target other than GitHub's actual default branch. A merged retry validates declared links
@@ -294,7 +297,8 @@ too and routes missing historical linkage to L3. GitHub owns closure on default-
 No task issue registry or closure poller exists.
 Reports verify delivery and retain closure evidence in FYIs, or route reconciliation to L3 through
 follow-ups. Task archival alone does not close issues. Partial scope, design-only work, pending
-operator acceptance and unrelated mentions do not warrant closing keywords; holds still gate merge.
+operator acceptance and unrelated mentions do not warrant closing keywords or `--closes-issue`;
+L3 records remaining scope on the open issue. Holds still gate merge.
 
 For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
 records one immutable `adopted_pr` on the task and a `pr-adopted` event under the project lock.
