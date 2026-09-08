@@ -48,11 +48,15 @@ until both caps have room. Parallel leases declare staging scope: overlapping fi
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
 L3 and the operator file requested backlog through altd with `alt issue new --title "…" -`
-or `alt issue comment <number> -` (body on stdin). L3 closes an issue only when the operator
-requests it, using `alt issue close <number> --reason completed|not-planned`; closure publishes
-no comment and records the actor, issue, reason and URL. L3 does not clean up the backlog
-autonomously. L2 cannot mutate issues. See [GitHub issues](CLI.md#github-issues) for arguments
-and the rule excluding home paths and private incident evidence from published text.
+or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
+PR closing links; when an already merged delivery lacks its link, L3 verifies the issue's full
+scope and uses `alt issue close <number> --reason completed` without another routine request.
+Other closures require the operator's request; `not-planned` records work the operator decides
+not to pursue. Closure publishes no comment and records the actor, issue, reason and URL.
+L3 does not select or clean up unrelated backlog autonomously. L2 routes direct closure evidence
+through its task reply and report follow-ups and cannot mutate issues directly. See
+[GitHub issues](CLI.md#github-issues) for arguments and the rule excluding home paths and private
+incident evidence from published text.
 
 ## Recovering dirty main
 
