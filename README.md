@@ -66,10 +66,12 @@ specific PR and original head; later task commits retain their provenance traile
 the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
 commit history without requesting branch deletion. Task scope and merge holds still apply.
 
-When the operator replies exactly **Good to merge** directly after an owner's PR presentation,
-the coordinator can apply that recorded approval through the daemon's
+When the operator replies **Good to merge** or **You can merge it** directly after an owner's PR
+presentation, the coordinator can apply that recorded approval through the daemon's
 [`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). The daemon checks the message,
-current hold and unchanged PR before recording the release. The owner then rechecks and lands normally.
+current hold and unchanged PR before recording the release. Case, surrounding whitespace and a final
+period or exclamation mark are accepted; questions, conditions and extra prose are refused.
+The owner then rechecks and lands normally.
 
 ## How the work stays coherent
 

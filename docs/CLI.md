@@ -494,14 +494,18 @@ alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <
 ```
 
 Read `alt task messages <slug> --json` for the durable message id and `alt pr <number> --json`
-for the current PR head. The latest operator message must be exactly `Good to merge`, directly
-after the owner's message containing the canonical GitHub PR URL and no other PR URL. The daemon
-checks the current hold generation and reads the PR from the project's origin repository. It
+for the current PR head. The latest operator message must be a standalone `Good to merge` or
+`You can merge it` authorization, directly after the owner's message containing the canonical
+GitHub PR URL and no other PR URL. The daemon checks the current hold generation and reads the PR
+from the project's origin repository. It
 requires an open, non-draft, same-repository PR targeting main on the task branch at the supplied
 head, with GitHub's `updatedAt` strictly before the presentation and the presentation after the hold.
 Missing or corrupt evidence, a later operator message, a renewed hold, or a later PR update refuses
 release. This is deliberately conservative: even a later PR comment or description edit invalidates
-this evidence path. Arbitrary approval wording is not interpreted.
+this evidence path. The two supported authorizations ignore case and surrounding whitespace and allow
+one final period or exclamation mark (for example, `you can merge it.`). Questions (`You can merge it?`),
+negations, conditions (`You can merge it after tests`), quotations and extra prose are refused.
+The daemon checks the original operator message; L3 cannot substitute its own wording or interpretation.
 
 Success returns a receipt with the approval message id/time, presentation id, prior hold/event,
 PR URL/head and actual actor `l3`. The receipt is stored as `merge_approval` on the task and in a

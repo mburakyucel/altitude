@@ -196,9 +196,11 @@ checkout guard before requeue clears its fault; a failed check keeps its blocked
 retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
 
 Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
-Sending a message does not automatically clear a merge hold. For the exact operator reply
-`Good to merge` directly following the owner's single-PR presentation, L3 explicitly invokes
-[`hold-merge --approval`](CLI.md#recorded-merge-approval) through its daemon connection. Altd validates
+Sending a message does not automatically clear a merge hold. For the standalone operator reply
+`Good to merge` or `You can merge it` directly following the owner's single-PR presentation, L3 explicitly
+invokes [`hold-merge --approval`](CLI.md#recorded-merge-approval) through its daemon connection. Altd validates
+the whole reply, ignoring case and surrounding whitespace and allowing one final period or exclamation
+mark; questions, conditions, negations, quotations and extra prose cannot authorize release. It checks
 the durable message, current hold generation and unchanged PR, then records a release receipt without
 changing worker or block state. A later operator message, renewed hold, changed PR or missing evidence
 preserves the hold. L3 checks the release receipt before resuming a blocked owner; the owner rechecks
