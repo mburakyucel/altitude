@@ -33,6 +33,19 @@ are clearer on a new machine. In a restricted worktree, use
 `pnpm --dir web install --frozen-lockfile --store-dir /tmp/altitude-ui-pnpm-store` if the package
 store is not writable. Do not change the lockfile to work around an installation failure.
 
+## End-to-end validation
+
+After a change to dispatch, engines, or landing, run one real tiny task through chat, task,
+PR, checks, merge, and archive, as required by
+[working rule 4](SIMPLIFICATION.md#working-rules-that-still-apply-to-every-pr).
+L3 creates it from chat through the trusted `alt task new` door. The L2 delivers a useful small
+change through the normal PR, full checks, review as appropriate, and merge path, respecting any
+recorded merge hold. L3 finalizes and archives the task; the originating task records the task
+identity, observed engine/model, PR, merge SHA, check results, and archive evidence.
+
+This validates the observed path only. A documentation-only validation task does not change
+dispatch, engines, or landing, so it does not require another live validation task.
+
 ## UI development
 
 Against your own running backend on an unreserved port, a separate terminal can run:
