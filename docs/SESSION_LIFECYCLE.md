@@ -84,6 +84,14 @@ hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto
 landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
 informational overlaps; the lease remains the staging boundary enforced by `alt land`.
 
+If required paths are missing, an L2 checkpoints progress and blocks to L3 with the paths and reason,
+including during recovery. This ordinary scope request uses no fault flag. L3 inspects task status,
+assigns the complete lease with `alt task paths <slug> <paths>` through its coordinator transport,
+and verifies the saved scope before sending a task message to resume. Assignment replaces `paths`,
+retains the blocked state and starts no worker. The message takes the normal daemon resume path,
+preserving the attempt, provider session, worktree, branch and merge hold. L2 verifies the recorded
+lease before editing or applying work; it cannot assign its own lease.
+
 Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,

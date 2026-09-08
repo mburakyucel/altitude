@@ -247,6 +247,14 @@ their own sections. If main moves, the owner runs `git rebase origin/main` in th
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
 
+Only L3 or the operator assigns a lease with `alt task paths`; it replaces the complete `paths`
+list and records a `paths` event with the actor and previous scope. A missing-scope L2, including
+a recovery owner, uses an ordinary block to L3 and stops before editing or applying that work.
+L3 retains the authorized existing paths, assigns the required scope through its project-bound
+transport, and observes the saved lease in task status before messaging the owner to resume.
+Assignment alone leaves the task blocked. The normal daemon resume keeps the attempt, provider
+session, worktree, branch and merge hold; the owner rechecks the lease before continuing.
+
 Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
 text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
 issue scope with the authorized delivery. For a complete resolution it supplies native closing
