@@ -102,7 +102,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         rec = faults.get(key) or {}
         recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
                   and rec.get("incident"))
-        rec = {"first": rec.get("first") or S.now(), "last": S.now(),
+        rec = {**rec, "first": rec.get("first") or S.now(), "last": S.now(),
                "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
                "detail": detail[:500], "project": project, "task": task}
         faults[key] = rec
@@ -118,12 +118,13 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
             l3.queue_message(target, f"System fault [{kind}] again, now blocking {where}: {detail[:600]}\n\n"
                              f"Incident {target}/{rec['incident']} from earlier today already holds the evidence; amend it only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
-                             "the cause is gone. Answer in one or two plain sentences.", trigger="incident")
+                             "the cause is gone. Answer in one or two plain sentences.\n\n"
+                             + upstream_summary(target), trigger="incident")
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
                            evidence=f"monitor/faults.json key {key}; journalctl --user -u altitude", cause="not yet analysed — a system fault, not a task fault",
-                           tags=["system-fault", kind], actor="altd")
+                           tags=["system-fault", kind], actor="altd", fault_key=key)
         rec["incident"] = inc["id"]
         faults[key] = rec
         S.write_json(FAULTS, faults)
@@ -134,20 +135,71 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
                          f"Its task is blocked and incident {target}/{inc['id']} holds the evidence. Read the evidence, record "
                          "what you learned with `alt incident amend`, then fix the cause directly if that is trivial or "
-                         "create one ordinary task. Answer in two or three plain sentences.", trigger="incident")
+                         "create one ordinary task. Answer in two or three plain sentences.\n\n"
+                         + upstream_summary(target), trigger="incident")
     return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
 
 
-def index() -> list[dict]:
-    if not config.INCIDENT_INDEX.exists():
+def index(project: str | None = None) -> list[dict]:
+    path = config.project_dir(project) / "incidents.jsonl" if project else config.INCIDENT_INDEX
+    if not path.exists():
         return []
+    faults = S.read_json(FAULTS, {}) or {}
     out = []
-    for line in config.INCIDENT_INDEX.read_text().splitlines():
+    for line in path.read_text().splitlines():
         try:
-            out.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
-            pass
+            continue
+        if "system-fault" in row.get("tags", []):
+            row["upstream"] = (faults.get(row.get("fault_key"), {}).get("upstream") or
+                               {"status": "missing", "url": None,
+                                "reason": "No linked report. Check existing upstream issues; report only with authorization."})
+        out.append(row)
     return out
+
+
+def upstream_delivery(project: str, incident: str, *, outcome: dict | None = None,
+                      expected: dict | None = None) -> dict:
+    """Read or compare-and-save delivery on the incident's existing project/kind fault identity."""
+    if not isinstance(incident, str) or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", incident):
+        raise ValueError("alt issue upstream: invalid incident id")
+    with _fault_lock():
+        row = next((row for row in index(project) if row["id"] == incident), None)
+        if not row or not row.get("fault_key"):
+            raise ValueError("alt issue upstream: incident has no tracked system-fault identity in this project; "
+                             "historical backfill requires separate authorization")
+        faults = S.read_json(FAULTS, {}) or {}
+        key = row["fault_key"]
+        source = json.loads(key)[0]
+        if key not in faults or not (source == project or source is None and project == "altitude"):
+            raise ValueError("alt issue upstream: incident fault identity is unavailable in this project")
+        current = row["upstream"]
+        if outcome is None:
+            return current
+        if current != expected:
+            raise ValueError("alt issue upstream: delivery changed; inspect `alt incident list` before trying again")
+        faults[key]["upstream"] = outcome
+        S.write_json(FAULTS, faults)
+    S.project_log(project, "incident-upstream", id=incident, **outcome)
+    S.regen_state_md(project)
+    return outcome
+
+
+def upstream_summary(project: str) -> str:
+    """Bounded current fault-kind outcomes; the full incident list remains the audit surface."""
+    rows = {row.get("fault_key") or row["id"]: row for row in index(project) if "upstream" in row}
+    if not rows:
+        return ""
+    counts = {status: sum(row["upstream"]["status"] == status for row in rows.values())
+              for status in ("missing", "failed", "uncertain", "confirmed")}
+    lines = ["Upstream reports: " + ", ".join(f"{status}={count}" for status, count in counts.items())]
+    ordered = sorted(reversed(list(rows.values())), key=lambda row: row["upstream"]["status"] == "confirmed")
+    for row in ordered[:5]:
+        outcome = row["upstream"]
+        lines.append(f"- {row['id']}: {outcome['status']} — {outcome.get('url') or outcome['reason']}")
+    lines.append("Inspect all links and gaps with `alt incident list`; reporting does not assign repair work.")
+    return "\n".join(lines)
 
 
 def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
@@ -165,7 +217,7 @@ def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
 
 
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
-                 tags: list[str], actor: str = "l3") -> dict:
+                 tags: list[str], actor: str = "l3", fault_key: str | None = None) -> dict:
     """Write incident evidence into the project's Altitude state.
 
     Filing an incident never creates a task or schedules a healing workflow.
@@ -182,7 +234,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         path.unlink(missing_ok=True)
         raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
-           "cause": cause.strip()[:200]}
+           "cause": cause.strip()[:200], **({"fault_key": fault_key} if fault_key else {})}
     with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
     _index_append(row)

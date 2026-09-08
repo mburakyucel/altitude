@@ -296,9 +296,9 @@ def main(argv=None) -> None:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if args.operation == "close" and sys.stdin.isatty() else sys.stdin.read()
+        body = "" if sys.stdin.isatty() and (args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
         payload = {"project": _project(args), "operation": args.operation, "body": body,
-                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
+                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
         if ACTOR == "l3":
             sys.exit("alt issue: L3 must use its project-bound runtime alt socket")
@@ -517,7 +517,7 @@ def main(argv=None) -> None:
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:
-            out([r for r in incidents.index() if r["project"] == p])
+            out(incidents.index(p))
         return
     if c == "serve":
         from altitude import server; server.main(host=args.host, port=args.port); return
