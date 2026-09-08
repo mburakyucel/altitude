@@ -11,11 +11,11 @@ Three grep-level counts that may fall and never rise:
    configuration; text that spells it cannot be read by anyone else and cannot be reconfigured. The
    incident class is the operator being welded into personas, code, UI, and docs.
 3. Persona boundary. `personas/` is the global layer — how anyone works under Altitude on any
-   project — so it must not carry this repository's own rules, which live in `CLAUDE.md` and
-   `docs/SIMPLIFICATION.md`. The incident class is a project rule leaking into every project.
+   project — so it must not carry this repository's own rules, which live in `AGENTS.md`.
+   The incident class is a project rule leaking into every project.
 
 A PR that reduces a count updates the baseline here in the same commit; the test says so when the
-numbers disagree. Decision 8 in `docs/SIMPLIFICATION.md` is the rule these numbers enforce.
+numbers disagree. The Seams section in `AGENTS.md` is the rule these numbers enforce.
 """
 from __future__ import annotations
 
@@ -32,18 +32,18 @@ ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
 
 #: Provider names per file in `altitude/*.py` and `bin/alt`, outside the engine seam.
 PROVIDER_BASELINE = {
-    "altitude/dispatch.py": 9,
+    "altitude/dispatch.py": 7,
     "altitude/l3.py": 32,
     "altitude/monitor.py": 6,
     "altitude/quota_codex.py": 18,
-    "altitude/server.py": 14,
+    "altitude/server.py": 13,
     "altitude/tasks.py": 3,
     "altitude/transcript.py": 47,
 }
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "CLAUDE.md": 7,
+    "AGENTS.md": 5,
     "README.md": 4,
     "altitude/config.py": 1,
     "altitude/digest.py": 3,
@@ -59,7 +59,6 @@ OPERATOR_BASELINE = {
     "docs/CLI.md": 3,
     "docs/ROADMAP.md": 2,
     "docs/SESSION_LIFECYCLE.md": 5,
-    "docs/SIMPLIFICATION.md": 6,
     "personas/l2.md": 6,
     "personas/l3.md": 9,
     "web/src/data/api.ts": 1,
@@ -101,7 +100,7 @@ def _provider_files():
 
 
 def _operator_files():
-    files = {REPO / "bin" / "alt", REPO / "README.md", REPO / "CLAUDE.md"}
+    files = {REPO / "bin" / "alt", REPO / "README.md", REPO / "AGENTS.md", REPO / "CLAUDE.md"}
     for root in ("personas", "altitude", "web/src", "docs"):
         files.update(p for p in (REPO / root).rglob("*") if p.is_file())
     return sorted(files)
@@ -144,7 +143,7 @@ class TestPersonaBoundary(unittest.TestCase):
                 if rule.lower() in text:
                     self.fail(
                         f"{path.name} is the global layer; "
-                        f'"{rule}" is this project\'s rule and belongs in CLAUDE.md'
+                        f'"{rule}" is this project\'s rule and belongs in AGENTS.md'
                     )
 
 

@@ -563,7 +563,7 @@ def start_l3(project: str) -> None:
         request_l3_drain(project)
         return
     # The start reply is a conversation with Burak, not a turn log.
-    server_l3_turn(project, "You have just been started for this project. Read the state file and the repo's README/CLAUDE.md (skim), "
+    server_l3_turn(project, "You have just been started for this project. Read the repository rules named in this turn, the state file, and the repo's README (skim), "
                             "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
                             "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
                    trigger="start")
@@ -930,7 +930,7 @@ def tick() -> None:
 
 
 def tick_project(project: str) -> None:
-    # Decision 11: a sole running worker's merge must activate without another dispatch or report.
+    # Activation: a sole running worker's merge must activate without another dispatch or report.
     try:
         with dispatch.publication_settlement(project):
             dispatch.self_deploy_fast_forward(project)
@@ -1425,7 +1425,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (Burak, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Decision 11: only dispatch, L3 and report handling
+    until the deployed service and bundle contain it). Activation: only dispatch, L3 and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
     if not status or status.get("failed"):
@@ -1762,7 +1762,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         scheme = "https"
     elif config.TLS:
         log(f"no certificate in {config.TLS_DIR} — serving plain http (run `alt tls-init` for https)")
-    # Decision 11: do not release waiting launches if the replacement cannot bind its API or brokers.
+    # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
     if os.environ.get("ALTITUDE_SERVICE"):
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":

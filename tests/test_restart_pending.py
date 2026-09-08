@@ -1,4 +1,4 @@
-"""Decision 11: running workers do not hold activation; only short daemon work does."""
+"""Running workers do not hold activation; only short daemon work does."""
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock

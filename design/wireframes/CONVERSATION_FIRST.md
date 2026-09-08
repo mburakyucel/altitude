@@ -89,11 +89,9 @@ Existing inbox, wake, capacity and provider conversation rules deliver both kind
 queued fresh attempt still receives the current questions or receipts. There is no second model
 classifier, decision store, queue, conversation, daemon or provider reset.
 
-The separate decision workspace, option/note form, recipient selector, mirrored card conversation
-and last-event anchoring are removed. Saved decision URLs redirect into the owning chat. Obsolete
-wireframe boards and superseded captures are removed from this PR. Loading and input behavior reuse
-the familiar shared components.
+Saved decision URLs redirect into the owning chat. Loading and input behavior reuse the familiar
+shared components.
 
 The process learning is recorded in [issue #271](https://github.com/mburakyucel/altitude/issues/271)
-and the project's simplification rules: settle a major UX proposal with the user before finalizing
+and the [project UX rules](../../AGENTS.md#ui): settle a major UX proposal with the user before finalizing
 implementation and migrating tests. Broad positive feedback does not settle ongoing UX questions.

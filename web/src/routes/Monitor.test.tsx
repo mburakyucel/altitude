@@ -272,7 +272,7 @@ describe("Monitor", () => {
     expect(document.querySelectorAll(".monitor-seat")).toHaveLength(1);
   });
 
-  it("takes every engine name from the seam's rows and spells none itself (decision 8)", async () => {
+  it("takes every engine name from the seam's rows and spells none itself (project seams rule)", async () => {
     mockFetch({
       ...monitor,
       seats: [{ ...claudeSeat, label: "Seat one" }, { ...codexSeat, label: "Seat two" }],

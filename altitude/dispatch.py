@@ -98,9 +98,9 @@ def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request
 
 
 def project_never_list(repo: Path) -> str:
-    """Best effort: the 'Never' bullets from the repo's CLAUDE.md, else a generic line."""
-    md = repo / "CLAUDE.md"
-    if md.exists():
+    """Best effort: the 'Never' bullets from the project's rules, else a generic line."""
+    md = engines.repository_rules(repo)
+    if md:
         lines = [l.strip("- ").strip() for l in md.read_text().splitlines() if re.match(r"^\s*-\s*\*\*?never", l, re.I) or "never" in l.lower()[:40]]
         if lines:
             return "; ".join(l[:160] for l in lines[:8])
@@ -1184,7 +1184,7 @@ def activation_component(path: str) -> str | None:
 
 
 def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
-    # Decision 11: a finishing worker must not clear requested_at or change build inputs during activation.
+    # Activation: a finishing worker must not clear requested_at or change build inputs during activation.
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             return ["deferred self-deploy: activation in progress"]

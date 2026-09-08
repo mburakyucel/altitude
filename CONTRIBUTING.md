@@ -16,7 +16,7 @@ Prefer small coordination mechanisms with a clear owner and a current caller. Ke
 operator and optional local-service details at their named boundaries. Use the engines' native
 instructions, skills, hooks and helpers where appropriate; explain the need before introducing
 another persistent stage, role or state. The project rules and seven review questions are in
-[CLAUDE.md](CLAUDE.md) and the [simplification record](docs/SIMPLIFICATION.md#working-rules-that-still-apply-to-every-pr).
+[AGENTS.md](AGENTS.md#working-rules-for-every-pr), the shared authoritative instruction file.
 
 ## Develop and verify
 

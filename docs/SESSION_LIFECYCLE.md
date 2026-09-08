@@ -37,6 +37,25 @@ For first-run configuration, Auto preferences and explicit pins, see [setup](SET
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
 
+## Repository instructions
+
+Both roles explicitly read project rules before proceeding. Each fresh or resumed L2 worker receives
+the absolute rule-file path in its worktree; every L3 turn receives the path in the registered checkout,
+including start/restart and other server turns. L3's disposable cwd stays outside the repository, so
+native checkout discovery is insufficient. The common engine boundary chooses root `AGENTS.md` when
+present, otherwise `CLAUDE.md`, and directs the role to follow references/imports and applicable
+directory instructions. It resolves the file on each turn so a resumed session sees a changed source.
+
+Altitude maintains its own project rules only in [AGENTS.md](../AGENTS.md); root `CLAUDE.md` is the
+native `@AGENTS.md` import. Managed repositories keep their own rules and need no file migration.
+The global L2/L3 personas describe roles and retain explicit reading instructions without embedding
+Altitude-specific rules. No session rotation or extra engine policy is needed for this reference.
+
+Codex's [native discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) follows the
+repository root through cwd; Claude's [native import](https://code.claude.com/docs/en/memory#agentsmd)
+resolves `@AGENTS.md` relative to `CLAUDE.md`. Fixture tests verify the reference and prompt paths;
+they do not prove that a live provider loads or follows the rules.
+
 Repository validation uses deterministic fixtures at the external engine boundary: the
 [core journey tests](DEVELOPMENT.md#coverage-and-limits) retain real task state, routing,
 message/resume logic, API/storage and Git operations. Live-provider cases, including the real
@@ -538,6 +557,10 @@ finalized observations retain their timestamp rather than becoming live-stale. T
 shows engine, owner/delegated/provider coverage, input/output and available cache/reasoning subsets.
 
 ## Context and prompt-cache evidence
+
+Claude L2 settings explicitly supply `autoCompactWindow` from `config.AUTOCOMPACT_WINDOW` through
+the engine boundary. Native compaction remains the engine's responsibility; Altitude keeps the
+owner's small progress checkpoint for recovery and handoffs.
 
 For Claude, context is the newest genuine assistant usage record: input plus cache-read plus
 cache-creation tokens. Synthetic all-zero limit records are ignored. Codex task context is unknown:
