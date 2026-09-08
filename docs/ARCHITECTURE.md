@@ -470,6 +470,19 @@ A failed chat turn reads "L3 could not answer this turn." with Retry, which rese
 
 `GET /api/project/<name>` includes `repository`, the GitHub HTTPS web URL derived from the deployment checkout's SSH or HTTPS `origin`, or `null` without a GitHub origin; the task PR chip links to `<repository>/pull/<n>` in a new tab when present and stays text otherwise.
 
+`web/src/components/Prose.tsx` owns reference rendering for L3 and L2 replies, live session prose,
+system summaries/cards, decision questions/recommendations/follow-ups, and report prose and fields.
+Each view supplies its project's cached `repository` through `ProseRepository`; cross-project
+decision cards read their own project. Plain `PR #250` and `pull request #250` use `/pull/250`;
+`issue #247` and bare `#247` use `/issues/247`, which GitHub redirects for pull requests.
+`owner/repo#247` overrides project context and works without project metadata. Targets are built
+only from validated GitHub HTTPS repository paths and positive issue numbers. Existing Markdown
+links and URLs are consumed before reference matching; inline code and shared backtick/tilde fence
+boundaries exclude code in full prose, compact mirrors, and folded summaries. Anchors retain their
+visible labels and use the app's focus styling, underlines, and new-tab `noopener noreferrer`
+behavior. Rendering never changes stored messages or performs per-reference requests or model calls.
+Missing/loading/failed repository metadata leaves unqualified references as text until available.
+
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the hint reads "L3 is mid-turn · runs next", and the message shows as a muted queued row with Remove until
 its turn starts, when the row becomes the turn's bubble and typing indicator. The API snapshots the queue and active record under the same

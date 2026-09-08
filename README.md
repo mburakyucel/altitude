@@ -133,6 +133,12 @@ license has been selected; public release is a separate milestone.
 
 ## Project conversations
 
+PR and issue references in L3 and L2 prose, decisions, and reports are clickable, including saved
+messages. `PR #250` and `pull request #250` open the project's pull request; `issue #247` and
+`#247` use GitHub's issue route, which also resolves pull requests. `owner/repo#247` names its own
+repository. Links open in a new tab. Existing links and code stay intact; unqualified references
+stay text when the project's GitHub repository is unavailable.
+
 Within an L2 task, Conversation and Live session are local views. Switching between them adds no
 browser history entries. Browser Back and the task's Back control return to the preceding page;
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link

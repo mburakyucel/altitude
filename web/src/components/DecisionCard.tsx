@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import { useChat, useDecide, useTask } from "../data/api";
+import { useChat, useDecide, useProject, useTask } from "../data/api";
 import type { Decision, DecisionOption } from "../data/api";
 import { askerLabel, decisionKind, decisionOptions, followUpsOf, recommendedOption } from "../data/decisions";
 import type { FollowUp } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { Prose } from "./Prose";
+import { InlineProse, Prose, ProseRepository } from "./Prose";
 
 /** How long the card takes to collapse after a decision lands. */
 export const LEAVE_MS = 200;
@@ -66,7 +66,7 @@ export function FollowUpThread({ items, compact = true }: { items: FollowUp[]; c
             {item.answer != null ? (
               <div className="decision-fu-a">
                 <b>{item.to === "l2" ? "The L2:" : "L3:"}</b>{" "}
-                {compact ? <span>{item.answer}</span> : <Prose text={item.answer} />}
+                {compact ? <InlineProse text={item.answer} /> : <Prose text={item.answer} />}
               </div>
             ) : null}
           </div>
@@ -102,6 +102,7 @@ export function DecisionCard({
   // The follow-ups: the project's chat rows and the task's messages that carry this decision (§4.3).
   const chat = useChat(decision.project);
   const task = useTask(decision.project, decision.slug);
+  const project = useProject(decision.project);
   const kind = decisionKind(decision);
   const options = decisionOptions(decision);
   const recommended = recommendedOption(decision);
@@ -129,6 +130,7 @@ export function DecisionCard({
   const retry = () => choose(options.find((o) => o.label === chosen) ?? recommended);
 
   return (
+    <ProseRepository value={project.data?.repository}>
     <article className="decision" data-leaving={leaving || undefined} data-selected={selected || undefined} aria-label={title}>
       <div className="decision-kind" data-tone={kind.tone}>
         <span className="kind-label">{kind.label}</span>
@@ -138,8 +140,8 @@ export function DecisionCard({
           {ageText(decision.asked)}
         </span>
       </div>
-      <p className="decision-question">{decision.question || title}</p>
-      {why ? <p className="decision-why">{why}</p> : null}
+      <p className="decision-question"><InlineProse text={decision.question || title} /></p>
+      {why ? <p className="decision-why"><InlineProse text={why} /></p> : null}
       <FollowUpThread items={followUps} />
       <div className="decision-options">
         <DecisionOptions options={options} recommended={recommended} chosen={chosen} deciding={deciding} onChoose={choose} />
@@ -161,5 +163,6 @@ export function DecisionCard({
         </p>
       ) : null}
     </article>
+    </ProseRepository>
   );
 }

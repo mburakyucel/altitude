@@ -4,11 +4,12 @@ import { createInterface } from "node:readline";
 import { expect, test as base } from "@playwright/test";
 
 /** Every spec owns a disposable real API/storage process serving this checkout's built bundle. */
-export const test = base.extend<{ service: string; scenario: string; single: boolean }>({
+export const test = base.extend<{ service: string; scenario: string; single: boolean; serviceScript: string }>({
   scenario: ["acceptance", { option: true }],
   single: [false, { option: true }],
-  service: async ({ scenario, single }, use) => {
-    const script = ["acceptance", "tasks"].includes(scenario) ? "acceptance-service.py" : `project-${scenario}-service.py`;
+  serviceScript: ["", { option: true }],
+  service: async ({ scenario, single, serviceScript }, use) => {
+    const script = serviceScript || (["acceptance", "tasks"].includes(scenario) ? "acceptance-service.py" : `project-${scenario}-service.py`);
     const child = spawn("python3", [`e2e/${script}`, ...(single ? ["single"] : scenario === "tasks" ? ["tasks"] : [])], {
       stdio: ["ignore", "pipe", "pipe"],
     });

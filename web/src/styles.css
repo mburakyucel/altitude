@@ -1742,7 +1742,7 @@
 .reply .session-prose ol {
   list-style: decimal;
 }
-.reply .session-prose a {
+.prose-link {
   color: var(--accent-text);
   text-decoration: underline;
 }

@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router";
-import { Prose } from "../components/Prose";
+import { InlineProse, Prose, ProseRepository } from "../components/Prose";
 import { TokenUsage } from "../components/TokenUsage";
-import { useOverview, useTask } from "../data/api";
+import { useOverview, useProject, useTask } from "../data/api";
 
 /*
  * The task's report view (SPEC.md §3.4, §5.2 note 1): the full report that no longer travels in the
@@ -43,6 +43,7 @@ export default function TaskReport() {
   const { name = "", slug = "" } = useParams();
   const task = useTask(name, slug);
   const overview = useOverview();
+  const project = useProject(name);
   if (task.isPending) {
     return (
       <div className="page" aria-label="Loading">
@@ -80,6 +81,7 @@ export default function TaskReport() {
   const empty = Object.keys(report).length === 0 && !markdown && !digest;
 
   return (
+    <ProseRepository value={project.data?.repository}>
     <div className="page report-page">
       <p className="text-meta">
         <Link to={`/projects/${name}/tasks/${slug}`}>← {view.title || slug}</Link>
@@ -92,8 +94,7 @@ export default function TaskReport() {
           <ul>
             {prs.map((pr, index) => (
               <li key={index}>
-                PR #{String(pr.number ?? "?")} {pr.merged ? "merged" : "open"}
-                {str(pr.title) ? ` · ${str(pr.title)}` : ""}
+                <InlineProse text={`PR #${String(pr.number ?? "?")} ${pr.merged ? "merged" : "open"}${str(pr.title) ? ` · ${str(pr.title)}` : ""}`} />
               </li>
             ))}
             {runs.map((run, index) => (
@@ -102,7 +103,7 @@ export default function TaskReport() {
                 {run.id != null ? ` · run ${String(run.id)}` : ""}
               </li>
             ))}
-            {landed.deploy != null ? <li>Deploy: {line(landed.deploy)}</li> : null}
+            {landed.deploy != null ? <li>Deploy: <InlineProse text={line(landed.deploy)} /></li> : null}
           </ul>
         </Section>
       ) : null}
@@ -111,10 +112,10 @@ export default function TaskReport() {
           <ul>
             {review.map((finding, index) => (
               <li key={index}>
-                {str(finding.summary) || str(finding.title) || line(finding)}
+                <InlineProse text={str(finding.summary) || str(finding.title) || line(finding)} />
                 {str(finding.severity) ? ` · ${str(finding.severity)}` : ""}
                 {str(finding.disposition) ? ` · ${str(finding.disposition)}` : ""}
-                {str(finding.reason) ? ` · ${str(finding.reason)}` : ""}
+                {str(finding.reason) ? <InlineProse text={` · ${str(finding.reason)}`} /> : null}
               </li>
             ))}
           </ul>
@@ -122,7 +123,7 @@ export default function TaskReport() {
       ) : null}
       {blocked ? (
         <Section title="Blocked">
-          <p className="text-danger">{blocked}</p>
+          <p className="text-danger"><InlineProse text={blocked} /></p>
         </Section>
       ) : null}
       {lists.map(([title, value]) =>
@@ -130,7 +131,7 @@ export default function TaskReport() {
           <Section key={title} title={title}>
             <ul>
               {arr(value).map((item, index) => (
-                <li key={index}>{line(item)}</li>
+                <li key={index}><Prose text={line(item)} /></li>
               ))}
             </ul>
           </Section>
@@ -152,5 +153,6 @@ export default function TaskReport() {
         </Section>
       ) : null}
     </div>
+    </ProseRepository>
   );
 }

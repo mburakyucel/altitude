@@ -124,6 +124,13 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
+Saved and arriving L3/L2 prose shares project-aware GitHub reference rendering across conversations,
+live sessions, decisions, and reports. The UI resolves `PR #250`, `issue #247`, and bare `#247`
+against `GET /api/project/<name>` repository metadata; `owner/repo#247` uses the named repository.
+This is a read-time presentation of durable text: no message rewrite, provider request, or
+per-mention lookup occurs. Existing links and code remain intact, and missing repository metadata
+leaves unqualified references as text. Switching projects supplies the destination's repository.
+
 A message from Burak (task page, chat through L3, or `alt task message`) is appended to the task's durable
 conversation and to its inbox. Nothing is killed. A running Claude L2 receives the inbox at its next checkpoint:
 the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the

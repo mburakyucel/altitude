@@ -4,6 +4,7 @@ import { NavLink, useLocation, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
+import { ProseRepository } from "../components/Prose";
 import { agoText, when } from "../data/observed";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -421,8 +422,8 @@ function TaskPage({
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
 
-  const panel = <LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} />;
-  const conversation = <TaskConversation project={project} task={task} facts={facts} decision={decision} />;
+  const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} /></ProseRepository>;
+  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} decision={decision} /></ProseRepository>;
 
   if (phone) {
     return (

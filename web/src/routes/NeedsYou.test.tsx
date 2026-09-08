@@ -85,6 +85,10 @@ function mockFetch(queue: unknown[], decideStatus = 200) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
+    if (url.includes("/api/project/")) {
+      const name = url.split("/").at(-1);
+      return jsonResponse({ name, tasks: [], repository: `https://github.com/example/${name}` });
+    }
     if (url.includes("/api/chat/altitude")) return jsonResponse(chatView);
     if (url.includes("/api/chat/")) return jsonResponse({ history: [], queued: [], active: null, busy: false });
     if (url.includes("/api/task/tutor/score-phonemes")) {
@@ -110,6 +114,15 @@ function mockFetch(queue: unknown[], decideStatus = 200) {
 }
 
 describe("Needs you", () => {
+  it("resolves the same reference against each decision card's own project", async () => {
+    mockFetch([{ ...asks, question: "Review PR #250?" }, { ...l2Asks, question: "Review PR #250?" }]);
+    renderApp({ route: "/" });
+    await waitFor(() => expect(screen.getAllByRole("link", { name: "PR #250" })
+      .map((link) => link.getAttribute("href")).sort()).toEqual([
+        "https://github.com/example/altitude/pull/250", "https://github.com/example/tutor/pull/250",
+      ]));
+  });
+
   it("says so when nothing waits", async () => {
     mockFetch([]);
     renderApp({ route: "/" });

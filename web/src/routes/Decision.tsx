@@ -5,7 +5,7 @@ import { sendL2Message, streamChat, useChat, useDecide, useOverview, useProject,
 import type { Decision, DecisionOption, TaskView } from "../data/api";
 import Composer from "../components/Composer";
 import { DecisionOptions } from "../components/DecisionCard";
-import { Prose } from "../components/Prose";
+import { InlineProse, Prose, ProseRepository } from "../components/Prose";
 import { clock } from "../components/Bubbles";
 import { askerLabel, askerOf, decisionKind, decisionOptions, followUpsOf, isOperator, recommendedOption } from "../data/decisions";
 import type { FollowUp } from "../data/decisions";
@@ -132,7 +132,6 @@ export function evidenceOf(
   project: string,
   slug: string,
   task: TaskView | undefined,
-  decision: Decision | undefined,
   repository: string | null | undefined,
 ): EvidenceChip[] {
   const base = `/projects/${project}/tasks/${slug}`;
@@ -146,14 +145,6 @@ export function evidenceOf(
     if (typeof pr !== "number" || seen.has(pr)) continue;
     seen.add(pr);
     chips.push(repo ? { href: `${repo}/pull/${pr}`, label: `PR #${pr}`, external: true } : { href: base, label: `PR #${pr}` });
-  }
-  if (repo && decision) {
-    for (const match of `${decision.question} ${decision.detail ?? ""}`.matchAll(/(?<![\w/])#(\d+)\b/g)) {
-      const n = Number(match[1]);
-      if (seen.has(n)) continue;
-      seen.add(n);
-      chips.push({ href: `${repo}/issues/${n}`, label: `#${n}`, external: true });
-    }
   }
   return chips;
 }
@@ -172,8 +163,8 @@ function Timeline({ items }: { items: TimelineItem[] }) {
           <div className="tl-body">
             {item.who ? <b>{item.who}</b> : null}
             {item.who ? " " : ""}
-            {item.text}
-            {item.quote ? <q>{item.quote}</q> : null}
+            <InlineProse text={item.text} />
+            {item.quote ? <q><InlineProse text={item.quote} /></q> : null}
           </div>
         </li>
       ))}
@@ -253,7 +244,7 @@ export default function DecisionPage() {
   const recommended = decision ? recommendedOption(decision) : null;
   const why = decision?.recommendation?.why?.trim() || "";
   const described = options.filter((o) => o.text && o.text.trim() && o.text.trim() !== o.label);
-  const evidence = evidenceOf(name, slug, task.data, decision, project.data?.repository);
+  const evidence = evidenceOf(name, slug, task.data, project.data?.repository);
   const timeline = timelineOf(task.data, since, followUps, waiting, task.data ? l2Label(task.data, overview.data) : "");
   const asked = decision?.asked ?? decision?.since ?? null;
 
@@ -304,7 +295,7 @@ export default function DecisionPage() {
           </span>
         ) : null}
       </div>
-      <h1 className="decision-title">{question || title}</h1>
+      <h1 className="decision-title"><InlineProse text={question || title} /></h1>
       {decision && recommended ? (
         <div className="decision-options decision-options-page">
           <DecisionOptions
@@ -339,7 +330,7 @@ export default function DecisionPage() {
           {why ? <Prose text={why} /> : null}
           {described.map((option) => (
             <p key={option.key ?? option.label} className="dp">
-              <b>{option.label}:</b> {option.text}
+              <b>{option.label}:</b> <InlineProse text={option.text ?? ""} />
             </p>
           ))}
         </section>
@@ -400,10 +391,12 @@ export default function DecisionPage() {
 
   const panel = <WorkPanel name={name} project={project} decisions={decisions} selected={slug} />;
   const main = (
+    <ProseRepository value={project.data?.repository}>
     <div className="convo decision-page">
       <div className="convo-scroll decision-scroll">{body}</div>
       {composer}
     </div>
+    </ProseRepository>
   );
 
   if (phone) return <div className="project-page">{main}</div>;
