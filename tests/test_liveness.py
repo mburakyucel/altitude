@@ -100,6 +100,56 @@ class TestDeadWorker(AltitudeCase):
 
 
 class TestResumeRebinds(AltitudeCase):
+    def test_finished_snapshot_cannot_replace_an_intentional_question_block(self):
+        task = T.new(self.project, "Question at exit", "Discuss scope")
+        task.update(state="running", attempt=1, agent_id="worker", session_id="session")
+        S.save_task(self.project, task)
+        with mock.patch.object(engines, "worker", return_value={"id": "worker", "state": "done"}):
+            item = dispatch.poll(self.project)[0]
+        self.assertTrue(item["died"])
+        T.block(self.project, task["slug"], "Confirm scope", actor="l2", updates={"waiting_on": "burak"})
+        with mock.patch.object(server.incidents, "system_fault") as fault:
+            server.on_l2_finished(self.project, item)
+        fault.assert_not_called()
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual((current["state"], current["waiting_on"], current["blocked_reason"]),
+                         ("blocked", "burak", "Confirm scope"))
+
+    def test_death_fault_tag_cannot_replace_a_newer_escalation(self):
+        task = T.new(self.project, "Question during exit handling", "Discuss scope")
+        task.update(state="running", attempt=1, agent_id="worker", session_id="session")
+        S.save_task(self.project, task)
+        real_fault = server.incidents.system_fault
+
+        def fault(*args, **kwargs):
+            T.escalate(self.project, task["slug"], "Confirm scope")
+            return real_fault(*args, **kwargs)
+
+        with mock.patch.object(server.incidents, "system_fault", side_effect=fault):
+            server.on_l2_finished(self.project, {"task": task, "agent": {"state": "done"}, "died": True})
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual((current["state"], current["waiting_on"], current["blocked_reason"]),
+                         ("blocked", "burak", "Confirm scope"))
+        self.assertFalse(current.get("fault"))
+
+    def test_worker_replaced_between_finished_snapshot_check_and_block_is_preserved(self):
+        task = T.new(self.project, "Replacement during exit handling", "Continue work")
+        task.update(state="running", attempt=1, agent_id="old", session_id="session")
+        S.save_task(self.project, task)
+        real_block = T.block
+
+        def block(*args, **kwargs):
+            real_block(self.project, task["slug"], "Turn boundary")
+            T.resume(self.project, task["slug"], agent_id="replacement", session_id="session")
+            return real_block(*args, **kwargs)
+
+        with mock.patch.object(T, "block", side_effect=block), \
+             mock.patch.object(server.incidents, "system_fault") as fault:
+            server.on_l2_finished(self.project, {"task": task, "agent": {"state": "done"}, "died": True})
+        fault.assert_not_called()
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual((current["state"], current["agent_id"]), ("running", "replacement"))
+
     def test_finished_snapshot_cannot_block_a_replacement_worker(self):
         slug = "stale-finished-worker"
         S.task_dir(self.project, slug).mkdir(parents=True, exist_ok=True)

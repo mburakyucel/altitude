@@ -78,6 +78,8 @@ current hold and unchanged PR before recording the release. The owner then reche
   into that conversation.
 - **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
   session, and follow its PR and report. Messages queue for the engine's next checkpoint.
+  An explicit question block survives worker exit and restart; older queued messages do not
+  resume it. A later message or explicit Resume brings the session back.
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.
   Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
   Shared-file changes still need rebasing and reconciliation by their owners.

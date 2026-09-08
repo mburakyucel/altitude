@@ -21,28 +21,36 @@ class ResumeFailure(RuntimeError, T.TransitionError):
     """A session-resume fault that is already recorded as a system fault."""
 
 
-def record_dispatch_failure(project: str, slug: str, error: object) -> DispatchFailure:
+def record_dispatch_failure(project: str, slug: str, error: object, *, launch: dict | None = None) -> DispatchFailure:
     """Clear the failed launch's transient claim and record the fault; the fault blocks the task."""
     reason = str(error)[:300]
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if task.get("state") == "queued":
+        if (task.get("dispatching") == launch.get("dispatching") if launch else task.get("state") == "queued"):
             task["dispatching"] = None
             S.save_task(project, task)
     S.append_event(project, slug, "dispatch-failed", reason=reason)
     from . import incidents
-    incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug)
+    incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug,
+                           expected_block_id=(launch or task).get("block_id"))
     return DispatchFailure(f"dispatch failed: {reason}")
 
 
 def record_resume_failure(project: str, slug: str, claim_id: str, error: object, *,
-                          suppress_retry: bool = False) -> ResumeFailure:
+                          suppress_retry: bool = False, kind: str = "l2-resume") -> ResumeFailure:
     """Record a failed session relaunch as a system fault; the task stays blocked with the incident."""
     reason = str(error)[:300]
-    T.release_resume_claim(project, slug, claim_id, consume_request=True, suppress_retry=suppress_retry)
+    task = S.load_task(project, slug)
+    claim = task.get("resume_claim") or {}
+    claim = claim if claim.get("id") == claim_id else {}
+    current = claim.get("id") == claim_id and claim.get("block_id") == task.get("block_id")
+    T.release_resume_claim(project, slug, claim_id, consume_request=current, suppress_retry=suppress_retry and current)
+    if not current and isinstance(error, T.TransitionError):
+        return ResumeFailure(reason)
     S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
-    incidents.system_fault("l2-resume", f"{project}/{slug}: {reason}", project=project, task=slug)
+    incidents.system_fault(kind, f"{project}/{slug}: {reason}", project=project, task=slug,
+                           expected_block_id=claim.get("block_id", claim_id))
     return ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 
@@ -72,20 +80,20 @@ def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request
         return {"already_resuming": True} if claim else None
     worker = claim.get("worker") or {}
     if worker.get("id") and worker.get("sessionId"):
-        T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
-                 previous_worker=task.get("agent_id"), expected_claim=claim["id"],
-                 expected_daemon_request=daemon_request_id, **(daemon_fence or {}))
-        return {"agent": worker, "recovered": True}
+        return {**_bind_resume_worker(project, slug, task, claim, worker,
+                                     daemon_request_id, daemon_fence or {}), "recovered": True}
     if claim.get("phase") == "claimed":
         T.release_resume_claim(project, slug, claim["id"], consume_request=False)
-        return None
+        return {"superseded": True} if claim.get("block_id") != task.get("block_id") else None
     # The provider call crossed a daemon crash without returning a worker identity. Retrying could deliver the
     # same inbox batch twice, so preserve it and fail closed for an explicit operator decision.
     reason = "daemon exited while provider resume was launching; worker ownership cannot be proven"
-    T.release_resume_claim(project, slug, claim["id"], consume_request=True, suppress_retry=True)
+    T.release_resume_claim(project, slug, claim["id"], consume_request=True,
+                           suppress_retry=claim.get("block_id") == task.get("block_id"))
     S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
-    incidents.system_fault("l2-resume-recovery", f"{project}/{slug}: {reason}", project=project, task=slug)
+    incidents.system_fault("l2-resume-recovery", f"{project}/{slug}: {reason}", project=project, task=slug,
+                           expected_block_id=claim.get("block_id"))
     raise ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 
@@ -144,11 +152,12 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             )
         if previous.get("status") in ("done", "refused", "failed") and same:
             receipt = (previous.get("result_state"), previous.get("result_agent_id"),
-                       previous.get("result_session_id"))
-            current = (task.get("state"), task.get("agent_id"), task.get("session_id"))
+                       previous.get("result_session_id"), previous.get("result_block_id"))
+            current = (task.get("state"), task.get("agent_id"), task.get("session_id"), task.get("block_id"))
             # A retry is the same operation only while the task still matches its terminal receipt. A later
             # lifecycle may legitimately need the same human reason again, but gets a new request/id/event.
-            if previous.get("result_state") is None or receipt == current:
+            if (previous.get("result_state") is None or receipt == current) and (
+                    operation != "resume" or previous.get("block_id") == task.get("block_id")):
                 return {"queued": False, "idempotent": True, "request": previous}
         if task.get("state") not in contract["from"]:
             raise T.TransitionError(
@@ -156,6 +165,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             )
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
                    "actor": actor, "status": "pending", "expected_state": task.get("state"),
+                   "block_id": task.get("block_id"),
+                   "resume_request": task.get("resume_request"),
                    "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
         task["daemon_request"] = request
         if operation == "resume":
@@ -267,9 +278,11 @@ def _finish_task_operation(project: str, slug: str, request_id: str | None, stat
             return {"stale": True}
         request.update({"status": status, "completed_at": S.now(), "note": str(note or "")[:300],
                         "result_state": task.get("state"), "result_agent_id": task.get("agent_id"),
+                        "result_block_id": task.get("block_id"),
                         "result_session_id": task.get("session_id")})
         task["daemon_request"] = request
-        if request.get("operation") == "resume" and status not in ("pending", "executing"):
+        if request.get("operation") == "resume" and status not in ("pending", "executing") and all(
+                request.get(key) == task.get(key) for key in ("block_id", "resume_request")):
             task.pop("resume_after", None)
         S.save_task(project, task)
         return {"request": request, "state": task.get("state")}
@@ -304,6 +317,8 @@ def run_task_operation(project: str, slug: str) -> dict:
                             f"task events and legacy git log -g refs/stash for {request_id} before retrying")
             elif identity_changed:
                 terminal = ("refused", "worker identity changed")
+            elif operation == "resume" and request.get("block_id") != task.get("block_id"):
+                terminal = ("refused", "block changed after resume request")
             elif state in DAEMON_TASK_OPERATIONS[operation]["done"] and operation != "stop":
                 terminal = ("done", "already in target state")
             elif state not in DAEMON_TASK_OPERATIONS[operation]["from"] and not (
@@ -645,7 +660,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
     except T.TransitionError:
         raise
     except Exception as exc:
-        raise record_dispatch_failure(project, slug, exc) from exc
+        raise record_dispatch_failure(project, slug, exc, launch=task) from exc
     agent = res.get("agent") or {}
     try:
         if res.get("returncode") != 0:
@@ -658,25 +673,24 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
                    l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"])
     except T.TransitionError as exc:
         if agent.get("id"):
-            try:
-                engines.stop_l2_worker(engine, agent["id"], job_root=l2_job_root(project, slug))
-            except Exception:  # noqa: BLE001 — preserve the launch fault; the incident records any orphaned worker
-                pass
+            _stop_replacement(engine, agent["id"], l2_job_root(project, slug))
         try:
-            current_state = S.load_task(project, slug).get("state")
+            with S.project_lock(project):
+                current = S.load_task(project, slug)
+                current_state = current.get("state")
+                if current.get("dispatching") == task.get("dispatching"):
+                    current["dispatching"] = None
+                    S.save_task(project, current)
         except (KeyError, OSError, ValueError):
             current_state = None
         if current_state != "queued":
             S.append_event(project, slug, "dispatch-cancelled", reason=str(exc)[:300])
-            raise
-        raise record_dispatch_failure(project, slug, exc) from exc
+            raise DispatchFailure(str(exc)) from exc
+        raise record_dispatch_failure(project, slug, exc, launch=task) from exc
     except Exception as exc:
         if agent.get("id"):
-            try:
-                engines.stop_l2_worker(engine, agent["id"], job_root=l2_job_root(project, slug))
-            except Exception:  # noqa: BLE001 — preserve the launch fault; the incident records any orphaned worker
-                pass
-        raise record_dispatch_failure(project, slug, exc) from exc
+            _stop_replacement(engine, agent["id"], l2_job_root(project, slug))
+        raise record_dispatch_failure(project, slug, exc, launch=task) from exc
     return {"attempt": attempt, "engine": engine, "routing": choice["why"],
             "agent": agent, "stdout": res.get("stdout", "")}
 
@@ -696,7 +710,10 @@ def resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> 
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             return {"held": "Altitude is restarting; retry shortly"}
-        return _resume(project, slug, daemon_request_id=daemon_request_id)
+        try:
+            return _resume(project, slug, daemon_request_id=daemon_request_id)
+        except T.TransitionError as exc:
+            raise ResumeFailure(str(exc)) from exc  # lifecycle cancellation must not become workflow:resume
 
 
 def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) -> dict:
@@ -728,6 +745,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
     if recovered is not None:
         return recovered
     task = S.load_task(project, slug)
+    if task.get("waiting_on") and not task.get("fault") and not task.get("resume_after") and daemon_request_id is None:
+        return {"waiting": True}  # I-20260908-045037: an old inbox/wake is not an answer to a new question.
     if not task.get("agent_id") or not task.get("session_id"):
         if task.get("fault") == "main-unpushed":
             try:
@@ -742,16 +761,18 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
                         current.pop("resume_request", None)
                         S.save_task(project, current)
                 raise ResumeFailure(f"checkout fault remains unresolved: {exc}") from exc
-        T.requeue(project, slug, expected_daemon_request=daemon_request_id, **daemon_fence)
+        T.requeue(project, slug, expected_daemon_request=daemon_request_id,
+                  expected_block_id=task.get("block_id"), **daemon_fence)
         return {"requeued": True}
     window = engines.window_hold(l2_engine(task))
     hold = f"usage limit: subscription window exhausted, resets {window}" if window else wip_hold(project, task)
     if hold:
         T.mark_resume_held(project, slug, hold, retry_at=window,
                            expected_daemon_request=daemon_request_id,
-                           **daemon_fence)
+                           expected_block_id=task.get("block_id"), **daemon_fence)
         return {"held": hold}
-    claim = T.claim_resume(project, slug, expected_daemon_request=daemon_request_id, **daemon_fence)
+    claim = T.claim_resume(project, slug, expected_daemon_request=daemon_request_id,
+                           expected_block_id=task.get("block_id"), **daemon_fence)
     if claim is None:
         live = S.load_task(project, slug)
         if live.get("state") == "running":
@@ -772,10 +793,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
             _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
-        from . import incidents
-        T.release_resume_claim(project, slug, claim["id"], consume_request=True)
-        incidents.system_fault("task-git-provenance", f"resume {project}/{slug}: {exc}", project=project, task=slug)
-        raise ResumeFailure(f"resume refused by Git provenance gate: {exc}") from exc
+        raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     engine, job_root = l2_engine(task), l2_job_root(project, slug)
@@ -807,20 +825,15 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             raise RuntimeError("no concrete live worker")
     except Exception as exc:
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
+    return _bind_resume_worker(project, slug, task, claim, worker, daemon_request_id, daemon_fence)
+
+
+def _bind_resume_worker(project: str, slug: str, task: dict, claim: dict, worker: dict,
+                        daemon_request_id: str | None, daemon_fence: dict) -> dict:
+    """Normal completion and restart adoption share binding and unowned-worker cleanup."""
+    engine, job_root = l2_engine(task), l2_job_root(project, slug)
     try:
         T.update_resume_claim(project, slug, claim["id"], phase="launched", worker=worker)
-    except Exception as exc:
-        stop_error = _stop_replacement(engine, worker["id"], job_root)
-        if isinstance(exc, T.TransitionError):
-            T.release_resume_claim(project, slug, claim["id"], consume_request=False)
-            if stop_error:
-                from . import incidents
-                incidents.system_fault("l2-resume", f"{project}/{slug}: replacement stop failed: {stop_error}",
-                                       project=project, task=slug)
-            raise
-        detail = f"{exc}; replacement stop also failed: {stop_error}" if stop_error else exc
-        raise record_resume_failure(project, slug, claim["id"], detail, suppress_retry=True) from exc
-    try:
         T.resume(project, slug, agent_id=worker["id"], session_id=worker["sessionId"],
                  previous_worker=task["agent_id"], expected_claim=claim["id"],
                  expected_daemon_request=daemon_request_id, **daemon_fence)
@@ -843,7 +856,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             if stop_error:
                 from . import incidents
                 incidents.system_fault("l2-resume", f"{project}/{slug}: replacement stop failed: {stop_error}",
-                                       project=project, task=slug)
+                                       project=project)
             raise
         detail = f"{exc}; replacement stop also failed: {stop_error}" if stop_error else exc
         raise record_resume_failure(project, slug, claim["id"], detail, suppress_retry=True) from exc
@@ -851,8 +864,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
 
 
 def stop(project: str, slug: str, *, by: str = "burak", reason: str | None = None,
-         daemon_request_id: str | None = None, expected_agent_id: str | None = None,
-         expected_session_id: str | None = None) -> dict:
+         daemon_request_id: str | None = None, expected_agent_id: object = T._UNSET,
+         expected_session_id: object = T._UNSET) -> dict:
     """Abort the task's worker. The task blocks; a message or Resume starts the same session again, Reject ends it."""
     reason = str(reason or f"stopped by {by}").strip()
     task = S.load_task(project, slug)
@@ -891,7 +904,7 @@ def resume_due(project: str) -> list[str]:
                 due.append(t["slug"])
             continue  # a stale claim is recovered before ordinary due times, WIP or usage holds
         after = t.get("resume_after") or ""
-        inbox_due = (not after and not t.get("fault") and not t.get("resume_failed")
+        inbox_due = (not after and not t.get("waiting_on") and not t.get("fault") and not t.get("resume_failed")
                      and bool(T.pending(project, t["slug"])))
         if (not after and not inbox_due) or after > now:
             continue
@@ -1021,7 +1034,7 @@ def _lease_tasks(project: str, exclude: str | None = None) -> list[dict]:
             if t["slug"] != exclude
             and (t["state"] == "running"
                  or (t["state"] == "blocked" and (t.get("resume_after") or t.get("resume_claim")
-                     or (not t.get("fault") and not t.get("resume_failed")
+                     or (not t.get("waiting_on") and not t.get("fault") and not t.get("resume_failed")
                          and T.pending(project, t["slug"])))))]
 
 

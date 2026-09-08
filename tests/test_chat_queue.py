@@ -187,6 +187,191 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)], [message["id"]])
         self.assertEqual(dispatch.resume_due(self.project), [])
 
+    def test_new_question_supersedes_resume_before_launch_or_binding(self):
+        for index, checkpoint in enumerate(("launching", "launched", "binding"), 1):
+            with self.subTest(checkpoint=checkpoint):
+                T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+                original_update, original_bind = T.update_resume_claim, T.resume
+
+                def update(*args, **kwargs):
+                    if kwargs.get("phase") == checkpoint:
+                        T.escalate(self.project, self.slug, "A newer scope decision?")
+                    return original_update(*args, **kwargs)
+
+                def bind(*args, **kwargs):
+                    if checkpoint == "binding":
+                        T.escalate(self.project, self.slug, "A newer scope decision?")
+                    return original_bind(*args, **kwargs)
+
+                with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+                     mock.patch.object(engines, "window_hold", return_value=None), \
+                     mock.patch.object(dispatch, "settle_deploy_checkout"), \
+                     mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                     mock.patch.object(dispatch, "_validate_task_worktree"), \
+                     mock.patch.object(engines, "worker_live", return_value=False), \
+                     mock.patch.object(engines, "resume_l2", return_value={"returncode": 0,
+                         "agent": {"id": "replacement", "sessionId": "thread-old"}}) as launch, \
+                     mock.patch.object(engines, "stop_l2_worker") as stop, \
+                     mock.patch.object(T, "update_resume_claim", side_effect=update), \
+                     mock.patch.object(T, "resume", side_effect=bind), \
+                     mock.patch.object(incidents, "system_fault") as fault:
+                    with self.assertRaisesRegex(T.TransitionError, "no longer current"):
+                        dispatch.resume(self.project, self.slug)
+                fault.assert_not_called()
+                self.assertEqual(launch.call_count, int(checkpoint != "launching"))
+                self.assertEqual(stop.call_count, int(checkpoint != "launching"))
+                task = S.load_task(self.project, self.slug)
+                self.assertEqual((task["state"], task["waiting_on"], task["blocked_reason"], task["agent_id"]),
+                                 ("blocked", "burak", "A newer scope decision?", "agent-old"))
+                self.assertFalse(task.get("resume_claim"))
+                self.assertFalse(task.get("dispatching"))
+                self.assertEqual(dispatch.resume_due(self.project), [])
+                self.assertEqual(len(T.pending(self.project, self.slug)), index)
+
+    def test_restart_discards_a_launched_claim_superseded_by_a_new_question(self):
+        earlier = T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+                              worker={"id": "replacement", "sessionId": "thread-old"})
+        T.escalate(self.project, self.slug, "A newer scope decision?")
+        with mock.patch.object(engines, "resume_l2") as launch, mock.patch.object(engines, "stop_l2_worker") as stop:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "no longer current"):
+                dispatch.resume(self.project, self.slug)
+        launch.assert_not_called()
+        stop.assert_called_once_with("codex", "replacement", job_root=dispatch.l2_job_root(self.project, self.slug))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["blocked_reason"]), ("blocked", "A newer scope decision?"))
+        self.assertFalse(task.get("resume_claim"))
+        self.assertEqual(T.pending(self.project, self.slug), [earlier])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_background_resume_cancellation_preserves_the_question(self):
+        for checkpoint in ("claim", "hold", "provenance", "binding"):
+            with self.subTest(checkpoint=checkpoint):
+                T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+                original_bind = T.resume
+
+                def wip(*args):
+                    if checkpoint in ("claim", "hold"):
+                        T.escalate(self.project, self.slug, "New question")
+                    return "WIP limit" if checkpoint == "hold" else None
+
+                def validate(*args, **kwargs):
+                    if checkpoint == "provenance":
+                        T.escalate(self.project, self.slug, "New question")
+                        raise dispatch.git_policy.GitPolicyError("Fixture provenance failure")
+
+                def bind(*args, **kwargs):
+                    T.escalate(self.project, self.slug, "New question")
+                    return original_bind(*args, **kwargs)
+
+                with mock.patch.object(dispatch, "wip_hold", side_effect=wip), \
+                     mock.patch.object(engines, "window_hold", return_value=None), \
+                     mock.patch.object(dispatch, "settle_deploy_checkout"), \
+                     mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                     mock.patch.object(dispatch, "_validate_task_worktree", side_effect=validate), \
+                     mock.patch.object(engines, "worker_live", return_value=False), \
+                     mock.patch.object(engines, "resume_l2", return_value={"returncode": 0,
+                         "agent": {"id": "replacement", "sessionId": "thread-old"}}), \
+                     mock.patch.object(engines, "stop_l2_worker"), \
+                     mock.patch.object(T, "resume", side_effect=bind), \
+                     mock.patch.object(server, "log"), \
+                     mock.patch.object(incidents, "system_fault", wraps=incidents.system_fault) as fault:
+                    self.assertTrue(server.request_task_resume(self.project, self.slug, due=False))
+                    with server._bg_guard:
+                        worker = server._bg[f"resume:{self.project}:{self.slug}"]
+                    worker.join(5)
+                    self.assertFalse(worker.is_alive())
+                self.assertEqual([call.args[0] for call in fault.call_args_list],
+                                 ["task-git-provenance"] if checkpoint == "provenance" else [])
+                task = S.load_task(self.project, self.slug)
+                self.assertEqual((task["state"], task["waiting_on"], task["blocked_reason"]),
+                                 ("blocked", "burak", "New question"))
+                self.assertFalse(task.get("resume_claim"))
+                self.assertFalse(task.get("fault"))
+                self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_ambiguous_recovery_records_fault_without_replacing_newer_question(self):
+        T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching", owner_pid=99999999)
+        T.escalate(self.project, self.slug, "New question")
+        with mock.patch.object(engines, "resume_l2") as launch:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "worker ownership cannot be proven"):
+                dispatch.resume(self.project, self.slug)
+        launch.assert_not_called()
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
+        self.assertFalse(task.get("fault"))
+        self.assertFalse(task.get("resume_claim"))
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        self.assertIn("l2-resume-recovery", incidents.FAULTS.read_text())
+
+    def test_stale_recovery_stop_failure_keeps_wait_and_records_uncertainty(self):
+        T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+                              worker={"id": "replacement", "sessionId": "thread-old"})
+        T.escalate(self.project, self.slug, "New question")
+        with mock.patch.object(engines, "stop_l2_worker", side_effect=OSError("Fixture stop failed")):
+            with self.assertRaises(dispatch.ResumeFailure):
+                dispatch.resume(self.project, self.slug)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
+        self.assertFalse(task.get("resume_claim"))
+        self.assertFalse(task.get("dispatching"))
+        self.assertFalse(task.get("fault"))
+        self.assertIn("Fixture stop failed", incidents.FAULTS.read_text())
+
+    def test_explicit_resume_request_cannot_answer_a_later_question(self):
+        first = dispatch.request_task_operation(self.project, self.slug, "resume", "Continue", actor="l3")
+        T.escalate(self.project, self.slug, "New question")
+        answer = T.message(self.project, self.slug, "burak", "New answer")
+        with mock.patch.object(engines, "resume_l2") as launch:
+            dispatch.run_task_operation(self.project, self.slug)
+        launch.assert_not_called()
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(task["daemon_request"]["status"], "refused")
+        self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
+        self.assertEqual(task["resume_request"], answer["id"])
+        self.assertTrue(task.get("resume_after"))
+        second = dispatch.request_task_operation(self.project, self.slug, "resume", "Continue", actor="l3")
+        self.assertFalse(second["idempotent"])
+        self.assertNotEqual(first["request"]["id"], second["request"]["id"])
+
+    def test_late_failure_cannot_consume_a_new_answer_or_retag_the_new_question(self):
+        T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+        claim = T.claim_resume(self.project, self.slug)
+        original_release = T.release_resume_claim
+
+        def release(*args, **kwargs):
+            T.escalate(self.project, self.slug, "New question")
+            T.message(self.project, self.slug, "burak", "New answer")
+            return original_release(*args, **kwargs)
+
+        with mock.patch.object(T, "release_resume_claim", side_effect=release):
+            dispatch.record_resume_failure(self.project, self.slug, claim["id"], "Fixture failure", suppress_retry=True)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
+        self.assertFalse(task.get("fault"))
+        self.assertTrue(task.get("resume_after"))
+        self.assertEqual([r["text"] for r in T.pending(self.project, self.slug)], ["Earlier steering", "New answer"])
+        self.assertIn("l2-resume", incidents.FAULTS.read_text())
+
+    def test_old_resume_error_cannot_borrow_a_new_claims_block_identity(self):
+        T.message(self.project, self.slug, "l3", "Earlier steering", by="l3")
+        old = T.claim_resume(self.project, self.slug)
+        T.escalate(self.project, self.slug, "New question")
+        T.release_resume_claim(self.project, self.slug, old["id"], consume_request=False)
+        T.message(self.project, self.slug, "burak", "New answer")
+        new = T.claim_resume(self.project, self.slug)
+        dispatch.record_resume_failure(self.project, self.slug, old["id"], RuntimeError("Earlier launch failed"))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], task["blocked_reason"]), ("burak", "New question"))
+        self.assertFalse(task.get("fault"))
+        self.assertEqual(task["resume_claim"]["id"], new["id"])
+        self.assertIn("Earlier launch failed", incidents.FAULTS.read_text())
+
     def test_terminal_precondition_failure_is_reported_once_and_not_retried_each_tick(self):
         T.message(self.project, self.slug, "l3", "Resume after checking the worktree.", by="l3")
         task = S.load_task(self.project, self.slug)

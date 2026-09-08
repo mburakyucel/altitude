@@ -602,7 +602,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
     t = live  # include completion/action fields that may have landed after poll took its worker snapshot
 
     def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
-        return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"), updates=updates)
+        return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"), updates=updates,
+                       expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"))
 
     if t.get("completion_requested"):
         a = item.get("agent") or {}
@@ -690,14 +691,14 @@ def _on_l2_finished(project: str, item: dict) -> None:
         a = item.get("agent") or {}
         engine = t.get("l2_engine") or "claude"
         try:
-            block_snapshot(f"L2 session ended without a fresh report (Altitude fault, not the L2's) — Resume from the card "
+            blocked = block_snapshot(f"L2 session ended without a fresh report (Altitude fault, not the L2's) — Resume from the card "
                            f"re-attaches its transcript (agent {a.get('id', '')})")
         except T.TransitionError:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return
         incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} (attempt {t.get('attempt')}) ended without a fresh report: "
                                f"{engine} worker state={a.get('state', 'absent')}; {item.get('detail') or a.get('detail') or ''}",
-                               project=project, task=slug)  # I-20260907-171446: preserve the worker's failure reason.
+                               project=project, task=slug, expected_block_id=blocked.get("block_id"))
         log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)
