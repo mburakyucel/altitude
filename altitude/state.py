@@ -215,6 +215,7 @@ def age(iso: str) -> str:
 
 
 def regen_state_md(project: str) -> str:
+    from . import incidents
     tasks = list_tasks(project)
     by = {s: [t for t in tasks if t["state"] == s] for s in STATES}
     lines = [f"# STATE — {project}", "",
@@ -249,6 +250,9 @@ def regen_state_md(project: str) -> str:
                 extra.append(f"turns {sp['turns']}")
             lines.append(f"- **{t['slug']}** {t['title']} — {age(t['updated'])}" + (" — " + "; ".join(extra) if extra else ""))
         lines.append("")
+    summary = incidents.upstream_summary(project)
+    if summary:
+        lines += ["## Incident reporting", "", summary, ""]
     text = "\n".join(lines) + "\n"
     atomic_write(config.project_dir(project) / "STATE.md", text)
     return text

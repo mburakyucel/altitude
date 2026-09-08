@@ -224,7 +224,8 @@ When those rules queue a fresh attempt after a provider limit, an existing dilem
 replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;
 dispatch and delivery use the existing paths, and the UI says the message waits for the L2 to start.
 An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
-On start, altd queues one message per project listing its active tasks and unresolved faults. L3
+On start, altd queues one message per project listing its active tasks, unresolved faults, and a bounded
+upstream-report summary with confirmed links and missing/failed/uncertain gaps. L3
 resumes only after observing that the cause is gone. A workerless `main-unpushed` task passes the
 checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,
 retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
@@ -356,6 +357,14 @@ write commands are absent; `alt issue new` and `alt issue comment` publish reque
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
 an issue URL or an actionable failure; the successful receipt stays in the calling project's log.
+For system incidents, `--incident <id>` retains delivery on the existing source-project/fault-kind
+record and exposes it through incident inspection and coordinator state. A confirmed URL survives
+repeated notifications, new incident windows and daemon restart. Uncertain is persisted before
+creation and retained after interruption, timeout, nonzero exit or unconfirmed output; creation
+cannot be repeated for that identity. The operator checks existing upstream issues, and L3 can
+attach a verified match with `--incident <id> --url <url>`, which performs only a GitHub read.
+Failed prepublication checks retain an actionable reason. No outcome resumes tasks or grants repair
+ownership; historical backfill and uncertain-result retry remain separate operator decisions.
 L3 may use `alt issue close <number> --reason completed|not-planned` for requested closure or to
 reconcile verified completion of an authorized delivery with `completed`, without another routine
 operator request. Unrelated autonomous backlog cleanup remains unauthorized. It follows the same coordinator/socket boundary, publishes no text,

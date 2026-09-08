@@ -583,6 +583,7 @@ def restart_notice() -> None:
                    if t["state"] == "blocked" else t["state"])
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
+                         + "\n\n" + incidents.upstream_summary(project)
                          + "\n\nCheck each with `alt task status <slug>`. A restart does not resolve checkout faults. "
                          "Resume only after observing that the cause is gone (`alt task resume <slug> --reason \"<observed fix>\"`); leave a task waiting on "
                          "Burak to him; a running task keeps "
@@ -1235,11 +1236,11 @@ class Handler(BaseHTTPRequestHandler):
             o = self._body()
             if api == "issue":
                 try:
-                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor"}:
+                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor", "incident", "url"}:
                         raise ValueError("alt issue: unsupported fields")
                     url = issue_write(o["project"], o.get("operation"), o.get("body", ""), actor="operator",
                                       title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"),
-                                      reason=o.get("reason"))
+                                      reason=o.get("reason"), incident=o.get("incident"), url=o.get("url"))
                     return self._json({"url": url})
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
@@ -1545,10 +1546,13 @@ def issue_parser() -> argparse.ArgumentParser:
     new.add_argument("--title", required=True)
     new.add_argument("--label", action="append", dest="labels")
     upstream = commands.add_parser("upstream")
-    upstream.add_argument("--title", required=True)
+    upstream.add_argument("--title", default="")
+    upstream.add_argument("--incident")
+    upstream.add_argument("--url")
+    upstream.add_argument("text", choices=["-"], nargs="?")
     comment = commands.add_parser("comment")
     comment.add_argument("number", type=int)
-    for command in (new, comment, upstream):
+    for command in (new, comment):
         command.add_argument("text", choices=["-"])
     close = commands.add_parser("close")
     close.add_argument("number", type=int)
@@ -1592,12 +1596,71 @@ def upstream_issue_body(body: str) -> str:
         ("reproduction", "Fictional/redacted reproduction"), ("version", "Altitude version"))) + "\n"
 
 
+class UpstreamUncertain(ValueError):
+    """GitHub may have accepted publication; another create is unsafe."""
+
+
 def issue_write(project: str, operation: str, body: str, *, actor: str,
+                incident: str | None = None, url: str | None = None, **fields) -> str:
+    """Keep incident delivery at the existing issue authority and public-content boundary."""
+    if actor not in ("l3", "operator"):
+        raise ValueError("alt issue: not available to an L2 worker")
+    if incident is None and url is None:
+        return _issue_write(project, operation, body, actor=actor, **fields)
+    if operation != "upstream" or incident is None:
+        raise ValueError("alt issue: tracking is only available on upstream reports; --url requires --incident")
+    if any(fields.get(key) is not None for key in ("labels", "number", "reason")):
+        raise ValueError("alt issue: fields do not match the operation")
+    previous = incidents.upstream_delivery(project, incident)
+    if previous["status"] == "confirmed":
+        if url is not None and (not isinstance(url, str) or url.lower() != previous["url"].lower()):
+            raise ValueError("alt issue upstream: incident already has a different confirmed URL; inspect its linkage")
+        return previous["url"]
+    if url is None and previous["status"] == "uncertain":
+        raise ValueError("alt issue upstream: " + previous["reason"])
+    if url is not None:
+        if body or any(value is not None and value != "" for value in fields.values()):
+            raise ValueError("alt issue upstream: linking --url accepts only --incident; no public body or creation fields")
+        repository = upstream_issue_repository()
+        if not isinstance(url, str) or not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url, re.I):
+            raise ValueError("alt issue upstream: --url must identify an issue in the configured upstream repository")
+        try:
+            result = subprocess.run(["gh", "issue", "view", url, "--repo", repository, "--json", "url"],
+                                    cwd=config.project_path(project), env=engines.clean_env(),
+                                    capture_output=True, text=True, timeout=30)
+            confirmed = json.loads(result.stdout).get("url") if result.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+            confirmed = None
+        if not isinstance(confirmed, str) or confirmed.lower() != url.lower():
+            raise ValueError("alt issue upstream: cannot verify existing issue URL; check GitHub authentication and issue access. "
+                             "Previous delivery status is retained; no issue was created.")
+        url = confirmed
+    else:
+        claim = {"status": "uncertain", "url": None, "incident": incident, "at": S.now(), "actor": actor,
+                 "reason": "Report may be in flight or interrupted. Check existing upstream issues before retrying; "
+                           "attach a verified match with `alt issue upstream --incident ID --url URL`. Creation is blocked."}
+        incidents.upstream_delivery(project, incident, outcome=claim, expected=previous)
+        previous = claim
+        try:
+            url = _issue_write(project, operation, body, actor=actor, **fields)
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            uncertain = isinstance(exc, (UpstreamUncertain, OSError, subprocess.SubprocessError))
+            reason = (str(exc) if isinstance(exc, ValueError) else
+                      "Report delivery bookkeeping failed. Check existing upstream issues before retrying; "
+                      "repair local recording and attach a verified match. Creation is blocked.")
+            incidents.upstream_delivery(project, incident, expected=previous, outcome={
+                **claim, "status": "uncertain" if uncertain else "failed", "reason": reason})
+            raise ValueError(reason) from exc
+    incidents.upstream_delivery(project, incident, expected=previous, outcome={
+        "status": "confirmed", "url": url, "reason": "Verified upstream issue URL; reuse this report.",
+        "incident": incident, "at": S.now(), "actor": actor})
+    return url
+
+
+def _issue_write(project: str, operation: str, body: str, *, actor: str,
                 title: str = "", labels: list[str] | None = None, number: int | None = None,
                 reason: str | None = None) -> str:
     """Altd owns project-local issues and the create-only upstream reporting exception."""
-    if actor not in ("l3", "operator"):
-        raise ValueError("alt issue: not available to an L2 worker")
     if operation not in ("new", "comment", "close", "upstream"):
         raise ValueError("alt issue: only new, comment, close, and upstream are available")
     creating = operation in ("new", "upstream")
@@ -1654,21 +1717,22 @@ def issue_write(project: str, operation: str, body: str, *, actor: str,
     try:
         result = subprocess.run(args, input=body, cwd=checkout, env=env,
                                 capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         if operation != "upstream":
             raise
-        raise ValueError("alt issue upstream: GitHub request unavailable or timed out. Operator: check for an "
+        error = ValueError if isinstance(exc, (FileNotFoundError, PermissionError)) else UpstreamUncertain
+        raise error("alt issue upstream: GitHub request unavailable or timed out. Operator: check for an "
                          "existing report before retrying; verify altd's gh installation, authentication "
                          f"and access to {repository}.") from exc
     if result.returncode:
         if operation == "upstream":
-            raise ValueError("alt issue upstream: GitHub refused the report. Operator: check for an existing "
+            raise UpstreamUncertain("alt issue upstream: GitHub did not confirm the report. Operator: check for an existing "
                              "report before retrying; verify altd's gh authentication and issue access "
                              f"to {repository}.")
         raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
     url = f"{repository}/issues/{number}" if operation == "close" else result.stdout.strip()
     if operation == "upstream" and not re.fullmatch(re.escape(repository) + r"/issues/[1-9]\d*", url, re.I):
-        raise ValueError("alt issue upstream: GitHub returned no confirmed issue URL. Operator: check for the "
+        raise UpstreamUncertain("alt issue upstream: GitHub returned no confirmed issue URL. Operator: check for the "
                          f"report before retrying at {repository}/issues")
     with S.project_lock(project):
         S.project_log(project, f"issue-{operation}", actor=actor,
@@ -1693,7 +1757,7 @@ def project_view(name: str) -> dict:
             "design_viewer": design_viewer_url(name), "repository": repository_url(origin.stdout),
             "archive": [{k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True) if t["state"] in ("done", "rejected")][-20:],
             "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
-            "incidents": [r for r in incidents.index() if r["project"] == name][-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
+            "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 
 

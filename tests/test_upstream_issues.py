@@ -23,6 +23,7 @@ TARGET = "https://github.com/product-fixture/altitude"
 class TestUpstreamIssues(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.private_ledgers()
         make_repo(self.repo)
         git("remote", "set-url", "origin", "git@github.com:fictional/atlas.git", cwd=self.repo)
         self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "product-fixture/altitude")
@@ -33,6 +34,8 @@ class TestUpstreamIssues(AltitudeCase):
             if args[0] == "gh":
                 self.writes.append((args, kwargs))
                 repository = args[args.index("--repo") + 1]
+                if args[1:3] == ["issue", "view"]:
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"url": repository + "/issues/42"}), "")
                 return subprocess.CompletedProcess(args, 0, repository + "/issues/42\n", "")
             return real_run(args, **kwargs)
 
@@ -42,6 +45,203 @@ class TestUpstreamIssues(AltitudeCase):
         return server.l3_verb_request(self.project, {
             "kind": "alt", "args": ARGS if args is None else args,
             "stdin": json.dumps(REPORT if report is None else report), **extra})
+
+    def fault(self, kind, project=None):
+        project = project or self.project
+        task = T.new(project, f"Fictional {kind} victim", "Toy request")
+        return incidents.system_fault(kind, "Private fictional diagnostic", project=project, task=task["slug"])["incident"]
+
+    def tracked(self, incident):
+        return self.request(args=[*ARGS, "--incident", incident])
+
+    def delivery(self, incident):
+        return next(row for row in incidents.index(self.project) if row["id"] == incident)["upstream"]
+
+    def link(self, incident, url=TARGET + "/issues/42"):
+        return server.l3_verb_request(self.project, {"kind": "alt", "args": [
+            "issue", "upstream", "--incident", incident, "--url", url]})
+
+    def test_two_faults_one_report_remains_visible_and_reuses_link_after_restart_and_new_window(self):
+        first, second = self.fault("resume"), self.fault("dispatch")
+        self.assertEqual([row["upstream"]["status"] for row in incidents.index(self.project)], ["missing", "missing"])
+        self.tracked(first)
+        self.assertEqual(self.delivery(first)["url"], TARGET + "/issues/42")
+        self.assertEqual(self.delivery(second)["status"], "missing")
+        self.assertIn("Check existing upstream issues", self.delivery(second)["reason"])
+        summary = S.regen_state_md(self.project)
+        self.assertIn("missing=1", summary); self.assertIn("confirmed=1", summary)
+        self.assertIn(TARGET + "/issues/42", summary)
+        self.assertIn(second, summary)
+        with mock.patch.object(server, "log"):
+            server.restart_notice()
+        restarted = [row for row in l3.queued(self.project) if row["trigger"] == "restart"][-1]["text"]
+        self.assertIn("missing=1", restarted); self.assertIn(TARGET + "/issues/42", restarted)
+        # A new Python process sees the persisted receipt without a live daemon/session cache.
+        result = subprocess.run(["python3", "-c", "from pathlib import Path; import json, sys; "
+            "from altitude import incidents; incidents.FAULTS=Path(sys.argv[1]); "
+            "print(json.dumps(incidents.index(sys.argv[2])))", str(incidents.FAULTS), self.project],
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)[0]["upstream"], self.delivery(first))
+        self.tracked(first)
+        repeat = self.fault("resume")
+        self.assertEqual(repeat, first)
+        self.assertIn(TARGET + "/issues/42", l3.queued(self.project)[-1]["text"])
+        faults = S.read_json(incidents.FAULTS)
+        faults[json.dumps([self.project, "resume"])]["last"] = "2000-01-01T00:00:00+00:00"
+        S.write_json(incidents.FAULTS, faults)
+        later = self.fault("resume")
+        self.assertNotEqual(first, later)
+        self.assertEqual(self.delivery(later), self.delivery(first))
+        self.assertEqual(self.delivery(later)["incident"], first)
+        self.tracked(later)
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.delivery(second)["status"], "missing")
+        self.assertNotIn("Private fictional diagnostic", self.writes[0][1]["input"])
+        self.assertNotIn(first, self.writes[0][1]["input"])
+
+    def test_prepublication_failure_is_actionable_and_can_be_explicitly_retried(self):
+        incident = self.fault("configuration")
+        with mock.patch.object(config, "UPSTREAM_ISSUE_REPOSITORY", "invalid"):
+            with self.assertRaisesRegex(ValueError, "configure ALTITUDE_UPSTREAM"):
+                self.tracked(incident)
+        self.assertEqual(self.delivery(incident)["status"], "failed")
+        self.assertIn("configure ALTITUDE_UPSTREAM", self.delivery(incident)["reason"])
+        self.assertEqual(self.writes, [])
+        self.tracked(incident)
+        self.assertEqual(self.delivery(incident)["status"], "confirmed")
+        incident = self.fault("executable")
+        with mock.patch.object(server.subprocess, "run", side_effect=FileNotFoundError("private executable path")):
+            with self.assertRaisesRegex(ValueError, "gh installation"):
+                self.tracked(incident)
+        self.assertEqual(self.delivery(incident)["status"], "failed")
+        self.assertNotIn("private executable path", self.delivery(incident)["reason"])
+
+    def test_potentially_delivered_failures_latch_uncertainty_and_never_retry_creation(self):
+        failures = [OSError("private pipe failure after launch"), subprocess.TimeoutExpired("gh", 120),
+                    UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid output after publication"),
+                    subprocess.CompletedProcess([], 1, "", "private stderr"),
+                    subprocess.CompletedProcess([], 0, "", ""),
+                    subprocess.CompletedProcess([], 0, "https://github.com/other/repo/issues/42", "")]
+        for i, failure in enumerate(failures):
+            incident = self.fault(f"uncertain-{i}")
+            kwargs = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+            with mock.patch.object(server.subprocess, "run", **kwargs):
+                with self.assertRaisesRegex(ValueError, "before retrying"):
+                    self.tracked(incident)
+            outcome = self.delivery(incident)
+            self.assertEqual(outcome["status"], "uncertain")
+            self.assertNotIn("private stderr", outcome["reason"])
+            with self.assertRaisesRegex(ValueError, "before retrying"):
+                self.tracked(incident)
+            self.assertEqual(self.delivery(incident), outcome)
+        self.assertEqual(self.writes, [])
+        self.assertIn("uncertain=6", S.regen_state_md(self.project))
+
+    def test_interrupted_request_and_concurrent_repeat_retain_uncertainty(self):
+        incident = self.fault("interrupted")
+
+        def interrupted(*args, **kwargs):
+            # The prepublication receipt is durable and its lock is released during external IO.
+            self.assertEqual(self.delivery(incident)["status"], "uncertain")
+            with self.assertRaisesRegex(ValueError, "Creation is blocked"):
+                self.tracked(incident)
+            self.fault("independent")
+            raise SystemExit("fictional daemon exit")
+
+        with mock.patch.object(server.subprocess, "run", side_effect=interrupted):
+            with self.assertRaises(SystemExit):
+                self.tracked(incident)
+        with mock.patch.object(server, "log"):
+            server.restart_notice()
+        self.assertEqual(self.delivery(incident)["status"], "uncertain")
+        with self.assertRaisesRegex(ValueError, "Check existing upstream issues"):
+            self.tracked(incident)
+        self.assertEqual(self.writes, [])
+
+    def test_successful_creation_with_failed_local_event_cannot_be_replayed(self):
+        incident = self.fault("local-recording")
+        project_log = S.project_log
+
+        def fail_receipt(project, kind, **fields):
+            if kind == "issue-upstream":
+                raise OSError("private bookkeeping path")
+            return project_log(project, kind, **fields)
+
+        with mock.patch.object(S, "project_log", side_effect=fail_receipt):
+            with self.assertRaisesRegex(ValueError, "bookkeeping failed"):
+                self.tracked(incident)
+        self.assertEqual(self.delivery(incident)["status"], "uncertain")
+        self.assertNotIn("private bookkeeping path", self.delivery(incident)["reason"])
+        with self.assertRaisesRegex(ValueError, "before retrying"):
+            self.tracked(incident)
+        self.assertEqual(len(self.writes), 1)
+
+    def test_verified_link_resolves_uncertainty_and_can_share_known_match_across_kinds(self):
+        first, second = self.fault("first"), self.fault("second")
+        with mock.patch.object(server.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 120)):
+            with self.assertRaises(ValueError):
+                self.tracked(first)
+        with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, json.dumps({"url": TARGET + "/issues/42"}), "")) as run:
+            self.link(first)
+            self.link(second)
+            self.assertTrue(all(call.args[0][1:3] == ["issue", "view"] for call in run.call_args_list))
+        self.assertEqual(self.delivery(first)["url"], self.delivery(second)["url"])
+        self.tracked(first); self.tracked(second)
+        with self.assertRaisesRegex(ValueError, "different confirmed URL"):
+            self.link(first, TARGET + "/issues/43")
+        self.assertEqual(self.writes, [])
+
+    def test_failed_link_and_late_creation_failure_cannot_erase_a_verified_link(self):
+        incident = self.fault("race")
+
+        def late_failure(*args, **kwargs):
+            with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 0, json.dumps({"url": TARGET + "/issues/42"}), "")):
+                self.link(incident)
+            raise subprocess.TimeoutExpired("gh", 120)
+
+        with mock.patch.object(server.subprocess, "run", side_effect=late_failure):
+            with self.assertRaisesRegex(ValueError, "delivery changed"):
+                self.tracked(incident)
+        self.assertEqual(self.delivery(incident)["status"], "confirmed")
+        other = self.fault("failed-link")
+        with mock.patch.object(server.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 120)):
+            with self.assertRaises(ValueError):
+                self.tracked(other)
+            previous = self.delivery(other)
+            with self.assertRaisesRegex(ValueError, "Previous delivery status is retained"):
+                self.link(other)
+        self.assertEqual(self.delivery(other), previous)
+
+    def test_incident_linking_keeps_project_authority_and_sanitization(self):
+        self.register("other")
+        self.fault("foreign", "other")
+        foreign = self.fault("foreign-two", "other")
+        own = self.fault("own")
+        for incident in (foreign, "../private", "I-20000101-000000"):
+            with self.assertRaises(ValueError):
+                self.tracked(incident)
+        for url in ("https://github.com/other/repo/issues/42", TARGET + "/pull/42", TARGET + "/issues/42?x=1"):
+            with self.assertRaisesRegex(ValueError, "configured upstream repository"):
+                self.link(own, url)
+        with self.assertRaisesRegex(ValueError, "L2"):
+            server.issue_write(self.project, "upstream", "", actor="l2", incident=own, url=TARGET + "/issues/42")
+        with self.assertRaisesRegex(ValueError, "Private"):
+            self.request(args=[*ARGS, "--incident", own], report=REPORT | {"actual": "Read incidents/private.md"})
+        self.assertEqual(self.delivery(own)["status"], "failed")
+        self.assertEqual(incidents.index("other")[0]["upstream"]["status"], "missing")
+        self.assertNotIn(foreign, S.regen_state_md(self.project))
+        self.assertEqual(self.writes, [])
+
+    def test_historical_incidents_are_visible_without_inferred_linkage_or_publication(self):
+        incident = incidents.new_incident(self.project, title="system fault: historical", task=None,
+            what="Private historical fault", cause="unknown", evidence=TARGET + "/issues/42", tags=["system-fault"])["id"]
+        self.assertEqual(self.delivery(incident)["status"], "missing")
+        with self.assertRaisesRegex(ValueError, "historical backfill requires separate authorization"):
+            self.tracked(incident)
+        self.assertEqual(self.writes, [])
 
     def test_report_only_uses_product_target_and_leaves_all_private_state_in_place(self):
         self.private_ledgers()
@@ -174,17 +374,21 @@ class TestUpstreamIssues(AltitudeCase):
         self.addCleanup(l3._remove_runtime, runtime)
         bindir = runtime / "bin"
         adapter = tomllib.loads("\n".join(engines.codex_l3_permissions(runtime, project=self.project)))["mcp_servers"]["altitude"]
+        tracked, linked = self.fault("runtime-create"), self.fault("runtime-link")
         cases = [(ARGS, REPORT, False),
+                 ([*ARGS, "--incident", tracked], REPORT, False),
+                 (["issue", "upstream", "--incident", linked, "--url", TARGET + "/issues/42"], None, False),
                  ([*ARGS, "--repo", "other/repo"], REPORT, True),
                  (["issue", "close", "42", "--reason", "completed", "--target", "upstream"], REPORT, True),
                  (ARGS, REPORT | {"actual": "Read incidents/private.md"}, True)]
         self.assertIn("Bash(alt issue upstream *)", l3.ALLOWED_TOOLS)
         for args, report, denied in cases:
-            result = subprocess.run([str(bindir / "alt"), *args], input=json.dumps(report), cwd=runtime,
+            stdin = json.dumps(report) if report is not None else ""
+            result = subprocess.run([str(bindir / "alt"), *args], input=stdin, cwd=runtime,
                                     capture_output=True, text=True, timeout=30)
             self.assertEqual(bool(result.returncode), denied, result)
             wire = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
-                "name": "coordinator", "arguments": {"kind": "alt", "args": args, "stdin": json.dumps(report)}}}
+                "name": "coordinator", "arguments": {"kind": "alt", "args": args, "stdin": stdin}}}
             result = subprocess.run([adapter["command"], *adapter["args"]], input=json.dumps(wire) + "\n",
                                     cwd=runtime, env=os.environ | l3._l3_env(self.project, runtime),
                                     capture_output=True, text=True, timeout=30)
@@ -193,7 +397,9 @@ class TestUpstreamIssues(AltitudeCase):
             self.assertEqual(reply["isError"], denied, reply)
             if not denied:
                 self.assertEqual(json.loads(reply["content"][0]["text"])["stdout"], TARGET + "/issues/42\n")
-        self.assertEqual(len(self.writes), 2)
+        self.assertEqual(len(self.writes), 4)
+        self.assertEqual(self.delivery(tracked)["status"], "confirmed")
+        self.assertEqual(self.delivery(linked)["status"], "confirmed")
 
     def test_operator_cli_http_uses_the_same_create_only_handler(self):
         http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -217,3 +423,14 @@ class TestUpstreamIssues(AltitudeCase):
                 urllib.request.urlopen(request)
             self.assertEqual(error.exception.code, 400)
         self.assertEqual(len(self.writes), 1)
+        tracked, linked = self.fault("http-create"), self.fault("http-link")
+        for args, body in (([*ARGS, "--incident", tracked], json.dumps(REPORT)),
+                           (["issue", "upstream", "--incident", linked, "--url", TARGET + "/issues/42"], "")):
+            result = subprocess.run([str(config.REPO / "bin" / "alt"), *args], input=body,
+                env=os.environ | {"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project},
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, TARGET + "/issues/42\n")
+        self.assertEqual(self.delivery(tracked)["actor"], "operator")
+        self.assertEqual(self.delivery(linked)["actor"], "operator")
+        self.assertEqual(len(self.writes), 3)
