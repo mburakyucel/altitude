@@ -16,8 +16,13 @@ def remember(task: dict) -> None:
     if not engine or not session:
         return
     identities = task.setdefault("token_usage_sessions", [])
-    if not any(row["engine"] == engine and row["session_id"] == session for row in identities):
-        identities.append({"engine": engine, "session_id": session, "attempt": task.get("attempt", 0)})
+    identity = next((row for row in identities if row["engine"] == engine and row["session_id"] == session), None)
+    if identity is None:
+        identity = {"engine": engine, "session_id": session, "attempt": task.get("attempt", 0)}
+        identities.append(identity)
+    attempts = identity.setdefault("attempts", [identity["attempt"]])
+    if task.get("attempt", 0) not in attempts:
+        attempts.append(task.get("attempt", 0))
 
 
 def _sum(rows: list[dict], key: str) -> int | None:
@@ -37,7 +42,7 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
         path = S.task_dir(project, task["slug"]) / "token-usage.json"
         cursors = S.read_json(path, {}) or {}
         identities = task.get("token_usage_sessions", [])
-        rows, notes, statuses = [], [], []
+        rows, notes, statuses, helpers, helper_statuses = [], [], [], [], []
         for engine in dict.fromkeys(row["engine"] for row in identities):
             roots = [row for row in identities if row["engine"] == engine]
             result = {}
@@ -61,12 +66,17 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
                     seen.add(ancestor)
                     ancestor = parents[ancestor]
                 rows.append({**row, "engine": engine, "attempt": attempts.get(ancestor)})
+            for helper in result.get("helpers", []):
+                owner = next((root for root in roots if root["session_id"] == helper.get("owner_session_id")), {})
+                helpers.append({**helper, "engine": engine, "attempt": owner.get("attempt"),
+                                "attempts": owner.get("attempts", [owner["attempt"]] if owner else [])})
+            helper_statuses.append(result.get("helper_status", "unknown"))
             notes.extend(result.get("notes", []))
             statuses.append(result.get("status", "partial"))
             if result.get("pending"):
                 notes.append("Collection is catching up; some local records have not been read.")
                 statuses.append("partial")
-        attempts = {row["attempt"] for row in identities}
+        attempts = {attempt for row in identities for attempt in row.get("attempts", [row["attempt"]])}
         if any(n not in attempts for n in range(1, task.get("attempt", 0) + 1)):
             notes.append("Earlier attempt identities or usage are unavailable.")
             statuses.append("partial")
@@ -77,11 +87,21 @@ def capture(project: str, task: dict, *, final: bool = False) -> None:
         total = sum(known) if known else None
         status = ("unknown" if total is None else "partial" if "partial" in statuses
                   or any(row.get("status") != "observed" for row in rows) else "observed")
+        helper_known = bool(helpers) or "partial" in helper_statuses
+        unclassified = sum(row.get("depth") is None for row in helpers)
+        direct = sum(row.get("depth") == 1 for row in helpers)
+        descendants = sum((row.get("depth") or 0) > 1 for row in helpers)
+        helper_summary = {"status": "partial" if helper_known else "unknown",
+                          "observed_count": len(helpers) if helper_known else None,
+                          "direct_count": direct if helper_known and (direct or not unclassified) else None,
+                          "descendant_count": descendants if helper_known and (descendants or not unclassified) else None,
+                          "unclassified_count": unclassified if helper_known else None,
+                          "total_tokens": _sum(helpers, "total_tokens"), "sessions": helpers}
         at = S.now()
         snapshot = {"status": status, **counters, "total_tokens": total,
-                    "checked_at": at, "observed_at": max((row["observed_at"] for row in rows
+                    "checked_at": at, "observed_at": max((row["observed_at"] for row in [*rows, *helpers]
                                                            if row.get("observed_at")), default=None),
-                    "finalized_at": at if final else None, "sessions": rows,
+                    "finalized_at": at if final else None, "sessions": rows, "helpers": helper_summary,
                     "notes": list(dict.fromkeys(notes))}
         S.write_json(path, cursors)
         task["token_usage"] = snapshot

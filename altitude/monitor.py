@@ -37,6 +37,7 @@ def sessions() -> list[dict]:
                     cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
+                            "token_usage": t.get("token_usage"),
                             "at": live.get("at"), "edits": counts.get("edits", 0),
                             "context_percent": cp, "engine": engine,
                             "model": t.get("engine_model"), "engine_reasoning_effort": t.get("engine_reasoning_effort"),

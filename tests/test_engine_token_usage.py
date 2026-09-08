@@ -122,6 +122,7 @@ class TestEngineTokenUsage(AltitudeCase):
             self.write(jobs / f"{name}.stdout.jsonl", [event, event])
         result = self.observe("codex", job_root=jobs)
         self.assertEqual(result["sessions"][0]["total_tokens"], 110)
+        self.assertEqual(result["helper_status"], "unknown")  # An owned total does not prove helper discovery.
         self.rollout("owner", [self.response("owner", "response", inp=300)])
         engines._TOKEN_ROLLOUT_INDEX.clear()
         result = self.observe("codex", cursor=result["cursor"], job_root=jobs)
@@ -352,3 +353,72 @@ class TestEngineTokenUsage(AltitudeCase):
              mock.patch.object(engines.subprocess, "Popen", side_effect=AssertionError("no subprocess")):
             result = self.observe("claude")
         self.assertNotIn("private transcript", json.dumps(result))
+
+    def test_helper_identities_survive_unsplit_totals_missing_counters_and_reobservation(self):
+        self.rollout("owner", self.snapshot(980))
+        helper = self.rollout("helper", [self.response("helper", "own", inp=50)], parent="owner")
+        self.rollout("unknown", [], parent="owner")
+        first = self.observe("codex")
+        self.assertEqual([(row["role"], row["total_tokens"]) for row in first["sessions"]], [("provider", 1000)])
+        helpers = {row["session_id"]: row for row in first["helpers"]}
+        self.assertEqual(set(helpers), {"helper", "unknown"})
+        self.assertEqual(helpers["helper"]["total_tokens"], 70)
+        self.assertIsNone(helpers["unknown"]["total_tokens"])
+        self.assertEqual({row["depth"] for row in helpers.values()}, {1})
+        self.assertEqual(first["helper_status"], "partial")
+        self.write(helper, [self.response("helper", "own", inp=50)], append=True)
+        resumed = self.observe("codex", cursor=first["cursor"])
+        self.assertEqual(resumed["helpers"], first["helpers"])
+        helper.unlink()
+        retained = self.observe("codex", cursor=resumed["cursor"])
+        self.assertEqual(len(retained["helpers"]), 2)
+        self.assertEqual(next(row for row in retained["helpers"] if row["session_id"] == "helper")["total_tokens"], 70)
+
+    def test_descendant_requests_are_disjoint_from_helper_provider_subtree_total(self):
+        inherited = self.response("owner", "parent")
+        self.rollout("owner", [inherited])
+        self.rollout("helper", [self.response("helper", "own", inp=50), *self.snapshot(480)], parent="owner")
+        self.rollout("nested", [inherited, self.response("nested", "own-nested", inp=30)], parent="helper", fork=True)
+        result = self.observe("codex")
+        helpers = {row["session_id"]: row for row in result["helpers"]}
+        self.assertEqual((helpers["helper"]["depth"], helpers["nested"]["depth"]), (1, 2))
+        self.assertEqual({row["owner_session_id"] for row in helpers.values()}, {"owner"})
+        self.assertEqual(sum(row["total_tokens"] for row in helpers.values()), 120)
+        self.assertEqual(helpers["helper"]["provider_total_tokens"], 500)
+        self.assertEqual(sum(row["total_tokens"] for row in result["sessions"]), 620)
+
+    def test_registered_owner_is_not_counted_as_helper(self):
+        self.rollout("owner", [], parent="previous-owner")
+        self.rollout("previous-owner", [])
+        first = self.observe("codex")
+        self.assertEqual(self.observe("codex", "previous-owner", first["cursor"])["helpers"], [])
+
+    def test_missing_native_evidence_differs_from_observed_empty_set(self):
+        for engine in ("codex", "claude"):
+            with self.subTest(engine=engine):
+                self.assertEqual(self.observe(engine)["helper_status"], "unknown")
+        self.rollout("owner", [])
+        self.write(self.home / "projects/project/owner.jsonl", [self.message("owner", "own")])
+        engines._TOKEN_ROLLOUT_INDEX.clear()
+        for engine in ("codex", "claude"):
+            with self.subTest(engine=engine):
+                result = self.observe(engine)
+                self.assertEqual(result["helpers"], [])
+                self.assertEqual(result["helper_status"], "partial")
+
+    def test_owner_linked_helper_evidence_does_not_invent_spawning_depth(self):
+        # Helper files remain useful even when the owner transcript is gone; no message counters
+        # are required to retain the native identity. Directory ownership does not prove depth.
+        child = self.home / "projects/project/owner/subagents/agent-helper.jsonl"
+        self.write(child, [])
+        first = self.observe("claude")
+        helper = first["helpers"][0]
+        self.assertEqual(helper["session_id"], "owner/agent-helper")
+        self.assertEqual(helper["owner_session_id"], "owner")
+        self.assertEqual(helper["parentage"], "owner")
+        self.assertIsNone(helper["depth"])
+        self.assertIsNone(helper["total_tokens"])
+        self.write(child, [self.message("owner", "own", agent="helper")] * 2, append=True)
+        resumed = self.observe("claude", cursor=first["cursor"])
+        self.assertEqual(len(resumed["helpers"]), 1)
+        self.assertEqual(resumed["helpers"][0]["total_tokens"], 73)

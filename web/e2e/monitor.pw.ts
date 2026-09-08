@@ -53,13 +53,14 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   // The sentence and its Retry share one paragraph: match the start, not the whole text.
   const error = page.getByText(/^Could not read the monitor\./);
   const retry = page.getByRole("button", { name: "Retry", exact: true });
+  const usage = page.getByRole("button", { name: "L2 usage details", exact: true });
 
   // Loading: the real read, held until the skeleton is on screen.
   let release = () => {};
   const held = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/api/monitor*", async (route) => { await held; await route.continue(); });
   await walk.open("/monitor");
-  await walk.state("01-loading", { visible: [loading, page.getByRole("heading", { name: "Monitor", exact: true })], hidden: [routing, error] });
+  await walk.state("01-loading", { visible: [loading, page.getByRole("heading", { name: "Monitor", exact: true })], hidden: [routing, error, usage] });
   await walk.state("02-ready", { action: async () => { release(); }, visible: [seatsHead, routing, sessions], hidden: [loading, error] });
   await page.unroute("**/api/monitor*");
   for (const seat of seats) await expect(page.getByRole("region", { name: seat.label, exact: true })).toBeVisible();
@@ -73,7 +74,7 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
   });
   await walk.open("/monitor");
   await error.waitFor({ timeout: 30_000 });
-  await walk.state("03-error", { visible: [error, retry], hidden: [loading, routing, seatsHead] });
+  await walk.state("03-error", { visible: [error, retry], hidden: [loading, routing, seatsHead, usage] });
   await walk.state("04-retry", {
     action: async () => { failing = false; await retry.click(); },
     visible: [seatsHead, routing, sessions], hidden: [error, retry, loading],

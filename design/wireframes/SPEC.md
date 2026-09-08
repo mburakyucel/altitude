@@ -371,6 +371,13 @@ cache-read, cache-write and reasoning subsets. Cache/reasoning fields are parts 
 never additional totals. Attempts survive resume and engine handoff; project L3 work is excluded.
 The display is separate from the context line and quota readouts and makes no cost claim.
 
+Expanded details also show **L1 helpers observed**, the total unique observed count across recorded
+owner attempts, direct/descendant counts when known, unknown depth, and attributable helper request
+tokens. Each helper shows engine, native identity, spawning parent or owner linkage, owning L2
+session, owner attempt context, counters/coverage and any separate unsplit provider total. Resumed
+identities count once; unavailable token counters do not erase observed identities. Counts and
+tokens are partial observations. An owner-linked helper does not imply a known direct spawn.
+
 Data: `GET /api/task/<project>/<slug>` `token_usage`, retained on the archived task. Reads use the
 daemon's saved observation; opening or polling the disclosure never starts collection or a model.
 States: task loading uses the page skeleton; absent readings say **Token usage unknown**; live
@@ -490,6 +497,22 @@ kind and task, engine and model when supplied, context meter and recorded status
 age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
 process list.
 
+Each L2 session adds one **L2 usage details** disclosure. Collapsed, it shows only the control;
+helper counts, token totals and audit rows are absent. Expansion shows the shared task token readout
+(§3.10), with **L1 helpers observed** first. Task/provider totals include helper accounting; the
+helper sum is a separate attributable lower bound, never an additional total. Native identity,
+parentage, owner attempt context and counters wrap on phone and desktop; expanded Monitor rows use
+page scrolling. Collapse removes the details and a refreshed observation keeps the disclosure open.
+
+Helper states: available request counters; partial discovery with counters missing for some helpers;
+unknown evidence (**Helper evidence unavailable**, counts/tokens Unknown); observed empty (**No
+helpers observed**, still partial, never zero spawned); unreadable collection (retained observations
+and the collection-unavailable note). Whole-page loading hides disclosures behind the existing
+skeleton; transport failure hides rows and offers Retry, which restores collapsed disclosures.
+There is no separate expansion fetch/loading state, listening state or permission action. A denied
+native source is unavailable evidence. `web/e2e/monitor-helpers.pw.ts` walks expansion/collapse and
+these read states with named captures at 390×844 and 1440×900; existing monitor walks no sessions.
+
 States: loading (seat, routing and session skeletons); error ("Could not read the monitor." and
 Retry); no reading ("No reading." with the seat's sentence explaining what produces one); stale
 (reading kept, amber Stale chip using `--chip-claimed-*`, meter at 50% opacity); one configured
@@ -498,6 +521,9 @@ sessions.").
 
 Data: `GET /api/monitor` `seats[]` identifies each seat by its configured engine and supplies its
 label, windows, plan and reading metadata; `routing[]` and `sessions[]` supply their rows.
+L2 `sessions[].token_usage` is the same persisted accounting snapshot as task/status/report reads,
+including `helpers`; opening Monitor starts no provider collection. Archived tasks retain the
+breakdown on their task/report pages rather than appearing as live Monitor sessions.
 `GET /api/overview` `engines[]` supplies routing and session engine labels. Monitor derives no action.
 
 ## 4. Behaviour rules

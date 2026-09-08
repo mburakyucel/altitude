@@ -407,7 +407,7 @@ resumes and engine handoffs. `token_usage` on the task holds the public accounti
 `token-usage.json` holds engine cursors and numeric deduplication evidence. Both travel into archive,
 so final accounting survives provider-log or worktree cleanup. Earlier attempts whose identities or
 counters are unavailable remain partial. Queued/older tasks without readings say unknown, never zero.
-The task API, `alt task status`, and `alt task report --json` expose the same snapshot independently
+The task API, Monitor's L2 session rows, `alt task status`, and `alt task report --json` expose the same snapshot independently
 of agent-authored `report.json.spend`.
 
 Input is inclusive of cache reads and writes exactly once. Output includes reasoning when the
@@ -432,6 +432,28 @@ excluded. Available native children appear as delegated work, without creating a
 supervising helpers. Discovery cannot prove exhaustive helper coverage, so observed task totals may
 be partial even when the owner's counters are current. Project-global L3 usage is not charged to a
 task. Collection uses no model calls, summaries, live-agent experiments, or external export.
+
+`token_usage.helpers` retains observed helper identities even when their counters are unavailable
+or an ancestor's unsplit provider total covers them. `observed_count` counts distinct engine/native
+identities across all recorded owner sessions; repeated observations and resuming the same identity
+do not count another helper. Registered task owners are excluded, even when native records show a
+prior parent. `direct_count` and `descendant_count` count known spawning depths; `unclassified_count`
+counts owner-linked identities whose depth is unknown. Without evidence a count is null, not zero.
+An empty observed set means **No helpers observed**, with partial coverage, not that no helpers spawned.
+
+Codex thread parentage establishes direct and recursive descendant links. Claude helper files bind
+`owner-session/agent-ID` to the recorded owner, including when its transcript has disappeared; that
+directory alone does not establish spawning depth or cross-owner identity equivalence. Helpers that
+leave no discoverable native record are unknown. The API's per-helper `owner_session_id`, `parentage`,
+`depth`, and `attempts` expose those limits: attempts are the owning session's recorded attempt
+context, not proof that the helper spawned or ran in each attempt.
+
+Helper `total_tokens` sums only attributable request input/output, retaining unknown counters and
+excluding replayed history. The helper summary sums these disjoint request observations as a lower
+bound. A helper's available unsplit subtree `provider_total_tokens` is shown separately, never added
+to its own counters or the helper sum. The task's provider total remains intact; the helper sum is
+already covered by task accounting and is never an extra charge. Monitor, task and report disclosures
+show the same audit, with all helper counts and per-helper details hidden when collapsed.
 
 The daemon reads complete appended JSONL records in bounded batches, persists byte cursors, and
 refreshes at report/finalization boundaries. An unfinished trailing record is retried; unread,
