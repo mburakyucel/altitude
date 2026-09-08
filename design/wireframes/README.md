@@ -6,6 +6,8 @@ illustrate. **The boards and spec are the source of truth together**, for visual
 accepted departures are folded into both. Nothing here depends on a hosted tool: the files open
 from disk, from `serve.sh`, or from the Altitude UI's Design link.
 
+Every design iteration follows the [standing design tenet and review expectations](SPEC.md#11-standing-design-tenet).
+
 Burak approved this direction on 2026-09-05. It replaces the 2026-09-03 set (#166), which polished
 the console-shaped app (Inbox, Projects, Chat, Monitor as four routes). The redesign starts from the
 product instead: the rail lists projects, each project is one conversation with its L3, and the work

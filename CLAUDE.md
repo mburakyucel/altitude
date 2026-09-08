@@ -64,6 +64,11 @@ deferred by the operator's 2026-09-08 decision, including the real tiny-task req
 
 ## UI
 
+Every design and feature iteration follows the standing project tenet: simple, elegant, polished,
+visually attractive, easy to use, and intuitive. The design itself makes clear where to click and
+where to go. Apply the concise [design review expectations](design/wireframes/SPEC.md#11-standing-design-tenet)
+alongside the interaction-state walkthrough below.
+
 From the wireframe-implementation phase on, a PR that implements or changes a UI component ships
 with that component's interaction states specified — empty, loading, listening, error, denied, and
 what appears and disappears after each action — and walked through on phone and desktop before the

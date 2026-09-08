@@ -27,6 +27,24 @@ reviewable work. The UI shows that and nothing else. Its four principles:
 4. **Same components everywhere.** One composer (voice included), one bubble pair, one card, one
    state vocabulary, on phone and desktop. A component ships with all its states or not at all.
 
+### 1.1 Standing design tenet
+
+Every design and feature iteration is **simple, elegant, polished, visually attractive, easy to
+use, and intuitive**. People understand where to click and where to go from the design itself,
+without feeling lost. This central project tenet guides future iterations as the visual direction
+evolves.
+
+In the existing design review and [phone and desktop walkthrough](../../CLAUDE.md#ui), check that:
+
+- Visual hierarchy makes the primary action clear; navigation and plain labels show where people
+  are, where they can go, and what an action does.
+- Complexity is restrained: each visible control and detail earns its place in the current task.
+- Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
+  interaction states and transitions feel complete and polished on phone and desktop.
+
+Apply these expectations with the specified component states (§3) and existing accessibility
+requirements, including accessible control names, minimum targets, and contrast (§6).
+
 ## 2. Information architecture
 
 ### 2.1 Routes

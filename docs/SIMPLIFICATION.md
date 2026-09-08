@@ -64,6 +64,14 @@ built. The seams rule, the review questions, deletion first, and parity live in 
 Burak decides questions of this altitude; module-level calls are made by the implementing session and
 reported in the PR. Ask him only for a decision not recorded here.
 
+## Standing design tenet
+
+The operator's standing instruction for every design and future feature iteration is **simple,
+elegant, polished, visually attractive, easy to use, and intuitive**. People understand where to
+click and where to go from the design itself, without feeling lost. This is a central project
+tenet; its practical [review expectations](../design/wireframes/SPEC.md#11-standing-design-tenet)
+live in the UI specification and apply through the existing [UI walkthrough](../CLAUDE.md#ui).
+
 ## Working rules that still apply to every PR
 
 1. Deletion first. A PR reduces production lines, or is a bug fix under fifty lines. No foundations,
