@@ -94,8 +94,9 @@ alt issue close <number> --reason completed|not-planned
 ```
 
 L3 and the operator use these verbs through altd; L2 cannot mutate issues directly. L3 files requested
-backlog and closes issues for requested closure or verified completion of authorized delivery,
-without another routine request. This does not authorize unrelated autonomous backlog cleanup.
+backlog, maintains authorized increment breakdowns, and closes issues for requested closure or verified
+completion of authorized delivery, without another routine request. This does not authorize unrelated
+autonomous backlog cleanup.
 The repository comes from the selected project's checkout origin; issue numbers must be positive
 integers, and URLs or repository overrides are refused. The L3 socket fixes the project.
 
@@ -114,10 +115,20 @@ The operator CLI uses `POST /api/issue` with
 URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful closure appends an
 `issue-close` project event with actor, number, reason, title, and URL; failed calls record no success.
 
+### Incremental issue delivery
+
+L3 maintains the authorized issue breakdown through `alt issue comment <number> -`, with its public
+body on stdin, using L2's `alt task reply` and report `follow_ups` for progress and delivery evidence.
+The [coordinator instructions](../personas/l3.md) define breakdown contents, increment briefs and
+authorization; the [owner instructions](../personas/l2.md#incremental-delivery) define acceptance and
+safe delivery. A task can complete its agreed increment while the parent issue retains outstanding
+scope. Altitude's [project rules](../AGENTS.md#roles) retain proposal checkpoints and implementation
+constraints. Closure follows the cumulative evidence rules below.
+
 ### Delivery-linked issue completion
 
-For authorized implementation that fully satisfies an identified issue, write `Closes #42` in the
-reviewed PR body and land with:
+When cumulative authorized deliveries satisfy an identified issue's full scope and any required
+operator acceptance, write `Closes #42` in the completing delivery's reviewed PR body and land with:
 
 ```sh
 alt land --message "fix: satisfy the issue" --pr-body-file /tmp/pr.md --closes-issue 42
@@ -135,7 +146,8 @@ merged PR also validates the declared links and routes a missing historical link
 [GitHub's supported closing relationship](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue).
 
 `Addresses #42` is a mention, not a closing link. Partial work, design-only progress and explicitly
-pending operator acceptance use mentions with the remaining scope explained. Rejected or unmerged PRs
+pending operator acceptance use mentions with the remaining scope explained and omit `--closes-issue`.
+L3 records delivered PR evidence and remaining scope in the open issue. Rejected or unmerged PRs
 do not complete issues. Merge holds and all applicable checks still apply. Verify the issue state
 after merge and record the evidence in the task report's `fyi`.
 

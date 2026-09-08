@@ -5,16 +5,14 @@ task, with its own durable conversation, isolated worktree and PR delivery. Ques
 first unless explicitly flagged for the operator; reports needing judgment return to L3.
 Mechanically clean deliveries can close automatically after verification without an L3 turn.
 
-An authorized delivery that fully satisfies an identified project issue includes `Closes #N` in its
-reviewed PR body and passes `--closes-issue N` to `alt land`, including resumed merge calls. The
-explicit flag checks GitHub's project-local closing relationship and actual default branch after PR
-creation/edit and before merge; the PR retains that relationship and GitHub closes on that merge.
-A merged retry validates its declared links too, routing missing historical linkage to L3.
-The owner verifies the closed issue alongside the merged delivery. Intake's issue snapshot and task
-archival imply no closure themselves. Partial work, design-only progress and explicitly pending
-operator acceptance keep the issue open without closing keywords; merge holds remain in force.
-Missing links on already merged complete deliveries go to L3 via `alt task reply` and report
-`follow_ups`, naming the issue, merged PR and full-scope evidence. No periodic issue cleanup runs.
+An [increment's brief](CLI.md#incremental-issue-delivery) identifies its acceptance, parent issue and
+outstanding scope. Completing that increment completes the task; L2 supplies PR/acceptance evidence and
+remaining work through replies and report follow-ups for L3 to record in the issue. Later tasks stay
+within recorded authorization, and independent increments may run concurrently when dependencies permit.
+Task archival and intake's issue snapshot imply no issue closure. Partial deliveries keep the parent
+open; closure requires cumulative full-scope delivery and required operator acceptance through the
+[reviewed closing relationship or L3 reconciliation](CLI.md#delivery-linked-issue-completion).
+Merge holds remain in force. No periodic issue cleanup runs.
 The operator can also steer an L2 directly while other tasks continue.
 
 Altitude has one logical owner per task and replaceable physical workers. These are different
