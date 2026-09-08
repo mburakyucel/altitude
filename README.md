@@ -196,6 +196,10 @@ for routing preferences, project Git guards and a foreground localhost server. T
 source-checked commands from the remaining clean-machine setup verification. No open-source
 license has been selected; public release is a separate milestone.
 
+Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
+to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
+deletions remain blocked.
+
 ## Project conversations
 
 PR and issue references in L3 and L2 prose, decisions, and reports are clickable, including saved

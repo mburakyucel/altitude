@@ -320,6 +320,10 @@ check.
 Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs
 updating runs `git rebase origin/main` in the worktree; a conflict they cannot resolve goes to L3
 through an ordinary `alt task block`, without `--fault`.
+Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
+hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
+actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
+the supported guarded fast-forward performs that move.
 
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
 then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
