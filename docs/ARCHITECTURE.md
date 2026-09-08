@@ -83,6 +83,25 @@ Resumed sessions rely on native history and receive only the cross-provider hand
 up to 20 user/assistant rows from the latest 60 log rows, handled by a different provider after
 that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
 
+`alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
+transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
+`tasks.task_messages` projection (including status-backed decision messages), and active/archived
+`report.json` string values and `digest.md`. It uses literal case-insensitive matching, retains the
+newest bounded matches, and returns original text with immediate neighbors, dates, roles/recorded
+authors and logical source references that survive task archival. Report/digest authors are unknown
+where unrecorded; their dates explicitly mean file modification, never decision time. Resolved
+evidence paths stay within the selected project. No engine transcripts, generated summaries, index,
+external service, model call or state mutation participate.
+
+Search scans the full local corpus rather than a recent-message slice; its cost grows with that
+corpus and the existing broker timeout applies. Results default to five, cap at twenty, retain at
+most 1,200 characters per excerpt, and fit within 64 KiB of serialized output. Count/output omission
+and character offsets disclose incomplete context; corrupt/unreadable evidence fails explicitly.
+Empty/missing evidence produces `no_results`. Every L3 turn advertises lookup, including native
+resumes and engine changes. Historical evidence is not new authority: current instructions and task
+records govern, and the coordinator checks temporary conditions and later corrections before action.
+See [source references and bounds](CLI.md#historical-evidence-search).
+
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
