@@ -332,7 +332,9 @@ is authoritative; lagging `baseRefOid` metadata does not replace it. Check evide
 current GitHub base target/head and exact candidate association, with real movement refusing merge.
 Required checks from branch protection and active rules remain mandatory, including missing or
 skipped checks. A nonrequired skipped job is exempt only when its immutable executed workflow and
-PR event prove the supported main-push-only condition false; ambiguous source or association refuses.
+PR event prove the supported main-push-only condition false, or prove
+`github.event_name != 'pull_request'` false for a `pull_request` run. The inequality does not
+exempt `pull_request_target` jobs; ambiguous conditions, source or association refuse.
 At least one applicable check must actually pass. Without CI,
 the full local suite runs on a clean two-parent merge candidate. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).

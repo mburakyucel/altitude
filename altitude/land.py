@@ -477,8 +477,8 @@ def _complete_check_nodes(connection: dict) -> list[dict]:
         raise LandError("GitHub check evidence is truncated or incomplete") from exc
 
 
-def _push_only_job(source: str, name: str) -> bool:
-    """Recognize one ordinary job's complete push-only condition; unsupported YAML stays unknown."""
+def _inapplicable_job(source: str, name: str, event: str) -> bool:
+    """Recognize complete job conditions false for the PR event; unsupported YAML stays unknown."""
     lines = source.splitlines()
     if ("\t" in source or [line for line in lines if re.match(r"^jobs\s*:", line)] != ["jobs:"]
             or any(line and not line[0].isspace() and not line.startswith("#")
@@ -523,8 +523,10 @@ def _push_only_job(source: str, name: str) -> bool:
         return False
     if condition.startswith("${{") and condition.endswith("}}"):
         condition = condition[3:-2].strip()
-    return re.fullmatch(r"github\.event_name\s*==\s*'push'\s*&&\s*"
-                        r"github\.ref\s*==\s*'refs/heads/main'", condition) is not None
+    return (re.fullmatch(r"github\.event_name\s*==\s*'push'\s*&&\s*"
+                         r"github\.ref\s*==\s*'refs/heads/main'", condition) is not None
+            or event == "pull_request"
+            and re.fullmatch(r"github\.event_name\s*!=\s*'pull_request'", condition) is not None)
 
 
 def _inapplicable_check(root: Path, check: dict, pair: dict, merge_sha: str | None, repository: str) -> bool:
@@ -548,7 +550,8 @@ def _inapplicable_check(root: Path, check: dict, pair: dict, merge_sha: str | No
       repository(owner:$owner,name:$repo){object(expression:$expression){... on Blob{isTruncated text}}}}""",
                             expression=f"{match[1]}:{match[2]}")
     blob = workflow.get("object") or {}
-    return blob.get("isTruncated") is False and _push_only_job(blob.get("text") or "", check.get("name") or "")
+    return blob.get("isTruncated") is False and _inapplicable_job(
+        blob.get("text") or "", check.get("name") or "", run["event"])
 
 
 def _checks_evidence(root: Path, pair: dict) -> str:

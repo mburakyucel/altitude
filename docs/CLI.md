@@ -621,9 +621,13 @@ outstanding required reviews block adopted merges. Checks must belong to the pin
 candidate. Required checks, including those specified by active branch rules, must pass; missing,
 ambiguous, unrelated or required skipped checks are not green. A nonrequired skipped Actions job
 can be excluded only when its executed immutable workflow unambiguously identifies the job and
-proves its main-push-only condition false for the PR event. The supported condition is
-`github.event_name == 'push' && github.ref == 'refs/heads/main'`; unsupported expressions or
-ambiguous job/source mappings stay blocked. At least one applicable check must succeed.
+proves its complete condition false for the associated PR event. The supported conditions are
+`github.event_name == 'push' && github.ref == 'refs/heads/main'` for `pull_request` or
+`pull_request_target`, and `github.event_name != 'pull_request'` only for `pull_request`.
+The latter is true for `pull_request_target` and cannot exempt its skipped jobs. Both conditions
+accept surrounding `${{ ... }}` and spaces around operators; unsupported expressions or
+ambiguous job/source mappings stay blocked. These rules apply to ordinary and adopted landing.
+At least one applicable check must succeed.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
 default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
