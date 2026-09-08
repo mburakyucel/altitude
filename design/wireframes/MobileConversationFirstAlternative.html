@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Altitude wireframe: MobileConversationFirstAlternative</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="wireframes.css">
+</head>
+<body>
+<div class="root" data-theme="light" style="width:390px;height:844px">
+<link rel="stylesheet" href="conversation-first.css"><style>[data-stage]{height:100%}</style><div class="cf cf-phone"><aside class="rail"><div class="brand"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H9l-4.5 4v-4H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg>Altitude</div>
+          <a class="ri" href="MobileConversationFirstNeedsYou.html" >Needs you <span class="badge">1</span></a>
+          <div class="rsec">Projects</div><div class="ri sel"><span class="dot"></span>Atlas<span class="badge">1</span></div>
+          <div class="ri"><span class="dot idle"></span>Meadow</div><div class="cf-rail-bottom">Engine · connected<br><br>Monitor<br><br>Operator</div></aside><main class="cf-main"><header class="cf-top"><a class="" href="MobileConversationFirstNeedsYou.html" data-back><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Needs you</a><span class="cf-meta">Atlas / Index rollout</span><span class="cf-prototype">Design proposal</span></header><div class="cf-head"><h1>Index rollout</h1><div class="cf-meta">Awaiting your decision</div></div><div class="cf-scroll"><div class="cf-column cf-feed"><div class="cf-summary">Open question · old index retention<br>Recommended: 7 days · <a class="cf-link" href="MobileConversationFirstQuestion.html" >View question</a></div><div class="cf-assistant"><div class="cf-author">L2 · Index rollout</div><div>Keeping it for 14 days gives us another week of fast rollback. That adds one more week of storage cost.</div></div></div></div><div class="cf-compose-wrap"><form class="cf-compose" data-target="MobileConversationFirstAccepted.html" data-scene="Alternative">
+          <textarea aria-label="Message the L2" placeholder="Message the L2" rows="2" >Keep it for 14 days, then delete it. Go ahead.</textarea><div class="cf-compose-row"><button class="cf-icon" type="button" aria-label="Use microphone" data-voice ><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button><button class="cf-icon send" aria-label="Send" ><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg></button></div>
+          </form><div class="cf-hint" role="status">Ask a question or say how to proceed.</div></div><div class="cf-keyboard" aria-label="Illustrated phone keyboard"><div class="keys"><span>q</span><span>w</span><span>e</span><span>r</span><span>t</span><span>y</span><span>u</span><span>i</span><span>o</span><span>p</span></div><div class="keys"><span>a</span><span>s</span><span>d</span><span>f</span><span>g</span><span>h</span><span>j</span><span>k</span><span>l</span></div><div class="keys"><span>z</span><span>x</span><span>c</span><span>v</span><span>b</span><span>n</span><span>m</span></div><div class="keys"><span>123</span><span class="space">space</span><span>return</span></div></div></main></div><script>
+const params = new URLSearchParams(location.search);
+// A tiny local fiction lets Back/Forward show the outcome of this prototype's own actions.
+// The production proposal instead reads the task's authoritative question record.
+const canvas = document.referrer.endsWith('/design/wireframes/index.html');
+const memory = {read(key) {try {return canvas ? '' : sessionStorage.getItem('cf-proposal-' + key) || '';} catch {return '';}}, write(key, value) {try {if (!canvas) sessionStorage.setItem('cf-proposal-' + key, value);} catch {}}};
+if (params.has('reset')) {memory.write('decision', ''); memory.write('draft', ''); params.delete('reset'); history.replaceState(null, '', location.pathname + (params.size ? '?' + params : ''));}
+const requested = params.get('state') || 'loading';
+const scenes = document.querySelectorAll('template[data-state]');
+if (scenes.length) {
+  const selected = [...scenes].find(t => t.dataset.state === requested) || scenes[0];
+  document.querySelector('[data-stage]').replaceChildren(selected.content.cloneNode(true));
+}
+const mobile = location.pathname.split('/').pop().startsWith('Mobile');
+const dest = (scene, state) => (mobile ? 'Mobile' : '') + 'ConversationFirst' + scene + '.html' + (state ? '?state=' + state : '');
+const sceneName = location.pathname.split('ConversationFirst').pop().split('.')[0];
+function reconcile() {
+  // Reset only on explicit entry; a restored history entry still reads the saved decision.
+  const saved = memory.read('decision');
+  const openScene = ['NeedsYou', 'Question', 'Followup', 'Alternative', 'Clarify'].includes(sceneName) || (sceneName === 'States' && !['archived', 'revised', 'missing', 'accepted-waiting', 'transcribing'].includes(requested));
+  if (saved && openScene) location.replace(dest(sceneName === 'NeedsYou' ? 'Empty' : 'Accepted') + '?choice=' + saved + '&answer=' + encodeURIComponent(memory.read('answer')));
+}
+addEventListener('pageshow', reconcile);
+const draft = params.get('draft') || '';
+const voiced = draft ? draft + ' then delete it. Go ahead.' : 'Keep it for 14 days, then delete it. Go ahead.';
+if (params.has('draft') && document.querySelector('textarea')) document.querySelector('textarea').value = requested === 'dictated' ? voiced : draft;
+document.querySelectorAll('[data-voice-cancel]').forEach(a => a.href += '?draft=' + encodeURIComponent(draft));
+document.querySelectorAll('[data-voice-stop]').forEach(a => a.href += '&mode=draft&draft=' + encodeURIComponent(draft));
+if (requested === 'transcribing' && params.has('mode')) setTimeout(() => {
+  location.href = params.get('mode') === 'send' ? dest('Accepted') + '?choice=14' : dest('States', 'dictated') + '&draft=' + encodeURIComponent(draft);
+}, 600);
+if (params.get('choice') === '14') {
+  const set = (selector, text) => {const el = document.querySelector(selector); if (el) el.textContent = text;};
+  set('[data-resolution]', '14 days approved by you · 10:49');
+  set('[data-answer]', params.get('answer') || 'Keep it for 14 days, then delete it. Go ahead.');
+  set('[data-ack]', 'I’ll keep the old index for 14 days, then delete it. I’m continuing with that plan.');
+  set('[data-empty-choice]', '14 days accepted · work will resume.');
+  if (sceneName === 'Empty') document.querySelectorAll('a[href*="Accepted"]').forEach(a => a.href += '?choice=14&answer=' + encodeURIComponent(params.get('answer') || memory.read('answer')));
+}
+document.querySelectorAll('[data-alternative]').forEach(a => {a.href += '?choice=14'; a.onclick = () => {memory.write('decision', '14'); memory.write('answer', 'Use 14 days and resume.'); memory.write('draft', '');};});
+document.querySelectorAll('[data-accept]').forEach(a => a.addEventListener('click', () => {memory.write('decision', '7'); memory.write('answer', 'Use 7 days and resume.'); memory.write('draft', '');}));
+document.querySelectorAll('a').forEach(a => {
+  if (params.has('dark') && a.getAttribute('href').includes('.html')) a.href += (a.href.includes('?') ? '&' : '?') + 'dark';
+});
+document.querySelectorAll('[data-back]').forEach(a => a.addEventListener('click', e => {
+  if (document.referrer && new URL(document.referrer).origin === location.origin && history.length > 1) {e.preventDefault(); history.back();}
+}));
+document.querySelectorAll('[data-voice]').forEach(b => b.addEventListener('click', () => location.href = dest('States', 'listening') + '&draft=' + encodeURIComponent(document.querySelector('textarea')?.value || '')));
+document.querySelectorAll('form').forEach(form => {
+  const field = form.querySelector('textarea');
+  const send = form.querySelector('[aria-label="Send"]');
+  if (field && !field.disabled) {
+    if (!params.has('draft') && ['Question', 'Clarify'].includes(sceneName) && memory.read('draft')) field.value = memory.read('draft');
+    if (field.value) memory.write('draft', field.value);
+    const update = () => {send.disabled = !field.value.trim();};
+    update(); field.addEventListener('input', () => {update(); memory.write('draft', field.value);});
+  }
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    if (!field) {memory.write('draft', ''); memory.write('decision', '14'); memory.write('answer', voiced); location.href = dest('States', 'transcribing') + '&mode=send&draft=' + encodeURIComponent(draft); return;}
+    const text = field.value.trim();
+    if (!text) return;
+    // Only scripted fictional examples; this is not a production intent classifier.
+    if (['14 days', 'Use 14 days', 'Keep it for 14 days, then delete it. Go ahead.'].includes(text)) {memory.write('draft', ''); memory.write('decision', '14'); memory.write('answer', text); location.href = dest('Accepted') + '?choice=14&answer=' + encodeURIComponent(text);}
+    else if (text === 'Could we roll back after day seven?') {memory.write('draft', ''); location.href = dest('Followup');}
+    else if (text === 'Maybe two weeks, but I’m unsure about cost.') {memory.write('draft', ''); location.href = dest('Clarify');}
+    else {const hint = document.querySelector('.cf-hint'); hint.textContent = 'Prototype: try “Could we roll back after day seven?”, “14 days”, or “Maybe two weeks, but I’m unsure about cost.”';}
+  });
+});
+if (['NeedsYou', 'Empty'].includes(sceneName)) memory.write('draft', '');
+</script>
+</div>
+<script>if(location.search.indexOf('dark')>=0)document.querySelector('.root').dataset.theme='dark'</script>
+</body>
+</html>

@@ -1,5 +1,9 @@
 # Altitude UI specification
 
+Pending review: [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md) proposes
+replacing the separate decision page with the owning task conversation. Its explicitly labelled
+proposal boards and state inventory do not supersede the approved rules below before approval.
+
 This document and the boards beside it are the UI's source of truth, for both visual design and
 rules. They stay aligned when the build departs from them; an unresolved rule change is a question
 for the operator (§4.6). It is written for the L3 and L2 that implement it: every component lists its states,

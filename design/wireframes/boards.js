@@ -3,6 +3,15 @@
  * a <script> tag because Chrome blocks fetch() on file:// URLs and the viewer opens from disk.
  * A listed file that is missing renders as a visible warning tile, never a blank one. */
 window.WIREFRAME_BOARDS = [
+  { label: 'Proposal · 01 · Needs you: accept or open the L2', desktop: 'ConversationFirstNeedsYou.html', mobile: 'MobileConversationFirstNeedsYou.html' },
+  { label: 'Proposal · 02 · Land at the actual question, with L3 context', desktop: 'ConversationFirstQuestion.html', mobile: 'MobileConversationFirstQuestion.html' },
+  { label: 'Proposal · 03 · Follow-up: discussion leaves the question open', desktop: 'ConversationFirstFollowup.html', mobile: 'MobileConversationFirstFollowup.html' },
+  { label: 'Proposal · 04 · Typed alternative: one conversational decision', desktop: 'ConversationFirstAlternative.html', mobile: 'MobileConversationFirstAlternative.html' },
+  { label: 'Proposal · 05 · Ambiguous answer: clarify in the same chat', desktop: 'ConversationFirstClarify.html', mobile: 'MobileConversationFirstClarify.html' },
+  { label: 'Proposal · 06 · Decision recorded, work resumed', desktop: 'ConversationFirstAccepted.html', mobile: 'MobileConversationFirstAccepted.html' },
+  { label: 'Proposal · 07 · Needs you clears after acceptance', desktop: 'ConversationFirstEmpty.html', mobile: 'MobileConversationFirstEmpty.html' },
+  { label: 'Proposal · 08 · Resolved elsewhere: read the outcome', desktop: 'ConversationFirstStale.html', mobile: 'MobileConversationFirstStale.html' },
+  { label: 'Proposal · 09 · Loading, error, denied and input states', desktop: 'ConversationFirstStates.html', mobile: 'MobileConversationFirstStates.html' },
   { label: 'Project: chat with L3, work panel beside it', desktop: 'Project.html', mobile: 'MobileProject.html' },
   { label: 'Project switcher (phone)', mobile: 'MobileSwitcher.html' },
   { label: 'Project work (phone)', mobile: 'MobileWork.html' },

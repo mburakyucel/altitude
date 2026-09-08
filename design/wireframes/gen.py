@@ -958,6 +958,8 @@ state_sheet("RestartStates", "Restart banner states", [
     + TOKENS + CSS)
 
 # The viewer's board list: one row per route, desktop beside phone, in the order of README.md.
+from conversation_first import generate as conversation_first_boards
+
 ROUTES = [
     ("Project: chat with L3, work panel beside it", "Project", "MobileProject"),
     ("Project switcher (phone)", None, "MobileSwitcher"),
@@ -979,6 +981,7 @@ ROUTES = [
     ("Conversation and report states", "ConversationStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
+ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
 sizes = {name: (w, h) for name, w, h in BOARDS}
 listed = {n for _, d, m in ROUTES for n in (d, m) if n}
 assert listed == set(sizes), sorted(listed ^ set(sizes))

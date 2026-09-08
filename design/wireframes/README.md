@@ -1,5 +1,13 @@
 # Altitude product design
 
+## Pending conversation-first proposal
+
+[Review the Needs you / L2 conversation proposal](CONVERSATION_FIRST.md), with
+[phone and desktop boards](conversation-first/index.html) and committed screenshots for PR review.
+The proposal is pending the operator's approval and changes no production behavior. Its boards
+appear first in the viewer; the approved design below remains in force until implementation.
+`conversation_first.py`, called by `gen.py`, generates this proposal's boards and styles.
+
 This folder is the design record Altitude's own L3 and L2 read: static boards, the generator that
 writes them, and [`SPEC.md`](SPEC.md), which states every interaction, state, and rule the boards
 illustrate. **The boards and spec are the source of truth together**, for visual design and rules;
