@@ -1,5 +1,6 @@
-import { expect, test, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
-import { liveProject, liveTask } from "./live-data";
+import { test } from "./fixtures";
+import { expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
+import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /*
@@ -96,7 +97,7 @@ async function revealTime(row: Locator, phone: boolean) {
 }
 
 test("real rows: bubbles, prose, day dividers, the time in the gutter, folded and grouped system lines, the card", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const { view } = await liveChat(page, project.name);
@@ -170,7 +171,7 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
 });
 
 test("a landed report in the label/value shape, its card links, and the report view (overlay on a real task)", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const { view, slug } = await liveChat(page, project.name);
@@ -213,7 +214,7 @@ test("a landed report in the label/value shape, its card links, and the report v
 });
 
 test("a turn in progress, a failed turn, an FYI, and an empty conversation (overlays)", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const { view, slug } = await liveChat(page, project.name);
@@ -278,7 +279,7 @@ test("a turn in progress, a failed turn, an FYI, and an empty conversation (over
 
 test("loading, then a failed read with Retry and the cached rows", async ({ page, request }, info) => {
   test.setTimeout(120_000);
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const isChat = (url: URL) => url.pathname === chatApi(project.name);
@@ -314,7 +315,7 @@ test("loading, then a failed read with Retry and the cached rows", async ({ page
 });
 
 test("send: the bubble at 60%, the streamed reply, one conversation after the poll; a refused send; a failed reply's Retry", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const text = "UI walkthrough: this message never reaches L3";
@@ -406,7 +407,7 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
 });
 
 test("busy: the arrow queues, the queued row with Remove, the typing indicator, and Remove taking the row back", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const text = "UI walkthrough: queued, never run";
@@ -464,7 +465,7 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
 });
 
 test("the engine pin: Auto and the engines the API names; the pin posts and is read back", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const overview = await (await request.get("/api/overview")).json() as { engines: { engine: string; label: string }[] };
@@ -513,7 +514,7 @@ const FAKE_MIC = `
 `;
 
 test("voice: listening, cancelled, transcribing, landed (nothing else appears), failed", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await page.addInitScript(FAKE_MIC);
@@ -601,7 +602,7 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
 });
 
 test("voice: Send at once transcribes the draft into the normal pending bubble", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await page.addInitScript(FAKE_MIC);
@@ -655,7 +656,7 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
 });
 
 test("voice: denied and unavailable", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false }));
@@ -689,9 +690,8 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   await insecure.close();
 });
 
-test("the phone shows the project name once, in the header, with the composer above the tab bar", async ({ page, request }, info) => {
-  test.skip(info.project.name !== "phone", "the desktop shows the name in the project header and the rail");
-  const project = await liveProject(request);
+test("the phone shows the project name once, in the header, with the composer above the tab bar @phone-only", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await walk.open(project.path);
@@ -707,8 +707,8 @@ test("the phone shows the project name once, in the header, with the composer ab
 });
 
 test("phone-shell-is-fixed-only-inner-containe: viewport shrink keeps the newest conversation row above the composer", async ({ page, request }, info) => {
-  const project = await liveProject(request);
-  const task = await liveTask(request, project.name);
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
   const walk = walkthrough(page, info);
   await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`,
     (route) => route.fulfill({ json: { ...task, state: "running" } }));

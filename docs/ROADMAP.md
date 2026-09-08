@@ -23,6 +23,13 @@ Remaining repository-presentation work under #219:
   `developer-workspace`, `git-worktrees`. These are recommendations, not applied settings.
 
 ## Engines, platforms and distribution
+Private-preview [release checkpoints](RELEASING.md) use versioned source snapshots, curated
+[release notes](../CHANGELOG.md), full deterministic candidate checks and documented recovery.
+During active preview work, readiness is checked daily and useful fixes can release several times
+per day after validation; publication is explicit and does not gate automatic activation.
+Live-provider testing is deferred by the operator's 2026-09-08 decision. The
+[coverage matrix](DEVELOPMENT.md#coverage-and-limits) keeps provider/host compatibility and other
+remaining validation limits explicit; this does not establish clean-machine or public readiness.
 
 The direction is the same project and task workflow across CLI engines and supported machines.
 These are intended capabilities, with no promised dates; the current setup remains the Linux

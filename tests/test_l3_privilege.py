@@ -412,15 +412,11 @@ class TestL3CheckoutConfinement(AltitudeCase):
     @unittest.skipUnless(os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") == "1",
                          "opt in on a host with the real Codex Linux sandbox")
     def test_sept7_real_codex_sandbox_denies_checkout_state_git_and_network(self):
-        binary = shutil.which(config.CODEX_BIN)
-        self.assertIsNotNone(binary, "requested native sandbox verification requires Codex")
+        from tests.support import run_native_sandbox_probe
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)
         broker = server.start_l3_verb_broker(self.project)
         self.addCleanup(server.stop_l3_verb_broker, broker)
-        cmd = [binary, "sandbox", "-P", "altitude-l3", "-C", str(runtime)]
-        for setting in engines.codex_l3_permissions(runtime, project=self.project):
-            cmd += ["-c", setting]
         probe = r'''
 import errno, os, socket, subprocess, sys
 from pathlib import Path
@@ -444,10 +440,9 @@ git = subprocess.run(["/usr/bin/git", "-C", repo, "config", "probe.denied", "tru
 assert git.returncode != 0, git
 print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/bus/HTTP writes denied")
 '''
-        cmd += ["--", sys.executable, "-c", probe, str(self.repo), str(config.ROOT),
-                str(l3.verb_socket_path(self.project)), f"/run/user/{os.getuid()}/bus"]
-        result = subprocess.run(cmd, cwd=runtime, env=engines.codex_env(),
-                                capture_output=True, text=True, timeout=45)
+        result = run_native_sandbox_probe(runtime, engines.codex_l3_permissions(runtime, project=self.project),
+                                          probe, [str(self.repo), str(config.ROOT),
+                                                  str(l3.verb_socket_path(self.project)), f"/run/user/{os.getuid()}/bus"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("native sandbox:", result.stdout)
 

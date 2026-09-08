@@ -29,14 +29,34 @@ class RemoteCIWorkflowTests(unittest.TestCase):
         self.assertIn("-C candidate rev-parse HEAD", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)
 
-    def test_runs_only_the_fixed_suite_in_a_sanitized_environment(self):
-        test_step = self.workflow.split("- name: Run Python tests without repository credentials", 1)[1]
+    def test_runs_full_fixed_suites_in_a_sanitized_environment(self):
+        test_step = self.workflow.split("- name: Run full deterministic checks without repository credentials", 1)[1]
+        test_step = test_step.split("- name: Upload fictional test results", 1)[0]
         self.assertIn("/usr/bin/env -i", test_step)
         self.assertIn("ALTITUDE_HOME=\"$altitude_home\"", test_step)
-        self.assertIn("/usr/bin/python3 -m unittest discover tests", test_step)
+        for command in ("/usr/bin/python3 -m unittest discover tests", "pnpm test", "pnpm build", "pnpm ui"):
+            self.assertIn(f"/usr/bin/time -p {command}", test_step)
+        self.assertIn("--noprofile --norc -euo pipefail", test_step)
+        self.assertNotIn("make check", test_step)
         self.assertNotIn("github.token", self.workflow)
         self.assertNotIn("secrets.", self.workflow)
         self.assertNotIn("GITHUB_TOKEN", test_step)
+        self.assertNotIn("UI_BASE_URL", test_step)
+        self.assertNotIn("UI_PROJECT", test_step)
+
+    def test_pins_supported_tooling_and_keeps_results_short_lived(self):
+        self.assertIn("node-version: '22.22.2'", self.workflow)
+        self.assertIn("package-manager-cache: false", self.workflow)
+        self.assertIn("--ignore-scripts pnpm@10.34.5", self.workflow)
+        self.assertIn("pnpm --dir web install --frozen-lockfile", self.workflow)
+        self.assertIn("pnpm exec playwright install --with-deps chromium", self.workflow)
+        self.assertIn('PLAYWRIGHT_BROWSERS_PATH="$test_home/browsers"', self.workflow)
+        self.assertIn("retention-days: 3", self.workflow)
+        self.assertIn("if: always()", self.workflow)
+        self.assertIn("candidate/web/ui-artifacts/results/", self.workflow)
+        for line in self.workflow.splitlines():
+            if "uses:" in line:
+                self.assertRegex(line, r"uses: actions/[a-z-]+@[0-9a-f]{40}(?: |$)")
 
 
 if __name__ == "__main__":

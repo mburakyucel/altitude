@@ -3,10 +3,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import socket
 import unittest
 from pathlib import Path
 
-from tests.support import REPO, SUITE
+from tests.support import REPO, SUITE, OFFLINE_COMMANDS
 from altitude import config
 
 
@@ -14,6 +15,53 @@ class TestIsolation(unittest.TestCase):
     def test_suite_process_uses_throwaway_homes(self):
         self.assertEqual(Path.home(), SUITE / "home")
         self.assertEqual(config.ROOT, SUITE / "altitude")
+
+    def test_inherited_provider_credentials_and_worker_identity_are_removed_before_import(self):
+        env = dict(os.environ, CODEX_HOME="/operator/provider", CLAUDE_CONFIG_DIR="/operator/provider",
+                   OPENAI_API_KEY="fixture-secret", ANTHROPIC_API_KEY="fixture-secret", GH_TOKEN="fixture-secret",
+                   DBUS_SESSION_BUS_ADDRESS="unix:path=/operator/bus", ALTITUDE_ACTOR="l2", ALTITUDE_TASK="live-task",
+                   ALTITUDE_OPERATOR="Private operator", ALTITUDE_PRIMARY_ENGINE="unconfigured-provider",
+                   WHISPER_SOCKET="/operator/speech.sock", WHISPER_BRIDGE="127.0.0.1:8890")
+        script = """from tests.support import SUITE, config
+import os
+from pathlib import Path
+for key in ('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_RUNTIME_DIR'):
+    assert Path(os.environ[key]).is_relative_to(SUITE), key
+for key in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GH_TOKEN', 'DBUS_SESSION_BUS_ADDRESS', 'ALTITUDE_ACTOR', 'ALTITUDE_TASK'):
+    assert key not in os.environ, key
+assert config.ROOT.is_relative_to(SUITE)
+assert config.OPERATOR == 'Operator'
+assert 'ALTITUDE_PRIMARY_ENGINE' not in os.environ
+from altitude import server
+assert Path(server.VOICE_SOCKET).is_relative_to(SUITE)
+assert server.VOICE_BRIDGE == '127.0.0.1:0'
+assert server._whisper_connection() is None
+"""
+        result = subprocess.run([sys.executable, "-c", script], cwd=REPO, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_external_commands_are_denied_in_child_clis_and_absolute_launches(self):
+        for command in OFFLINE_COMMANDS:
+            with self.subTest(command=command):
+                result = subprocess.run([command, "--version"], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 86)
+                self.assertIn("external executable denied", result.stderr)
+                # Use an existing installed executable: absent paths must preserve FileNotFoundError.
+                if Path("/usr/bin/" + command).exists():
+                    with self.assertRaisesRegex(AssertionError, "external executable"):
+                        subprocess.run(["/usr/bin/" + command, "--version"], capture_output=True)
+
+    def test_python_network_clients_cannot_reach_a_provider(self):
+        with socket.socket() as connection:
+            with self.assertRaisesRegex(AssertionError, "non-loopback"):
+                connection.connect(("203.0.113.1", 443))
+
+    def test_loopback_clients_cannot_reach_the_operator_service(self):
+        with socket.socket() as connection:
+            with self.assertRaisesRegex(AssertionError, "offline tests denied"):
+                connection.connect(("127.0.0.1", 8890))
+            with self.assertRaisesRegex(AssertionError, "offline tests denied"):
+                connection.bind(("127.0.0.1", 8890))
 
     def _import(self, fake_home: Path, altitude_home: Path | None) -> subprocess.CompletedProcess:
         env = dict(os.environ, HOME=str(fake_home))

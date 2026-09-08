@@ -69,6 +69,11 @@ evidence. Restart notices retain unresolved faults and require observed resoluti
 
 ## Service lifecycle
 
+[Versioned releases](RELEASING.md) are validated source checkpoints. They do not select the
+deployed revision or delay activation. Recovery normally uses a checked revert/fix PR followed
+by the activation path below; the release guide distinguishes web-bundle restoration from source
+and runtime-state recovery. Never reset the deployment checkout to a release tag as a rollback.
+
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
 Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
 merges even while their workers run. A self-deploy fast-forward marks activation

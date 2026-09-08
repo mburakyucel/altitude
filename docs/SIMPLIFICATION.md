@@ -1,4 +1,4 @@
-# Simplification record — 2026-09-02 to 2026-09-07
+# Simplification record — 2026-09-02 to 2026-09-08
 
 Burak reviewed `main` (`a4ca71c`) on 2026-09-02, closed the five draft PRs of the earlier autonomous
 simplification attempt (#138–#142, evidence in their closing comments; the only extract was the
@@ -31,6 +31,15 @@ bundles rewritten on every event, a resume path that killed its own worker on ev
 Decision 11 correction — I-20260907-165145: both engines' L2 workers use independent transient units; a vanished worker without a report from its latest launch/resume raises a system fault.
 Decision 11 correction — I-20260907-171446: both engines run owned foreground CLI turns; shared-daemon background dispatch cannot establish per-task unit ownership, so launch and resume retire any same-name daemon job first.
 
+Decision 12 — deterministic validation (operator, 2026-09-08): use fast, cheap mocked executions
+and programmatic assertions for module behavior and core user flows end to end. Live-provider
+cases are deferred, including working rule 4's real tiny task after dispatch/engine/landing
+changes. That earlier requirement does not create validation tasks under this policy. Keep
+real application/API/storage/Git logic and replace external engine/GitHub calls with fixtures;
+record the limits of this evidence. The testing/configuration/docs additions that establish this
+policy are decision-mandated work. Reconsidering live-provider validation is a future operator
+decision, not an unattended suite, follow-up task or release prerequisite.
+
 ## The two rule layers
 
 The personas in `personas/` are the global layer: how anyone works under Altitude on any project.
@@ -57,8 +66,11 @@ reported in the PR. Ask him only for a decision not recorded here.
    works only for this operator, this subscription mix, or this machine, and which seam holds it —
    could an engine be dropped tomorrow by touching only the seam? "Simpler" is not evidence on its
    own, and an existing test is not evidence that a mechanism is still wanted.
-4. Full Python and web suites on every PR. After any change to dispatch, engines, or landing, one real
-   tiny task end to end: chat, task, PR, checks, merge, archive.
+4. Full Python and web suites, typecheck/build and isolated phone/desktop browser checks on every
+   PR (`make check`). Changes to dispatch, engines or landing include deterministic integration
+   evidence for affected task, message/resume, failure and delivery paths. The operator's
+   2026-09-08 decision defers live-provider validation and the real tiny-task requirement; fakes
+   establish application behavior, not live CLI/authentication or provider compatibility.
 
 ## What each phase deleted
 

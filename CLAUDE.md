@@ -52,21 +52,32 @@ outside a seam can only fall.
 - Never publish credentials, tokens, private incident evidence, or security-sensitive operational
   details.
 
+## Checks
+
+Every PR runs `make check`: the full Python and web suites, typecheck/build and isolated
+headless browser flows. Tests keep application logic, state transitions and API/storage integration
+real, replacing external engine calls at the engine seam with deterministic fixtures. They must
+not launch real providers, operate user services or use the operator's runtime state. Coverage
+evidence names user journeys and failure modes, not just line counts. Live-provider testing is
+deferred by the operator's 2026-09-08 decision, including the real tiny-task requirement; see
+`docs/DEVELOPMENT.md` and SIMPLIFICATION working rule 4. New gaps stay explicit in the report.
+
 ## UI
 
 From the wireframe-implementation phase on, a PR that implements or changes a UI component ships
 with that component's interaction states specified — empty, loading, listening, error, denied, and
 what appears and disappears after each action — and walked through on phone and desktop before the
 work is done. Use the Playwright harness in `web/e2e/`: `make ui` runs the same specs headlessly at
-390×844 (phone, touch and mobile user agent) and 1440×900 (desktop), against real service data.
+390×844 (phone, touch and mobile user agent) and 1440×900 (desktop), against disposable services
+with fictional records and deterministic engine fixtures.
 Use `walkthrough.ts` to open the route, drive each action, assert visible text/roles that appear
 and disappear, and save a named screenshot for each state; `project-menu.pw.ts` is the example.
 The PR body lists the states walked at each viewport and the spec or screenshot folder that proves
-each state. Artifacts are local under `web/ui-artifacts/`; see README for target and browser setup.
-The harness prefers bundled Chromium under the Altitude home's shared `browsers/` directory,
+each state. Artifacts are under `web/ui-artifacts/` and retained briefly in CI; see development docs for setup.
+The harness uses the locked bundled Chromium under the Altitude home's shared `browsers/` directory,
 with Chromium's sandbox disabled inside the worker sandbox. Incident I-20260907-041446: this
-host's installed Chrome AppArmor profile denies network sockets there. Installed Chrome is only
-the fallback when the bundled browser is absent; install the bundle once as README describes.
+host's installed Chrome AppArmor profile denies network sockets there. Install the matching
+bundle once as development docs describe; a missing browser is a failed prerequisite.
 Review checks the states, not only the happy path; a state that is only described is
 not walked through. Functionality-first UI was acceptable before the boards were approved and is
 not now. The failure this prevents: after a voice message is sent the transcript box stays on

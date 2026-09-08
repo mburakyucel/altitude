@@ -1,34 +1,9 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { createInterface } from "node:readline";
-import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
+import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
-// All reads and mutations use fictional projects in a disposable home, never UI_BASE_URL.
-// Chat, queue, session and history are real service paths. Only providers and named overlays are simulated.
-const test = base.extend<{ service: string }>({
-  service: async ({}, use) => {
-    const child = spawn("python3", ["e2e/project-isolation-service.py"], { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (data) => { stderr += data; });
-    const lines = createInterface({ input: child.stdout });
-    try {
-      const ready = await Promise.race([
-        once(lines, "line"),
-        once(child, "exit").then(() => { throw new Error(`Disposable service exited: ${stderr}`); }),
-        new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error("Disposable service did not start")), 10_000); timer.unref(); }),
-      ]);
-      const data = JSON.parse(ready[0] as string);
-      expect(data.disposable).toBe(true);
-      expect(new URL(data.url).hostname).toBe("127.0.0.1");
-      await use(data.url as string);
-    } finally {
-      lines.close();
-      child.kill("SIGTERM");
-      if (child.exitCode === null) await once(child, "exit");
-    }
-  },
-});
+test.use({ scenario: "isolation" });
+
 test.setTimeout(60_000);
 
 function deferred() {

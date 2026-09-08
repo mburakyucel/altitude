@@ -1,13 +1,13 @@
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { test } from "./fixtures";
+import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { TaskMessageSchema } from "../src/data/api";
-import { liveProject } from "./live-data";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /**
- * The task page (SPEC.md §3.10), every state walked at 390 and 1440. Real tasks carry the running, queued,
- * done and rejected states; the states the live service cannot be asked to produce (a block, a fault, a
- * refused message, a failed read, a gone session) are overlaid on real records with page.route, so nothing
- * here dispatches, stops, rejects, or messages a real task.
+ * Task presentation states (SPEC.md §3.10) at both widths over fictional stored tasks. Named HTTP overlays
+ * hold reads or display a block, fault, refusal, or missing session. task-lifecycle.pw.ts separately drives
+ * real messages, resume requests, decisions, Stop and Reject through the isolated API and storage.
  */
 
 type Row = Record<string, unknown> & { slug: string; title?: string; state?: string; session_id?: string };
@@ -88,7 +88,7 @@ function views(page: Page, info: TestInfo) {
 }
 
 test("a running task: conversation, live session, Raw events, Stop and Reject confirms", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const task = await runningTask(request, project.name);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -141,7 +141,7 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
 });
 
 test("a queued task says what it waits for; a held task reads as queued", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const base = await runningTask(request, project.name);
@@ -186,7 +186,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
 });
 
 test("a blocked task: the decision card, waiting for L3, a fault", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const base = await runningTask(request, project.name);
@@ -251,7 +251,7 @@ test("a blocked task: the decision card, waiting for L3, a fault", async ({ page
 });
 
 test("done and rejected tasks read read-only, the PR in the header", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const done = await taskIn(request, project.name, "done");
@@ -315,7 +315,7 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
 });
 
 test("a message shows at once, then Not sent. Retry when the server refuses it", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const task = await runningTask(request, project.name);
@@ -362,7 +362,7 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
 });
 
 test("loading, a failed read with Retry, and an empty conversation", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const task = await runningTask(request, project.name);
@@ -405,7 +405,7 @@ test("loading, a failed read with Retry, and an empty conversation", async ({ pa
 });
 
 test("the live session: connecting, unavailable, no session file", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   const task = await runningTask(request, project.name);

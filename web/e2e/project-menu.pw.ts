@@ -1,9 +1,9 @@
-import { test } from "@playwright/test";
-import { liveProject } from "./live-data";
+import { test } from "./fixtures";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 test("project actions appear and disappear after cancel and Escape (issue #195)", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const more = page.getByRole("button", { name: "More actions" });
   const menu = page.getByRole("menu", { name: "Project actions" });

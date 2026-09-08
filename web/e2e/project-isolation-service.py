@@ -1,20 +1,12 @@
 """Disposable real chat/queue/history service; controlled providers never launch a worker."""
-import json
-from pathlib import Path
-import signal
-import sys
 import threading
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tests.support import SUITE  # isolate homes before Altitude freezes its paths
+from service_support import configure, serve
 from altitude import config, engines, l3, server, state as S
 
 
 def main():
-    config.PROJECT_ROOTS = [SUITE / "projects"]
-    server.log = lambda *args: None
-    engines.claude_agents = lambda: []
-    l3._select = lambda *args: {"engine": config.ENGINES[0], "why": "disposable walkthrough"}
+    configure()
     gates = {name: threading.Event() for name in ("alpha", "beta")}
     calls = []
     guard = threading.Lock()
@@ -68,17 +60,7 @@ def main():
                 return self._json({"ok": True})
             return super().do_POST()
 
-    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    httpd.daemon_threads = True
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True}), flush=True)
-    try:
-        httpd.serve_forever()
-    finally:
-        for gate in gates.values():
-            gate.set()
-        server.stop_l3_verb_brokers()
-        httpd.server_close()
+    serve(Handler, release=lambda: [gate.set() for gate in gates.values()])
 
 
 if __name__ == "__main__":

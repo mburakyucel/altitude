@@ -181,12 +181,20 @@ messages. Removing the last project opens First run; otherwise a remaining proje
 | [Setup](docs/SETUP.md) | [Architecture and engine boundary](docs/ARCHITECTURE.md) |
 | [Rendered walkthrough](docs/WALKTHROUGH.md) | [Engine and session lifecycle](docs/SESSION_LIFECYCLE.md) |
 | [Contributing](CONTRIBUTING.md) | [Development and checks](docs/DEVELOPMENT.md) |
+| [Release checkpoints](docs/RELEASING.md) | [Changelog](CHANGELOG.md) |
 | [CLI usage](docs/CLI.md) | [Service operations and mobile access](docs/OPERATIONS.md) |
 | [Roadmap and release prerequisites](docs/ROADMAP.md) | [Design boards and UI specification](design/wireframes/README.md) |
 
 For an installed service, [operations](docs/OPERATIONS.md#service-lifecycle) documents automatic
 activation and the operator's `make restart` command. Browser target and installation instructions
 are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
+
+Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop browser flows
+against isolated fictional state, with external engines replaced by deterministic fixtures.
+These repeated checks make no model calls. Live-provider validation is deferred; the
+[coverage matrix](docs/DEVELOPMENT.md#coverage-and-limits) records what the tests establish.
+Daily preview readiness checkpoints and as-needed releases select a validated source version and curated notes;
+the operator decides whether to publish it. Merged changes continue activating automatically.
 
 The [simplification record](docs/SIMPLIFICATION.md) explains the project's design decisions and
 review rules. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;

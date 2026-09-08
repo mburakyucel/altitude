@@ -1,10 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { test } from "./fixtures";
+import { expect, type Page } from "@playwright/test";
 import { walkthrough } from "./walkthrough";
 
 /**
- * Monitor states (SPEC.md §3.14, slice 5). Ready, loading and error come from the running service;
- * a state it cannot produce on demand (no reading, a stale reading, one engine, no sessions) is the
- * real response with the one field changed, and its name says so with "-overlay". Nothing is written.
+ * Monitor presentation states (SPEC.md §3.14) over the isolated service: HTTP overlays hold or fail a read
+ * and show missing/stale readings, a single engine or no sessions. Real routing remains in the server.
  */
 type Json = Record<string, unknown>;
 type Seat = { engine: string; label: string; quota: Json };

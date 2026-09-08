@@ -1,10 +1,11 @@
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
-import { liveProject } from "./live-data";
+import { test } from "./fixtures";
+import { expect, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
-/** Use a real L3 task card also present in Work; never create work or send messages. */
+/** Fixture L3 task cards also appear in Work; navigation retains the real API and router. */
 async function navigationTask(request: APIRequestContext, except?: string) {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const response = await request.get(`/api/project/${encodeURIComponent(project.name)}`);
   expect(response.ok()).toBe(true);
   const data = await response.json();
@@ -13,8 +14,8 @@ async function navigationTask(request: APIRequestContext, except?: string) {
   const chat = await chatResponse.json();
   const linked = chat.history.flatMap((row: { tasks?: string[] }) => row.tasks ?? []);
   const task = [...data.tasks, ...data.archive].find((row: { slug: string }) =>
-    linked.includes(row.slug) && (except ? row.slug !== except : !process.env.UI_TASK || row.slug === process.env.UI_TASK));
-  expect(task, "Needs a real task linked from L3 and Work (optionally UI_TASK)").toBeTruthy();
+    linked.includes(row.slug) && (!except || row.slug !== except));
+  expect(task, "The fixture supplies tasks linked from L3 and Work").toBeTruthy();
   return { project, task, path: `${project.path}/tasks/${encodeURIComponent(task.slug)}` };
 }
 

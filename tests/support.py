@@ -8,6 +8,7 @@ Run the suite from the repository root: `python3 -m unittest discover tests`.
 from __future__ import annotations
 
 import atexit
+import ipaddress
 import json
 import os
 import shutil
@@ -19,11 +20,92 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
+_NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
+_native_sandbox_command = None
 SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-"))
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
-(SUITE / "home").mkdir()
-os.environ["HOME"] = str(SUITE / "home")  # dispatch, monitor and server read ~/.claude in production
-os.environ["ALTITUDE_HOME"] = str(SUITE / "altitude")
+OFFLINE_BIN = SUITE / "bin"
+OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "service", "ssh", "curl", "wget")
+
+
+def install_offline_guards() -> None:
+    """Bootstrap before Altitude imports; child CLIs inherit the same closed external boundary.
+
+    Prevent repeated PR checks from launching paid workers or touching the operator's service
+    through inherited credentials, provider homes, absolute executables, or Python HTTP clients.
+    Real Git repositories, fixture subprocesses and loopback HTTP remain available.
+    """
+    for key in list(os.environ):
+        if (key.startswith(("CLAUDE", "CODEX", "OPENAI", "ANTHROPIC", "GH_", "GITHUB_", "AWS_", "AZURE_", "GOOGLE_",
+                            "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+                or key in {"ALTITUDE_ACTOR", "ALTITUDE_TASK", "ALTITUDE_PROJECT", "ALTITUDE_ATTEMPT",
+                           "ALTITUDE_SESSION_KEY", "ALTITUDE_ROOTS", "ALTITUDE_TLS_DIR", "ALTITUDE_HOST",
+                           "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE",
+                           "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "DBUS_SESSION_BUS_ADDRESS",
+                           "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH",
+                           "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND",
+                           "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}):
+            os.environ.pop(key, None)
+    for key, name in {"HOME": "home", "CODEX_HOME": "home/.codex", "CLAUDE_CONFIG_DIR": "home/.claude",
+                      "XDG_CONFIG_HOME": "home/.config", "XDG_DATA_HOME": "home/.local/share",
+                      "XDG_STATE_HOME": "home/.local/state", "XDG_CACHE_HOME": "home/.cache",
+                      "XDG_RUNTIME_DIR": "runtime", "ALTITUDE_HOME": "altitude"}.items():
+        path = SUITE / name
+        path.mkdir(parents=True, exist_ok=True)
+        os.environ[key] = str(path)
+    OFFLINE_BIN.mkdir(exist_ok=True)
+    for name in OFFLINE_COMMANDS:
+        path = OFFLINE_BIN / name
+        path.write_text("#!/bin/sh\necho 'offline tests: external executable denied; install a fixture at the engine boundary' >&2\nexit 86\n")
+        path.chmod(0o755)
+    os.environ.update({"CLAUDE_BIN": str(OFFLINE_BIN / "claude"), "CODEX_BIN": str(OFFLINE_BIN / "codex"),
+                       "PATH": f"{OFFLINE_BIN}:{os.environ.get('PATH', '')}", "GIT_TERMINAL_PROMPT": "0",
+                       "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                       "GIT_ALLOW_PROTOCOL": "file", "ALTITUDE_TIMERS": "0",
+                       "WHISPER_SOCKET": str(SUITE / "unavailable-speech.sock"), "WHISPER_BRIDGE": "127.0.0.1:0"})
+
+
+def _offline_audit(event, args):
+    if event == "subprocess.Popen":
+        executable = os.fsdecode(args[0])
+        if Path(executable).name in OFFLINE_COMMANDS:
+            resolved = Path(shutil.which(executable) or executable).resolve()
+            if resolved.exists() and not resolved.is_relative_to(SUITE) and tuple(args[1]) != _native_sandbox_command:
+                raise AssertionError(f"offline tests denied external executable: {Path(executable).name}")
+    elif event in ("socket.connect", "socket.bind"):
+        sock, address = args
+        if sock.family in (2, 10):  # IPv4 / IPv6, leave local fixture Unix sockets intact.
+            host = address[0]
+            try:
+                local = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                local = host == "localhost"
+            if not local or address[1] == 8890:
+                raise AssertionError("offline tests denied non-loopback network connection")
+
+
+install_offline_guards()
+sys.addaudithook(_offline_audit)
+
+
+def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arguments: list[str]):
+    """The existing explicit, zero-model native sandbox probe; no exec/turn invocation is permitted."""
+    global _native_sandbox_command
+    if os.environ.get("ALTITUDE_TEST_CODEX_SANDBOX") != "1":
+        raise AssertionError("native sandbox probe requires ALTITUDE_TEST_CODEX_SANDBOX=1")
+    if not _NATIVE_SANDBOX_BINARY:
+        raise AssertionError("requested native sandbox verification requires the installed binary")
+    command = [_NATIVE_SANDBOX_BINARY, "sandbox", "-P", "altitude-l3", "-C", str(runtime)]
+    for setting in settings:
+        command += ["-c", setting]
+    command += ["--", sys.executable, "-c", probe, *arguments]
+    _native_sandbox_command = tuple(command)
+    try:
+        return subprocess.run(command, cwd=runtime, env=engines.codex_env(), capture_output=True, text=True, timeout=45)
+    finally:
+        _native_sandbox_command = None
+
+
 os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
 sys.path.insert(0, str(REPO))
 from altitude import config, engines, incidents, monitor  # noqa: E402
@@ -82,6 +164,14 @@ elif cmd == ("pr", "checks"):
     print(body)
 elif cmd == ("pr", "merge"):
     body = json.loads(read("pr.json", "{}") or "{}")
+    if read("merge_git.txt") is not None:
+        # A composed journey opts in: the hosted merge also advances the real local bare remote.
+        head = body["headRefName"]
+        merged = subprocess.run(["git", "push", "origin", head + ":main"], capture_output=True, text=True)
+        if merged.returncode:
+            fail(merged.stderr)
+        oid = subprocess.check_output(["git", "rev-parse", head], text=True).strip()
+        body.update(mergeCommit={"oid": oid}, mergedAt="2026-09-08T00:00:00Z")
     body["state"] = "MERGED"
     open(os.path.join(d, "pr.json"), "w").write(json.dumps(body))
 elif cmd == ("pr", "edit"):
@@ -90,6 +180,8 @@ elif cmd == ("pr", "list"):
     print(read("pr_list.json", "[]"))
 elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
+elif cmd == ("run", "view"):
+    print(read("run.json", '{"status": "completed", "conclusion": "success"}'))
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''
