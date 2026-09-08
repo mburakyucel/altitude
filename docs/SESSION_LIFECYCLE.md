@@ -162,7 +162,9 @@ CLI returns without fetching or writing the deployment checkout; altd sees the d
 and its keyed resume runner coalesces a simultaneous API wake, retry, or available WIP slot. Before provider launch it
 persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox. Delivered
 messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
-for the running worker's next checkpoint. An L2's block goes to L3 first: L3's `alt task message` requests that
+for the running worker's next checkpoint. An explicit question block supersedes earlier wake requests:
+older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
+authorizes another turn. An L2's block goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
 The operator's choice (`POST /api/decide` with an option and an optional note) is recorded on the task as its `decision`
 and a `decided` event; a reject option rejects the task with the note as the reason, any other option appends a task
@@ -199,7 +201,10 @@ while its terminal state/worker receipt still matches. A later lifecycle receive
 The inbox and `resume_after` are the coordinator-to-daemon boundary: they survive coordinator exit and daemon
 restart. The keyed runner is the in-process fast path; a durable claim is the cross-process fence. Its
 `dispatching` marker also makes the independent restart guard wait. If altd restarts after the replacement worker
-identity is saved but before task binding, it adopts that worker. If it cannot prove whether a provider launch
+identity is saved but before task binding, it adopts that worker only while the claim still names the
+current block. A block or escalation gives that wait a new identity; an older claim restores its message
+batch and stops any known unowned replacement without clearing the newer question. Fresh dispatch binds
+only while its task remains queued. If it cannot prove whether a provider launch
 crossed an unexpected daemon exit, it reports a real recovery fault instead of risking a duplicate turn.
 
 1. a task blocked before any launch goes back to the queue;
@@ -209,11 +214,14 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    worktree and commit provenance are validated, and a worker that is still live is stopped first;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
    inbox text (or "Continue from your progress file."); changed Auto preferences and project defaults do not
-   alter that attempt. The replacement worker is bound atomically; a bind failure stops the unowned worker
-   and files a fault. A genuine
+   alter that attempt. The replacement worker is bound atomically; a superseded bind stops the unowned
+   worker and keeps the newer question. Launch failures and uncertain worker ownership retain incident
+   evidence without changing a newer question's wait. A genuine
    provenance or relaunch fault restores the claimed batch, consumes only the generation it tried, and blocks
    normally until another explicit request. A newer message carries a newer generation and stays due. A
    coordinator filesystem restriction never reaches this trusted boundary.
+   An explicit resume receipt also consumes only its original block and request; it cannot remove the
+   timer for an answer that arrived after a newer question.
 
 **Stop** (task page, `alt task stop --reason …`) runs in altd, blocks the task first, and then stops its worker,
 so the poll never reads the exiting worker as a death. A message or `alt task resume --reason …` brings the same
@@ -402,10 +410,13 @@ After an
 existing daemon jobs are observed through their active unit and session transcript until they finish or resume.
 Both engines' units survive the service restart.
 An ended or missing worker's report is current only when its mtime is at or after the latest launch
-or resume timestamp, persisted on the task before the provider starts. A missing or stale report
+or resume timestamp, persisted on the task before the provider starts. A missing or stale report on a running task
 without an explicit completion is a system fault
 that blocks the task and files an incident; a current report goes to verification. Rejection and
 post-merge cleanup use the same provider adapter.
+An explicitly question-blocked task remains waiting when its worker exits or disappears; it needs no
+completion report until a later authorized turn runs. A stale finished-worker observation cannot replace
+a newer block with a worker-death fault.
 
 A worker's PATH resolves `alt` to the deployment checkout's `bin/alt`, so each invocation uses the
 current CLI; L2 commands and the inbox hook use locked durable state directly and keep working while

@@ -144,6 +144,50 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual([row["text"] for row in T.task_messages(self.project, slug)],
                          ["Use the conservative default", "Also retain the old format"])
 
+    def test_question_block_survives_old_inbox_and_exit_until_a_new_answer(self):
+        # I-20260908-045037: pre-block steering must not relaunch a worker waiting on a new question.
+        for waiting_on in ("l3", "burak"):
+            with self.subTest(waiting_on=waiting_on):
+                task = self.launch(self.queue(f"Question for {waiting_on}"))
+                slug = task["slug"]
+                T.set_hold_merge(self.project, slug, "Review the proposed experience")
+                self.request("/api/l2/message", {"project": self.project, "slug": slug,
+                                                "text": "Discuss the choice before implementation"})
+                args = ["--project", self.project, "task", "block", slug, "--reason", "Include grouped questions?"]
+                if waiting_on == "burak":
+                    args.append("--for-burak")
+                result = self.alt(*args, env={"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": slug, "ALTITUDE_ATTEMPT": "1"})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                blocked = S.load_task(self.project, slug)
+                self.assertEqual(blocked["waiting_on"], waiting_on)
+                self.assertNotIn(slug, dispatch.resume_due(self.project))
+                self.assertFalse(server.request_task_resume(self.project, slug))
+                self.assertEqual(dispatch.resume(self.project, slug), {"waiting": True}, "a previously queued wake is stale")
+                self.assertNotIn(slug, [lease["slug"] for lease in dispatch.leases(self.project)])
+                self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+                self.assertEqual(dispatch.poll(self.project), [])
+                current = S.load_task(self.project, slug)
+                self.assertEqual((current["state"], current["blocked_reason"], current["hold_merge"]),
+                                 ("blocked", "Include grouped questions?", "Review the proposed experience"))
+                self.assertFalse(current.get("fault"))
+                self.assertEqual([m["text"] for m in T.pending(self.project, slug)],
+                                 ["Discuss the choice before implementation"])
+
+                self.request("/api/l2/message", {"project": self.project, "slug": slug,
+                                                "text": "Yes, include grouped questions"})
+                resumed = self.wait_state(slug, "running")
+                self.assertEqual((resumed["session_id"], resumed["attempt"], resumed["hold_merge"]),
+                                 (task["session_id"], task["attempt"], blocked["hold_merge"]))
+                self.assertNotEqual(resumed["agent_id"], task["agent_id"])
+                self.assertIn("Yes, include grouped questions", self.engine.calls[-1]["prompt"])
+                self.assertEqual(T.pending(self.project, slug), [])
+                # The authorized turn must record its own wait/completion/report; the old block cannot excuse it.
+                self.engine.workers[resumed["agent_id"]].update(state="done", status="exited")
+                item = dispatch.poll(self.project)[0]
+                self.assertTrue(item["died"])
+                server.on_l2_finished(self.project, item)
+                self.assertEqual(S.load_task(self.project, slug)["fault"], "l2-died")
+
     def test_capacity_retry_retains_identity_respects_wip_and_missing_report_never_completes(self):
         task = self.launch(self.queue("Capacity retry"))
         waiting = self.queue("Wait for capacity")

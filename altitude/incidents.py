@@ -48,7 +48,8 @@ def _fault_lock():
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> tuple[bool, bool]:
+def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
+                         expected_block_id: object = T._UNSET) -> tuple[bool, bool]:
     """Block the task a fault belongs to. Returns (newly blocked by this fault, is a repair task).
 
     The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
@@ -63,21 +64,24 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str) -> tup
     touched = False
     if task.get("state") in ("queued", "running", "reported"):
         try:
-            T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag)
+            T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag,
+                    expected_block_id=expected_block_id)
             touched = True
         except T.TransitionError:
             pass
     elif task.get("state") == "blocked":
         with S.project_lock(project):
             task = S.load_task(project, slug)
-            if task.get("state") == "blocked":
+            if (task.get("state") == "blocked"
+                    and (expected_block_id is T._UNSET or task.get("block_id") == expected_block_id)):
                 touched = task.get("fault") != kind
                 task.update(tag)
                 S.save_task(project, task)
     return touched, task.get("source") == "recovery"
 
 
-def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None) -> dict | None:
+def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None,
+                 expected_block_id: object = T._UNSET) -> dict | None:
     """Block the faulting task; deduplicate incidents by source project and kind for 24 hours.
 
     Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
@@ -87,7 +91,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
-    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind)
+    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail[:300]}", kind, expected_block_id)
                        if project and task else (False, False))
     target = project or ("altitude" if "altitude" in config.load_projects() else None)
     key = json.dumps([project, kind])

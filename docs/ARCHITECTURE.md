@@ -39,6 +39,13 @@ task also persists a due `resume_after` request. An L3 CLI process stops there: 
 request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
+An explicit question block needs a later message or resume request; pre-block inbox messages stay
+available but cannot wake it. Each block or escalation supersedes earlier wake requests and stamps
+the block identity checked by resume claims. A stale launch cannot clear a newer block: dispatch
+binds only a queued task, and a superseded resume stops its unowned replacement and restores its
+message batch while retaining the question.
+Late launch faults retain incident evidence but cannot retag a newer question as a fault. Resume
+receipts consume only their own block and request, leaving a newer answer due.
 Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI after persisting one
 `daemon-request` event with the task, actor, operation, and required reason. Altd checks the recorded
 state and worker/session identity, refuses a stale target, and treats a retry of the same completed
@@ -411,8 +418,9 @@ that Altitude restarts at the next quiet moment; it names any dispatch, L3 turn 
 in flight. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
 service retain `KillMode=control-group`, so stopping a worker takes all its descendants. An exited or
-missing worker requires a report written since its latest launch or resume; without one it blocks
-with a system fault and incident, rather than replaying an older report. Dispatch continues
+missing worker on a running task requires a report written since its latest launch or resume
+or an explicit completion; without one it blocks with a system fault and incident. An explicit
+question block remains waiting after worker exit and needs no completion report. Dispatch continues
 while activation is pending. When those short windows are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
