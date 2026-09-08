@@ -240,14 +240,22 @@ unchanged and untouched.
 Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the
 publication and project locks, altd requires dirty main exactly at fetched `origin/main`, then
-preserves tracked/index and untracked changes with `git stash push --include-untracked`. The
-request ID identifies its stash even when another worktree changes the shared stash stack. The
-task's `preserved_checkout` and `checkout-preserved` event retain its immutable commit ID, actor
-and reason, including when Git saves the stash but fails during cleanup. Ignored files stay in
-place. Submodule or nested-repository dirt can keep the checkout blocked. Altd never drops the
-stash, commits the edits, or resumes the task as part of preservation. An interrupted executing
-request refuses replay and names its stash marker for inspection. The task owner applies the
-snapshot in its own worktree, reviews its lease and publication scope, and uses the normal PR path.
+copies the index for capture without changing main. A local `archive/checkout-<request-id>` branch
+points to a working snapshot commit whose parent retains the staged tree and whose grandparent
+is the original main commit. This preserves staged-only versions, tracked deletions and untracked
+files; applying the net snapshot flattens staging intent. Ref creation refuses an existing branch.
+Before cleanup, the task's `checkout_archive` object and `checkout-preserved` event record `branch`
+and immutable `sha`; the event includes the request ID, actor and reason. Git cleans through the
+captured index without recursing into submodules. Changed gitlinks and dirty nested repositories
+refuse preservation; ignored files stay untouched, and ignored obstructions refuse cleanup. Detected
+later index or captured-file edits refuse cleanup; operators pause edits during preservation. A
+failure retains the archive and the blocked task.
+An interrupted executing request refuses replay and names its archive for inspection, including
+the window before the task receipt is written. Archives remain local until explicit operator
+removal; Altitude never pushes or deletes them and never resumes a task as part of preservation.
+Legacy `preserved_checkout` string SHAs and stash events remain readable; their stashes are neither
+deleted nor converted. The task owner inspects and applies the snapshot in its own worktree,
+reviews its lease and publication scope, and uses the normal PR path.
 The [recovery procedure](CLI.md#dirty-checkout-recovery) requires a separate resume after the
 checkout passes the guard. Workerless `main-unpushed` tasks retain their fault and blocked reason
 when a resume still fails that guard; a failed message wake leaves the inbox intact and does not

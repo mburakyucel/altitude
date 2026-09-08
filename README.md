@@ -149,9 +149,12 @@ the destination draft.
 When uncommitted changes block task dispatch, L3 or the operator can use
 [`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
-changes in a retained Git stash and records its commit ID. The task owner reviews those changes
-in its isolated worktree and delivers through a PR. Ordinary dispatch still requires clean main
-at `origin/main`; a restart does not clear an unresolved checkout fault.
+changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
+snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
+The task owner inspects and applies the changes in its isolated worktree and delivers through a PR.
+Archives remain local until explicit operator removal; Altitude never pushes or deletes them.
+Existing stash records and stashes remain readable and recoverable. Ordinary dispatch still
+requires clean main at `origin/main`; a restart does not clear an unresolved checkout fault.
 
 A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
 notification in the owning project. Repeated fault kinds are deduplicated within each project;

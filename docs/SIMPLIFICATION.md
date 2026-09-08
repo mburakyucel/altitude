@@ -40,6 +40,18 @@ record the limits of this evidence. The testing/configuration/docs additions tha
 policy are decision-mandated work. Reconsidering live-provider validation is a future operator
 decision, not an unattended suite, follow-up task or release prerequisite.
 
+Operator decision — local checkout archives (2026-09-07, following PR #250 / issue #247):
+unexpected edits on main are preserved only on an explicit reason-bearing `alt task preserve-checkout`
+request through altd. The durable record is a uniquely named local archive branch and immutable
+working snapshot SHA, with staged content retained in its parent commit. Applying the net snapshot
+flattens staging intent without losing staged-only content. Archive creation and task recording
+precede cleanup; ignored files remain untouched, failures retain recoverable content, and interrupted
+requests refuse replay. Archive branches stay local until explicit operator removal and are never
+automatically pushed or deleted. Existing stash records and stashes remain readable and untouched.
+Main stays clean, dispatch guards stay strict, resume is explicit, and the owner inspects/applies in
+its isolated worktree for reviewed PR delivery. This decision mandates the bounded preservation
+feature; it does not change periodic fetch, deployment, or worker authority.
+
 ## The two rule layers
 
 The personas in `personas/` are the global layer: how anyone works under Altitude on any project.

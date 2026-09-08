@@ -1,5 +1,6 @@
 """Issue #247: a fictional dirty project recovers without a privileged worker or lost edits."""
 import subprocess
+import os
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
@@ -45,6 +46,18 @@ class TestCheckoutPreservation(AltitudeCase):
         dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", "Review existing edits", actor="l3")
         return dispatch.run_task_operation(self.project, self.slug)
 
+    def apply_snapshot(self, sha, worktree):
+        patch = subprocess.run(["git", "diff", "--binary", f"{sha}~2", sha], cwd=self.repo,
+                               capture_output=True, check=True).stdout
+        subprocess.run(["git", "apply", "--index"], input=patch, cwd=worktree, capture_output=True, check=True)
+
+    def assert_archive(self):
+        record = S.load_task(self.project, self.slug)["checkout_archive"]
+        self.assertEqual(git("rev-parse", record["branch"], cwd=self.repo).strip(), record["sha"])
+        self.assertEqual(git("show", f"{record['sha']}:README.md", cwd=self.repo), "working version\n")
+        self.assertEqual(git("show", f"{record['sha']}^:README.md", cwd=self.repo), "staged version\n")
+        return record["sha"]
+
     def test_deadlock_restart_preservation_and_normal_dispatch(self):
         ordinary = T.new(self.project, "Ordinary fictional task", "Do useful work.")
         for slug in (ordinary["slug"], self.slug):
@@ -67,29 +80,34 @@ class TestCheckoutPreservation(AltitudeCase):
         result = self.preserve()
         self.assertEqual(result["request"]["status"], "done")
         task = S.load_task(self.project, self.slug)
-        sha = task["preserved_checkout"]
+        record = task["checkout_archive"]
+        sha = self.assert_archive()
         self.assertEqual(task["state"], "blocked", "preservation does not silently resume tasks")
         self.assertIn(sha, result["request"]["note"])
-        self.assertEqual(status.status(self.project, self.slug)["preserved_checkout"], sha)
+        self.assertEqual(status.status(self.project, self.slug)["checkout_archive"], record)
         self.assertEqual(git("status", "--porcelain", cwd=self.repo), "")
         self.assertEqual((self.repo / "runtime.txt").read_text(), "local runtime\n")
         events = [row for row in S.read_events(self.project, self.slug) if row["kind"] == "checkout-preserved"]
         self.assertEqual([(e["sha"], e["by"], e["reason"]) for e in events], [(sha, "l3", "Review existing edits")])
+        self.assertEqual(events[0]["branch"], record["branch"])
         self.assertTrue(dispatch.run_task_operation(self.project, self.slug)["idempotent"])
         self.assertFalse(dispatch.request_task_operation(self.project, self.slug, "preserve-checkout",
                          "Review existing edits", actor="l3")["queued"])
-        self.assertEqual(git("stash", "list", "--format=%H", cwd=self.repo).splitlines(), [sha])
+        self.assertEqual(git("stash", "list", cwd=self.repo), "")
         for slug in (self.slug, ordinary["slug"]):
             dispatch.request_task_operation(self.project, slug, "resume", "Checkout preserved", actor="l3")
             self.assertEqual(dispatch.run_task_operation(self.project, slug)["state"], "queued")
             dispatch.run(self.project, slug)
         worktree = config.project_path(self.project) / ".claude/worktrees" / self.slug
-        git("stash", "apply", "--index", sha, cwd=worktree)
-        self.assertEqual(self.snapshot(worktree), self.before)
+        self.apply_snapshot(sha, worktree)
+        self.assertEqual((worktree / "README.md").read_text(), "working version\n")
+        self.assertFalse((worktree / ".gitignore").exists())
+        self.assertEqual(git("diff", cwd=worktree), "", "applying the net snapshot flattens staging intent")
         self.assertEqual((worktree / "draft.bin").read_bytes(), b"\x00\xfffictional\n")
         self.assertTrue((worktree / "link").is_symlink())
         self.assertEqual(git("status", "--porcelain", cwd=self.repo), "")
-        self.assertEqual(git("rev-parse", "refs/stash", cwd=self.repo).strip(), sha)
+        self.assert_archive()
+        self.assertEqual(git("ls-remote", "--heads", "origin", "archive/*", cwd=self.repo), "")
         # New ordinary dispatch still refuses if someone dirties main again.
         (self.repo / "README.md").write_text("another edit\n")
         self.before = self.snapshot(self.repo)
@@ -153,23 +171,26 @@ class TestCheckoutPreservation(AltitudeCase):
         self.assertEqual(self.snapshot(self.repo), self.before)
         self.assertEqual(S.load_task(self.project, self.slug)["fault"], "main-unpushed")
 
-    def test_stash_saved_before_cleanup_failure_is_recorded_and_retained(self):
+    def test_snapshot_saved_before_cleanup_failure_is_recorded_and_retained(self):
         self.refuse_dispatch(self.slug)
         real_run = git_policy._run
 
         def fail_after_save(repo, *args, **kwargs):
-            result = real_run(repo, *args, **kwargs)
-            if args[:2] == ("stash", "push"):
-                self.assertEqual(result.returncode, 0)
-                return subprocess.CompletedProcess(result.args, 1, result.stdout, "fictional cleanup failure")
-            return result
+            if args[:3] == ("read-tree", "-m", "-u"):
+                self.assert_archive()
+                return subprocess.CompletedProcess(args, 1, "", "fictional cleanup failure")
+            return real_run(repo, *args, **kwargs)
 
         with mock.patch.object(git_policy, "_run", side_effect=fail_after_save):
             result = self.preserve()
         self.assertEqual(result["request"]["status"], "refused")
         task = S.load_task(self.project, self.slug)
         self.assertEqual(task["fault"], "main-unpushed")
-        self.assertEqual(task["preserved_checkout"], git("rev-parse", "refs/stash", cwd=self.repo).strip())
+        sha = self.assert_archive()
+        other = self.tmp / "recovery-worktree"
+        git("worktree", "add", "-q", "-b", "review", str(other), "origin/main", cwd=self.repo)
+        self.apply_snapshot(sha, other)
+        self.assertEqual((other / "draft.bin").read_bytes(), b"\x00\xfffictional\n")
 
     def test_message_resume_preserves_fault_and_consumes_only_the_attempted_wake(self):
         self.refuse_dispatch(self.slug)
@@ -213,15 +234,276 @@ class TestCheckoutPreservation(AltitudeCase):
 
         def concurrent_stash(repo, *args, **kwargs):
             result = real_run(repo, *args, **kwargs)
-            if args[:2] == ("stash", "push"):
+            if args[0] == "update-ref" and args[1].startswith("refs/heads/archive/"):
                 (other / "README.md").write_text("concurrent stash\n")
                 git("stash", "push", "-m", "another task stash", cwd=other)
             return result
 
         with mock.patch.object(git_policy, "_run", side_effect=concurrent_stash):
             self.assertEqual(self.preserve()["request"]["status"], "done")
-        sha = S.load_task(self.project, self.slug)["preserved_checkout"]
+        sha = self.assert_archive()
         stack = git("stash", "list", "--format=%H", cwd=other).splitlines()
-        self.assertEqual(len(stack), 3)
-        self.assertEqual(stack[1:], [sha, old])
+        self.assertEqual(len(stack), 2)
+        self.assertEqual(stack[1:], [old])
         self.assertEqual(git("show", f"{sha}:README.md", cwd=other), "working version\n")
+
+    def test_staged_only_content_modes_and_unusual_paths_survive(self):
+        staged_only = self.repo / " staged-only\nfile"
+        staged_only.write_bytes(b"\x00staged then deleted\xff")
+        git("add", "--", staged_only.name, cwd=self.repo)
+        staged_only.unlink()
+        executable = self.repo / " script\nname"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        self.before = self.snapshot(self.repo)
+        self.refuse_dispatch(self.slug)
+        self.assertEqual(self.preserve()["request"]["status"], "done")
+        sha = self.assert_archive()
+        content = subprocess.run(["git", "show", f"{sha}^:{staged_only.name}"], cwd=self.repo,
+                                 capture_output=True, check=True).stdout
+        self.assertEqual(content, b"\x00staged then deleted\xff")
+        other = self.tmp / "review-worktree"
+        git("worktree", "add", "-q", "-b", "review", str(other), "origin/main", cwd=self.repo)
+        self.apply_snapshot(sha, other)
+        self.assertTrue(os.access(other / executable.name, os.X_OK))
+        self.assertFalse((other / staged_only.name).exists())
+
+    def test_unique_branches_are_retained_even_after_gc_and_task_cleanup(self):
+        self.refuse_dispatch(self.slug)
+        self.assertEqual(self.preserve()["request"]["status"], "done")
+        first = S.load_task(self.project, self.slug)["checkout_archive"]
+        (self.repo / "README.md").write_text("second recovery\n")
+        dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", "New edits", actor="burak")
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "done")
+        second = S.load_task(self.project, self.slug)["checkout_archive"]
+        self.assertNotEqual(first["branch"], second["branch"])
+        T.reject(self.project, self.slug, "Review complete", actor="burak")
+        git("reflog", "expire", "--expire=now", "--all", cwd=self.repo)
+        git("-c", "gc.packRefs=false", "gc", "--prune=now", cwd=self.repo)
+        for record in (first, second):
+            self.assertEqual(git("rev-parse", record["branch"], cwd=self.repo).strip(), record["sha"])
+        self.assertEqual(git("show", f"{first['sha']}^:README.md", cwd=self.repo), "staged version\n")
+
+    def test_archive_collision_never_overwrites_or_cleans(self):
+        self.refuse_dispatch(self.slug)
+        request = dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", "Review existing edits", actor="l3")["request"]
+        branch = f"archive/checkout-{request['id']}"
+        git("branch", branch, cwd=self.repo)
+        base = git("rev-parse", "HEAD", cwd=self.repo)
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "refused")
+        self.assertEqual(git("rev-parse", branch, cwd=self.repo), base)
+        self.assertEqual(self.snapshot(self.repo), self.before)
+
+    def test_interruption_before_record_or_during_cleanup_retains_archive_without_replay(self):
+        self.refuse_dispatch(self.slug)
+        for phase in ("record", "cleanup"):
+            with self.subTest(phase=phase):
+                dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", phase, actor="l3")
+                if phase == "record":
+                    real_save = S.save_task
+
+                    def interrupt_record(project, task):
+                        if task.get("checkout_archive"):
+                            raise KeyboardInterrupt()
+                        return real_save(project, task)
+
+                    patcher = mock.patch.object(S, "save_task", side_effect=interrupt_record)
+                else:
+                    patcher = mock.patch.object(git_policy, "clean_archived_checkout", side_effect=KeyboardInterrupt)
+                with patcher, self.assertRaises(KeyboardInterrupt):
+                    dispatch.run_task_operation(self.project, self.slug)
+                task = S.load_task(self.project, self.slug)
+                branch = f"archive/checkout-{task['daemon_request']['id']}"
+                sha = git("rev-parse", branch, cwd=self.repo).strip()
+                self.assertEqual(git("show", f"{sha}:README.md", cwd=self.repo), "working version\n")
+                self.assertEqual(self.snapshot(self.repo), self.before)
+                result = dispatch.run_task_operation(self.project, self.slug)
+                self.assertEqual(result["request"]["status"], "refused")
+                self.assertIn(branch, result["request"]["note"])
+                self.assertEqual(self.snapshot(self.repo), self.before)
+
+    def test_capture_failure_leaves_original_index_and_files_untouched(self):
+        self.refuse_dispatch(self.slug)
+        real_run = git_policy._run
+
+        def fail_commit(repo, *args, **kwargs):
+            if args[0] == "commit-tree":
+                return subprocess.CompletedProcess(args, 1, "", "fictional storage failure")
+            return real_run(repo, *args, **kwargs)
+
+        with mock.patch.object(git_policy, "_run", side_effect=fail_commit):
+            self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual(git("for-each-ref", "refs/heads/archive/", cwd=self.repo), "")
+
+    def test_legacy_stash_record_and_contents_survive_new_archive(self):
+        self.refuse_dispatch(self.slug)
+        git("stash", "push", "-u", "-m", "legacy preservation", cwd=self.repo)
+        old = git("rev-parse", "refs/stash", cwd=self.repo).strip()
+        git("stash", "apply", "--index", old, cwd=self.repo)
+        task = S.load_task(self.project, self.slug)
+        task["preserved_checkout"] = old
+        S.save_task(self.project, task)
+        S.append_event(self.project, self.slug, "checkout-preserved", sha=old, request_id="legacy", by="l3", reason="legacy")
+        self.assertEqual(self.preserve()["request"]["status"], "done")
+        self.assertEqual(status.status(self.project, self.slug)["preserved_checkout"], old)
+        self.assert_archive()
+        self.assertEqual(git("rev-parse", "refs/stash", cwd=self.repo).strip(), old)
+        other = self.tmp / "legacy-worktree"
+        git("worktree", "add", "-q", "-b", "legacy", str(other), "origin/main", cwd=self.repo)
+        git("stash", "apply", "--index", old, cwd=other)
+        self.assertEqual(self.snapshot(other), self.before)
+
+    def test_ignored_obstructions_are_untouched_and_keep_task_blocked(self):
+        self.refuse_dispatch(self.slug)
+        git("rm", "--cached", "-f", "README.md", cwd=self.repo)
+        with (self.repo / ".git/info/exclude").open("a") as handle:
+            handle.write("README.md\n")
+        self.before = self.snapshot(self.repo)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual((self.repo / "README.md").read_text(), "working version\n")
+        self.assertIn("checkout_archive", S.load_task(self.project, self.slug))
+
+    def test_initialized_nested_repository_is_untouched(self):
+        nested = self.repo / "nested"
+        make_repo(nested)
+        (nested / "README.md").write_text("nested edits\n")
+        self.before = self.snapshot(self.repo)
+        self.refuse_dispatch(self.slug)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual((nested / "README.md").read_text(), "nested edits\n")
+
+    def test_edits_after_capture_refuse_cleanup_and_retain_both_versions(self):
+        self.refuse_dispatch(self.slug)
+        real_clean = git_policy.clean_archived_checkout
+        for stage in (False, True):
+            with self.subTest(stage=stage):
+                dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", f"Late edits {stage}", actor="l3")
+
+                def edit_before_clean(*args):
+                    (self.repo / "late.txt").write_text("new staged content\n")
+                    if stage:
+                        git("add", "late.txt", cwd=self.repo)
+                    else:
+                        (self.repo / "README.md").write_text("late working edit\n")
+                    return real_clean(*args)
+
+                with mock.patch.object(git_policy, "clean_archived_checkout", side_effect=edit_before_clean):
+                    self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "refused")
+                self.assertEqual((self.repo / "README.md").read_text(), "late working edit\n")
+                self.assertEqual((self.repo / "late.txt").read_text(), "new staged content\n")
+                record = S.load_task(self.project, self.slug)["checkout_archive"]
+                self.assertEqual(git("rev-parse", record["branch"], cwd=self.repo).strip(), record["sha"])
+
+    def test_ignored_directory_obstruction_is_not_removed(self):
+        self.refuse_dispatch(self.slug)
+        git("rm", "-f", "README.md", cwd=self.repo)
+        (self.repo / "README.md").mkdir()
+        (self.repo / "README.md" / "runtime.txt").write_text("ignored nested runtime\n")
+        self.before = self.snapshot(self.repo)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual((self.repo / "README.md" / "runtime.txt").read_text(), "ignored nested runtime\n")
+
+    def test_mixed_added_directory_keeps_ignored_files(self):
+        (self.repo / "added").mkdir()
+        (self.repo / "added" / "draft.txt").write_text("capture this\n")
+        (self.repo / "added" / "runtime.txt").write_text("keep here\n")
+        self.before = self.snapshot(self.repo)
+        self.refuse_dispatch(self.slug)
+        self.assertEqual(self.preserve()["request"]["status"], "done")
+        self.assertFalse((self.repo / "added" / "draft.txt").exists())
+        self.assertEqual((self.repo / "added" / "runtime.txt").read_text(), "keep here\n")
+        self.assertEqual(git("status", "--porcelain", cwd=self.repo), "")
+
+    def test_index_only_removal_restores_main_and_preserves_working_content(self):
+        git("rm", "--cached", "-f", "README.md", cwd=self.repo)
+        self.before = self.snapshot(self.repo)
+        self.refuse_dispatch(self.slug)
+        self.assertEqual(self.preserve()["request"]["status"], "done")
+        self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
+        sha = S.load_task(self.project, self.slug)["checkout_archive"]["sha"]
+        self.assertEqual(git("show", f"{sha}:README.md", cwd=self.repo), "working version\n")
+        self.assertEqual(git("ls-tree", f"{sha}^", "README.md", cwd=self.repo), "")
+
+    def test_dirty_submodule_refuses_even_when_configured_to_ignore_dirt(self):
+        self.refuse_dispatch(self.slug)
+        git("stash", "push", "-u", cwd=self.repo)
+        peer = self.tmp / "peer"
+        git("clone", "-q", "-b", "main", str(self.tmp / "origin.git"), str(peer), cwd=self.repo)
+        module = make_repo(self.tmp / "module-source" / "module")
+        git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(module), "module", cwd=peer)
+        git("commit", "-qam", "Add module", cwd=peer)
+        git("push", "-q", "origin", "main", cwd=peer)
+        git("fetch", "-q", "origin", "main", cwd=self.repo)
+        git("merge", "--ff-only", "origin/main", cwd=self.repo)
+        git("-c", "protocol.file.allow=always", "submodule", "update", "--init", cwd=self.repo)
+        git("stash", "apply", "--index", cwd=self.repo)
+        git("config", "submodule.module.ignore", "all", cwd=self.repo)
+        (self.repo / "module" / "README.md").write_text("dirty module\n")
+        self.before = self.snapshot(self.repo)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual((self.repo / "module" / "README.md").read_text(), "dirty module\n")
+        # A clean existing gitlink does not block preserving unrelated checkout edits.
+        git("restore", "README.md", cwd=self.repo / "module")
+        dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", "Module clean", actor="l3")
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "done")
+        self.assertEqual((self.repo / "module" / "README.md").read_text(), "readme\n")
+
+    def test_local_commits_and_divergence_are_never_archived(self):
+        self.refuse_dispatch(self.slug)
+        self.repo = make_repo(self.tmp / "local-case" / "repo")
+        self.register(self.project, path=self.repo)
+        base = git("rev-parse", "HEAD", cwd=self.repo).strip()
+        tree = git("rev-parse", "HEAD^{tree}", cwd=self.repo).strip()
+        local = git("commit-tree", tree, "-p", base, "-m", "local commit", cwd=self.repo).strip()
+        remote = git("commit-tree", tree, "-p", base, "-m", "remote commit", cwd=self.repo).strip()
+        # Install protection after constructing a checkout with pre-existing local commits.
+        git("update-ref", "refs/heads/main", local, cwd=self.repo)
+        git_policy.install_hooks(self.repo)
+        (self.repo / "README.md").write_text("uncommitted local edits\n")
+        before = self.snapshot(self.repo)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), before)
+        git("push", "-q", "origin", f"{remote}:refs/heads/fixture-remote", cwd=self.repo)
+        git("update-ref", "refs/heads/main", remote, cwd=self.repo.parent / "origin.git")
+        dispatch.request_task_operation(self.project, self.slug, "preserve-checkout", "Diverged main", actor="l3")
+        self.assertEqual(dispatch.run_task_operation(self.project, self.slug)["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), before)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), local)
+        self.assertEqual(git("for-each-ref", "refs/heads/archive/", cwd=self.repo), "")
+
+    def test_cleanup_failure_after_files_restored_retains_recoverable_snapshot(self):
+        self.refuse_dispatch(self.slug)
+        real_run = git_policy._run
+
+        def fail_real_index(repo, *args, **kwargs):
+            if args[0] == "read-tree" and not kwargs.get("env"):
+                self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
+                return subprocess.CompletedProcess(args, 1, "", "fictional index lock failure")
+            return real_run(repo, *args, **kwargs)
+
+        with mock.patch.object(git_policy, "_run", side_effect=fail_real_index):
+            self.assertEqual(self.preserve()["request"]["status"], "refused")
+        sha = self.assert_archive()
+        other = self.tmp / "partial-cleanup-review"
+        git("worktree", "add", "-q", "-b", "review", str(other), "origin/main", cwd=self.repo)
+        self.apply_snapshot(sha, other)
+        self.assertEqual((other / "draft.bin").read_bytes(), b"\x00\xfffictional\n")
+        self.assertTrue(dispatch.run_task_operation(self.project, self.slug)["idempotent"])
+        self.assertEqual(S.load_task(self.project, self.slug)["fault"], "main-unpushed")
+
+    def test_behind_main_refuses_preservation(self):
+        self.refuse_dispatch(self.slug)
+        peer = self.tmp / "peer"
+        git("clone", "-q", "-b", "main", str(self.tmp / "origin.git"), str(peer), cwd=self.repo)
+        (peer / "remote.txt").write_text("remote change\n")
+        git("add", ".", cwd=peer)
+        git("commit", "-qm", "Advance remote", cwd=peer)
+        git("push", "-q", "origin", "main", cwd=peer)
+        self.assertEqual(self.preserve()["request"]["status"], "refused")
+        self.assertEqual(self.snapshot(self.repo), self.before)
+        self.assertEqual(git("for-each-ref", "refs/heads/archive/", cwd=self.repo), "")
