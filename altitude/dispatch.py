@@ -1,6 +1,6 @@
 """Dispatch one task-owning L2 in its worktree, monitor it, and start its session again once it stopped."""
 from __future__ import annotations
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import fcntl
 import json
@@ -167,49 +167,62 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         return {"queued": True, "idempotent": False, "request": request}
 
 
-def request_project_setting(project: str, setting: str, value, reason: str, *, actor: str) -> dict:
+def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str) -> dict:
     """2026-09-07 WIP incident: persist an operational change without needing a free task slot."""
     reason = str(reason or "").strip()
-    if actor not in DAEMON_REQUEST_ACTORS or not reason:
-        raise T.TransitionError("project set requires L3 or the operator and a nonempty reason")
-    if setting not in ("wip", "routing"):
-        raise T.TransitionError("unknown project setting")
-    if setting == "wip" and value is not None and (type(value) is not int or not 1 <= value <= config.WIP_PER_MACHINE):
-        raise T.TransitionError(f"WIP must be between 1 and {config.WIP_PER_MACHINE}")
+    scope = "machine" if project is None else "project"
+    if actor not in DAEMON_REQUEST_ACTORS or (project is None and actor == "l3") or not reason:
+        authority = "the operator" if project is None else "L3 or the operator"
+        raise T.TransitionError(f"{scope} set requires {authority} and a nonempty reason")
+    if setting not in (("wip",) if project is None else ("wip", "routing")):
+        raise T.TransitionError(f"unknown {scope} setting")
+    if setting == "wip":
+        try:
+            config.validate_wip(value)
+        except ValueError as exc:
+            raise T.TransitionError(str(exc)) from exc
     if setting == "routing" and value is not None:
         value = config.parse_routing(value)
-    with S.project_lock(project):
-        entry = config.project(project)
-        path = config.project_dir(project) / f"{setting}-request.json"
+    with config.projects_lock() if project is None else S.project_lock(project):
+        entry = config.machine_settings() if project is None else config.project(project)
+        directory = config.ROOT if project is None else config.project_dir(project)
+        path = directory / f"{setting}-request.json"
         previous = S.read_json(path, {})
         same = (previous.get(setting), previous.get("reason"), previous.get("actor")) == (value, reason, actor)
         if same and (previous.get("status") == "pending" or previous.get(f"result_{setting}") == entry.get(setting)):
             return {"idempotent": True, "request": previous}
+        if setting == "wip" and project is not None:
+            try:
+                config.validate_wip(value, project=True)
+            except ValueError as exc:
+                raise T.TransitionError(str(exc)) from exc
         if previous.get("status") == "pending":
-            raise T.TransitionError("project set already pending in altd")
-        request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": "project-set", "project": project,
+            raise T.TransitionError(f"{scope} set already pending in altd")
+        request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": f"{scope}-set", "project": project,
                    "actor": actor, "reason": reason, setting: value, "status": "pending"}
         S.write_json(path, request)
         return {"idempotent": False, "request": request}
 
 
-def run_project_settings(project: str) -> dict:
-    return {setting: _run_project_setting(project, setting) for setting in ("wip", "routing")}
+def run_settings(project: str | None = None) -> dict:
+    settings = ("wip",) if project is None else ("wip", "routing")
+    return {setting: _run_setting(project, setting) for setting in settings}
 
 
-def _run_project_setting(project: str, setting: str) -> dict:
+def _run_setting(project: str | None, setting: str) -> dict:
     """Altd drains this before task requests, independent of WIP and restart dispatch holds.
 
     D7/I-20260904-062512: preserve the receipt and deduplicate the project event across a crash.
     Re-registration is deliberate: the last registry write wins, with no registration identity fence.
     """
-    with S.project_lock(project), config.projects_lock():
-        path = config.project_dir(project) / f"{setting}-request.json"
+    with (nullcontext() if project is None else S.project_lock(project)), config.projects_lock():
+        directory = config.ROOT if project is None else config.project_dir(project)
+        path = directory / f"{setting}-request.json"
         request = S.read_json(path, {})
         if request.get("status") != "pending":
             return request
-        projects = config._load_projects()
-        entry = projects.get(project)
+        projects = config._load_projects() if project is not None else None
+        entry = projects.get(project) if projects is not None else config.machine_settings()
         if entry is None:
             request.update(status="refused", note="project is not registered")
         else:
@@ -217,12 +230,15 @@ def _run_project_setting(project: str, setting: str) -> dict:
                 entry.pop(setting, None)
             else:
                 entry[setting] = request[setting]
-            config.save_projects(projects)
+            if projects is None:
+                S.write_json(config.ROOT / "settings.json", entry)
+            else:
+                config.save_projects(projects)
             request["status"] = "done"
-        events = config.project_dir(project) / "events.jsonl"
+        events = directory / "events.jsonl"
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
-            event = {"at": S.now(), "kind": "project-set", "project": project, "request_id": request["id"],
+            event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
                      "actor": request["actor"], "reason": request["reason"], setting: request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
@@ -1020,11 +1036,10 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
 
 def wip_hold(project: str, task: dict | None = None) -> str | None:
     running = [t for t in S.list_tasks(project) if t["state"] == "running"]
-    proj = config.project(project)
-    if len(running) >= int(proj.get("wip", config.WIP_PER_PROJECT)):
+    if len(running) >= config.project_wip(project):
         return f"WIP limit: {len(running)} running in {project}"
     total = sum(1 for p in config.load_projects() for t in S.list_tasks(p) if t["state"] == "running")
-    if total >= config.WIP_PER_MACHINE:
+    if total >= config.machine_wip():
         return f"WIP limit: {total} running on this machine"
     return None
 

@@ -33,10 +33,10 @@ class TestDirectDispatch(AltitudeCase):
         brief = (S.task_dir(self.project, second["slug"]) / "brief.md").read_text()
         self.assertIn("Shared paths with `first` on README.md, docs/ARCHITECTURE.md", brief)
 
-    def test_default_project_cap_is_eight_and_machine_cap_is_ten(self):
+    def test_default_project_cap_is_eight_and_machine_cap_is_eighty(self):
         self.register(self.project)
         self.assertEqual(config.WIP_PER_PROJECT, 8)
-        self.assertEqual(config.WIP_PER_MACHINE, 10)
+        self.assertEqual(config.WIP_PER_MACHINE, 80)
         for index in range(8):
             self.assertIsNone(dispatch.wip_hold(self.project))
             task = T.new(self.project, f"Worker {index}", "request")
@@ -44,12 +44,15 @@ class TestDirectDispatch(AltitudeCase):
             S.save_task(self.project, task)
         self.assertEqual(dispatch.wip_hold(self.project), f"WIP limit: 8 running in {self.project}")
         self.register("another")
-        for index in range(2):
-            self.assertIsNone(dispatch.wip_hold("another"))
-            task = T.new("another", f"Worker {index}", "request")
-            task["state"] = "running"
-            S.save_task("another", task)
-        self.assertEqual(dispatch.wip_hold("another"), "WIP limit: 10 running on this machine")
+        for project_index in range(9):
+            project = f"parallel-{project_index}"
+            self.register(project)
+            for index in range(8):
+                self.assertIsNone(dispatch.wip_hold(project))
+                task = T.new(project, f"Worker {index}", "request")
+                task["state"] = "running"
+                S.save_task(project, task)
+        self.assertEqual(dispatch.wip_hold("another"), "WIP limit: 80 running on this machine")
 
     def test_new_task_is_immediately_queued_without_pipeline_metadata(self):
         task = T.new(self.project, "Fix the focused bug", "Fix it and test it.", actor="burak")

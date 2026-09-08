@@ -85,6 +85,25 @@ show coverage and freshness: missing records stay unknown or partial, and native
 only when local parentage supports attribution. Provider aggregates that cannot split helper usage
 say so. See [counting semantics and limits](docs/SESSION_LIFECYCLE.md#task-token-accounting).
 
+## Configure concurrency
+
+Running tasks default to **8 per project and 80 across the machine**. Both limits are persistent
+settings. Inspect active limits, defaults, overrides and pending requests with `alt machine show`:
+
+```sh
+alt machine show
+alt project set example --wip 12 --reason 'Allow more parallel tasks in this project'
+alt machine set --wip 120 --reason 'Allow more parallel tasks across this machine'
+alt project set example --unset-wip --reason 'Restore the project default of 8'
+alt machine set --unset-wip --reason 'Restore the machine default of 80'
+```
+
+The operator can change both limits; a project's L3 can change its own project limit. Machine
+changes are operator-only. Altd applies requests on its next tick without a free task slot or
+service restart. Existing explicit project caps persist. Lowering either limit lets running work
+continue and holds new launches until capacity is available. The machine default of 80 is
+configurable above 80. See [concurrency commands and validation](docs/CLI.md#concurrency-limits).
+
 ## Engines that can evolve with the work
 
 Altitude supplies project coordination, task ownership and delivery boundaries. The CLI engine

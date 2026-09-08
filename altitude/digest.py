@@ -16,7 +16,9 @@ def wip() -> dict:
     it, SPEC.md §3.5): the WIP limit, engine availability, a pending activation, or a resume checkpoint."""
     per = {p: sum(1 for t in S.list_tasks(p) if t["state"] == "running") for p in config.load_projects()}
     restart = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, None)
-    return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT, "limit_machine": config.WIP_PER_MACHINE,
+    return {"per_project": per, "machine": sum(per.values()), "limit_project": config.WIP_PER_PROJECT,
+            "limit_machine": config.machine_wip(),
+            "limits_per_project": {p: config.project_wip(p) for p in per},
             "waiting": [{"project": p, "slug": t["slug"], "why": "dispatch" if t["state"] == "queued" else "resume",
                          "hold": _waiting(p, t, restart)["reason"]}
                         for p in config.load_projects() for t in S.list_tasks(p)
