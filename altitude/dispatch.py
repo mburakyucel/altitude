@@ -109,6 +109,7 @@ def l2_job_root(project: str, slug: str) -> Path:
 
 
 DAEMON_TASK_OPERATIONS = {
+    "preserve-checkout": {"from": ("blocked",), "done": ()},
     "resume": {"from": ("blocked",), "done": ("running", "queued")},
     "stop": {"from": ("running",), "done": ("blocked",)},
     "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
@@ -282,6 +283,8 @@ def run_task_operation(project: str, slug: str) -> dict:
             # in that narrow window, the durable target state proves this executing request already succeeded.
             if operation == "resume" and status == "executing" and state in DAEMON_TASK_OPERATIONS[operation]["done"]:
                 terminal = ("done", "resume already reached its target state")
+            elif operation == "preserve-checkout" and status == "executing":
+                terminal = ("refused", f"preservation interrupted; inspect git log -g refs/stash for {request_id} before retrying")
             elif identity_changed:
                 terminal = ("refused", "worker identity changed")
             elif state in DAEMON_TASK_OPERATIONS[operation]["done"] and operation != "stop":
@@ -303,6 +306,8 @@ def run_task_operation(project: str, slug: str) -> dict:
             result = resume(project, slug, daemon_request_id=request_id)
             if result.get("held") or result.get("already_resuming"):
                 return {"pending": True, "request": request, **result}
+        elif operation == "preserve-checkout":
+            result = preserve_checkout(project, slug, request)
         elif operation == "stop":
             result = stop(project, slug, by=request["actor"], reason=request["reason"],
                           daemon_request_id=request_id, expected_agent_id=request.get("agent_id"),
@@ -315,7 +320,7 @@ def run_task_operation(project: str, slug: str) -> dict:
     except ResumeFailure as exc:
         _finish_task_operation(project, slug, request_id, "failed", str(exc))
         raise
-    except T.TransitionError as exc:
+    except (T.TransitionError, git_policy.GitPolicyError) as exc:
         return _finish_task_operation(project, slug, request_id, "refused", str(exc))
     return _finish_task_operation(project, slug, request_id, "done", str(result)[:300])
 
@@ -331,6 +336,34 @@ def publication_settlement(project: str):
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def preserve_checkout(project: str, slug: str, request: dict) -> str:
+    """Issue #247: preserve a dirty main through altd, before any worker can launch."""
+    with publication_settlement(project), S.project_lock(project):
+        task = S.load_task(project, slug)
+        T._require_daemon_fence(task, slug, expected_daemon_request=request["id"],
+                                expected_agent_id=None, expected_session_id=None)
+        if task["state"] != "blocked" or task.get("attempt"):
+            raise T.TransitionError("preserve-checkout requires a blocked task that has never launched")
+        repo = config.project_path(project)
+        origin = git_policy.fetch_origin(repo)
+        state = git_policy.inspect_repository(repo)
+        if not state.determinate or state.branch != "main" or state.head != origin or not state.dirty:
+            raise T.TransitionError("preserve-checkout requires dirty main at origin/main; inspect alt repo")
+        label = f"Altitude {project}/{slug} preserve-checkout {request['id']}"
+        try:
+            result = git_policy._run(repo, "stash", "push", "--include-untracked", "-m", label)
+        finally:  # Git can save the stash successfully and then fail while cleaning the checkout.
+            sha = git_policy._output(git_policy._run(repo, "stash", "list", "--format=%H", f"--grep={request['id']}"), label)
+            if sha:
+                task["preserved_checkout"] = sha
+                S.save_task(project, task)
+                S.append_event(project, slug, "checkout-preserved", sha=sha, request_id=request["id"],
+                               reason=request["reason"], by=request["actor"])
+        git_policy._output(result, label)
+        git_policy.fetch_and_require_exact_base(repo)
+        return f"Preserved checkout in stash {sha}; apply --index in the task worktree; retain the stash"
 
 
 def settle_deploy_checkout(project: str, slug: str) -> None:
@@ -679,6 +712,19 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         return recovered
     task = S.load_task(project, slug)
     if not task.get("agent_id") or not task.get("session_id"):
+        if task.get("fault") == "main-unpushed":
+            try:
+                with publication_settlement(project):
+                    settle_deploy_checkout(project, slug)
+                    git_policy.fetch_and_require_exact_base(config.project_path(project))
+            except git_policy.GitPolicyError as exc:
+                with S.project_lock(project):
+                    current = S.load_task(project, slug)
+                    if all(current.get(k) == task.get(k) for k in ("state", "resume_request", "resume_after")):
+                        current.pop("resume_after", None)
+                        current.pop("resume_request", None)
+                        S.save_task(project, current)
+                raise ResumeFailure(f"checkout fault remains unresolved: {exc}") from exc
         T.requeue(project, slug, expected_daemon_request=daemon_request_id, **daemon_fence)
         return {"requeued": True}
     window = engines.window_hold(l2_engine(task))

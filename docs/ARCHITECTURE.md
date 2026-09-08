@@ -237,6 +237,22 @@ same guarded fast-forward that runs after a task lands, and it happens only when
 clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main checkout still refuses,
 unchanged and untouched.
 
+Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
+request available to the operator and the project's L3 for an unlaunched blocked task. Under the
+publication and project locks, altd requires dirty main exactly at fetched `origin/main`, then
+preserves tracked/index and untracked changes with `git stash push --include-untracked`. The
+request ID identifies its stash even when another worktree changes the shared stash stack. The
+task's `preserved_checkout` and `checkout-preserved` event retain its immutable commit ID, actor
+and reason, including when Git saves the stash but fails during cleanup. Ignored files stay in
+place. Submodule or nested-repository dirt can keep the checkout blocked. Altd never drops the
+stash, commits the edits, or resumes the task as part of preservation. An interrupted executing
+request refuses replay and names its stash marker for inspection. The task owner applies the
+snapshot in its own worktree, reviews its lease and publication scope, and uses the normal PR path.
+The [recovery procedure](CLI.md#dirty-checkout-recovery) requires a separate resume after the
+checkout passes the guard. Workerless `main-unpushed` tasks retain their fault and blocked reason
+when a resume still fails that guard; a failed message wake leaves the inbox intact and does not
+retry until another wake is requested.
+
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
 project lock. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's

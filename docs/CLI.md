@@ -121,6 +121,44 @@ GitHub authentication/access, or an unconfirmed result without echoing GitHub's 
 After a timeout or unconfirmed response, the operator checks the target's issues before retrying to
 avoid duplicates; L3's GitHub read broker remains project-local.
 
+## Dirty-checkout recovery
+
+`alt task preserve-checkout <slug> --reason "…"` asks altd to preserve the selected project's dirty
+main checkout for an existing blocked task that has never launched. It is available to the
+operator and project-bound L3, and denied to L2. It needs neither a worker nor a free task slot.
+The CLI queues a durable request; `alt task status <slug>` shows `daemon_request.status`, its
+outcome note, and `preserved_checkout` once a stash is saved. `alt task events <slug> --json` includes the
+request's actor/reason and the `checkout-preserved` commit ID.
+
+For a fictional `example` project with dirty main exactly at `origin/main`:
+
+1. Stop editing that checkout during preservation. Inspect `alt --project example repo` and the
+   intended task with `alt --project example task status reconcile-edits`. Use an existing
+   unlaunched blocked task; `--source recovery` controls fault notifications, not Git privileges.
+2. Run `alt --project example task preserve-checkout reconcile-edits --reason "Preserve existing edits for review in the task PR"`.
+3. Wait for `alt --project example task status reconcile-edits` to show the completed request and
+   its `preserved_checkout` SHA. A successful preservation leaves clean main at `origin/main` and
+   keeps the task blocked. It does not drop the stash or commit/publish any file.
+4. Give the owner the SHA and reconciliation scope with
+   `alt --project example task message reconcile-edits "Review preserved checkout <SHA>; apply with git stash apply --index <SHA> in your task worktree and deliver the reviewed changes through your PR."`
+   This message requests resume. Ensure the task's lease covers the intended changes using
+   `alt task paths` if needed. The owner inspects the snapshot before staging and publishing it.
+   Resume any other blocked task separately with `alt task resume <slug> --reason "Checkout is clean after preservation"`.
+
+Git preserves staged and unstaged content, tracked deletions and untracked files. Ignored files
+remain in place; dirty submodules and nested repositories can still prevent a clean checkout.
+Off-main, ahead, behind or diverged checkouts are refused without preservation. This command does
+not reconcile local commits. L2 never gains permission to write the deployment checkout.
+
+If Git saves a stash but cleanup fails, its SHA remains recorded and the task stays blocked.
+If altd exits while the request executes, it refuses automatic replay and names the request ID;
+inspect `git log -g --format='%H %gs' refs/stash` for that marker and `alt task status` before deciding
+whether to retry with a fresh reason. This is available through L3's existing read-only Git door;
+it does not grant Git writes in the deployment checkout. Never use `stash pop`,
+`stash drop`, `reset --hard` or `clean` as a recovery shortcut. Retain the stash until its contents
+have been reviewed and accounted for; any eventual removal is an explicit operator action.
+A restart alone does not resolve the fault, and unsuccessful resume leaves it reported.
+
 ## Project lifecycle
 
 `alt project remove <name>` is operator-only. Removing a project from Altitude means detaching its

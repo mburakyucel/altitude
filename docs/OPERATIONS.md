@@ -50,6 +50,23 @@ no comment and records the actor, issue, reason and URL. L3 does not clean up th
 autonomously. L2 cannot mutate issues. See [GitHub issues](CLI.md#github-issues) for arguments
 and the rule excluding home paths and private incident evidence from published text.
 
+## Recovering dirty main
+
+A dirty deployment checkout blocks normal and recovery task dispatch. Use the
+[dirty-checkout recovery procedure](CLI.md#dirty-checkout-recovery): select an unlaunched blocked
+task, pause edits to main, and request `alt task preserve-checkout <slug> --reason "…"` as L3 or
+the operator. Altd preserves staged, unstaged and untracked files in a retained Git stash, records
+its immutable SHA on the task, and requires the checkout to pass the normal guard. Ignored files
+remain in place. This needs no task slot, service restart or privileged worker.
+
+Inspect `alt task status <slug>` for the request result and snapshot SHA before sending the owner
+its reconciliation instructions. The owner applies with `git stash apply --index <SHA>` inside
+its isolated worktree, reviews the contents against its lease and publication rules, and delivers
+through a PR. Resume other tasks separately once the checkout is clean. An interrupted request
+is not replayed: inspect the request marker in the stash list first. Stash cleanup failures and
+remaining submodule/nested-repository changes keep dispatch blocked; preserve the stash and fault
+evidence. Restart notices retain unresolved faults and require observed resolution before resume.
+
 ## Service lifecycle
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.

@@ -39,7 +39,7 @@ L3_GH_READS = {
 }
 L3_TASK_TARGETS = {
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
-    "paths", "hold-merge", "done", "status",
+    "paths", "hold-merge", "done", "status", "preserve-checkout",
 }
 
 # The wireframe boards of any project that has them, served read-only from its own checkout so the
@@ -576,8 +576,8 @@ def restart_notice() -> None:
                    if t["state"] == "blocked" else t["state"])
             lines.append(f"- {t['slug']}: {t['state']} ({tag}); {T.short_reason(t.get('blocked_reason') or t.get('title') or '')}")
         l3.queue_message(project, "Altitude restarted with the code now on main. Its active tasks:\n" + "\n".join(lines)
-                         + "\n\nCheck each with `alt task status <slug>`. Resume a task blocked by a fault the restart should "
-                         "have fixed (`alt task resume <slug> --reason \"restart fixed the fault\"`); leave a task waiting on "
+                         + "\n\nCheck each with `alt task status <slug>`. A restart does not resolve checkout faults. "
+                         "Resume only after observing that the cause is gone (`alt task resume <slug> --reason \"<observed fix>\"`); leave a task waiting on "
                          "Burak to him; a running task keeps "
                          "its worker. Reply in two or three plain sentences.", trigger="restart")
         log(f"[{project}] restart notice queued for L3 ({len(active)} active tasks)")

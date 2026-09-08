@@ -26,6 +26,7 @@ L3_ALLOWED_TOOLS = ",".join((
     "Bash(alt task status *)", "Bash(alt task show *)", "Bash(alt task list *)", "Bash(alt task message *)",
     "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)",
     "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
+    "Bash(alt task preserve-checkout *)",
     "Bash(alt fyi *)", "Bash(alt decisions *)", "Bash(alt monitor *)", "Bash(alt queue *)",
     "Bash(alt repo *)", "Bash(alt pr *)", "Bash(alt l3 tools *)",
     "Bash(alt incident new *)", "Bash(alt incident amend *)", "Bash(alt incident list *)",

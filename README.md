@@ -146,6 +146,13 @@ the destination draft.
 
 ## Project faults
 
+When uncommitted changes block task dispatch, L3 or the operator can use
+[`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
+for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
+changes in a retained Git stash and records its commit ID. The task owner reviews those changes
+in its isolated worktree and delivers through a PR. Ordinary dispatch still requires clean main
+at `origin/main`; a restart does not clear an unresolved checkout fault.
+
 A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
 notification in the owning project. Repeated fault kinds are deduplicated within each project;
 another affected task still gets a coordinator notification. Repair-task faults do not wake the
