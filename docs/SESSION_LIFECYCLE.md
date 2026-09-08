@@ -568,10 +568,13 @@ cache-creation tokens. Synthetic all-zero limit records are ignored. Codex task 
 cache counters are part of the separate task token observation.
 
 Every quota and session figure carries the time it was observed, and age is reported rather than
-hidden. A quota snapshot older than thirty minutes — the age at which the router stops routing on
-it — is stale: its figures are still shown and labelled, not replaced by "unknown", which is
-reserved for having no reading at all. A session snapshot older than five minutes while its worker
-is live is stale in the same way; an idle or finished worker is simply as old as it says.
+hidden. Monitor displays each available usage window independently, including zero, and explicitly
+names an absent window. Partial readings keep their available figures and reset times; only a seat
+without any usage figure says "No reading." A quota snapshot older than thirty minutes — the age
+at which the router stops routing on it — is stale: its figures are still shown and labelled, not
+replaced by "unknown", which is reserved for having no reading at all. A session snapshot older than
+five minutes while its worker is live is stale in the same way; an idle or finished worker is simply
+as old as it says.
 
 A provider session id records which provider conversation Altitude asks to resume. That documented
 resume behavior does not prove a cache hit or imply any undocumented prompt-cache guarantee.

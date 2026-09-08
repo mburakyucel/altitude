@@ -100,8 +100,8 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
       ...quota, known: false, stale: true,
       // The real source may never have emitted a figure. This state needs an actual old
       // observation, not just a stale flag on unknown data; keep the no-reading assertion below.
-      ...(typeof quota.primary_used !== "number" &&
-          !(typeof quota.five_hour === "number" && typeof quota.seven_day === "number")
+      ...(![quota.five_hour, quota.seven_day, quota.primary_used, quota.secondary_used]
+        .some((value) => typeof value === "number")
         ? { primary_used: 25, primary_window_minutes: 300 } : {}),
       ...("read_at" in quota ? { read_at: hoursAgo(2).toISOString() } : { at: Math.floor(hoursAgo(2).getTime() / 1000) }),
     })),
@@ -133,4 +133,62 @@ test("Monitor walks loading, ready, error, retry, and the readings' states", asy
     hidden: [page.locator(".monitor-session")],
   });
   await page.unroute("**/api/monitor*");
+});
+
+test("Monitor retains each partial window through fresh, stale and missing readings", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const baseline = await (await request.get("/api/monitor")).json();
+  const [first] = baseline.seats as Seat[];
+  expect(first, "the fixture supplies a configured seat").toBeTruthy();
+  let quota: Json = { known: false };
+  await page.clock.install();
+  await page.route("**/api/monitor*", (route) => route.fulfill({ json: {
+    ...baseline, seats: [{ ...first, quota }],
+  } }));
+  const card = page.getByRole("region", { name: first!.label, exact: true });
+  const noReading = card.getByText(/^No reading\./);
+  const stale = card.getByText("Stale", { exact: true });
+  await walk.open("/monitor");
+  await walk.state("01-no-figures", {
+    visible: [noReading], hidden: [card.locator(".monitor-age"), card.locator(".monitor-meter"), stale],
+  });
+
+  const cases = [
+    { state: "seven-day-only", reading: { five_hour: null, seven_day: 12 }, name: "7-day", percent: 12, absent: "5-hour" },
+    { state: "five-hour-only-zero", reading: { five_hour: 0, seven_day: null }, name: "5-hour", percent: 0, absent: "7-day" },
+    { state: "named-secondary-only", reading: { primary_used: null, secondary_used: 12, secondary_window_minutes: 90 }, name: "90-minute", percent: 12, absent: "first" },
+    { state: "named-primary-only-zero", reading: { primary_used: 0, secondary_used: null, primary_window_minutes: 2880 }, name: "2-day", percent: 0, absent: "second" },
+  ];
+  for (const [i, example] of cases.entries()) {
+    const reset = Math.floor(Date.now() / 1000) + 86400;
+    quota = {
+      ...example.reading, known: true, at: Math.floor(Date.now() / 1000),
+      five_hour_resets: reset, seven_day_resets: reset,
+      primary_resets: new Date(reset * 1000).toISOString(), secondary_resets: new Date(reset * 1000).toISOString(),
+    };
+    const visible = [card.getByText(example.name, { exact: true }), card.getByText(`${example.percent}%`, { exact: true }),
+      card.getByText(`No ${example.absent} window reported.`, { exact: true }), card.getByText(/^resets in/), card.locator(".monitor-age")];
+    await walk.state(`${i + 2}a-${example.state}`, {
+      action: () => page.clock.fastForward(20_001), visible, hidden: [noReading, stale],
+    });
+    await expect(card.locator(".monitor-meter")).toHaveCount(1);
+    await expect(card.locator(".meter-reserve")).toHaveCount(1);
+    await expect(card.locator(".meter-fill")).toHaveAttribute("style", `width: ${example.percent}%;`);
+    await fitsInViewport(page);
+
+    quota = { ...quota, known: false, stale: true, at: Math.floor(hoursAgo(2).getTime() / 1000) };
+    await walk.state(`${i + 2}b-${example.state}-stale`, {
+      action: () => page.clock.fastForward(20_001),
+      visible: [...visible, stale, card.getByText("reading 2h old", { exact: true })], hidden: [noReading],
+    });
+    await expect(card.locator(".monitor-meter[data-stale]")).toHaveCount(1);
+    await fitsInViewport(page);
+  }
+
+  // Reset metadata and a stale flag alone do not create a reading or an absent-window row.
+  quota = { ...quota, primary_used: null, secondary_used: null };
+  await walk.state("06-no-figures-removes-stale-reading", {
+    action: () => page.clock.fastForward(20_001), visible: [noReading],
+    hidden: [card.locator(".monitor-age"), card.locator(".monitor-meter"), card.getByText(/window reported/), card.getByText(/^resets in/), stale],
+  });
 });

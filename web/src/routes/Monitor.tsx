@@ -74,7 +74,7 @@ function readingAge(at: unknown): string {
 
 interface SeatWindow {
   name: string;
-  percent: number;
+  percent: number | null;
   resets: string;
 }
 
@@ -85,28 +85,23 @@ interface Seat {
   /** Null when the seat has never been read; then `fix` says what produces a reading. */
   windows: SeatWindow[] | null;
   fix: string;
-  /** The seat reports one window and no second one: absent, never zero. */
-  secondAbsent: boolean;
 }
 
 /** The windows a reading names, in the order it names them; null when it carries no figure at all. */
 function windowsOf(quota: MonitorSeat["quota"]): SeatWindow[] | null {
   const five = num(quota.five_hour);
   const seven = num(quota.seven_day);
-  if (five != null && seven != null) {
-    return [
+  const primary = num(quota.primary_used);
+  const secondary = num(quota.secondary_used);
+  const windows = five != null || seven != null
+    ? [
       { name: "5-hour", percent: five, resets: resetText(quota.five_hour_resets) },
       { name: "7-day", percent: seven, resets: resetText(quota.seven_day_resets) },
+    ] : [
+      { name: primary == null ? "first" : windowName(quota.primary_window_minutes), percent: primary, resets: resetText(quota.primary_resets) },
+      { name: secondary == null ? "second" : windowName(quota.secondary_window_minutes), percent: secondary, resets: resetText(quota.secondary_resets) },
     ];
-  }
-  const primary = num(quota.primary_used);
-  if (primary == null) return null;
-  const windows = [{ name: windowName(quota.primary_window_minutes), percent: primary, resets: resetText(quota.primary_resets) }];
-  const secondary = num(quota.secondary_used);
-  if (secondary != null) {
-    windows.push({ name: windowName(quota.secondary_window_minutes), percent: secondary, resets: resetText(quota.secondary_resets) });
-  }
-  return windows;
+  return windows.some((window) => window.percent != null) ? windows : null;
 }
 
 /** One seat row as the card shows it, whichever seat sent it. */
@@ -119,7 +114,6 @@ function seatFor(row: MonitorSeat): Seat {
     stale: windows != null && !quota.known,
     windows,
     fix: capitalize(str(quota.why)) || "The seat has not been read yet.",
-    secondAbsent: windows != null && windows.length === 1,
   };
 }
 
@@ -135,6 +129,7 @@ function Meter({ percent, reserve, stale }: { percent: number; reserve?: boolean
 }
 
 function Window({ window, stale }: { window: SeatWindow; stale: boolean }) {
+  if (window.percent == null) return <p className="monitor-muted">No {window.name} window reported.</p>;
   return (
     <div className="monitor-window" data-stale={stale || undefined}>
       <div className="monitor-window-row">
@@ -165,7 +160,6 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
       ) : (
         <p className="monitor-muted">No reading. {seat.fix}</p>
       )}
-      {seat.secondAbsent ? <p className="monitor-muted">No second window reported.</p> : null}
     </section>
   );
 }
