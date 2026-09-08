@@ -180,6 +180,11 @@ def main(argv=None) -> None:
     wip.add_argument("--wip", type=int); wip.add_argument("--unset-wip", action="store_true")
     wip.add_argument("--routing", help="ordered engine[:model] tiers: comma ties, > lower priority")
     wip.add_argument("--unset-routing", action="store_true")
+    m = sub.add_parser("machine"); ms = m.add_subparsers(dest="mcmd", required=True)
+    ms.add_parser("show", help="inspect active/default concurrency limits and pending changes")
+    x = ms.add_parser("set"); x.add_argument("--reason", required=True)
+    wip = x.add_mutually_exclusive_group(required=True)
+    wip.add_argument("--wip", type=int); wip.add_argument("--unset-wip", action="store_true")
     sub.add_parser("state")
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
@@ -273,13 +278,25 @@ def main(argv=None) -> None:
         except OSError as exc:
             sys.exit(f"alt issue: altd unavailable: {exc}")
         return
+    if c == "machine":
+        from altitude import dispatch
+        if args.mcmd == "set":
+            out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
+        else:
+            out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
+                 "default": config.WIP_PER_MACHINE, "default_project": config.WIP_PER_PROJECT,
+                 "request": S.read_json(config.ROOT / "wip-request.json", None),
+                 "projects": {name: {"wip": config.project_wip(name), "override": entry.get("wip"),
+                                     "request": S.read_json(config.project_dir(name) / "wip-request.json", None)}
+                              for name, entry in config.load_projects().items()}})
+        return
     if c == "project":
         if args.pcmd == "set":
             from altitude import dispatch
             if ACTOR == "l3" and args.name != _project(args):
                 sys.exit("alt project set: the L3 socket fixes the project")
             setting = "routing" if args.routing is not None or args.unset_routing else "wip"
-            out(dispatch.request_project_setting(args.name, setting, getattr(args, setting), args.reason, actor=ACTOR))
+            out(dispatch.request_setting(args.name, setting, getattr(args, setting), args.reason, actor=ACTOR))
             return
         if args.pcmd == "discover":
             out(config.discover_projects())

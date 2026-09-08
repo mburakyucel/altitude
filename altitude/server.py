@@ -906,6 +906,7 @@ def tick() -> None:
     except Exception as e:  # noqa: BLE001
         log(f"[quota-codex] refresh failed: {e}")
     drain_hook_faults()
+    dispatch.run_settings()
     for project in list(_l3_verb_brokers):
         if not config.is_managed(project):
             remove_l3_verb_broker(project)
@@ -928,7 +929,7 @@ def tick_project(project: str) -> None:
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
     try:
-        dispatch.run_project_settings(project)
+        dispatch.run_settings(project)
         if l3.queue_path(project).exists():
             request_l3_drain(project)
         for slug in dispatch.pending_task_operations(project):

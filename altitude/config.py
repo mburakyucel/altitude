@@ -68,7 +68,7 @@ AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_
 CODEX_EFFORT = {"l3": None}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 WIP_PER_PROJECT = 8
-WIP_PER_MACHINE = 10
+WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30
@@ -77,6 +77,28 @@ PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
+
+
+def machine_settings() -> dict:
+    from . import state as S
+    return S.read_json(ROOT / "settings.json", {})
+
+
+def machine_wip() -> int:
+    return machine_settings().get("wip", WIP_PER_MACHINE)
+
+
+def project_wip(name: str) -> int:
+    return project(name).get("wip", WIP_PER_PROJECT)
+
+
+def validate_wip(value, *, project: bool = False) -> None:
+    if value is None:
+        return
+    if type(value) is not int or value < 1:
+        raise ValueError("WIP must be a positive integer")
+    if project and value > machine_wip():
+        raise ValueError(f"project WIP must be between 1 and {machine_wip()} (the configured machine cap)")
 
 
 def parse_routing(value: str) -> list[list[dict]]:
@@ -220,8 +242,7 @@ def add_project(name: str, *, path=None, approval="default", wip=None, **pins):
     path = Path(path or (PROJECT_ROOTS[0] / name)).expanduser()
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
-    if wip is not None and (type(wip) is not int or not 1 <= wip <= WIP_PER_MACHINE):
-        raise ValueError(f"WIP must be between 1 and {WIP_PER_MACHINE}")
+    validate_wip(wip, project=True)
     entry = {"path": str(path), "approval": approval, **({"wip": wip} if wip is not None else {}),
              **{key: value for key, value in pins.items() if value}}
     with S.project_lock(name):

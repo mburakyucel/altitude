@@ -28,6 +28,14 @@ bundles rewritten on every event, a resume path that killed its own worker on ev
 | 10 | **Operational settings are state behind reason-bearing verbs available to L3** (2026-09-07) | An operational cap changes through one recorded daemon command without a PR, restart, or free WIP slot. Source changes by L3 remain forbidden. |
 | 11 | **Running workers do not hold activation.** (operator, 2026-09-07) | A merged change activates as soon as no dispatch marker or resume claim, L3 turn, or report verification is in flight. Detached workers survive and are adopted after restart; running and blocked tasks are not a condition. New dispatches continue while activation is pending. Dispatch and L3 turns wait only from the restart unit request until the replacement daemon is ready, bounded by the ten-minute restart fault. The banner offers Restart at the same narrow quiet point. The failure prevented is the 2026-09-07 pipeline starvation: parallel running tasks kept activation pending for hours and queued tasks could not dispatch. |
 
+Decision 9 amendment — configurable concurrency (operator, 2026-09-08): the machine default is
+80, superseding decision 9's original 10; the project default remains 8. Both caps are persistent,
+user-configurable operational settings under decision 10, and 80 is not an immutable ceiling.
+Machine-wide changes require operator authority; a project's L3 can change its own project cap,
+and L2 cannot change either. Existing explicit project caps remain respected. Settings apply
+without a free WIP slot or service restart. Lowering caps preserves running work and holds new
+launches until capacity is available. This bounded feature is explicitly operator-authorized.
+
 Decision 11 correction — I-20260907-165145: both engines' L2 workers use independent transient units; a vanished worker without a report from its latest launch/resume raises a system fault.
 Decision 11 correction — I-20260907-171446: both engines run owned foreground CLI turns; shared-daemon background dispatch cannot establish per-task unit ownership, so launch and resume retire any same-name daemon job first.
 

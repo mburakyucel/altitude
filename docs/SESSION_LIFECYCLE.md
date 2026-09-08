@@ -49,7 +49,7 @@ queued task
   └─ bind its concrete session and worker → running
 ```
 
-WIP defaults to 8 running tasks per project and 10 across the machine. Shared lease paths do not
+WIP defaults to 8 running tasks per project and 80 across the machine. Shared lease paths do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
 landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
 informational overlaps; the lease remains the staging boundary enforced by `alt land`.
@@ -75,7 +75,18 @@ caps, including 3, persist. L3 can use `alt project set <name> --wip N --reason 
 `--unset-wip --reason "…"` for its own project, with N from 1 to the machine cap. The CLI persists
 the request and altd applies it on the next tick before capacity gates, with no task slot or restart
 needed. One project-level event records actor, reason and outcome; retries reuse the receipt and
-event while the configured WIP still matches. Project add and remove remain operator-only.
+event while the configured WIP still matches. The operator sets the aggregate cap with
+`alt machine set --wip N --reason "…"` or resets it to 80 with
+`alt machine set --unset-wip --reason "…"`. Any positive integer is supported for the machine,
+including values above 80. The same daemon settings implementation stores machine overrides and
+receipts persistently and drains them before project ticks. Machine changes and project add/remove
+are operator-only; an L2 cannot change scheduling limits. `alt machine show` displays active/default
+values, project overrides, and pending/completed receipts. See [concurrency commands](CLI.md#concurrency-limits).
+
+Lowering a project or aggregate cap preserves running workers and explicit project settings.
+Dispatch and due resumes wait until the running counts are below both effective limits. A project
+cap can exceed a machine cap lowered later; the aggregate gate still applies. Resetting a project
+restores 8 even if the machine cap is lower. Changes need no task slot or service restart.
 
 When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
 the provenance gate reads it, and announces activation pending if the pull carried loaded backend code

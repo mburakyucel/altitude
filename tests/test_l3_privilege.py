@@ -473,7 +473,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
             result = server.l3_verb_request(self.project, {
                 "kind": "alt", "args": ["project", "set", self.project, *options, "--reason", "test"]})
             self.assertEqual(result["returncode"], 0, result["stderr"])
-            dispatch.run_project_settings(self.project)
+            dispatch.run_settings(self.project)
             self.assertEqual(config.project(self.project).get("wip"), expected)
         events = [json.loads(line) for line in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
         self.assertEqual([(e["actor"], e["reason"]) for e in events], [("l3", "test")] * 2)
@@ -487,7 +487,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         args = ["project", "set", self.project, "--routing", "claude:opus", "--reason", "available account"]
         result = server.l3_verb_request(self.project, {"kind": "alt", "args": args})
         self.assertEqual(result["returncode"], 0, result["stderr"])
-        dispatch.run_project_settings(self.project)
+        dispatch.run_settings(self.project)
         self.assertEqual(config.project(self.project)["routing"], config.parse_routing("claude:opus"))
         for invalid in (args[:-2], [*args[:2], "other", *args[3:]]):
             result = server.l3_verb_request(self.project, {"kind": "alt", "args": invalid})

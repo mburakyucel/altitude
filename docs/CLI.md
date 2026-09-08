@@ -201,6 +201,46 @@ the project's **More actions** menu (`POST /api/project/remove` with `{"name":"<
 The existing folder-add flow (`POST /api/project/add`) attaches L3 again. `alt l3-reset` remains a
 separate conversation reset; it marks a session for rotation without disabling coordination.
 
+### Concurrency limits
+
+Defaults are **8 running L2 tasks per project and 80 across the machine**. The operator can inspect
+both scopes, including active values, defaults, explicit overrides and pending/completed requests:
+
+```sh
+alt machine show
+alt project list
+alt project set example --wip 12 --reason 'Allow more parallel tasks in this project'
+alt machine set --wip 120 --reason 'Allow more parallel tasks across this machine'
+alt project set example --unset-wip --reason 'Restore the project default of 8'
+alt machine set --unset-wip --reason 'Restore the machine default of 80'
+```
+
+`machine show` reports the effective machine `wip`, its `override` (null when inherited), `default`
+(80), `default_project` (8), and each project's effective `wip` and stored override. `request.status`
+shows whether a change is still `pending` or has completed. `project list` shows stored project
+configuration; a missing `wip` inherits 8. Registration accepts an explicit cap with
+`alt project add example --path /path/to/repo --wip 12`.
+
+Machine caps accept positive integers with no fixed ceiling of 80. Project caps accept positive
+integers up to the **currently effective** machine cap, so raise the machine cap first and wait for
+`machine show` to report it active before setting a larger project cap. Zero, negatives, fractions,
+booleans and nonnumeric values are rejected. Reset removes the selected override; existing explicit
+project caps remain respected, including an explicit 8 or 3.
+
+The operator runs machine commands from their own terminal. A project's L3 can set/reset its own
+project cap through its existing `alt project set` transport. L2 cannot change either cap; L3 cannot
+change the machine cap. A nonempty reason is required. The CLI queues one durable daemon request;
+altd applies it on its next tick, without a PR, service restart or free task slot. Repeat inspection
+to confirm `request.status: done` and the active value. Identical retries reuse the existing receipt
+and audit event while the stored setting still matches. The machine override is in
+`$ALTITUDE_HOME/settings.json`; requests and audit events use the same operational settings protocol
+as project caps. Use these commands to change settings.
+
+Lowering a cap lets running work continue. Queued tasks and due resumes wait until running counts
+are below both the project and machine caps. A lowered machine cap does not rewrite existing project
+overrides; it bounds their aggregate launches. A project reset restores 8 even when the machine cap
+is smaller. These limits count running tasks, not the engines' native helpers or L3 turns.
+
 ### Automatic routing preferences
 
 The operator and a project's L3 can set that project's shared Auto policy for L3 turns and fresh

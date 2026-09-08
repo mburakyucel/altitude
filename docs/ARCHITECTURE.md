@@ -144,7 +144,7 @@ A no-code research or proposal task can go directly from `running` to `done/arch
 refuses that shortcut when the task branch changed. Code work uses the verified report path.
 
 Queued tasks wait for WIP and engine availability gates. The default caps are 8 running tasks per
-project and 10 across the machine. Overlapping declared paths are information in task status and
+project and 80 across the machine. Overlapping declared paths are information in task status and
 briefs; they do not hold dispatch or resume. One provider's quota does not
 globally freeze the other. Blocked is a persisted wait/intervention state: an L2 question, a timed
 operational hold, a worker failure, a verifier fault, or a report gap. An L2's question goes to L3
@@ -154,16 +154,31 @@ the ones a fault had stopped. Deferral is not an active
 state: durable future work belongs in a GitHub issue, and the task exits the active set.
 
 Project registration stores `wip` only when explicitly supplied; the gate reads that override or
-`config.WIP_PER_PROJECT`. On the first registry load, a one-time migration removes stored caps equal
+`config.WIP_PER_PROJECT` (8). The aggregate gate reads `config.machine_wip()`, the persistent machine
+override or `config.WIP_PER_MACHINE` (80). Both dispatch and resume use these limits; status includes
+the effective aggregate cap and each project's cap. On the first registry load, a one-time migration removes stored caps equal
 to the legacy default of 3 and logs the affected projects, preserving approval and engine pins.
 `alt project set <name> --wip N --reason "…"` and `--unset-wip --reason "…"` are available to
-the operator and that project's L3; add and remove remain operator-only. Caps range from 1 to
-`WIP_PER_MACHINE`. Altd applies the durable `wip-request.json` before task dispatch on its next tick,
+the operator and that project's L3; add and remove remain operator-only. Project caps are positive
+integers up to the effective configured machine cap at registration or request time.
+`alt machine set --wip N --reason "…"` and `--unset-wip --reason "…"` use the same settings request
+and receipt implementation, with operator-only authority and a positive integer machine cap;
+80 is a default, not a fixed ceiling. The machine override lives in `$ALTITUDE_HOME/settings.json`;
+its `wip-request.json` and `events.jsonl` live alongside it. The machine event kind is `machine-set`.
+Altd drains machine requests before project ticks, including when no projects are registered.
+Altd applies each project's durable `wip-request.json` before task dispatch on its next tick,
 regardless of task capacity, and records one `project-set` event with project, actor, reason, request
 id and outcome in the project's `events.jsonl`. Identical pending requests and completed retries
 whose WIP receipt still matches reuse the request and event. CLI and HTTP registration, removal,
 engine pins and operational settings serialize registry writes under the project and registry locks.
 Re-registering a project is the operator's deliberate act, and the last registry write wins.
+
+Settings take effect without a PR, service restart or free WIP slot. Lowering a cap never terminates
+workers or rewrites explicit project overrides, including overrides above a subsequently lowered
+machine cap. Both gates must have capacity for a new launch; queued tasks and due resumes wait
+until running counts fall below both caps. Reset removes only the selected override and restores
+its default. `alt machine show` inspects active caps, defaults, overrides and request receipts;
+see [inspect/set/reset examples](CLI.md#concurrency-limits).
 
 Auto preference tiers use the same reason-bearing operational path:
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`, or
