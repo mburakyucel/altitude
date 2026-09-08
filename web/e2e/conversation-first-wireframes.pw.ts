@@ -78,6 +78,7 @@ test("conversation-first proposal: decisions and discussion", async ({ page }, i
     visible: [page.getByText("7 days approved by you · 10:49", { exact: true }), page.getByText("Work resumed", { exact: true }).last()], hidden: [accept],
   });
   await walk.state("09-evidence", { action: () => page.getByText("Activity & evidence", { exact: true }).click(), visible: [page.getByRole("link", { name: "PR #42", exact: true })], hidden: [] });
+  await expect(page.getByRole("link", { name: "PR #42", exact: true })).toHaveAttribute("target", "_blank");
   await walk.open(route("Stale"));
   await walk.state("10-resolved-elsewhere", { visible: [page.getByText("This question was resolved in another conversation.", { exact: true })], hidden: [accept] });
   await walk.open(route("NeedsYou") + "?reset");

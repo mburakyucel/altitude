@@ -28,6 +28,7 @@ CSS = r"""
 .cf-summary{border-left:2px solid var(--border);padding:4px 0 4px 14px;color:var(--text-secondary);font-size:14px}
 .cf-details{font-size:13px;color:var(--text-muted)}.cf-details summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px}.cf-details summary::before{content:'›';font-size:20px}.cf-details[open] summary::before{content:'⌄'}
 .cf-evidence{border:1px solid var(--border);background:var(--page);border-radius:10px;padding:14px;color:var(--text-secondary)}
+.cf-evidence a{text-decoration:underline;text-underline-offset:2px}
 .cf-compose-wrap{flex-shrink:0;padding:12px 32px 24px}.cf-compose{max-width:700px;margin:auto;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:12px 12px 10px 18px;box-shadow:var(--shadow)}
 .cf-compose textarea{display:block;width:100%;border:0;outline:0;background:transparent;color:var(--text-primary);resize:none;font-size:15px;line-height:1.5;min-height:44px;max-height:140px;padding:0}.cf-compose textarea::placeholder{color:var(--text-muted)}
 .cf-compose-row{display:flex;align-items:center;justify-content:flex-end;gap:8px}.cf-icon{width:44px;height:44px;border:0;border-radius:50%;background:transparent;color:var(--text-secondary);display:inline-flex;align-items:center;justify-content:center}
@@ -115,7 +116,7 @@ def generate(out, board, icon):
         </article>'''
 
     def evidence(mobile):
-        return '<details class="cf-details"><summary>Activity &amp; evidence</summary><div class="cf-evidence"><p>10:38 · L2 checked rollback coverage.</p><p>10:40 · L3: The launch plan sets no retention window. This cost and rollback choice needs you.</p><p>10:47 · Checks finished after the question was asked.</p><p>Fictional reference: <a href="https://example.com/atlas/pull/42">PR #42</a></p></div></details>'
+        return '<details class="cf-details"><summary>Activity &amp; evidence</summary><div class="cf-evidence"><p>10:38 · L2 checked rollback coverage.</p><p>10:40 · L3: The launch plan sets no retention window. This cost and rollback choice needs you.</p><p>10:47 · Checks finished after the question was asked.</p><p>Fictional reference: <a href="https://example.com/atlas/pull/42" target="_blank" rel="noopener noreferrer">PR #42</a></p></div></details>'
 
     def compose(mobile, scene, state=""):
         drafts = {"Alternative": "Keep it for 14 days, then delete it. Go ahead.", "Clarify": "",
