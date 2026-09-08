@@ -1600,13 +1600,48 @@ class UpstreamUncertain(ValueError):
     """GitHub may have accepted publication; another create is unsafe."""
 
 
+def notify_upstream_issue(project: str, url: str, incident: str | None = None) -> None:
+    """Publication has succeeded; local queue availability cannot turn it into a failed publication."""
+    target = "altitude"
+    notice = {"status": "unavailable", "reason": "No registered local Altitude development project."}
+    try:
+        if config.is_managed(target):
+            with config.project_activity(target) as attached:
+                if not attached or not config.is_managed(target):
+                    raise ValueError("Local project removal is in progress.")
+                checkout = config.project_path(target)
+                origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                                        capture_output=True, text=True, timeout=10)
+                repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+                if repository and repository.lower() == url.lower().rsplit("/issues/", 1)[0]:
+                    notice = l3.queue_upstream_issue(target, url, checkout=checkout)
+                else:
+                    notice = {"status": "unavailable", "reason": "Local development repository does not match the issue."}
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        notice = {"status": "failed", "reason": "Issue publication is confirmed; local notification failed. "
+                  "Check local project/queue availability, then repeat the confirmed incident command; do not repost the issue."}
+    try:
+        if incident:
+            incidents.upstream_delivery(project, incident, notification=notice)
+        S.project_log(project, "upstream-notification", url=url, **notice)
+        if not incident and notice["status"] == "failed":
+            T.fyi(project, None, f"Upstream issue confirmed: {url}. Local notification failed; "
+                  "check local project/queue availability. Do not repost the issue.", actor="altd")
+    except (OSError, ValueError):
+        # #277: failure to record a local nudge must not invite another public issue creation.
+        log(f"Upstream issue confirmed: {url}. Local notification status could not be recorded; do not repost.")
+
+
 def issue_write(project: str, operation: str, body: str, *, actor: str,
                 incident: str | None = None, url: str | None = None, **fields) -> str:
     """Keep incident delivery at the existing issue authority and public-content boundary."""
     if actor not in ("l3", "operator"):
         raise ValueError("alt issue: not available to an L2 worker")
     if incident is None and url is None:
-        return _issue_write(project, operation, body, actor=actor, **fields)
+        result = _issue_write(project, operation, body, actor=actor, **fields)
+        if operation == "upstream":
+            notify_upstream_issue(project, result)
+        return result
     if operation != "upstream" or incident is None:
         raise ValueError("alt issue: tracking is only available on upstream reports; --url requires --incident")
     if any(fields.get(key) is not None for key in ("labels", "number", "reason")):
@@ -1615,6 +1650,7 @@ def issue_write(project: str, operation: str, body: str, *, actor: str,
     if previous["status"] == "confirmed":
         if url is not None and (not isinstance(url, str) or url.lower() != previous["url"].lower()):
             raise ValueError("alt issue upstream: incident already has a different confirmed URL; inspect its linkage")
+        notify_upstream_issue(project, previous["url"], incident)
         return previous["url"]
     if url is None and previous["status"] == "uncertain":
         raise ValueError("alt issue upstream: " + previous["reason"])
@@ -1654,6 +1690,7 @@ def issue_write(project: str, operation: str, body: str, *, actor: str,
     incidents.upstream_delivery(project, incident, expected=previous, outcome={
         "status": "confirmed", "url": url, "reason": "Verified upstream issue URL; reuse this report.",
         "incident": incident, "at": S.now(), "actor": actor})
+    notify_upstream_issue(project, url, incident)
     return url
 
 

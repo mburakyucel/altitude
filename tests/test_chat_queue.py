@@ -720,6 +720,68 @@ class TestChatQueue(AltitudeCase):
     def deliverable(self):
         return mock.patch.object(l3, "_select", return_value={"engine": "claude", "why": "test"})
 
+    def test_upstream_notification_uses_existing_queue_and_chat_without_task_association(self):
+        url = "https://github.com/fictional/altitude/issues/42"
+        row = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
+        waiting = self.chat_view()
+        self.assertEqual(waiting["queued"][0]["id"], row["message_id"])
+        self.assertNotIn("slug", waiting["queued"][0])
+        with self.deliverable(), mock.patch.object(engines, "claude_print", return_value=self.claude_result()):
+            server.drain_l3_queue(self.project)
+        view = self.chat_view()
+        self.assertEqual(view["queued"], [])
+        self.assertEqual([r["trigger"] for r in view["history"]], ["upstream-issue", "upstream-issue"])
+        self.assertIn(url, view["history"][0]["text"])
+        self.assertTrue(all("slug" not in r and "tasks" not in r for r in view["history"]))
+        self.assertEqual(S.list_tasks(self.project), [])
+        self.assertEqual(l3.queue_upstream_issue(self.project, url, checkout=self.repo)["status"], "received")
+        self.assertEqual(l3.queued(self.project), [])
+
+    def test_upstream_enqueue_failure_after_persistence_reuses_the_waiting_row(self):
+        url = "https://github.com/fictional/altitude/issues/42"
+        write = l3._write_queue
+        def persisted(*args):
+            write(*args)
+            raise OSError("Interruption after atomic enqueue")
+        with mock.patch.object(l3, "_write_queue", side_effect=persisted):
+            with self.assertRaises(OSError):
+                l3.queue_upstream_issue(self.project, url, checkout=self.repo)
+        first = l3.queued(self.project)[0]
+        retried = l3.queue_upstream_issue(self.project, url.upper(), checkout=self.repo)
+        self.assertEqual(retried["message_id"], first["id"])
+        self.assertEqual(len(l3.queued(self.project)), 1)
+
+    def test_upstream_claim_receipt_failure_preserves_queue_and_no_second_notification(self):
+        url = "https://github.com/fictional/altitude/issues/42"
+        row = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
+        with self.deliverable(), mock.patch.object(S, "project_log", side_effect=OSError("Receipt unavailable")):
+            with self.assertRaises(OSError):
+                l3.deliver_queued(self.project)
+        self.assertEqual(l3.queued(self.project)[0]["id"], row["message_id"])
+        # A saved claim with failed dequeue also leaves the same pending row recoverable.
+        with self.deliverable(), mock.patch.object(l3, "_write_queue", side_effect=OSError("Dequeue unavailable")):
+            with self.assertRaises(OSError):
+                l3.deliver_queued(self.project)
+        self.assertEqual(l3.queue_upstream_issue(self.project, url, checkout=self.repo), row)
+        with self.deliverable(), mock.patch.object(l3, "turn", return_value={"completed": True}) as turn:
+            l3.deliver_queued(self.project)
+            l3.deliver_queued(self.project)
+        turn.assert_called_once()
+        self.assertEqual(l3.queue_upstream_issue(self.project, url, checkout=self.repo)["status"], "received")
+
+    def test_upstream_claim_survives_exit_between_dequeue_and_chat(self):
+        url = "https://github.com/fictional/altitude/issues/42"
+        row = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
+        with self.deliverable(), mock.patch.object(l3, "turn", side_effect=SystemExit("Daemon exit before chat")):
+            with self.assertRaises(SystemExit):
+                l3.deliver_queued(self.project)
+        self.assertEqual(l3.queued(self.project), [])
+        self.assertEqual(l3.chat_history(self.project), [])
+        retried = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
+        self.assertEqual(retried["status"], "received")
+        self.assertEqual(retried["message_id"], row["message_id"])
+        self.assertEqual(l3.queued(self.project), [])
+
     def test_consecutive_chat_messages_fold_into_one_turn_and_server_rows_keep_their_own(self):
         for text, trigger in (("first", "chat"), ("second", "chat"), ("a fault", "incident"), ("third", "chat")):
             l3.queue_message(self.project, text, trigger=trigger, role="burak" if trigger == "chat" else "server")
