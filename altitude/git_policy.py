@@ -410,7 +410,7 @@ def _hook_pre_push(base: str) -> int:
 
 
 def _hook_reference_transaction(repo: Path, base: str, phase: str) -> int:
-    """Keep protected local branches pinned to their cached remote refs.
+    """Allow unchanged protected tips and moves to their cached remote refs.
 
     This covers fast-forward merge, reset, and branch-force paths that do not invoke pre-commit or
     pre-merge-commit. The service's supported self-deploy fast-forward remains allowed because its target is
@@ -424,7 +424,23 @@ def _hook_reference_transaction(repo: Path, base: str, phase: str) -> int:
         fields = line.split()
         if len(fields) != 3 or fields[2] not in protected:
             continue
-        _old, new, ref = fields
+        old, new, ref = fields
+        current = _run(repo, "rev-parse", "--verify", ref)
+        if current.returncode == 0 and new == current.stdout.strip():
+            # #291: pack-refs writes zero -> current, even over an older packed tip.
+            continue
+        if new == "0" * len(new) and old != "0" * len(old):
+            # #291: pruning removes only the loose copy after packing the same tip.
+            # Real deletion first prepares a zero -> zero packed removal, which
+            # must still be refused, even when the packed entry matches the loose one.
+            packed = _run(repo, "rev-parse", "--path-format=absolute", "--git-path", "packed-refs")
+            if packed.returncode == 0:
+                try:
+                    rows = Path(packed.stdout.strip()).read_text().splitlines()
+                except OSError:
+                    rows = []
+                if current.returncode == 0 and current.stdout.strip() == old and f"{old} {ref}" in rows:
+                    continue
         branch = protected[ref]
         remote = _run(repo, "rev-parse", "--verify", f"refs/remotes/origin/{branch}^{{commit}}")
         expected = (remote.stdout or "").strip() if remote.returncode == 0 else None

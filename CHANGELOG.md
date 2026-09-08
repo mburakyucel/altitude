@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Protected Git hooks allow reference packing, loose-copy pruning and fetch garbage collection
+  while main lags origin/main, preserving its tip and subsequent permitted fast-forward. Genuine
+  unauthorized protected branch moves and deletions remain blocked (#291).
 - Landing accepts a nonrequired skipped deployment with immutable condition
   `github.event_name != 'pull_request'` for an associated `pull_request` run. Required checks,
   exact candidate/source validation and at least one applicable passing check remain mandatory (#288).

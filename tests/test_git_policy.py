@@ -1,4 +1,5 @@
 """Repository policy tests use real repositories, refs, hooks, and pushes."""
+import json
 import shutil
 import subprocess
 import tempfile
@@ -52,6 +53,130 @@ class TestGitPolicy(unittest.TestCase):
         git("commit", "-q", "-m", "remote advance", cwd=other)
         git("push", "-q", "origin", "main", cwd=other)
         return git("rev-parse", "HEAD", cwd=other).strip()
+
+    def trace_reference_transactions(self):
+        """Record real Git input, then run the unchanged tracked hook executable."""
+        source = Path(__file__).resolve().parent.parent / "hooks"
+        hooks = self.tmp / "hooks"
+        hooks.mkdir()
+        trace = self.tmp / "transactions.jsonl"
+        trace.touch()
+        for name in git_policy.REQUIRED_HOOKS:
+            if name != "reference-transaction":
+                (hooks / name).symlink_to(source / name)
+        hook = hooks / "reference-transaction"
+        hook.write_text(
+            "#!/usr/bin/env python3\nimport json, subprocess, sys\n"
+            "data = sys.stdin.read()\n"
+            f"with open({str(trace)!r}, 'a') as f:\n"
+            "    f.write(json.dumps([sys.argv[1], data]) + '\\n')\n"
+            f"raise SystemExit(subprocess.run([{str(source / hook.name)!r}, *sys.argv[1:]], "
+            "input=data, text=True).returncode)\n"
+        )
+        hook.chmod(0o755)
+        git_policy.install_hooks(self.repo, hooks)
+        return trace
+
+    def assert_packing_preserves_lagging_main(self, *command, prune=True):
+        trace = self.trace_reference_transactions()
+        ref = "refs/heads/main"
+        for _ in range(2):  # First pack, then replace the stale packed entry after a fast-forward.
+            tip = self.git("rev-parse", ref).stdout.strip()
+            remote = self.advance_remote()
+            self.git("fetch", "-q", "origin", "main")
+            trace.write_text("")
+            self.git(*command)
+            self.assertEqual(self.git("rev-parse", ref).stdout.strip(), tip)
+            self.assertIn(f"{tip} {ref}\n", (self.repo / ".git/packed-refs").read_text())
+            self.assertEqual((self.repo / ".git" / ref).exists(), not prune)
+            rows = [(phase, *line.split()) for phase, data in
+                    map(json.loads, trace.read_text().splitlines()) for line in data.splitlines()]
+            zero = "0" * len(tip)
+            self.assertIn(("prepared", zero, tip, ref), rows)
+            if prune:
+                self.assertIn(("prepared", tip, zero, ref), rows)
+                self.assertIn(("committed", tip, zero, ref), rows)
+            self.git("merge", "--ff-only", "origin/main")
+            self.assertEqual(self.git("rev-parse", ref).stdout.strip(), remote)
+
+    def test_pack_refs_preserves_lagging_main_and_prunes_loose_copy(self):
+        self.assert_packing_preserves_lagging_main("pack-refs", "--all")
+
+    def test_pack_refs_no_prune_preserves_lagging_main(self):
+        self.assert_packing_preserves_lagging_main("pack-refs", "--all", "--no-prune", prune=False)
+
+    def test_gc_preserves_lagging_main(self):
+        self.assert_packing_preserves_lagging_main("gc")
+
+    def test_fetch_automatic_gc_packs_and_prunes_lagging_main(self):
+        trace = self.trace_reference_transactions()
+        tip = self.git("rev-parse", "main").stdout.strip()
+        prefix = str(self.repo / ".git/objects/pack/pack")
+        self.git("pack-objects", "--all", prefix)
+        remote = self.advance_remote()
+        self.git("fetch", "-q", "origin", "main")
+        self.git("pack-objects", "--all", prefix)
+        self.assertEqual(len(list((self.repo / ".git/objects/pack").glob("*.pack"))), 2)
+        self.git("config", "gc.autoPackLimit", "1")
+        self.git("config", "gc.autoDetach", "false")
+        trace.write_text("")
+        fetched = self.git("fetch", "origin", "main")
+        self.assertNotIn("failed", fetched.stderr)
+        rows = [line for phase, data in map(json.loads, trace.read_text().splitlines())
+                if phase == "prepared" for line in data.splitlines()]
+        self.assertIn(f"{'0' * len(tip)} {tip} refs/heads/main", rows)
+        self.assertIn(f"{tip} {'0' * len(tip)} refs/heads/main", rows)
+        self.assertFalse((self.repo / ".git/refs/heads/main").exists())
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), tip)
+        self.git("merge", "--ff-only", "origin/main")
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), remote)
+
+    def test_packing_from_linked_worktree_uses_common_packed_refs(self):
+        git_policy.install_hooks(self.repo)
+        worktree = self.tmp / "worktree"
+        self.git("worktree", "add", "-q", "-b", "topic", str(worktree))
+        tip = self.git("rev-parse", "main").stdout.strip()
+        remote = self.advance_remote()
+        self.git("fetch", "-q", "origin", "main")
+        git("pack-refs", "--all", cwd=worktree)
+        self.assertFalse((self.repo / ".git/refs/heads/main").exists())
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), tip)
+        self.git("merge", "--ff-only", "origin/main")
+        self.assertEqual(self.git("rev-parse", "main").stdout.strip(), remote)
+
+    def test_protected_ref_deletions_and_moves_remain_blocked_in_each_storage_form(self):
+        git_policy.install_hooks(self.repo)
+        self.git("checkout", "-q", "-b", "topic")
+        unauthorized = self.commit_file("topic.txt", "topic\n", "topic")
+        tip = self.git("rev-parse", "main").stdout.strip()
+        for storage in ("loose", "both", "packed", "stale-packed"):
+            if storage == "both":
+                self.git("pack-refs", "--all", "--no-prune")
+            elif storage == "packed":
+                self.git("pack-refs", "--all")
+            elif storage == "stale-packed":
+                tip = self.advance_remote()
+                self.git("fetch", "-q", "origin", "main")
+                self.git("update-ref", "refs/heads/main", tip)
+            for command in (("update-ref", "-d", "refs/heads/main"),
+                            ("update-ref", "-d", "refs/heads/main", tip),
+                            ("update-ref", "--no-deref", "-d", "refs/heads/main", tip),
+                            ("branch", "-D", "main"),
+                            ("update-ref", "refs/heads/main", unauthorized),
+                            ("branch", "-f", "main", unauthorized)):
+                with self.subTest(storage=storage, command=command):
+                    refused = self.git(*command, check=False)
+                    self.assertNotEqual(refused.returncode, 0)
+                    self.assertIn("protected branch update blocked", refused.stderr)
+                    self.assertEqual(self.git("rev-parse", "main").stdout.strip(), tip)
+            with self.subTest(storage=storage, command="transactional delete"):
+                refused = subprocess.run(
+                    ["git", "-C", str(self.repo), "update-ref", "--stdin"], text=True,
+                    input=f"start\ndelete refs/heads/main {tip}\nprepare\ncommit\n", capture_output=True,
+                )
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("protected branch update blocked", refused.stderr)
+                self.assertEqual(self.git("rev-parse", "main").stdout.strip(), tip)
 
     def test_inspection_does_not_fetch_and_reports_local_commits_oldest_first(self):
         initial = self.git("rev-parse", "HEAD").stdout.strip()

@@ -371,6 +371,15 @@ same guarded fast-forward that runs after a task lands, and it happens only when
 clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main checkout still refuses,
 unchanged and untouched.
 
+The reference-transaction hook allows writes that retain a protected ref's current logical tip,
+including `pack-refs` writes whose old object ID is zero. Loose-ref pruning is allowed only when
+its nonzero old tip matches both the current ref and its committed entry in the common
+`packed-refs` file. Git's files backend prepares genuine packed deletions as zero-to-zero updates
+before removing a loose copy; these remain blocked. Packing, repacking and fetch-triggered garbage
+collection therefore preserve a lagging main and permit its subsequent guarded fast-forward.
+Real-Git regressions exercise these transaction forms and deletion refusals in loose, packed and
+mixed storage, including linked worktrees.
+
 Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the
 publication and project locks, altd requires dirty main exactly at fetched `origin/main`, then
