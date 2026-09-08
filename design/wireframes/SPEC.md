@@ -38,7 +38,7 @@ use, and intuitive**. People understand where to click and where to go from the 
 without feeling lost. This central project tenet guides future iterations as the visual direction
 evolves.
 
-In the existing design review and [phone and desktop walkthrough](../../CLAUDE.md#ui), check that:
+In the existing design review and [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
 
 - Visual hierarchy makes the primary action clear; navigation and plain labels show where people
   are, where they can go, and what an action does.
@@ -247,7 +247,7 @@ opens the task page.
 States by task state: queued ("Queued · <hold>", where the hold is the queue's own reason: "waits
 for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
 for resume at <time>", or plain "waits for dispatch"; never a file lease, which the queue does not
-hold, decision 9); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
+hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
 on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
 operator ("Waits for your answer", amber dot, red when the task was stopped mid-task); blocked by a

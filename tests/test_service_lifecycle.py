@@ -26,7 +26,7 @@ class TestServiceLifecycle(unittest.TestCase):
 
 
 class TestDecision11WorkerContinuity(AltitudeCase):
-    """Decision 11: running workers do not hold activation (2026-09-07 queue starvation)."""
+    """Running workers do not hold activation (2026-09-07 queue starvation)."""
 
     def task(self, engine):
         task = T.new(self.project, f"Running {engine} worker", "Produce a proposal.")

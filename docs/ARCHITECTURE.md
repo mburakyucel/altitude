@@ -87,9 +87,15 @@ when available. An unknown Monitor model is an absent key rather than null.
 
 Both roles read two layers of rules. The personas in `personas/` are the global layer: how anyone
 works under Altitude on any project, carrying nothing project-specific. The repository's own
-instructions file — `CLAUDE.md`, or `AGENTS.md` where an engine reads that instead — is the project
-layer, owned by the operator of that repository and read first. Altitude's own `CLAUDE.md` is simply
-the project file of the project being built.
+instructions file is the project layer, owned by that repository's operator and read first.
+Altitude's [AGENTS.md](../AGENTS.md) is authoritative; root `CLAUDE.md` contains only `@AGENTS.md`,
+the native import that shares the same rules. The shared engine boundary selects root `AGENTS.md`
+when present, otherwise `CLAUDE.md`, and names its absolute path on every L2 launch/resume and L3
+turn. The instruction directs each role to follow references/imports and applicable directory rules.
+L2 resolves against its task worktree; L3 resolves against the registered repository while its cwd
+remains a disposable scratch directory. Discovery is repeated each turn, including native resumes.
+Repositories with only the legacy file are read as they stand; Altitude neither rewrites their files
+nor injects its own project policy. Brief boundary excerpts use that same rule-file selection.
 
 Everything that encodes the operator, their providers, or their hardware sits behind a named seam.
 The operator seam is one configured name and role, so personas, docs, and UI text say "the operator"
@@ -353,7 +359,7 @@ and service-status reads through the project-bound Unix socket; altd supplies th
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
-`alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the CLAUDE.md boundary, and record one project event with actor, title, and URL.
+`alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
 `alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
 or verified completion of an authorized delivery missing its closing link. L2 supplies the issue,
 merged PR and complete-scope evidence through its reply and report follow-ups; L3 verifies and closes
@@ -478,7 +484,7 @@ run stable data. Scripted engine replies exercise streaming, failures, retry and
 overlays remain for named UI loading and transport-error states. The service fixture does not
 start the production daemon or its timer and is cleaned up after each test. No routine test uses
 the operator's running service or launches a real worker. Live-provider validation is deferred
-under the operator's [testing decision](SIMPLIFICATION.md#working-rules-that-still-apply-to-every-pr);
+under the operator's [testing policy](../AGENTS.md#checks);
 the [coverage matrix](DEVELOPMENT.md#coverage-and-limits) identifies unproven external behavior.
 
 The same browser specs run at 390×844 with mobile user agent and touch and at 1440×900. The
@@ -742,4 +748,5 @@ read-only with the composer gone.
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
 that `git_policy` installs into every managed repository, the Claude inbox hook, and the statusline
-monitor. [SIMPLIFICATION.md](SIMPLIFICATION.md) records why the system has this shape.
+monitor. [AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages
+retain the system's operating decisions and rationale. Git history preserves completed migrations.

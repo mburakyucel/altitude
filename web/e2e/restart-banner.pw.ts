@@ -24,7 +24,7 @@ const pending = {
   files: ["web/src/routes/Monitor.tsx", "web/src/shell/RestartBanner.tsx"],
 };
 
-test("restart banner offers Restart at the narrow quiet point while workers run, and leaves when the new process answers (decision 11)", async ({ page }, info) => {
+test("restart banner offers Restart at the narrow quiet point while workers run, and leaves when the new process answers", async ({ page }, info) => {
   // Six reloads with a full overview read each: longer than Playwright's default 30s on a slow poll.
   test.setTimeout(120_000);
   const walk = walkthrough(page, info);

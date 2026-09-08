@@ -140,6 +140,12 @@ supplies execution tools, context management and native subagents; repository in
 skills and hooks shape how it works. Execution strategy stays with the owner rather than a
 prescribed sequence of specialist stages.
 
+Repository rules stay with each project. Altitude's authoritative rules are in [AGENTS.md](AGENTS.md);
+`CLAUDE.md` imports that file. Both engines receive an explicit instruction-file path on fresh and
+resumed L2/L3 turns, including L3's scratch directory outside the checkout. Projects with only
+`CLAUDE.md` remain supported without changing their files. Global personas contain role guidance;
+they do not carry Altitude's own project rules into other repositories.
+
 Both project roles can use one installed engine with Auto. Configure project preference tiers with
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`: commas tie options,
 and `>` puts the next tier below them. Auto chooses the highest available tier, compares meaningful
@@ -261,8 +267,8 @@ These repeated checks make no model calls. Live-provider validation is deferred;
 Daily preview readiness checkpoints and as-needed releases select a validated source version and curated notes;
 the operator decides whether to publish it. Merged changes continue activating automatically.
 
-The [simplification record](docs/SIMPLIFICATION.md) explains the project's design decisions and
-review rules. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;
+The [project rules](AGENTS.md#working-rules-for-every-pr) govern implementation and review;
+the architecture and lifecycle pages describe the current system. [Pull requests](https://github.com/mburakyucel/altitude/pulls) show current changes;
 [issue #219](https://github.com/mburakyucel/altitude/issues/219) tracks this onboarding milestone
 and the remaining repository-presentation work.
 

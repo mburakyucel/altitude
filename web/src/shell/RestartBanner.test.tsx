@@ -52,7 +52,7 @@ describe("RestartBanner", () => {
     expect(banner()).toBeNull();
   });
 
-  it("says what changed in words, that Altitude restarts at the next quiet moment, and offers Restart while a worker runs (decision 11)", async () => {
+  it("says what changed in words, that Altitude restarts at the next quiet moment, and offers Restart while a worker runs", async () => {
     mockFetch({ ...pending, waiting_for: [] });
     renderApp({ route: "/" });
     await screen.findByText(/Merged changes to the backend are waiting to activate\./);

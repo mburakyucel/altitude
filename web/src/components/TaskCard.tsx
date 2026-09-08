@@ -24,7 +24,7 @@ function oneSentence(text: string): string {
 }
 
 /** The queued meta from the queue's own hold text (§3.5): the WIP limit, an engine hold, a pending
- * activation, a resume checkpoint, or plain dispatch. Never a file lease (decision 9). */
+ * activation, a resume checkpoint, or plain dispatch. Overlapping file leases do not hold dispatch. */
 export function holdText(hold: string | null | undefined, why: string | null | undefined): string {
   if (!hold || hold === "ready for dispatch") return why === "resume" ? "waits for resume" : "waits for dispatch";
   const checkpoint = /^resume checkpoint (\S+)/.exec(hold);

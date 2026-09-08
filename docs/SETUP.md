@@ -44,7 +44,7 @@ tools are on the launch environment's PATH.
 
 Use a clean primary checkout of a small GitHub project you are comfortable giving the agent
 write access to through tasks. Replace the path below with your project; this does not create or
-clone one. Read its instructions file (`CLAUDE.md`, or `AGENTS.md` for the selected engine), and
+clone one. Read its instructions file (`AGENTS.md` when present, otherwise `CLAUDE.md`), follow its references/imports, and
 record its build/test and delivery expectations there if they are not already documented.
 
 ```sh

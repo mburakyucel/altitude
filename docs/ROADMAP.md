@@ -49,11 +49,12 @@ each OS. Clean-machine checks must cover authentication, existing Git hooks, fir
 and a checked task delivery. These projects are backlog, not prerequisites for reading the product
 walkthrough or claims of support already shipped.
 
-## Simplification (complete)
+## Pending command-surface decision
 
-The module-by-module simplification finished on 2026-09-03; [SIMPLIFICATION.md](SIMPLIFICATION.md)
-holds the decisions, the working rules that still apply, and the deletion ledger. Service lifecycle
-stays separate from ordinary source work and requires explicit authorization.
+The operator decides whether to remove retained commands without current callers:
+`task paths|brief|list`, `fyi`, `decisions`, `digest`, `monitor`, `dispatch`, `verify`, `poll`,
+`chat`, `l3-reset`, and `incident list`. Their retention is not authorization for unattended cleanup.
+Current project and review rules live in [AGENTS.md](../AGENTS.md); completed migrations live in Git history.
 
 ## Current product work
 
@@ -63,9 +64,8 @@ installation's product target and a fictional/redacted reproduction, and leaves 
 recovery in the affected project. Altitude's operator/coordinator selects implementation separately;
 there is no automatic upstream issue intake or cross-project repair.
 
-The product redesign, approved on 2026-09-05, replaced the 2026-09-03 wireframes under
-`design/wireframes/`; its `SPEC.md` governs the UI and lists the implementation slices, each one
-task. The durable backlog is GitHub issues selected by the operator. The current priorities are:
+The [UI specification](../design/wireframes/SPEC.md) governs the design and lists the implementation
+slices, each one task. The durable backlog is GitHub issues selected by the operator. The current priorities are:
 
 - expose a clear project overview of active work and items that need the operator;
 - make direct task conversation with the owning L2 simple and readable;

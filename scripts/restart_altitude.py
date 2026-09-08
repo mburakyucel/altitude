@@ -78,7 +78,7 @@ def require_deployed_checkout() -> None:
 
 
 def require_idle() -> None:
-    # Decision 11 (2026-09-07): detached workers survive; only launch/bind, L3 and report windows hold.
+    # 2026-09-07 queue starvation: detached workers survive; only launch/bind, L3 and report windows hold.
     # Ask the live daemon too: its L3 turns and verification are process-local, unlike task markers.
     if unit_properties().get("ActiveState") == "active":
         try:

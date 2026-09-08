@@ -19,6 +19,19 @@ from . import config, state as S
 
 logger = logging.getLogger(__name__)
 
+
+def repository_rules(repo: Path) -> Path | None:
+    """The project's shared rules, or its legacy native instruction file."""
+    return next((repo.resolve() / name for name in ("AGENTS.md", "CLAUDE.md")
+                 if (repo / name).is_file()), None)
+
+
+def repository_rule_prompt(repo: Path) -> str:
+    rules = repository_rules(repo)
+    return (f"[altitude] Before proceeding, read the repository rules at `{rules}` and follow their "
+            "references/imports and any applicable directory instructions.\n\n" if rules else "")
+
+
 L3_ALLOWED_TOOLS = ",".join((
     "Read", "Grep", "Glob",
     "Bash(alt project set *)", "Bash(alt state *)", "Bash(alt task new *)", "Bash(alt task reject *)",
@@ -1142,6 +1155,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
                   settings: Path | None = None, start_timeout: float = 15.0) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
+    prompt = repository_rule_prompt(cwd) + prompt
     if engine == "claude":
         # I-20260907-171446: retire daemon jobs bound to this name before launch or resume.
         for row in claude_agents():

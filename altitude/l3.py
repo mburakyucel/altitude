@@ -489,8 +489,9 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     directory = config.project_dir(project)
     lines = [f"[altitude] project={project} trigger={trigger} state_file={directory / 'STATE.md'} "
              f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)}"]
+    lines.append(engines.repository_rule_prompt(config.project_path(project)).rstrip())
     if fresh:
-        lines.append("[altitude] Fresh provider session. Read the state file first; it is durable project memory.")
+        lines.append("[altitude] Fresh provider session. Then read the state file; it is durable project memory.")
     lines.append("[altitude] Task dilemmas belong in the owning L2 conversation. For operator judgment, "
                  "use alt task escalate <slug> --question '<dilemma>' with --recommendation/--label/--why, "
                  "or --questions-file - with JSON on stdin: {\"questions\":[{\"id\":\"existing question id\","
