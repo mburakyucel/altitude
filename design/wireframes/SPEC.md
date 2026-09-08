@@ -162,6 +162,27 @@ phone a long-press shows it. The phone layout is portrait 390 wide only; landsca
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
 row while the operator is at the bottom; scrolling up leaves the reading position in place.
 
+Shared prose links apply to L3/L2 conversations, live session prose, folded/expanded system replies,
+decision questions, recommendations and follow-ups, and report notes, digest and prose fields.
+`PR #250` / `pull request #250` target the project's `/pull/250`; `issue #247` / bare `#247`
+target `/issues/247` (GitHub also resolves pull requests there). `owner/repo#247` targets that named
+repository, including when the current project has no GitHub origin. Repository context comes
+from `GET /api/project/<name>`, and each Needs you card uses its own project.
+
+| Reference state | Appearance and interaction |
+| --- | --- |
+| Plain references, saved or arriving | Accent text with underline; the whole reference is a native link. No mention lookup or loading indicator. |
+| Hover / keyboard focus / touch | Native pointer and link preview; the shared focus outline on keyboard focus. Enter or tap opens a new tab and leaves the conversation and draft in place. |
+| Existing URL or Markdown link | Keeps its label and destination, with one anchor and the same external-link behavior. |
+| Inline code / backtick or tilde fence | Code stays code, including unfinished fences while streaming; no reference links inside. Ordinary numbers remain text. |
+| Repository loading, absent, invalid, or failed | Prose remains readable; unqualified references stay text. Once metadata arrives they become links. Explicit cross-repository references and existing links remain usable. |
+| Empty prose | No links or extra controls; the containing view retains its empty state. |
+| Listening / denied | Reference rendering adds no microphone or permission state; the composer's states in §3.6 apply. |
+| After reload / project switch | Saved text is rendered with the displayed project's repository; no prior project's destination carries over. |
+
+Phone (390×844) and desktop (1440×900) evidence: `web/e2e/prose-references.pw.ts` uses
+`walkthrough.ts` and a disposable real service, with named metadata failure/delay overlays.
+
 Data: `GET /api/chat/<project>` → `history[]` rows `{at, role, text, trigger, engine, turn_id}`,
 `active {id, started_at, trigger}`, `queued[]`. Rows with `trigger == "chat"` are the conversation;
 every other trigger is a system turn. The assistant row of a turn that created tasks carries their

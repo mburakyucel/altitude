@@ -4,7 +4,7 @@ import { useTask } from "../data/api";
 import type { ChatMessage } from "../data/api";
 import { when } from "../data/observed";
 import { clock } from "./Bubbles";
-import { Prose, lastParagraph } from "./Prose";
+import { InlineProse, Prose, lastParagraph } from "./Prose";
 
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
@@ -175,7 +175,7 @@ function SystemCard({
               {fields.map((row) => (
                 <div key={row.label}>
                   <dt>{row.label}</dt>
-                  <dd>{row.value}</dd>
+                  <dd><InlineProse text={row.value} /></dd>
                 </div>
               ))}
             </dl>
@@ -235,7 +235,7 @@ export function SystemLine({
       <Dot trigger={turn.trigger} />
       <span className="sys-text">
         {withTime && at != null ? `${clock(at)} · ` : ""}
-        {text}
+        <InlineProse text={text} />
       </span>
       {turn.inProgress ? null : (
         <button type="button" className="link" onClick={() => setOpen(true)}>
