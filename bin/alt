@@ -20,7 +20,7 @@ L3_COMMANDS = {
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "list")),
+                                    "done", "list", "preserve-checkout")),
     *(("incident", name) for name in ("new", "amend", "list")),
 }
 
@@ -200,6 +200,8 @@ def main(argv=None) -> None:
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
     st.add_argument("slug"); st.add_argument("--reason", required=True)
+    pc = ts.add_parser("preserve-checkout", help="ask altd to stash dirty main for an unlaunched blocked task")
+    pc.add_argument("slug"); pc.add_argument("--reason", required=True)
     tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
@@ -301,9 +303,9 @@ def main(argv=None) -> None:
         p = _project(args); tc = args.tcmd
         if tc == "new":
             out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
-        elif tc == "reject":
+        elif tc in ("reject", "resume", "stop", "preserve-checkout"):
             from altitude import dispatch
-            out(dispatch.request_task_operation(p, args.slug, "reject", args.reason, actor=ACTOR))
+            out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR))
         elif tc == "block":
             if ACTOR == "l2":
                 attempt = os.environ.get("ALTITUDE_ATTEMPT")
@@ -327,17 +329,11 @@ def main(argv=None) -> None:
                 from altitude import incidents
                 out(incidents.system_fault(f"worker:{args.slug}", args.reason, project=p, task=args.slug)
                     or {"state": "blocked", "note": "this fault was already filed today; L3 was told once"})
-        elif tc == "resume":
-            from altitude import dispatch
-            out(dispatch.request_task_operation(p, args.slug, "resume", args.reason, actor=ACTOR))
         elif tc == "escalate":
             out(T.escalate(p, args.slug, args.question, actor=ACTOR))
         elif tc == "message":
             message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
             out(message)
-        elif tc == "stop":
-            from altitude import dispatch
-            out(dispatch.request_task_operation(p, args.slug, "stop", args.reason, actor=ACTOR))
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]
             if not declared:

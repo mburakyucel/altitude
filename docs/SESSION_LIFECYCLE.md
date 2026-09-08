@@ -47,6 +47,16 @@ hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto
 landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
 informational overlaps; the lease remains the staging boundary enforced by `alt land`.
 
+Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
+L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
+blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
+unstaged and untracked changes in a retained Git stash, and records `preserved_checkout` and a
+`checkout-preserved` event with its commit ID. Ignored files remain untouched. The operation uses
+the existing reason-bearing daemon request and identity fence and leaves the task blocked;
+an interrupted request refuses replay so it cannot accidentally stash later edits. The owner
+receives the snapshot ID through task status or an L3 message, applies it in the isolated worktree,
+reviews the changes and delivers a PR. See [the recovery procedure](CLI.md#dirty-checkout-recovery).
+
 A project stores a WIP cap only when explicitly configured. The first registry load removes legacy
 stored caps of 3 once and logs the migration, preserving approval and engine pins; later explicit
 caps, including 3, persist. L3 can use `alt project set <name> --wip N --reason "…"` or
@@ -119,7 +129,10 @@ message naming the choice and the note and requests the daemon resume, so the L2
 next checkpoint. A follow-up sent before choosing goes to the asker: to L3 as a chat turn that carries the task's slug
 (the prompt tells L3 the task stays blocked), or to the L2 as an ordinary task message, which resumes it like any
 other. An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
-On start, altd queues one message per project listing its active tasks, so L3 resumes what a fault had stopped.
+On start, altd queues one message per project listing its active tasks and unresolved faults. L3
+resumes only after observing that the cause is gone. A workerless `main-unpushed` task passes the
+checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,
+retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
 
 Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
 Sending a message does not automatically clear a merge hold. For the exact operator reply
