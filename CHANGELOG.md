@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Landing accepts a nonrequired skipped deployment with immutable condition
+  `github.event_name != 'pull_request'` for an associated `pull_request` run. Required checks,
+  exact candidate/source validation and at least one applicable passing check remain mandatory (#288).
 - Full Python, web, build and phone/desktop browser checks run with disposable fictional state
   and deterministic external-engine fixtures. Core task delivery, messaging/resume and failure
   paths have programmatic integration evidence; routine checks make no model calls.

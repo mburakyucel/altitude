@@ -1130,14 +1130,14 @@ class TestLand(AltitudeCase):
 
 
 class TestCheckEvidence(AltitudeCase):
-    """#266: real Git candidates and immutable workflow blobs through the shared GitHub transport."""
+    """#266/#288: real Git candidates and immutable workflow blobs through the shared GitHub transport."""
     git = TestLand.git
     clone = TestLand.clone
     advance_base = TestLand.advance_base
     leased_change = TestLand.leased_change
     workflow_path = ".github/workflows/checks.yml"
     condition = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    source = ("on: [pull_request, push]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
+    source = ("on: [pull_request, push, workflow_dispatch]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
               "    steps:\n      - run: echo tests\n  deploy:\n    if: " + condition
               + "\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n")
 
@@ -1174,7 +1174,7 @@ class TestCheckEvidence(AltitudeCase):
         self.evidence = json.loads((self.ghdir / "last_check_evidence.json").read_text())
         self.pr = self.evidence["pullRequest"]
         self.head, self.base = self.pr["headRefOid"], self.pr["baseRef"]["target"]["oid"]
-        self.pair = {"number": 101, "base": "main", "branch": "worktree-fix-x",
+        self.pair = {"number": 101, "base": "main", "branch": self.pr["headRefName"],
                      "base_sha": self.base, "head_sha": self.head}
 
     def contexts(self):
@@ -1333,7 +1333,7 @@ class TestCheckEvidence(AltitudeCase):
         with self.assertRaisesRegex(land.LandError, "incomplete"):
             self.classify()
 
-    def test_optional_canonical_push_only_job_does_not_block_successful_pr_checks(self):
+    def test_optional_inapplicable_job_does_not_block_successful_pr_checks(self):
         self.optional_deploy()
         self.assertEqual(self.classify(), "pass")
         result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
@@ -1342,6 +1342,42 @@ class TestCheckEvidence(AltitudeCase):
         query_calls = [a for a in self.gh_log() if a[:2] == ["api", "graphql"]]
         self.assertTrue(query_calls)
         self.assertTrue(all("owner=team" in a and "repo=demo" in a for a in query_calls))
+
+    def test_adopted_pr_with_inapplicable_job_merges_and_preserves_history(self):
+        self.git("push", "-q", "origin", "HEAD:proposal/external")
+        self.git("checkout", "-q", "main")
+        worktree = self.tmp / "task-worktree"
+        self.git("worktree", "add", str(worktree), "worktree-fix-x")
+        self.repo = worktree
+        task = S.load_task("demo", "fix-x")
+        task.update(worktree=str(worktree), branch="worktree-fix-x")
+        S.save_task("demo", task)
+        pull = json.loads((self.ghdir / "pr.json").read_text())
+        pull.update(url="https://github.com/team/demo/pull/101", headRefName="proposal/external",
+                    isCrossRepository=False, isDraft=False, reviewDecision="APPROVED")
+        S.write_json(self.ghdir / "pr.json", pull)
+        land.land("adopt assigned PR", cwd=self.repo, wait=0, adopt_pr=101,
+                  expected_head=self.head, reason="Assigned external PR with optional deployment")
+        receipt = S.load_task("demo", "fix-x")["adopted_pr"]
+        self.refresh()
+        self.optional_deploy()
+        self.assertEqual(self.classify(), "pass")
+        (self.ghdir / "merge_git.txt").touch()
+        result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["pr"], result["checks"], result["merged"]), (101, "pass", True))
+        self.assertEqual(S.load_task("demo", "fix-x")["adopted_pr"], receipt)
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{self.base} {self.head}")
+
+    def test_policy_required_skipped_job_cannot_be_excluded_by_optional_metadata(self):
+        self.optional_deploy()
+        base = self.pr["baseRef"]
+        for classic in (True, False):
+            with self.subTest(classic=classic):
+                base["branchProtectionRule"] = {"requiredStatusChecks": [{"context": "deploy", "app": None}]} if classic else None
+                base["rules"] = self.connection([] if classic else [{"type": "REQUIRED_STATUS_CHECKS",
+                    "parameters": {"requiredStatusChecks": [{"context": "deploy", "integrationId": None}]}}])
+                self.assertEqual(self.classify(), "skipped")
+                self.assertFalse(land.land("required deploy skipped", cwd=self.repo, wait=0, merge=True)["merged"])
 
     def test_required_or_non_actions_skipped_job_remains_blocked(self):
         check = self.optional_deploy(required=True)
@@ -1445,6 +1481,16 @@ class TestCheckEvidence(AltitudeCase):
         S.write_json(self.ghdir / "checks.json", [{"bucket": "skipping"}])
         self.assertEqual(self.classify(), "skipped")
 
+    def test_inapplicable_job_does_not_hide_applicable_failure_or_pending_check(self):
+        self.optional_deploy()
+        check = self.contexts()["nodes"][0]
+        for status, conclusion, expected in (("COMPLETED", "FAILURE", "fail"), ("IN_PROGRESS", None, "pending")):
+            with self.subTest(expected=expected):
+                check.update(status=status, conclusion=conclusion)
+                self.assertEqual(self.classify(), expected)
+                result = land.land("applicable check is not green", cwd=self.repo, wait=0, merge=True)
+                self.assertEqual((result["checks"], result["merged"]), (expected, False))
+
     def test_buckets_without_candidate_evidence_cannot_enter_no_ci_fallback(self):
         self.pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
         for bucket in ("pass", "skipping"):
@@ -1460,6 +1506,28 @@ class TestCheckEvidence(AltitudeCase):
                 S.write_json(self.ghdir / "graphql_response.json", response)
                 with self.assertRaises(land.LandError):
                     self.classify()
+
+
+class TestPullRequestExcludedCheckEvidence(TestCheckEvidence):
+    """Run the same landing and evidence protections for the #288 condition."""
+    condition = "github.event_name != 'pull_request'"
+    source = TestCheckEvidence.source.replace(TestCheckEvidence.condition, condition)
+
+    def test_condition_true_for_target_or_push_run_cannot_exempt_skipped_job(self):
+        for event in ("pull_request_target", "push"):
+            with self.subTest(event=event):
+                self.optional_deploy(event=event, revision=self.base)
+                self.assertEqual(self.classify(), "skipped")
+                self.assertFalse(land.land("deployment was applicable", cwd=self.repo, wait=0, merge=True)["merged"])
+
+    def test_event_inequality_only_accepts_the_exact_pull_request_literal(self):
+        for condition in ("github.event_name != 'push'", "github.event_name != 'pull_request_target'",
+                          "github.event_name != inputs.event", "github.event_name != 'pull_request' && true"):
+            with self.subTest(condition=condition):
+                (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, condition))
+                self.refresh()
+                self.optional_deploy()
+                self.assertEqual(self.classify(), "skipped")
 
 
 if __name__ == "__main__":
