@@ -455,8 +455,10 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
         )
     task_ref = f"{project}/{slug}"
+    task = S.read_json(S.status_path(project, slug), {}) or {}
     missing = git_policy.commits_missing_task_trailer(
-        worktree, "main", task_ref, origin_sha=origin_sha
+        worktree, "main", task_ref, origin_sha=origin_sha,
+        adopted_head=(task.get("adopted_pr") or {}).get("head"),
     )
     if missing:
         sample = ", ".join(sha[:12] for sha in missing[:5])

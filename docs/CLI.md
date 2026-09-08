@@ -318,6 +318,67 @@ A message to a blocked task uses its durable inbox and `resume_after` handoff in
 worker in the caller. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
 
+### Adopt an existing PR
+
+The task owner or operator can explicitly adopt an assigned, open, same-repository PR targeting
+main. The task keeps its isolated worktree and `worktree-<slug>` branch. Its lease must include
+the original committed paths and the complete PR diff, as well as task edits. Adoption refuses
+another task's branch, foreign task trailers, unrelated local history and a PR already adopted
+by another active task. Fork PRs are not supported.
+
+From the task worktree, inspect the existing PR and its full history. For a fictional PR #42
+on `proposal/external`:
+
+```sh
+gh pr view 42 --json url,headRefName,headRefOid,baseRefName,isCrossRepository
+git fetch origin main proposal/external
+git log --oneline origin/main..origin/proposal/external
+git diff origin/main...origin/proposal/external
+git merge --ff-only origin/proposal/external
+alt land --adopt-pr 42 --expected-head <full-observed-head-sha> \
+  --reason "This task is assigned to reconcile the existing proposal" \
+  --message "docs: reconcile proposal" --paths docs/proposal.md --dry-run
+alt land --adopt-pr 42 --expected-head <full-observed-head-sha> \
+  --reason "This task is assigned to reconcile the existing proposal" \
+  --message "docs: reconcile proposal" --paths docs/proposal.md
+```
+
+Use the actual full SHA observed from the PR. The head must agree with origin and be an ancestor
+of local HEAD; already-present task-owned additions are allowed. If the local task branch has
+diverged, incorporate the inspected PR with a merge commit carrying the exact
+`Altitude-Task: <project>/<slug>` trailer. Never rewrite the original history. Add any reconciliation
+edits before landing; `alt land` stages only the lease and adds the trailer to its commit.
+
+The explicit command records one immutable `adopted_pr` receipt and `pr-adopted` event before
+publication, visible through `alt task status` and `alt task events`. `--dry-run` fetches and
+validates the PR but records nothing and stages/pushes nothing. After adoption, ordinary
+`alt land --message "…" [--merge]` reuses that PR and its original branch. Supply `--paths` again
+if it overrides the task's declared lease. Retrying adoption with the same original PR/head is
+idempotent; selecting another head or PR is refused. Later unowned commits cannot be adopted by
+repeating the command. If origin moves, inspect and incorporate only changes belonging to this
+task; unrelated history requires a separate ownership decision, not a broader adoption receipt.
+
+Complete the repository's applicable review before `--merge`. Drafts, requested changes and
+outstanding required reviews block adopted merges. Configured checks must pass; absent or skipped
+configured checks are not green. Where no CI is configured, use `--test-cmd "<full suite>"` if the
+default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
+owner and merge hold are rechecked before merging. The original branch receives only fast-forward
+pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
+branch deletion, so the repository must permit that merge method. Host-side branch deletion
+settings remain the repository operator's policy.
+
+When main advances, preserve the adopted commits with a task-owned merge commit:
+
+```sh
+git fetch origin main
+git merge --no-ff origin/main -m "Merge main for validation" \
+  -m "Altitude-Task: <project>/<slug>"
+```
+
+Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
+Task merge holds, recorded operator approval and the normal report/archive workflow also apply
+to adopted PRs.
+
 ### Recorded merge approval
 
 L3 can apply an existing operator authorization through its project-bound daemon connection:

@@ -235,6 +235,20 @@ Landing fetches the base and validates the current PR base/head pair. An owner w
 updating runs `git rebase origin/main` in the worktree; a conflict they cannot resolve goes to L3
 through an ordinary `alt task block`, without `--fault`.
 
+An owner assigned an existing external PR incorporates its history in the isolated task branch,
+then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
+Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
+The original unowned ancestors are accepted during landing and resumed-session provenance checks;
+later commits still need the exact task trailer, and foreign task trailers remain refused.
+The local task branch stays unchanged in identity while fast-forward pushes update the original
+PR branch. Merge main with a task-trailed merge commit when necessary to preserve the adopted
+commits. No adopted push uses force, and adoption never expands to a later external head.
+Review blockers, required checks and merge holds apply to the reused PR; the owner and hold are
+checked again immediately before merge. Recorded operator approval matches the adopted PR's
+number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains
+history without requesting deletion of the original branch. The normal report and archive path
+verifies delivery; adoption grants no authority over another project's task.
+
 ## Engine containment
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common
