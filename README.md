@@ -248,10 +248,17 @@ Existing stash records and stashes remain readable and recoverable. Ordinary dis
 requires clean main at `origin/main`; a restart does not clear an unresolved checkout fault.
 
 A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
-notification in the owning project. Repeated fault kinds are deduplicated within each project;
-another affected task still gets a coordinator notification. Repair-task faults do not wake the
+notification in the owning project. Unchanged saved blockers stay quiet across restarts and incident
+windows. Another affected task, a new blocker, or changed details still gets a coordinator notification.
+Repair-task faults do not wake the
 coordinator again. Machine faults without a project notify the registered `altitude` project, or
 remain in the machine fault ledger when it is absent.
+
+The originating coordinator checks public delivery evidence and local observations that the actual
+cause is gone before requesting a reason-bearing resume of the original session. Notification receipt,
+issue closure and unrelated restarts do not establish repair. Coordinator messages to faulted tasks
+remain readable without waking them; direct operator discussion remains available. Landing checks
+and merge holds still apply.
 
 A project's L3 reports an upstream Altitude defect with
 [`alt issue upstream`](docs/CLI.md#upstream-altitude-defects), supplying a fictional or redacted

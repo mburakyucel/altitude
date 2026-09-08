@@ -199,8 +199,9 @@ persists a cross-process claim and moves that claim's exact message batch out of
 messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
 for the running worker's next checkpoint. An explicit question block supersedes earlier wake requests:
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
-authorizes another turn. An L2's block goes to L3 first: L3's `alt task message` requests that
+authorizes another turn. An L2's question goes to L3 first: L3's `alt task message` requests that
 daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
+For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
 A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
@@ -227,7 +228,12 @@ dispatch and delivery use the existing paths, and the UI says the message waits 
 An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
 On start, altd queues one message per project listing its active tasks, unresolved faults, and a bounded
 upstream-report summary with confirmed links and missing/failed/uncertain gaps. L3
-resumes only after observing that the cause is gone. A workerless `main-unpushed` task passes the
+uses that inventory without repeating unchanged blocker nudges. The originating L3 checks public
+delivery evidence and local observations that the actual cause is gone, then requests the existing
+reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
+repair. Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
+the saved block in place; they are readable in the conversation and delivered at a later supported
+resume. Operator discussion retains its ordinary wake behavior. A workerless `main-unpushed` task passes the
 checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,
 retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
 
@@ -283,9 +289,12 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 so the poll never reads the exiting worker as a death. A message or `alt task resume --reason …` brings the same
 session back; `alt task reject --reason …` ends the task and removes its worker in altd. An L2 that blocks with
 `--fault` takes the system-fault path instead of asking Burak: the task, incident, FYI and L3
-notification all stay in its project. Fault deduplication uses the source project and kind for a
-24-hour window; another task newly blocked by that kind in the same project still notifies its L3
-with the same project's incident reference. Repair-task faults (`--source recovery`) never wake L3
+notification all stay in its project. Incidents use the source project and kind for a 24-hour window;
+another task newly blocked by that kind or changed same-kind details still notify its L3 with the
+same incident reference within the window. Each task retains its full fault reason, so unchanged
+saved observations stay quiet across restarts and later windows. A changed blocker supersedes a
+resume based on older evidence; an unchanged observation preserves a supported recovery request.
+Repair-task faults (`--source recovery`) never wake L3
 again. Faults without a project notify registered `altitude`, or only update the machine fault
 ledger if it is absent. A failed resume blocks the task with an incident and leaves the provider
 conversation to its project's L3. A project's L3 reports an upstream Altitude defect through

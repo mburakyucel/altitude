@@ -177,3 +177,18 @@ class TestL3Continuity(AltitudeCase):
         text, _ = self.turn("other-project-current", "claude", project=other)
         self.assertIn("only-in-other-project", text)
         self.assertNotIn(f"only-in-{self.project}", text)
+
+    def test_recovery_guidance_reaches_fresh_and_resumed_sessions_on_incidental_turns(self):
+        for engine in config.ENGINES:
+            project = f"recovery-{engine}"
+            self.register(project)
+            for trigger in ("restart", "incident", "chat"):
+                with self.subTest(engine=engine, trigger=trigger):
+                    text, resume = self.turn("Review current observations.", engine, project=project, trigger=trigger)
+                    self.assertEqual(resume is None, trigger == "restart")
+                    self.assertIn("Saved blockers in state or restart inventory are observations, not new failures", text)
+                    self.assertIn("Do not re-report or repeat waiting nudges for unchanged blockers", text)
+                    self.assertIn("Notification receipt, issue closure and unrelated restart never prove repair", text)
+                    self.assertIn("Check public delivery evidence and local observations that the actual cause is gone", text)
+                    self.assertIn("alt task resume <slug> --reason", text)
+                    self.assertIn("Coordinator messages to faulted tasks are non-waking", text)

@@ -8,7 +8,8 @@ import threading
 import unittest
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase
+from tests.support import ALT, AltitudeCase, make_repo
+from tests.fakes import FakeL2
 from altitude import config, dispatch, engines, incidents, l3, server, state as S, tasks as T
 
 
@@ -35,6 +36,122 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         S.save_task(self.project, task)
         S.append_event(self.project, self.slug, "state", frm="running", to="blocked", by="l2", reason="Need an answer.")
         self.setenv("ALTITUDE_ACTOR", "l3")
+
+    def test_fault_waiting_messages_stay_quiet_and_operator_discussion_still_wakes(self):
+        incidents.system_fault("fixture-fault", "Local operation still fails", project=self.project, task=self.slug)
+        blocked = S.load_task(self.project, self.slug)
+        messages = []
+        for text in ("The receiving coordinator was notified.", "The upstream issue is closed.",
+                     "An unrelated restart has finished; the local operation still fails."):
+            row = cli(["--project", self.project, "task", "message", self.slug, text])
+            self.assertIs(row["wake"], False)
+            messages.append(row)
+            self.assertEqual(dispatch.resume_due(self.project), [])
+            self.assertEqual(S.load_task(self.project, self.slug), blocked)
+        self.assertEqual(T.pending(self.project, self.slug), messages)
+        self.assertEqual(T.task_messages(self.project, self.slug), messages)
+        self.assertFalse(any(event["kind"] == "resume-requested"
+                             for event in S.read_events(self.project, self.slug)))
+
+        human = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Explain what remains blocked.")
+        self.assertEqual(dispatch.resume_due(self.project), [self.slug])
+        self.assertEqual(S.load_task(self.project, self.slug)["resume_request"], human["id"])
+        self.assertEqual(T.pending(self.project, self.slug), [*messages, human])
+
+    def test_nonwaking_message_stays_quiet_after_a_later_operational_block(self):
+        task = S.load_task(self.project, self.slug)
+        task.update(state="running", blocked_reason=None)
+        task.pop("waiting_on", None)
+        S.save_task(self.project, task)
+        row = T.message(self.project, self.slug, "l3", "Waiting status for the next checkpoint.", wake_blocked=False)
+        self.assertIs(row["wake"], False)
+        T.block(self.project, self.slug, "Worker stopped at its checkpoint", expected_state="running")
+        self.assertEqual(T.pending(self.project, self.slug), [row])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+        self.assertNotIn("resume_after", S.load_task(self.project, self.slug))
+
+    def test_verified_fault_resume_keeps_the_original_session_model_attempt_and_hold(self):
+        make_repo(self.repo)
+        self.quiet_engines()
+        worker = FakeL2()
+        worker.install(self)
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                queued = T.new(self.project, "Recover original session", "Continue after the local cause is repaired.",
+                               engine=engine, model="fixture-original-model", paths=["README.md"],
+                               hold_merge="Operator review remains required")
+                slug = queued["slug"]
+                dispatch.run(self.project, slug)
+                original = S.load_task(self.project, slug)
+                incidents.system_fault("fixture-fault", "Local operation failed", project=self.project, task=slug)
+                message = T.message(self.project, slug, "l3", "Public delivery is available; local verification is pending.")
+                self.assertEqual(dispatch.resume_due(self.project), [])
+                reason = "Verified public delivery and observed the affected local operation succeed."
+                request = dispatch.request_task_operation(self.project, slug, "resume", reason, actor="l3")
+                self.assertEqual(request["request"]["reason"], reason)
+                calls = len(worker.calls)
+                with mock.patch.object(dispatch, "wip_hold", return_value="project at WIP cap"):
+                    held = dispatch.run_task_operation(self.project, slug)
+                    self.assertEqual(held["request"]["status"], "executing")
+                    self.assertEqual(S.load_task(self.project, slug)["blocked_reason"],
+                                     "system fault [fixture-fault]: Local operation failed")
+                    dispatch.run_task_operation(self.project, slug)
+                    self.assertEqual(sum(event["kind"] == "resume-held" for event in S.read_events(self.project, slug)), 1)
+                self.assertIsNone(incidents.system_fault("fixture-fault", "Local operation failed",
+                                                         project=self.project, task=slug))
+                self.assertEqual(S.load_task(self.project, slug)["block_id"], request["request"]["block_id"],
+                                 "rereading the unchanged saved blocker preserves the verified recovery request")
+                self.register(self.project, routing=[[{"engine": engine, "model": "fixture-new-default"}]])
+                result = dispatch.run_task_operation(self.project, slug)
+                self.assertEqual(result["request"]["status"], "done")
+                resumed = S.load_task(self.project, slug)
+                self.assertEqual(resumed["state"], "running")
+                for key in ("l2_engine", "session_id", "launch_model", "attempt", "worktree", "branch", "hold_merge"):
+                    self.assertEqual(resumed[key], original[key], key)
+                self.assertNotEqual(resumed["agent_id"], original["agent_id"])
+                self.assertFalse(resumed.get("fault"))
+                self.assertEqual(len(worker.calls), calls + 1)
+                self.assertEqual((worker.calls[-1]["engine"], worker.calls[-1]["session_id"], worker.calls[-1]["model"]),
+                                 (engine, original["session_id"], "fixture-original-model"))
+                self.assertIn(message["text"], worker.calls[-1]["prompt"])
+                self.assertEqual(T.pending(self.project, slug), [])
+                self.assertEqual(dispatch.run_task_operation(self.project, slug)["request"]["id"], request["request"]["id"])
+                self.assertEqual(len(worker.calls), calls + 1, "a repeated daemon receipt does not relaunch")
+
+    def test_changed_fault_supersedes_a_queued_recovery_request(self):
+        incidents.system_fault("fixture-fault", "First observed cause", project=self.project, task=self.slug)
+        requested = dispatch.request_task_operation(self.project, self.slug, "resume", "First cause verified repaired", actor="l3")
+        incidents.system_fault("fixture-fault", "Changed local cause", project=self.project, task=self.slug)
+        changed = S.load_task(self.project, self.slug)
+        self.assertNotEqual(changed["block_id"], requested["request"]["block_id"])
+        with mock.patch.object(engines, "resume_l2") as launch:
+            result = dispatch.run_task_operation(self.project, self.slug)
+        launch.assert_not_called()
+        self.assertEqual(result["request"]["status"], "refused")
+        self.assertIn("block changed", result["request"]["note"])
+        self.assertEqual(S.load_task(self.project, self.slug)["blocked_reason"], "system fault [fixture-fault]: Changed local cause")
+        self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_changed_fault_discards_a_launched_claim_without_replacing_the_original_session(self):
+        incidents.system_fault("fixture-fault", "First observed cause", project=self.project, task=self.slug)
+        message = T.message(self.project, self.slug, "l3", "Waiting on a verified repair.")
+        claim = T.claim_resume(self.project, self.slug)
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launched", owner_pid=99999999,
+                              worker={"id": "unbound-replacement", "sessionId": "thread-old"})
+        incidents.system_fault("fixture-fault", "Changed local cause", project=self.project, task=self.slug)
+        with mock.patch.object(engines, "resume_l2") as launch, mock.patch.object(engines, "stop_l2_worker") as stop:
+            with self.assertRaisesRegex(dispatch.ResumeFailure, "no longer current"):
+                dispatch.resume(self.project, self.slug)
+        launch.assert_not_called()
+        stop.assert_called_once_with(S.load_task(self.project, self.slug)["l2_engine"], "unbound-replacement",
+                                     job_root=dispatch.l2_job_root(self.project, self.slug))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task["session_id"], task["agent_id"], task["attempt"]),
+                         ("blocked", "thread-old", "agent-old", 1))
+        self.assertEqual(task["blocked_reason"], "system fault [fixture-fault]: Changed local cause")
+        self.assertFalse(task.get("resume_claim"))
+        self.assertEqual(T.pending(self.project, self.slug), [message])
+        self.assertEqual(dispatch.resume_due(self.project), [])
 
     def test_l3_cli_saves_the_message_when_git_metadata_is_unavailable(self):
         unavailable = PermissionError(".git/FETCH_HEAD is read-only in the coordinator")
