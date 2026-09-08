@@ -379,6 +379,13 @@ Resolve conflicts in the task worktree, rerun applicable checks and review, and 
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
 
+If a task is already blocked on unowned PR history before its first adoption, resume still refuses
+that history. The operator can run the adoption command above from the task's registered worktree
+in their own shell, with `ALTITUDE_PROJECT=<project> ALTITUDE_TASK=<slug>` selecting the task.
+Adoption records the receipt without changing the blocked state; the coordinator then requests
+`alt task resume <slug> --reason "Existing PR adoption is recorded"`. A blocked worker cannot
+land, and coordinators cannot invoke landing. Activation alone does not adopt existing history.
+
 ### Recorded merge approval
 
 L3 can apply an existing operator authorization through its project-bound daemon connection:

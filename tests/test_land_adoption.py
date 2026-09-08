@@ -344,11 +344,17 @@ print('3 passed')
         self.git("merge-base", "--is-ancestor", self.original, "HEAD")
 
     def test_message_resume_keeps_adoption_and_original_session(self):
-        self.adopt()
         task = S.load_task("demo", "fix-x")
         task.update(state="blocked", session_id="existing-thread", agent_id="old-worker", l2_engine="codex",
                     blocked_reason="Waiting for review", waiting_on="l3")
         S.save_task("demo", task)
+        with self.assertRaisesRegex(land.LandError, "task is not running"):
+            self.adopt()
+        # Initial adoption of already-blocked history uses existing operator landing authority.
+        with mock.patch.dict(os.environ, {"ALTITUDE_ACTOR": "burak"}):
+            self.adopt()
+        task = S.load_task("demo", "fix-x")
+        self.assertEqual((task["state"], task["session_id"]), ("blocked", "existing-thread"))
         self.private_ledgers()
         self.quiet_engines()
         message = T.message("demo", "fix-x", "l3", "Review is ready", by="l3")

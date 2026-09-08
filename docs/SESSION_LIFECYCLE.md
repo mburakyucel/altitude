@@ -248,6 +248,9 @@ checked again immediately before merge. Recorded operator approval matches the a
 number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains
 history without requesting deletion of the original branch. The normal report and archive path
 verifies delivery; adoption grants no authority over another project's task.
+If the owner is already blocked before adoption, the operator records adoption through the same
+landing command in their own shell before the coordinator requests resume. Resume never supplies
+an adoption exception by itself, and adoption leaves the blocked state and provider session intact.
 
 ## Engine containment
 
