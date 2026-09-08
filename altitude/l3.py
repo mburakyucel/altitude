@@ -596,6 +596,9 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     lines = [f"[altitude] project={project} trigger={trigger} state_file={directory / 'STATE.md'} "
              f"tasks_dir={directory / 'tasks'} repo={config.project_path(project)}"]
     lines.append(engines.repository_rule_prompt(config.project_path(project)).rstrip())
+    lines.append("[altitude] In replies, briefs and summaries, preserve upstream references as full URLs "
+                 "or owner/repo#number. Bare #number refers to the current project; never guess the "
+                 "repository of ambiguous historical text.")
     if fresh:
         lines.append("[altitude] Fresh provider session. Then read the state file; it is durable project memory.")
     lines.append('[altitude] For earlier decisions beyond the handoff, use `alt l3 search "literal text"` '

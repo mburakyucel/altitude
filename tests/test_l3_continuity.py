@@ -56,6 +56,7 @@ class TestL3Continuity(AltitudeCase):
                     followup = "Please propose how to record this mechanism."
                     text, resume = self.turn(followup, engine, project=project)
                     self.assertIsNone(resume)
+                    self.assertIn("preserve upstream references as full URLs or owner/repo#number", text)
                     self.assertIn("Recent human conversation", text)
                     self.assertIn("historical context", text)
                     self.assertIn(f"- user: {discussion}", text)
@@ -68,6 +69,7 @@ class TestL3Continuity(AltitudeCase):
                     saved_sid = l3.info(project)["sessions"][engine]["session_id"]
                     text, resume = self.turn("Continue the proposal.", engine, project=project)
                     self.assertEqual(resume, saved_sid)
+                    self.assertIn("preserve upstream references as full URLs or owner/repo#number", text)
                     self.assertNotIn("Recent human conversation", text)
                     self.assertNotIn("Cross-provider chat", text)
                     self.assertNotIn(discussion, text)

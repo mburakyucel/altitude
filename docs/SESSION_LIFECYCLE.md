@@ -181,6 +181,9 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 Saved and arriving L3/L2 prose shares project-aware GitHub reference rendering across conversations,
 live sessions, decisions, and reports. The UI resolves `PR #250`, `issue #247`, and bare `#247`
 against `GET /api/project/<name>` repository metadata; `owner/repo#247` uses the named repository.
+Replies, briefs and summaries preserve upstream URLs or qualified references. Every L3 turn receives
+this guidance, including a resumed conversation; both role personas carry it. Ambiguous historical
+references retain their text rather than acquiring a guessed upstream identity.
 This is a read-time presentation of durable text: no message rewrite, provider request, or
 per-mention lookup occurs. Existing links and code remain intact, and missing repository metadata
 leaves unqualified references as text. Switching projects supplies the destination's repository.

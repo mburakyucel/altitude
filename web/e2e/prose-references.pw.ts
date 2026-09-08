@@ -15,6 +15,9 @@ async function savedReferences(scope: Locator, hasRepository = true) {
     else await expect(link).toHaveCount(0);
   }
   await expect(scope.getByRole("link", { name: "other/repo#12", exact: true })).toHaveAttribute("href", "https://github.com/other/repo/issues/12");
+  for (const label of ["example/altitude#247", "https://github.com/example/altitude/issues/247"]) {
+    await expect(scope.getByRole("link", { name: label, exact: true })).toHaveAttribute("href", "https://github.com/example/altitude/issues/247");
+  }
   await expect(scope.getByRole("link", { name: "review", exact: true })).toHaveAttribute("href", `${repository}/pull/251`);
   await expect(scope.getByRole("link", { name: `${repository}/issues/252`, exact: true })).toHaveAttribute("href", `${repository}/issues/252`);
   await expect(scope.locator("a a")).toHaveCount(0);
