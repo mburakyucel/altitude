@@ -1,0 +1,97 @@
+# Private-preview release checkpoints
+
+Altitude uses source releases for invited collaborators. A release identifies a validated commit
+and its notes. The operator decides when to publish it. No release or tag is created by running
+the test suite, merging a PR, or recording an Unreleased changelog entry.
+
+Merged changes activate through the existing [service lifecycle](OPERATIONS.md#service-lifecycle).
+That process continues while a release candidate is evaluated. A service can therefore run a
+newer commit than the latest published version. Release readiness and activation are separate;
+record the exact source SHA when reporting either. Packaging, public visibility and licensing
+remain separate [release prerequisites](ROADMAP.md#early-user-onboarding-and-public-release).
+
+## Cadence and versions
+
+During active preview development, check readiness daily and release a useful batch of fixes or
+features as soon as it is validated. Several patch releases in one day are reasonable when fixes
+warrant them; there is no weekly wait or mandatory overnight observation period. Every candidate
+passes the complete gate and targeted validation. Higher-risk lifecycle, permissions or storage
+changes include an observation interval chosen for their failure modes and recorded in the
+readiness record. A checkpoint can conclude that no release is ready. There is no scheduled
+publication, release branch or freeze of unrelated development.
+
+Tags are the source version authority: `v0.MINOR.PATCH`, beginning with `v0.1.0` when a first
+release is approved. Compatible fixes increment PATCH; features or breaking preview behavior
+increment MINOR and reset PATCH. Breaking behavior is described even during `0.x`. Candidate
+labels use `v0.1.0-rc.1`, incrementing `rc.N` when the candidate changes. Before tag publication,
+the candidate label is just a label in the readiness record. Never move a published tag.
+The web package's private build metadata is not a separate product version.
+
+## Candidate and release gates
+
+1. Select an exact commit already on `origin/main`. Record its SHA, proposed version, previous
+   release/known-good SHA and the PRs included since that point. Later main commits are outside
+   this candidate's evidence and notes. Use an isolated checkout for candidate testing.
+2. Require the complete deterministic gate: Python, web tests, typecheck/build and all applicable
+   phone/desktop browser cases. Record the successful CI run for that exact SHA, commands,
+   runtime/tool versions, executed counts, exceptions and artifacts. Missing, failed, canceled
+   or skipped required checks do not establish readiness. A changed candidate needs a new full
+   gate; a green run on an earlier SHA is not its validation.
+3. Review [journey coverage and limits](DEVELOPMENT.md#coverage-and-limits) for included changes.
+   Assert affected failure, retry, permission and terminal states programmatically. Fix material
+   findings or explicitly dismiss them with evidence. Record remaining external/host confidence
+   gaps rather than describing the preview as universally validated. Live-provider tests and
+   the real tiny task are deferred; they are not candidate gates under the current policy.
+4. Keep [Unreleased](../CHANGELOG.md) current in every behavior-changing PR. Prepare curated
+   notes with user-visible changes, compatibility/migration needs, known limitations and a
+   recovery plan. Review notes/artifacts for fictional or sanitized data; never publish runtime
+   conversations, credentials or private incident records. Docs describing behavior ship in
+   the same PR as that behavior.
+5. Record targeted validation and any applicable observation interval and results. When it is already activated, normal
+   use and existing API/UI health evidence can inform this record without starting model-using
+   validation tasks. Any changed code gives a new candidate and new evidence. A version's
+   notes and observations must identify which SHA was observed.
+6. Present the readiness record and proposed notes to the operator for the publication decision.
+   Approval names the version and SHA. Then deliver the dated changelog section through a PR
+   and publish the immutable source tag/GitHub release only as authorized. If that PR changes
+   the release SHA, repeat the deterministic gate on the final SHA before publishing it.
+   Use the same source for notes and tag; a private preview remains labeled as such.
+
+The readiness record can be a small file attached to the task report; it needs no new daemon
+record or release service. Include: version, candidate SHA, included PRs, previous known-good
+SHA, CI run and artifact links, test counts/timings, tested runtime/engine fixture formats,
+observation interval, compatibility/recovery notes, finding dispositions and publication decision.
+An example candidate command sequence, from an isolated checkout at the recorded SHA:
+
+```sh
+git rev-parse HEAD
+pnpm --dir web install --frozen-lockfile
+# Install the locked Chromium build as described in DEVELOPMENT.md.
+make check
+```
+
+This validates the selected source. It does not create a release, switch a deployment to that
+source or prove live provider compatibility.
+
+## Recovery
+
+The ordinary recovery is a checked revert or forward-fix PR to `main`, followed by normal
+automatic activation and verification of the affected API/UI behavior. Record the bad and
+known-good SHAs, the symptom, the recovery PR and its check/activation evidence. Keep main and
+its deployment checkout under the normal Git guards; do not reset that checkout to a tag or
+force-push a release rollback around the PR path.
+
+The restart helper stages/builds the web app and restores the prior web bundle if verification
+fails. That restores only the bundle: Python source, task records, conversations and provider
+sessions are not rolled back. Check state compatibility before reverting code. A forward fix
+is preferable when earlier code cannot read the current persisted records.
+
+Before publishing an incompatible storage change, its release owner documents the affected
+records and obtains explicit authorization for a consistent private backup and any lifecycle
+actions needed to take it. Include provider-owned data only when needed and permitted. Rehearse
+restoring that snapshot in disposable storage with the intended code version, verify representative
+task/message/archive reads and writes, and retain the private backup until recovery is verified.
+An actual restore needs separate authorization, a record of the current state it replaces and
+post-restore API/UI checks. Never overwrite live state from a test or infer that a code revert
+undoes its data changes. This test/release policy does not install a backup system or change
+activation, service permissions or state formats.

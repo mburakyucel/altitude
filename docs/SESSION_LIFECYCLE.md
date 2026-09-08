@@ -26,6 +26,13 @@ For first-run configuration, Auto preferences and explicit pins, see [setup](SET
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
 
+Repository validation uses deterministic fixtures at the external engine boundary: the
+[core journey tests](DEVELOPMENT.md#coverage-and-limits) retain real task state, routing,
+message/resume logic, API/storage and Git operations. Live-provider cases, including the real
+tiny task, are deferred by the operator's 2026-09-08 decision. Passing fixtures does not establish
+live CLI/authentication compatibility or host confinement. [Release checkpoints](RELEASING.md)
+identify validated source versions without changing the automatic activation lifecycle.
+
 The L2 learns its attempt from `ALTITUDE_ATTEMPT`. Replies, completion, and landing name it, so
 a worker of an earlier attempt cannot act for the current one. `ALTITUDE_SESSION_KEY` (`project--slug-attempt`)
 keys the edit-count telemetry across worker replacements.
@@ -238,10 +245,11 @@ Claude's confinement, while Codex retains its native filesystem sandbox.
 The September 7 coordinator outage is verified with the real Codex Linux sandbox, not profile assertions:
 `ALTITUDE_TEST_CODEX_SANDBOX=1 python3 -m unittest tests.test_l3_privilege` runs the broker transport tests
 and a native sandbox probe for checkout/state/Git writes and direct socket/HTTP access. The opt-in requires
-a working Codex installation and fails if sandbox initialization fails. A live acceptance run additionally
-starts a fresh L3 through the production launcher, observes a successful coordinator tool call and a
-cross-project refusal, and checks repository and user-bus denials from that session's shell. Activation
-uses the normal merged-change quiet point, followed by the same fresh-session acceptance check.
+a working Codex installation and fails if sandbox initialization fails. This host-capability
+probe makes no model calls and is separate from routine deterministic checks. Fresh live-session
+acceptance through the production launcher is deferred under the testing policy; deterministic
+transport and permission tests do not prove live-session confinement. Activation uses the normal
+merged-change quiet point and its existing API/UI health verification.
 
 An L3 session on either engine that predates this confinement policy is rotated before its next turn.
 The common session save records the version, so each engine then resumes its own current conversation.

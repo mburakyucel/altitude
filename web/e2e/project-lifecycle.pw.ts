@@ -1,34 +1,8 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { createInterface } from "node:readline";
-import { expect, test as base } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
-// Every mutation targets this test's disposable home and OS-selected loopback port, never UI_BASE_URL.
-const test = base.extend<{ service: string; single: boolean }>({
-  single: [false, { option: true }],
-  service: async ({ single }, use) => {
-    const child = spawn("python3", ["e2e/project-lifecycle-service.py", ...(single ? ["single"] : [])], { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (data) => { stderr += data; });
-    const lines = createInterface({ input: child.stdout });
-    try {
-      const ready = await Promise.race([
-        once(lines, "line"),
-        once(child, "exit").then(() => { throw new Error(`Disposable service exited: ${stderr}`); }),
-        new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error("Disposable service did not start")), 10_000); timer.unref(); }),
-      ]);
-      const data = JSON.parse(ready[0] as string);
-      expect(data.disposable).toBe(true);
-      expect(new URL(data.url).hostname).toBe("127.0.0.1");
-      await use(data.url as string);
-    } finally {
-      lines.close();
-      child.kill("SIGTERM");
-      if (child.exitCode === null) await once(child, "exit");
-    }
-  },
-});
+test.use({ scenario: "lifecycle" });
 
 test("removal detaches L3: confirm, cancel, denied, error, pending, navigation", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
@@ -69,6 +43,13 @@ test("removal detaches L3: confirm, cancel, denied, error, pending, navigation",
   const overview = await (await request.get(`${service}/api/overview`)).json();
   expect(overview.projects.find((project: { name: string }) => project.name === "sample-project").managed).toBe(false);
   expect((await request.post(`${service}/api/chat`, { data: { project: "sample-project", text: "Must be refused" } })).status()).toBe(409);
+  // Known HTTP semantics gap: detached project reads return 500; the UI below still explains detach.
+  // Assert it explicitly so the fixture's narrow expected-error allowance cannot conceal another failure.
+  for (const api of ["/api/project/sample-project", "/api/chat/sample-project?limit=60"]) {
+    const removed = await request.get(`${service}${api}`);
+    expect(removed.status()).toBe(500);
+    expect((await removed.json()).error).toContain("unknown project 'sample-project'; register it first");
+  }
   for (const suffix of ["", "/tasks/existing-work", "/tasks/existing-work/report"]) {
     await walk.open(`${service}/projects/sample-project${suffix}`);
     await walk.state(`10-old-route-${suffix.replaceAll("/", "-") || "project"}`, { visible: [page.getByRole("heading", { name: "Project not managed", exact: true })], hidden: [more, page.getByRole("textbox", { name: "Message L3 about sample-project" })] });

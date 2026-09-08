@@ -1,7 +1,8 @@
+import { test } from "./fixtures";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { expect, test } from "@playwright/test";
-import { liveProject, liveTask } from "./live-data";
+import { expect } from "@playwright/test";
+import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 // Read route declarations without importing React/browser modules into the test runner.
@@ -29,8 +30,8 @@ const routePaths = [...new Set(paths(source))];
 
 for (const route of [...routePaths, "/projects/:name?tab=work"]) {
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }, info) => {
-    const project = await liveProject(request, route === "/projects" || route === "/chat");
-    const task = route.includes(":slug") ? await liveTask(request, project.name) : undefined;
+    const project = await fixtureProject(request, route === "/projects" || route === "/chat");
+    const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     const url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
       .replace("*", "__ui_unknown_route__");

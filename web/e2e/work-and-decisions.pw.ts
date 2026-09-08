@@ -1,13 +1,13 @@
-import { expect, test, type APIRequestContext, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
-import { liveProject } from "./live-data";
+import { test } from "./fixtures";
+import { expect, type APIRequestContext, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
+import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 /**
  * Slice 3 (SPEC.md §3.5 task card, §3.7 work panel, §3.8 decision card, §3.9 decision page), every state
- * walked at 390 and 1440. The live service has no decision in its queue and cannot be asked to block a
- * task for the operator, so the decision states are overlaid on real records with page.route and named
- * "-overlay". Every POST /api/decide, /api/chat, and /api/l2/message is intercepted: nothing here decides,
- * stops, rejects, resumes, or messages a real task.
+ * walked at 390 and 1440 over fictional stored tasks. Named HTTP overlays produce presentation and
+ * transport states, intercepting writes in this spec. task-lifecycle.pw.ts covers actual persisted
+ * decisions, messages and requested resumes through the same isolated service.
  */
 
 type Row = Record<string, unknown> & { slug: string; title?: string; state?: string };
@@ -186,7 +186,7 @@ test.afterEach(async ({ page }) => page.unrouteAll({ behavior: "ignoreErrors" })
 const settles = (locator: Locator) => () => expect(locator).toBeVisible({ timeout: 30_000 });
 
 test("the work panel: live sections, the queued hold, Waits for L3, the fold, deciding, decided, failed, empty, loading", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const { tasks, archive } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
   expect(running, "The walkthrough needs one running task").toBeTruthy();
@@ -294,7 +294,7 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
 });
 
 test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, error, loading", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const { tasks } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
   expect(running, "The walkthrough needs one running task").toBeTruthy();
@@ -399,7 +399,7 @@ test("Needs you: empty, the cards with follow-ups, deciding, decided, failed, er
 });
 
 test("the decision page: ready, follow-up in flight and answered, to the L2, deciding, decided, gone, error, loading", async ({ page, request }, info) => {
-  const project = await liveProject(request);
+  const project = await fixtureProject(request);
   const { tasks, repository } = await liveRows(request, project.name);
   const running = tasks.find((t) => t.state === "running");
   expect(running, "The walkthrough needs one running task").toBeTruthy();

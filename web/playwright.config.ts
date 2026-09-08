@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { chromium, defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -10,13 +9,13 @@ export default defineConfig({
   reporter: [["list"], ["html", { outputFolder: "ui-artifacts/report", open: "never" }]],
   workers: 2,
   retries: 0,
+  forbidOnly: Boolean(process.env.CI),
   use: {
-    baseURL: process.env.UI_BASE_URL ?? "https://10.88.0.1:8890",
-    ignoreHTTPSErrors: true, // The local service uses its own CA.
+    // fixtures.ts supplies each test's disposable loopback service. No live-service fallback.
     browserName: "chromium",
     // I-20260907-041446: the host's installed Chrome profile denies sandboxed networking.
     // pnpm ui sets a shared, writable browser cache under the Altitude home before runner startup.
-    channel: existsSync(chromium.executablePath()) ? "chromium" : "chrome",
+    channel: "chromium",
     launchOptions: {
       chromiumSandbox: false,
       // Crashpad also needs a writable directory even with Playwright's temporary browser profile.
@@ -36,6 +35,6 @@ export default defineConfig({
         deviceScaleFactor: 1,
       },
     },
-    { name: "desktop", use: { viewport: { width: 1440, height: 900 } } },
+    { name: "desktop", grepInvert: /@phone-only/, use: { viewport: { width: 1440, height: 900 } } },
   ],
 });

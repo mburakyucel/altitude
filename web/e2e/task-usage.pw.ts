@@ -1,5 +1,6 @@
-import { expect, test } from "@playwright/test";
-import { liveProject, liveTask } from "./live-data";
+import { test } from "./fixtures";
+import { expect } from "@playwright/test";
+import { fixtureProject, fixtureTask } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
 // Real task/service data underlies each view. Only accounting observations and read failures are
@@ -16,8 +17,8 @@ const usage = (over: Record<string, unknown> = {}) => ({
 });
 
 test("task consumption: unknown, live, expanded, updated, stale, missing source, collapsed", async ({ page, request }, info) => {
-  const project = await liveProject(request);
-  const task = await liveTask(request, project.name);
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
   const path = `/projects/${project.name}/tasks/${task.slug}`;
   const walk = walkthrough(page, info);
   await page.clock.install();
@@ -61,8 +62,8 @@ test("task consumption: unknown, live, expanded, updated, stale, missing source,
 });
 
 test("final consumption remains in task and report with multiple engines and unsplit provider coverage", async ({ page, request }, info) => {
-  const project = await liveProject(request);
-  const task = await liveTask(request, project.name);
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
   const path = `/projects/${project.name}/tasks/${task.slug}`;
   const walk = walkthrough(page, info);
   const final = usage({ total_tokens: 1_800, input_tokens: 1_500, output_tokens: 300, finalized_at: "2026-09-01T12:00:00Z", checked_at: "2026-09-01T12:00:00Z" });
@@ -98,8 +99,8 @@ test("final consumption remains in task and report with multiple engines and uns
 });
 
 test("task usage waits for loading and recovers with the task read", async ({ page, request }, info) => {
-  const project = await liveProject(request);
-  const task = await liveTask(request, project.name);
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
   const path = `/projects/${project.name}/tasks/${task.slug}`;
   const walk = walkthrough(page, info);
   let release: () => void = () => {};

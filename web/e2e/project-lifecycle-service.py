@@ -1,19 +1,18 @@
 """Disposable, file-backed altd for destructive walkthroughs; only the provider is simulated."""
-import json
-from pathlib import Path
-import signal
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tests.support import SUITE  # isolates HOME/ALTITUDE_HOME before importing Altitude
-from altitude import config, engines, l3, server, state as S, tasks as T
+from service_support import configure, serve
+from altitude import config, engines, l3, state as S, tasks as T
 
 
 def main():
-    config.PROJECT_ROOTS = [SUITE / "projects"]
-    server.log = lambda *args: None
-    engines.claude_agents = lambda: []
-    l3._select = lambda *args: {"engine": config.ENGINES[0], "why": "disposable walkthrough"}
+    # Existing API semantics: racing reads after detach return unknown-project 500, while the UI
+    # shows Project not managed. The removal spec asserts that exact response; no other 500 is allowed.
+    configure(expected_error=lambda message: (
+        not config.is_managed("sample-project")
+        and message.startswith(("GET /api/project/sample-project: ", "GET /api/chat/sample-project?limit=60: "))
+        and 'KeyError: "unknown project \'sample-project\'; register it first (alt project add)"' in message
+    ))
 
     def answer(_prompt, **options):
         assert options.get("resume") == "fixture-saved-session", "reattachment must retain the provider session"
@@ -37,15 +36,7 @@ def main():
             T.reject(name, task["slug"], "already finished")
             l3.queue_message(name, "Saved queued request", trigger="chat", role="burak")
         S.regen_state_md(name)
-    httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
-    httpd.daemon_threads = True
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True}), flush=True)
-    try:
-        httpd.serve_forever()
-    finally:
-        server.stop_l3_verb_brokers()
-        httpd.server_close()
+    serve()
 
 
 if __name__ == "__main__":

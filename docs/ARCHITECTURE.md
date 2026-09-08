@@ -375,27 +375,35 @@ and finalization times. Lost logs and collection failures retain earlier evidenc
 never prevent delivery. A final read drains only a bounded backlog; unread evidence stays partial.
 See [the engine counting semantics](SESSION_LIFECYCLE.md#task-token-accounting).
 
-The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make test`
-runs Python unit and integration tests with throwaway state; `pnpm --dir web test` runs the web
-unit suite. `make ui` runs the separate Playwright `web/e2e/*.pw.ts` suite against a running
-service (`UI_BASE_URL`, default `https://10.88.0.1:8890`), including a Vite server with its API proxy
-or an independently populated throwaway altd. The smoke spec reads the route tree in
-`web/src/routes.tsx`, resolves dynamic parameters from real managed-project and task records, and
-checks rendered content, console/uncaught errors, API failures and viewport horizontal overflow.
-The same specs run at 390×844 with mobile user agent and touch and at 1440×900. Component specs use
-`walkthrough.ts` for actions, visible text/role assertions for appearances and removals, and named
-screenshots; `project-menu.pw.ts` demonstrates confirmation and cancellation without mutating state.
-`project-lifecycle.pw.ts` uses an isolated file-backed service and a simulated provider reply to walk
-removal and attachment again through First run, including pending, refused and failed actions.
-Screenshots, traces and the HTML report live in ignored `web/ui-artifacts/`. Bundled Chromium runs
-headlessly with a temporary profile and its browser sandbox disabled inside the worker sandbox.
-`pnpm ui` sets `PLAYWRIGHT_BROWSERS_PATH` to the Altitude home's shared `browsers/` directory unless
-overridden; one install serves every worktree using that browser version. Installed Chrome is the
-fallback only when the bundle is absent (its host profile denies networking in incident
-I-20260907-041446). [Development and checks](DEVELOPMENT.md) documents browser setup,
-target overrides and the human's headed mode; [operations](OPERATIONS.md) covers service activation
-and mobile access. The UI rule stays in the project instructions file,
-which both worker personas direct the task owner to read first.
+The web build uses pnpm's frozen lockfile and emits `web/dist/` through `make web`. `make check`
+runs Python, web unit tests, typecheck/build and the separate Playwright `web/e2e/*.pw.ts` suite.
+Python fixtures isolate runtime/provider homes and replace external engine execution and GitHub
+responses. Core integration tests retain real routing, dispatch, task transitions, HTTP handlers,
+file storage, locks and temporary Git repositories. Unexpected real provider/service execution
+is refused by the test bootstrap. This is test scaffolding, with no production test mode.
+
+Browser specs serve the candidate's built app through a disposable real Python HTTP handler on
+an OS-selected loopback port. Fictional projects, tasks, history and session records give every
+run stable data. Scripted engine replies exercise streaming, failures, retry and resume; API
+overlays remain for named UI loading and transport-error states. The service fixture does not
+start the production daemon or its timer and is cleaned up after each test. No routine test uses
+the operator's running service or launches a real worker. Live-provider validation is deferred
+under the operator's [testing decision](SIMPLIFICATION.md#working-rules-that-still-apply-to-every-pr);
+the [coverage matrix](DEVELOPMENT.md#coverage-and-limits) identifies unproven external behavior.
+
+The same browser specs run at 390×844 with mobile user agent and touch and at 1440×900. The
+smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
+failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
+appearing and disappearing, and saves named screenshots. Screenshots, traces and reports stay
+under ignored `web/ui-artifacts/` and are retained briefly as fictional CI artifacts. Bundled
+Chromium runs headlessly with a temporary profile and its browser sandbox disabled inside the
+worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
+timings and CI identity; [operations](OPERATIONS.md) covers service activation and mobile access.
+
+[Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
+published private-preview version and release notes. They add no runtime lifecycle state and
+do not gate automatic activation of merged changes. The UI and testing rules remain in the
+project instructions file, which both worker personas direct the task owner to read first.
 
 The Python server owns state transitions and JSON APIs. The React app is one shell around four
 pages, specified in `design/wireframes/SPEC.md`: Needs you at `/` (every decision across projects as

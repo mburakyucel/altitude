@@ -27,24 +27,31 @@ the same PR, in present tense. For Altitude-owned tasks, use the declared file l
 Invited human contributors should agree branch access with the maintainer; the current CI path
 tests branches in this repository and does not accept private-fork PRs.
 
-Every PR runs the full Python and web unit suites; build the UI to check TypeScript and bundling:
+Every PR runs the full Python and web suites, typecheck/build and isolated browser checks:
 
 ```sh
-make test
 pnpm --dir web install --frozen-lockfile
-pnpm --dir web test
-pnpm --dir web build
+# Install matching Chromium once, as described in Development and checks.
+make check
 ```
 
 [Development and checks](docs/DEVELOPMENT.md) covers temporary test state, restricted package
 stores, Vite and Playwright. UI changes also need the specified interaction states walked at
-phone and desktop sizes. Changes to dispatch, engines or landing need a real tiny task through
-chat, PR, checks, merge and archive, as required by the project rules.
+phone and desktop sizes. Changes to dispatch, engines or landing need deterministic integration
+evidence for the affected user flows and failure modes. Application logic, API/storage and Git
+stay real; external engine and GitHub effects use fixtures. Live-provider validation, including
+the real tiny task, is deferred under the operator's recorded testing policy.
 
 In the PR, describe the problem and resulting behavior, answer the seven review questions in at
 most fifteen lines, and include the relevant validation. Record material findings and their
-dispositions. CI currently runs Python; passing CI alone does not replace the local web suite.
+dispositions. CI runs the same checks against the exact candidate with isolated fictional state;
+missing or skipped required checks are not a passing gate. Describe what the evidence does and
+does not establish; do not replace behavioral assertions with a line-coverage percentage.
 Ordinary development does not restart deployed services; see [operations](docs/OPERATIONS.md).
+
+Add user-visible changes to [Unreleased](CHANGELOG.md) in the same PR. Private-preview
+[release checkpoints](docs/RELEASING.md) identify validated versions independently of automatic
+merged-change activation. Release publication requires the operator's explicit decision.
 
 ## Share useful evidence
 
