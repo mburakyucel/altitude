@@ -14,22 +14,25 @@ class TestRecordedMergeApproval(AltitudeCase):
         make_repo(self.repo)
         git("remote", "set-url", "origin", "git@github.com:team/project.git", cwd=self.repo)
         self.gh = self.fake_gh()
-        self.at = "2026-09-07T20:00:00+00:00"
         self.patch(S, "now", side_effect=lambda: self.at)
         self.patch(T, "_conversation_time", side_effect=lambda: self.at)
-        task = T.new(self.project, "Review narrative", "Revise the narrative", hold_merge="Review the story")
+        self.record_approval("You can merge it")
+
+    def record_approval(self, text, title="Review narrative"):
+        self.at = "2026-09-07T20:00:00+00:00"
+        task = T.new(self.project, title, "Revise the narrative", hold_merge="Review the story")
         self.slug = task["slug"]
         self.at = "2026-09-07T20:01:00+00:00"
         T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree=str(self.repo), branch="worktree-review-narrative")
+                   worktree=str(self.repo), branch=f"worktree-{self.slug}")
         self.pull = {"number": 235, "url": "https://github.com/team/project/pull/235", "state": "OPEN",
                      "isDraft": False, "isCrossRepository": False, "baseRefName": "main",
-                     "headRefName": "worktree-review-narrative", "headRefOid": "d" * 40,
+                     "headRefName": f"worktree-{self.slug}", "headRefOid": "d" * 40,
                      "updatedAt": "2026-09-07T20:02:00Z"}
         self.at = "2026-09-07T20:03:00+00:00"
         self.presentation = T.message(self.project, self.slug, "l2", f"Ready for review: {self.pull['url']}.")
         self.at = "2026-09-07T20:04:00+00:00"
-        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Good to merge")
+        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, text)
         self.at = "2026-09-07T20:05:00+00:00"
         T.block(self.project, self.slug, "Waiting for the recorded hold to be released")
         T.message(self.project, self.slug, "l2", "The approval is recorded; hold release needs the daemon.")
@@ -85,7 +88,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         foreign = T.new(self.project, "Another task", "Other work")
         T.dispatch(self.project, foreign["slug"], attempt=1, session_id="other", agent_id="other",
                    worktree=str(self.repo), branch="worktree-other")
-        other = T.message(self.project, foreign["slug"], T.OPERATOR_MESSAGE_ROLE, "Good to merge")
+        other = T.message(self.project, foreign["slug"], T.OPERATOR_MESSAGE_ROLE, "You can merge it")
         for identity in ("0" * 32, other["id"], self.presentation["id"]):
             with self.subTest(identity=identity):
                 args = self.args(); args[4] = identity
@@ -105,12 +108,47 @@ class TestRecordedMergeApproval(AltitudeCase):
         S.save_task(self.project, task)
         self.assertEqual(json.loads(self.request()["stdout"])["pr"], 235)
 
-    def test_exact_whole_operator_reply_is_required(self):
+    def test_standalone_authorizations_allow_case_and_terminal_punctuation(self):
+        for index, text in enumerate(("Good to merge", "good to merge.", "GOOD TO MERGE!",
+                                      "You can merge it", "you can merge it.", "YOU CAN MERGE IT!",
+                                      "  You can merge it.\n")):
+            with self.subTest(text=text):
+                self.record_approval(text, title=f"Review wording {index}")
+                conversation = (self.directory / "conversation.jsonl").read_bytes()
+                receipt = json.loads(self.request()["stdout"])
+                task = S.load_task(self.project, self.slug)
+                self.assertIsNone(task["hold_merge"])
+                self.assertEqual(task["merge_approval"], receipt)
+                self.assertEqual(receipt["approval"], self.approval["id"])
+                self.assertEqual((self.directory / "conversation.jsonl").read_bytes(), conversation)
+
+    def test_approval_from_another_project_cannot_authorize_the_same_task_slug(self):
+        self.register("foreign")
+        foreign = T.new("foreign", "Review narrative", "Other work", hold_merge="Other review")
+        self.assertEqual(foreign["slug"], self.slug)
+        T.dispatch("foreign", self.slug, attempt=1, session_id="other", agent_id="other",
+                   worktree=str(self.repo), branch=self.pull["headRefName"])
+        other = T.message("foreign", self.slug, T.OPERATOR_MESSAGE_ROLE, "You can merge it")
+        self.approval = other
+        self.refused("latest operator message")
+        with self.assertRaisesRegex(ValueError, "latest operator message"):
+            self.request(project="foreign", actor=T.OPERATOR_MESSAGE_ROLE, stdin="You can merge it")
+        self.assertEqual(S.load_task("foreign", self.slug)["hold_merge"], "Other review")
+
+    def test_ambiguous_negative_conditional_and_quoted_replies_preserve_hold(self):
         path = self.directory / "conversation.jsonl"
         original = path.read_text()
-        for text in ("Not good to merge", "Good to merge after tests", "He said 'Good to merge'", "good to merge"):
+        for text in ("", "Looks good", "Yes", "Maybe you can merge it", "You can merge it?",
+                     "Good to merge?", "Not good to merge", "You cannot merge it", "You can't merge it",
+                     "Do not merge it", "Good to merge after tests", "You can merge it after tests",
+                     "You can merge it if CI passes", "If CI passes, you can merge it",
+                     "You can merge it, but wait for review", "You can merge it. Wait for my review.",
+                     "You can merge it\nunless checks fail", "You can merge it...",
+                     "He said 'Good to merge'", '"You can merge it"', "> You can merge it"):
             with self.subTest(text=text):
-                path.write_text(original.replace('"text": "Good to merge"', json.dumps("text") + ": " + json.dumps(text)))
+                rows = [json.loads(line) for line in original.splitlines()]
+                rows[1]["text"] = text
+                path.write_text("".join(json.dumps(row) + "\n" for row in rows))
                 self.refused("latest operator message")
 
     def test_operator_identity_and_latest_message_are_required(self):
@@ -137,7 +175,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.at = "2026-09-07T20:06:00+00:00"
         T.message(self.project, self.slug, "l2", self.pull["url"])
         self.at = "2026-09-07T20:07:00+00:00"
-        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Good to merge", wake_blocked=False)
+        self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "You can merge it", wake_blocked=False)
         self.assertEqual(json.loads(self.request()["stdout"])["hold"], "Second review")
 
     def test_foreign_changed_closed_or_unavailable_pr_preserves_hold(self):

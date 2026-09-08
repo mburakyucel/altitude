@@ -1356,7 +1356,7 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                          reason: str, actor: str) -> dict:
     """Apply recorded operator authority; altd supplies the origin-bound GitHub observation.
 
-    I-20260907-205556: no caller prose grants approval. The exact operator reply must follow the
+    I-20260907-205556: no caller prose grants approval. The explicit operator reply must follow the
     current hold and an unambiguous PR presentation, with no later operator message or PR update.
     """
     if actor != "l3" or not reason.strip():
@@ -1368,9 +1368,12 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 raise ValueError("task has no active merge hold")
             rows = task_messages(project, slug)
             operator = next((r for r in reversed(rows) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
+            # Issue #274: accept explicit permission without interpreting arbitrary prose.
             if (operator.get("id") != approval or operator.get("by") != OPERATOR_MESSAGE_ROLE
-                    or operator.get("text") != "Good to merge"):
-                raise ValueError("approval must name the latest operator message, exactly 'Good to merge'")
+                    or not re.fullmatch(r"(?:good to merge|you can merge it)[.!]?",
+                                        operator.get("text", "").strip().lower())):
+                raise ValueError("approval must name the latest operator message, a standalone "
+                                 "'Good to merge' or 'You can merge it' authorization")
             previous = rows[:rows.index(operator)]
             presentation = previous[-1] if previous else {}
             urls = re.findall(r"https://github\.com/[\w.-]+/[\w.-]+/pull/[1-9][0-9]*\b",

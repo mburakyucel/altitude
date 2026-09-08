@@ -277,10 +277,12 @@ GitHub merge commit and request no branch deletion. See the [supported workflow]
 Operator authority also travels through a recorded task reply. L3's project-bound
 `alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <sha> --reason <reason>`
 executes directly in altd. The daemon reads the checkout-origin PR, then validates and releases the
-hold under the project lock. The latest operator conversation message must be exactly `Good to merge`,
-directly following an L2 message containing that PR's canonical URL and no other PR URL. Worker and
-coordinator text cannot supply operator authority. The current hold generation must precede that
-presentation; GitHub's PR update timestamp must also precede it. A renewed hold, later operator
+hold under the project lock. The latest operator conversation message must be the standalone
+authorization `Good to merge` or `You can merge it`, ignoring case and surrounding whitespace and
+allowing one final period or exclamation mark. Questions, negations, conditions, quotations and extra
+prose are refused. It must directly follow an L2 message containing that PR's canonical URL and no
+other PR URL. Worker and coordinator text cannot supply operator authority. The current hold generation
+must precede that presentation; GitHub's PR update timestamp must also precede it. A renewed hold, later operator
 message, missing evidence, or any later PR update refuses release. GitHub must report an open,
 non-draft, same-repository PR targeting main, with the task's publication branch and the caller's
 observed head. For an adopted PR, its recorded number, URL and original branch supply that binding.
