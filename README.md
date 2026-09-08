@@ -184,6 +184,14 @@ to that project shows its saved history and any active turn. Retry sends to the 
 Switching also stops voice recording and releases the microphone; a late transcription cannot fill
 the destination draft.
 
+Every fresh L3 provider session receives the project's latest 20 prior operator and assistant chat
+messages, oldest first, as labeled historical context. This includes discussion with the same
+provider before rotation. Server-triggered reports, restarts and other system events do not consume
+those slots; the current turn is excluded. Each message includes at most 800 characters of text,
+with longer text marked `[truncated]`. Resumed sessions keep native conversation history and receive
+only a bounded handoff of messages missed while another provider handled L3. No tool
+transcripts or generated summaries are replayed.
+
 ## Project faults
 
 When uncommitted changes block task dispatch, L3 or the operator can use

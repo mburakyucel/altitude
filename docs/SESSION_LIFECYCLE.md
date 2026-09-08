@@ -339,9 +339,23 @@ sends while a turn is in flight is appended to the project's durable L3 queue an
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order; a message queued but not started is not a turn in flight, so it neither holds the
 quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
-choosing another configured model on that provider retains its conversation. When the other provider handled intervening chat, Altitude supplies the missed
-human conversation as a small explicit handoff; it does not replay tool logs or invent a shared
-provider transcript. A limit or access rejection after text or tool activity never causes the same turn
+choosing another configured model on that provider retains its conversation.
+
+Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
+receives the project's latest 20 prior human chat messages from either provider, oldest first. A
+replaced session's `last_turn` does not limit this context. Selection uses `user` and `assistant`
+rows with trigger `chat` or no trigger, before applying the count limit: server reports, restart
+turns, other system events and their replies cannot displace human discussion. The current turn's
+rows are excluded. Messages are labeled historical context for the current request, rather than
+new instructions, with at most 800 characters of each text and an explicit `[truncated]` marker
+when longer. Task state remains in `STATE.md`; no tool evidence or generated summaries are replayed.
+
+A resumed session keeps native continuity. When another provider handled intervening turns,
+Altitude supplies only the cross-provider missed-message handoff: user/assistant rows
+newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
+log rows. It uses the same text bound and historical label. A fresh session receives only fresh
+context, and a native resume with no missed rows receives neither block, avoiding duplicate
+injection. A limit or access rejection after text or tool activity never causes the same turn
 to be automatically replayed on another option because that could duplicate side effects. A confirmed
 rejection before output or tool effects can try each remaining configured option at most once.
 Provider selection changes

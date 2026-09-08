@@ -57,6 +57,17 @@ L2 and L3 can run on Claude Code or Codex. Fresh L2 dispatch records one provide
 that provider for the attempt. L3 keeps a separate resumable conversation on each provider. See
 [Session lifecycle](SESSION_LIFECYCLE.md) for identity, routing, messages, containment, and context.
 
+A fresh L3 session receives the latest 20 prior human conversation rows from its own project's
+`chat.jsonl`, in append order, regardless of provider or the replaced session's `last_turn`.
+Human rows have role `user` or `assistant` and trigger `chat` (an absent or empty trigger also means
+chat). Server-triggered turns use those roles too, so trigger filtering precedes the 20-message
+limit and reads past system traffic. The current `turn_id` is excluded. This historical context
+contains only message text, limited to 800 characters per row with an explicit `[truncated]`
+marker; stored tool evidence is not replayed. `STATE.md` supplies task state separately.
+Resumed sessions rely on native history and receive only the cross-provider handoff:
+up to 20 user/assistant rows from the latest 60 log rows, handled by a different provider after
+that session's `last_turn`. Fresh context and resumed handoff are mutually exclusive.
+
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
