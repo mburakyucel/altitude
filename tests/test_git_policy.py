@@ -117,6 +117,11 @@ class TestGitPolicy(unittest.TestCase):
         self.git("fetch", "-q", "origin", "main")
         self.git("pack-objects", "--all", prefix)
         self.assertEqual(len(list((self.repo / ".git/objects/pack").glob("*.pack"))), 2)
+        # Exceed the loose-ref threshold used by newer Git's GC pack-refs --auto.
+        for index in range(32):
+            self.git("branch", f"packing-{index}", "main")
+        # Select GC explicitly: newer Git defaults automatic maintenance to geometric repacking.
+        self.git("config", "maintenance.strategy", "gc")
         self.git("config", "gc.autoPackLimit", "1")
         self.git("config", "gc.autoDetach", "false")
         trace.write_text("")
