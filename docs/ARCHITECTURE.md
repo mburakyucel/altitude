@@ -706,8 +706,9 @@ seam's order, as `{engine, label, quota}`, where the label is the seam's display
 that seat's reading whole. Only the engine seam knows which reading belongs to which engine, so the
 page ties no reading to an engine key and spells no provider. It sits in the shell's page container
 and shows one seat card per row: either the five-hour and seven-day windows a statusline snapshot
-names, or windows named by the length the seat reports, a window the seat does not report shown as
-absent rather than zero — each with percent used, a meter with the 70% reserve line drawn, when it
+names, or windows named by the length the seat reports. Each window renders independently, including
+zero; an absent five-hour, seven-day, first or second window is explicitly named, without a meter.
+Available windows show percent used, a meter with the 70% reserve line drawn, when it
 resets in relative and clock terms, the plan where the seat names it, and how old the reading is. A
 seat with no reading at all says so and carries the reading's own `why`, the one line that fixes it;
 a reading older than the age the router itself trusts is stale: still shown, dimmed, and labelled. One

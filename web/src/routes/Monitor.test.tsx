@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
+import type { MonitorSeat } from "../data/api";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -150,6 +151,54 @@ describe("Monitor", () => {
     expect(screen.getByText(/resets in 1d/)).toBeInTheDocument();
     expect(screen.getByText(/resets in 4h/)).toBeInTheDocument();
     expect(screen.getByText("No second window reported.")).toBeInTheDocument();
+  });
+
+  describe.each([false, true])("partial readings (stale=%s)", (stale) => {
+    it.each([
+      { quota: { five_hour: null, seven_day: 12, seven_day_resets: inHours(2) }, name: "7-day", percent: 12, absent: "5-hour" },
+      { quota: { five_hour: 12, seven_day: null, five_hour_resets: inHours(2) }, name: "5-hour", percent: 12, absent: "7-day" },
+      { quota: { seven_day: 0, seven_day_resets: inHours(2) }, name: "7-day", percent: 0, absent: "5-hour" },
+      { quota: { five_hour: 0, five_hour_resets: inHours(2) }, name: "5-hour", percent: 0, absent: "7-day" },
+      { quota: { primary_used: null, secondary_used: 12, secondary_window_minutes: 90, secondary_resets: new Date(inHours(2) * 1000).toISOString() }, name: "90-minute", percent: 12, absent: "first" },
+      { quota: { primary_used: 12, secondary_used: null, primary_window_minutes: 2880, primary_resets: new Date(inHours(2) * 1000).toISOString() }, name: "2-day", percent: 12, absent: "second" },
+      { quota: { secondary_used: 0, secondary_window_minutes: 90, secondary_resets: new Date(inHours(2) * 1000).toISOString() }, name: "90-minute", percent: 0, absent: "first" },
+      { quota: { primary_used: 0, primary_window_minutes: 2880, primary_resets: new Date(inHours(2) * 1000).toISOString() }, name: "2-day", percent: 0, absent: "second" },
+    ])("keeps $name at $percent% when $absent is absent", async ({ quota, name, percent, absent }) => {
+      mockFetch({ ...monitor, seats: [{ engine: "fixture", label: "Seat one", quota: {
+        ...quota, known: !stale, stale, at: agoEpoch(stale ? 120 : 3),
+      } }], sessions: [] });
+      renderApp({ route: "/monitor" });
+
+      const card = await screen.findByRole("region", { name: "Seat one" });
+      const reading = within(card);
+      expect(reading.getByText(name)).toBeVisible();
+      expect(reading.getByText(`${percent}%`)).toBeVisible();
+      expect(reading.getByText(`No ${absent} window reported.`)).toBeVisible();
+      expect(reading.getByText(/resets in 2h/)).toBeVisible();
+      expect(reading.getByText(stale ? "reading 2h old" : "reading 3m old")).toBeVisible();
+      expect(reading.queryByText(/^No reading\./)).not.toBeInTheDocument();
+      expect(card.querySelectorAll(".monitor-meter")).toHaveLength(1);
+      expect(card.querySelectorAll(".meter-reserve")).toHaveLength(1);
+      expect(card.querySelector(".meter-fill")).toHaveStyle({ width: `${percent}%` });
+      expect(card.querySelectorAll(".monitor-meter[data-stale]")).toHaveLength(stale ? 1 : 0);
+      expect(reading.queryAllByText("Stale")).toHaveLength(stale ? 1 : 0);
+    });
+  });
+
+  it.each<MonitorSeat["quota"]>([
+    { known: false },
+    { known: true, five_hour: null, seven_day: null, at: agoEpoch(3) },
+    { known: true, primary_used: null, secondary_used: null, read_at: ago(3) },
+    { known: false, stale: true, five_hour_resets: inHours(2), at: agoEpoch(120) },
+    { known: false, stale: true, primary_window_minutes: 300, read_at: ago(120), why: "usage unavailable" },
+  ])("shows no reading without any usage figure: %j", async (quota) => {
+    mockFetch({ ...monitor, seats: [{ engine: "fixture", label: "Seat one", quota }], sessions: [] });
+    renderApp({ route: "/monitor" });
+
+    const card = await screen.findByRole("region", { name: "Seat one" });
+    expect(within(card).getByText(quota.why ? "No reading. Usage unavailable" : "No reading. The seat has not been read yet.")).toBeVisible();
+    expect(card.querySelectorAll(".monitor-meter, .monitor-age, .chip-stale")).toHaveLength(0);
+    expect(within(card).queryByText(/window reported/)).not.toBeInTheDocument();
   });
 
   it("names the engine each role would get right now, with the router's reason", async () => {
