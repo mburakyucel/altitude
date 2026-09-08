@@ -16,7 +16,7 @@ L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "report"), ("task"
 L3_COMMANDS = {
     ("project", "set"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
-    ("repo", None), ("pr", None), ("l3", "tools"),
+    ("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
@@ -109,6 +109,25 @@ def _events_text(rows: list[dict]) -> str:
         by = f" · {row['by']}" if row.get("by") else ""
         lines.append(f"[{S.age(str(row.get('at') or ''))}] {kind}" + (f": {_one_line(detail)}" if detail else "") + by)
     return "\n".join(lines) or "No events."
+
+
+def _search_text(record: dict) -> str:
+    lines = [record["notice"], f"{record['matched']} matching records; showing {len(record['results'])}. "
+             f"Limit {record['limit']}; {record['excerpt_chars']} characters per excerpt; "
+             f"{record['output_bytes']} bytes maximum output."]
+    if record["status"] == "no_results":
+        lines.append("No matching evidence found. No decision inferred.")
+    if record["truncated"]:
+        lines.append("Results omitted by output/result bounds; refine the query or increase --limit (maximum 20).")
+    for result in record["results"]:
+        lines.append(f"\nMatch: {result['match']}")
+        for row in result["context"]:
+            lines.append(f"[{row['at'] or 'date unknown'}; {row['date_kind']}] "
+                         f"{row['role']} ({row['by'] or 'author not stored'}) {row['source']}")
+            lines.append(row["text"])
+            if row["truncated"]:
+                lines.append(f"[excerpt characters {row['start']}:{row['end']} of {row['text_chars']}; truncated]")
+    return "\n".join(lines)
 
 
 def _brief_text(record: dict) -> str:
@@ -254,6 +273,8 @@ def main(argv=None) -> None:
     pr = sub.add_parser("pr"); pr.add_argument("number", type=int); pr.add_argument("--json", action="store_true", dest="as_json")
     l3p = sub.add_parser("l3"); l3s = l3p.add_subparsers(dest="l3cmd", required=True)
     lt = l3s.add_parser("tools"); lt.add_argument("--days", type=int, default=7); lt.add_argument("--json", action="store_true", dest="as_json")
+    ls = l3s.add_parser("search", help="find historical project conversation and task evidence")
+    ls.add_argument("query"); ls.add_argument("--limit", type=int, default=5); ls.add_argument("--json", action="store_true", dest="as_json")
     from altitude import server
     sub.add_parser("issue", parents=[server.issue_parser()], add_help=False)
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
@@ -479,6 +500,12 @@ def main(argv=None) -> None:
         record = status.pr(_project(args), args.number); out(record) if args.as_json else print(_pr_text(record)); return
     if c == "l3":
         from altitude import l3
+        if args.l3cmd == "search":
+            try:
+                record = l3.search(_project(args), args.query, args.limit)
+            except (ValueError, KeyError, OSError) as exc:
+                sys.exit(f"alt l3 search: evidence unavailable: {exc}")
+            print(json.dumps(record) if args.as_json else _search_text(record)); return
         record = l3.tool_summary(_project(args), args.days); out(record) if args.as_json else print(_tools_text(record)); return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return

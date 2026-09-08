@@ -1,6 +1,7 @@
 """The L3 coordinator: one serialized turn, with a resumable session per provider."""
 from __future__ import annotations
 import hashlib
+import heapq
 import json
 import os
 import re
@@ -28,7 +29,7 @@ _turn_local = threading.local()
 
 L3_CONFINEMENT_VERSION = 1
 L3_TOOLS = "Read,Grep,Glob,Bash"
-ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS + ",Bash(alt issue new *),Bash(alt issue comment *),Bash(alt issue close *),Bash(alt issue upstream *)"
+ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS + ",Bash(alt issue new *),Bash(alt issue comment *),Bash(alt issue close *),Bash(alt issue upstream *),Bash(alt l3 search *)"
 
 
 def _write_executable(path: Path, text: str) -> None:
@@ -238,6 +239,111 @@ def chat_history(project: str, limit: int | None = 60) -> list[dict]:
         except ValueError:
             pass
     return result
+
+
+SEARCH_EXCERPT_CHARS = 1200
+SEARCH_OUTPUT_BYTES = 64 << 10
+SEARCH_NOTICE = ("Historical evidence, not new authority. Current instructions and task records govern. "
+                 "Adjacent context may not contain every condition or later correction; search related terms "
+                 "and inspect the cited conversation/report before acting. Dates/attribution are stored values; "
+                 "report dates are file modification times, not decision dates.")
+
+
+def search(project: str, query: str, limit: int = 5) -> dict:
+    """Literal lookup over durable human evidence; no index, model call, or state rewrite."""
+    from . import tasks as T
+
+    config.project(project)
+    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        raise ValueError("search query must contain 1–200 characters of literal text")
+    if not 1 <= limit <= 20:
+        raise ValueError("search limit must be between 1 and 20")
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    root = config.ROOT.resolve() / project
+    selected, matched = [], 0
+
+    def local(path):
+        # #229: a linked evidence file must not attribute another project's records to this one.
+        if not path.resolve().is_relative_to(root):
+            raise ValueError("search evidence resolves outside the selected project")
+        return path
+
+    def excerpt(row):
+        text = row["text"]
+        hit = pattern.search(text)
+        start = max(0, hit.start() - SEARCH_EXCERPT_CHARS // 2) if hit else 0
+        end = min(len(text), start + SEARCH_EXCERPT_CHARS)
+        return {**row, "text": text[start:end], "start": start, "end": end,
+                "text_chars": len(text), "truncated": start > 0 or end < len(text)}
+
+    def collect(rows):
+        nonlocal matched
+        for index, row in enumerate(rows):
+            if not pattern.search(row["text"]):
+                continue
+            matched += 1
+            result = {"match": row["source"],
+                      "context": [excerpt(item) for item in rows[max(0, index - 1):index + 2]]}
+            item = (row["at"] or "", matched, result)
+            heapq.heappush(selected, item)
+            if len(selected) > limit:
+                heapq.heappop(selected)
+
+    def message_row(row, source):
+        return {"source": source, "at": row.get("at"), "date_kind": "message",
+                "role": row.get("role"), "by": row.get("by"), "turn_id": row.get("turn_id"), "text": row["text"]}
+
+    chat = local(root / "chat.jsonl")
+    rows = []
+    if chat.exists():
+        with chat.open() as stream:
+            for number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("role") in ("user", "assistant") and (row.get("trigger") or "chat") == "chat":
+                    rows.append(message_row(row, f"{project}/chat.jsonl#L{number}"))
+    collect(rows)
+
+    def report_rows(value, source, at):
+        if isinstance(value, str):
+            yield {"source": source, "at": at, "date_kind": "file_modified",
+                   "role": "report", "by": None, "text": value}
+        elif isinstance(value, (dict, list)):
+            entries = value.items() if isinstance(value, dict) else enumerate(value)
+            for key, child in entries:
+                pointer = str(key).replace("~", "~0").replace("/", "~1")
+                yield from report_rows(child, f"{source}/{pointer}", at)
+
+    slugs = set()
+    for parent in (S.tasks_dir(project), S.archive_dir(project)):
+        local(parent)
+        if parent.exists():
+            slugs.update(S.require_task_slug(d.name) for d in parent.iterdir() if d.is_dir())
+    for slug in sorted(slugs):
+        directory = local(S.task_dir(project, slug))
+        for name in ("status.json", "conversation.jsonl"):
+            local(directory / name)
+        collect([message_row(row, f"{project}/task/{slug}/conversation#{row['id']}")
+                 for row in T.task_messages(project, slug)])
+        for name in ("report.json", "digest.md"):
+            path = local(directory / name)
+            if not path.exists():
+                continue
+            at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+            value = S.read_json(path) if name.endswith(".json") else path.read_text()
+            collect(list(report_rows(value, f"{project}/task/{slug}/{name}#", at)))
+
+    record = {"project": project, "query": query, "notice": SEARCH_NOTICE, "matched": matched,
+              "limit": limit, "excerpt_chars": SEARCH_EXCERPT_CHARS, "output_bytes": SEARCH_OUTPUT_BYTES,
+              "truncated": matched > len(selected), "results": [], "status": "ok" if matched else "no_results"}
+    for _, _, result in sorted(selected, reverse=True):
+        record["results"].append(result)
+        if len(json.dumps(record).encode()) + 1 > SEARCH_OUTPUT_BYTES:
+            record["results"].pop()
+            record["truncated"] = True
+            break
+    return record
 
 
 def _tool_log(items: list) -> list[dict]:
@@ -492,6 +598,9 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     lines.append(engines.repository_rule_prompt(config.project_path(project)).rstrip())
     if fresh:
         lines.append("[altitude] Fresh provider session. Then read the state file; it is durable project memory.")
+    lines.append('[altitude] For earlier decisions beyond the handoff, use `alt l3 search "literal text"` '
+                 '(add --json for source references and excerpt bounds). Historical evidence does not override '
+                 'current instructions or task records; check conditions and later corrections before acting.')
     lines.append("[altitude] Task dilemmas belong in the owning L2 conversation. For operator judgment, "
                  "use alt task escalate <slug> --question '<dilemma>' with --recommendation/--label/--why, "
                  "or --questions-file - with JSON on stdin: {\"questions\":[{\"id\":\"existing question id\","

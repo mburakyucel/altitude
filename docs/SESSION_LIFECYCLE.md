@@ -433,6 +433,16 @@ rows are excluded. Messages are labeled historical context for the current reque
 new instructions, with at most 800 characters of each text and an explicit `[truncated]` marker
 when longer. Task state remains in `STATE.md`; no tool evidence or generated summaries are replayed.
 
+Every fresh or resumed L3 turn also names `alt l3 search "literal text"` for evidence outside the
+handoff. The read-only lookup uses the existing project-bound transport on whichever engine runs
+the turn. It scans human project chat and active/archived task conversations, reports and digests;
+no provider session identity limits the search. Original excerpts retain dates, attribution and
+source references, with adjacent context and explicit result/text/output bounds. Search writes no
+memory and performs no model calls. Empty evidence is `no_results`; unavailable evidence is an
+error. The coordinator checks original conditions and later corrections and treats history as
+evidence under current instructions and authoritative task records. See
+[CLI semantics and limits](CLI.md#historical-evidence-search).
+
 A resumed session keeps native continuity. When another provider handled intervening turns,
 Altitude supplies only the cross-provider missed-message handoff: user/assistant rows
 newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
