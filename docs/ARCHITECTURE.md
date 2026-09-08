@@ -212,7 +212,7 @@ into L3 context.
 ## Isolation and landing
 
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
-based on the exact fetched `origin/main`. Commits require the task provenance trailer. Protected
+based on the exact fetched `origin/main`. Task commits require the task provenance trailer. Protected
 branches cannot be updated outside the guarded landing path. The trusted landing code validates the
 staging lease and repository, fetches the base, commits, pushes, opens the PR, pins the current
 base/head pair, waits for configured checks, and merges only
@@ -223,6 +223,26 @@ their own sections. If main moves, the owner runs `git rebase origin/main` in th
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
 
+For assigned existing external PRs, `alt land --adopt-pr N --expected-head SHA --reason "…"`
+records one immutable `adopted_pr` on the task and a `pr-adopted` event under the project lock.
+The current owner or operator can adopt; another active task cannot own that PR or branch.
+Adoption requires the registered isolated worktree, a same-repository open PR targeting main,
+and agreement between its observed head and origin. GitHub operations select the origin repository
+explicitly. Original commits and the complete PR diff must fit the landing lease, including
+rename sources and reverted original changes. The local branch must contain the remote head.
+Dry-run checks this evidence without recording adoption, committing or publishing.
+
+The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
+Only unowned ancestors of that original head are exempt from task trailers; foreign task trailers
+and later unowned commits refuse landing and resume. The original head must remain an ancestor.
+The task keeps its local branch and publishes a fast-forward refspec to the original PR branch;
+adopted pushes never retry with force. To incorporate main, the owner makes a merge commit with the
+task trailer, preserving the adopted history. Adoption cannot be widened to a later external head.
+The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
+and the live task owner/hold are rechecked before merging. Configured checks remain mandatory;
+without CI, the full local suite runs on a clean two-parent merge candidate. Adopted PRs use a
+GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
+
 Operator authority also travels through a recorded task reply. L3's project-bound
 `alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <sha> --reason <reason>`
 executes directly in altd. The daemon reads the checkout-origin PR, then validates and releases the
@@ -231,7 +251,8 @@ directly following an L2 message containing that PR's canonical URL and no other
 coordinator text cannot supply operator authority. The current hold generation must precede that
 presentation; GitHub's PR update timestamp must also precede it. A renewed hold, later operator
 message, missing evidence, or any later PR update refuses release. GitHub must report an open,
-non-draft, same-repository PR targeting main, with the task's branch and the caller's observed head.
+non-draft, same-repository PR targeting main, with the task's publication branch and the caller's
+observed head. For an adopted PR, its recorded number, URL and original branch supply that binding.
 
 The hold generation is its latest `hold-merge` event, or the creation event for an initial hold;
 hold changes and their events serialize under the same lock. Each hold change stores a fresh

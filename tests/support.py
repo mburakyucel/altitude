@@ -166,7 +166,12 @@ elif cmd == ("pr", "merge"):
     body = json.loads(read("pr.json", "{}") or "{}")
     if read("merge_git.txt") is not None:
         # A composed journey opts in: the hosted merge also advances the real local bare remote.
-        head = body["headRefName"]
+        head = "refs/remotes/origin/" + body["headRefName"]
+        if "--merge" in args:
+            base = "refs/remotes/origin/" + body["baseRefName"]
+            tree = subprocess.check_output(["git", "merge-tree", "--write-tree", base, head], text=True).strip()
+            head = subprocess.check_output(["git", "commit-tree", tree, "-p", base, "-p", head,
+                                            "-m", "fixture hosted merge"], text=True).strip()
         merged = subprocess.run(["git", "push", "origin", head + ":main"], capture_output=True, text=True)
         if merged.returncode:
             fail(merged.stderr)

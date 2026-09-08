@@ -52,6 +52,13 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
+An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
+Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
+The owner inspects and incorporates its history in the task worktree first. Adoption records that
+specific PR and original head; later task commits retain their provenance trailers. Updates go to
+the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
+commit history without requesting branch deletion. Task scope and merge holds still apply.
+
 When the operator replies exactly **Good to merge** directly after an owner's PR presentation,
 the coordinator can apply that recorded approval through the daemon's
 [`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). The daemon checks the message,

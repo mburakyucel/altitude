@@ -789,9 +789,13 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
             if not (timestamp(hold["at"]) < timestamp(presentation["at"]) < timestamp(operator["at"])
                     and timestamp(pull["updatedAt"]) < timestamp(presentation["at"])):
                 raise ValueError("approval is stale: hold or PR changed since its presentation")
+            adopted = task.get("adopted_pr") or {}
+            if adopted and (pull.get("number") != adopted["number"] or pull.get("url") != adopted["url"]):
+                raise ValueError("approval PR must match the adopted PR")
             if (pull.get("state") != "OPEN" or pull.get("isDraft") is not False
                     or pull.get("isCrossRepository") is not False or pull.get("baseRefName") != "main"
-                    or pull.get("headRefName") != task.get("branch") or pull.get("headRefOid") != head):
+                    or pull.get("headRefName") != (adopted.get("branch") or task.get("branch"))
+                    or pull.get("headRefOid") != head):
                 raise ValueError("approval PR must be open, ready, and match the task branch and observed head")
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             S.append_event(project, slug, "merge-approval-refused", actor=actor, approval=approval,

@@ -7,6 +7,9 @@ full local suite that passed on the base-plus-head merge candidate — and only 
 model call anywhere — the commit message arrives as an argument. Idempotent: nothing to commit is a skip, an
 up-to-date push is a no-op, an open PR is reused.
 
+Explicit adoption pins an existing external PR's original history. Its task branch publishes only
+fast-forward updates to the original branch; merging preserves history and requests no branch deletion.
+
 Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
 first — that lookup is what decides whether committing is safe at all (a merged or closed PR is refused) — so
 a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
@@ -23,7 +26,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import config, dispatch, git_policy, state as S
+from . import config, dispatch, git_policy, github_intake, state as S
 
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
@@ -42,7 +45,16 @@ class EmptyLeaseError(LandError):
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
     """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline."""
     try:
-        return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+        env = dict(os.environ)
+        if args[0] == "gh":
+            # #252: neither GH_REPO nor gh's preferred upstream may select a different adoption target.
+            env.pop("GH_REPO", None)
+            env.pop("GH_HOST", None)
+            origin = _need(_git(cwd, "config", "--get", "remote.origin.url"), "origin URL")
+            match = github_intake._REMOTE.fullmatch(origin)
+            if match:
+                args = [*args, "--repo", f"{match['owner']}/{match['repo']}"]
+        return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env)
     except (subprocess.SubprocessError, OSError) as e:
         raise LandError(f"{' '.join(args[:3])}: {e}") from e
 
@@ -140,12 +152,16 @@ def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     return tip.stdout.strip()
 
 
-def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None) -> list[str]:
-    """Push once normally; retry a non-fast-forward once against the pre-commit remote-tip lease."""
-    p = _git(root, "push", "-u", "origin", branch, timeout=300)
+def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None,
+          *, source_branch: str | None = None) -> list[str]:
+    """Push normally; only ordinary task branches may retry against the recorded remote-tip lease."""
+    refspec = f"refs/heads/{source_branch}:refs/heads/{branch}" if source_branch else branch
+    p = _git(root, "push", "-u", "origin", refspec, timeout=300)
     if p.returncode == 0:
         return []
     err = (p.stderr or "") + (p.stdout or "")
+    if source_branch:
+        raise LandError(f"adopted PR push refused; only fast-forward updates are allowed: {err.strip()[-300:]}")
     if not any(s in err for s in ("non-fast-forward", "fetch first", "[rejected]")):
         raise LandError(f"git push: {err.strip()[-300:]}")
     if recorded_tip is None:
@@ -203,7 +219,7 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
 
 def _pr_view(root: Path, target: str) -> dict | None:
     p = _run(["gh", "pr", "view", target, "--json",
-              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid"], root)
+              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision"], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():
@@ -218,6 +234,91 @@ def _pr_view(root: Path, target: str) -> dict | None:
 def _pr_files(root: Path, base: str) -> list[str]:
     p = _git(root, "diff", "--name-only", f"origin/{base}...HEAD")
     return sorted(x for x in (p.stdout or "").splitlines() if x) if p.returncode == 0 else []
+
+
+def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base: str,
+              number: int | None, expected_head: str | None, reason: str | None) -> tuple[dict | None, dict | None]:
+    """#252: one explicitly selected PR/head, bound to this project's isolated task checkout."""
+    receipt = task.get("adopted_pr")
+    if number is None and not receipt:
+        return None, None
+    expected_path = Path(task.get("worktree") or config.project_path(project))
+    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "task Git directory")
+    repo_common = _need(_git(config.project_path(project), "rev-parse", "--path-format=absolute",
+                            "--git-common-dir"), "project Git directory")
+    if (root.resolve() != expected_path.resolve() or root.resolve() == config.project_path(project).resolve()
+            or common != repo_common or branch != f"worktree-{slug}"):
+        raise LandError("PR adoption requires this task's isolated worktree and branch in its registered repository")
+    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
+    match = github_intake._REMOTE.fullmatch(origin)
+    if not match:
+        raise LandError("adoption requires a GitHub origin")
+    if receipt and (receipt["base"] != base or receipt["origin"] != origin
+                    or number is not None and (number != receipt["number"] or expected_head != receipt["head"])):
+        raise LandError("adopted PR identity is immutable; cannot change its PR, base, origin, or original head")
+    pr = _pr_view(root, str(receipt["number"] if receipt else number))
+    url = f"https://github.com/{match['owner']}/{match['repo']}/pull/{receipt['number'] if receipt else number}"
+    allowed_states = ("OPEN", "MERGED") if receipt else ("OPEN",)
+    if (not pr or pr.get("state") not in allowed_states or pr.get("isCrossRepository") is not False
+            or pr.get("baseRefName") != base or base != "main"
+            or pr.get("number") != (receipt["number"] if receipt else number)
+            or str(pr.get("url", "")).lower() != url.lower()):
+        raise LandError("adoption requires an open, same-repository PR targeting main")
+    remote_branch = pr.get("headRefName")
+    if not remote_branch or remote_branch in ("main", "master") or remote_branch.startswith("worktree-"):
+        raise LandError("cannot adopt a protected branch or an Altitude task branch")
+    if receipt and (remote_branch != receipt["branch"] or pr.get("url") != receipt["url"]):
+        raise LandError("adopted PR branch or URL changed")
+    if pr.get("state") == "MERGED":
+        return receipt, pr  # the existing merged-PR path refuses dirty work and publishes nothing
+    remote_head = _fetch_remote_tip(root, remote_branch)
+    if not remote_head or remote_head != pr.get("headRefOid") or not receipt and remote_head != expected_head:
+        raise LandError("PR head changed or differs from --expected-head; inspect it before adopting")
+    _need(_git(root, "merge-base", "--is-ancestor", remote_head, "HEAD"),
+          "PR remote head is not an ancestor of HEAD; incorporate it without rewriting history")
+    if not receipt:
+        receipt = {"number": number, "url": pr["url"], "branch": remote_branch, "base": base,
+                   "head": remote_head, "origin": origin, "reason": reason.strip()}
+    return receipt, pr
+
+
+def _adoption_scope(root: Path, base: str, lease: list[str]) -> None:
+    # #252: adopting ancestors must not smuggle out-of-lease changes, including reverted files.
+    commits = _need(_git(root, "rev-list", f"origin/{base}..HEAD"), "adopted commits").splitlines()
+    changed = set()
+    for sha in commits:
+        paths = _need(_git(root, "diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames",
+                           "--cc", "-r", "-z", sha), "adopted commit paths")
+        changed.update(p for p in paths.split("\0") if p)
+    paths = _need(_git(root, "diff", "--name-only", "--no-renames", "-z", f"origin/{base}...HEAD"),
+                  "PR paths")
+    changed.update(p for p in paths.split("\0") if p)
+    outside = sorted(p for p in changed if not _inside(p, lease))
+    if outside:
+        raise LandError(f"adopted PR changes outside the lease: {', '.join(outside)}")
+
+
+def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | None, *, dry_run: bool) -> None:
+    with S.project_lock(project):
+        current = S.load_task(project, slug)
+        _require_current_publisher(project, slug, current, authority)
+        if current.get("adopted_pr"):
+            if current["adopted_pr"] != receipt:
+                raise LandError("task adoption changed during landing")
+        for other in S.list_tasks(project):
+            adopted = other.get("adopted_pr") or {}
+            if other["slug"] != slug and other["state"] in S.OPEN_STATES and (
+                    adopted.get("number") == receipt["number"] or adopted.get("branch") == receipt["branch"]
+                    or other.get("branch") == receipt["branch"] or receipt["number"] in other.get("prs", [])):
+                raise LandError(f"PR or branch already belongs to task {other['slug']}")
+        if dry_run or current.get("adopted_pr"):
+            return
+        receipt = {**receipt, "actor": (authority or {}).get("actor") or os.environ.get("ALTITUDE_ACTOR", "operator"),
+                   "attempt": current.get("attempt"), "at": S.now()}
+        current["adopted_pr"] = receipt
+        current["prs"] = sorted(set(current.get("prs", []) + [receipt["number"]]))
+        S.save_task(project, current)
+        S.append_event(project, slug, "pr-adopted", **receipt)
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
@@ -325,8 +426,10 @@ def _assert_pair_current(root: Path, pair: dict) -> None:
     base_sha = _fetch_rev(root, pair["base"])
     head_sha = _fetch_rev(root, pair["branch"])
     pr = _pr_view(root, str(pair["number"])) or {}
-    actual = (base_sha, head_sha, pr.get("baseRefOid"), pr.get("headRefOid"), pr.get("state"))
-    expected = (pair["base_sha"], pair["head_sha"], pair["base_sha"], pair["head_sha"], "OPEN")
+    actual = (base_sha, head_sha, pr.get("baseRefOid"), pr.get("headRefOid"), pr.get("state"),
+              pr.get("baseRefName"), pr.get("headRefName"))
+    expected = (pair["base_sha"], pair["head_sha"], pair["base_sha"], pair["head_sha"], "OPEN",
+                pair["base"], pair["branch"])
     if actual != expected:
         raise LandError("the PR base or head moved after the merge candidate was pinned — "
                         "re-run alt land to classify, test and merge one current pair")
@@ -405,8 +508,8 @@ def _local_suite(cwd: Path, test_cmd: str) -> dict:
 
 
 @contextlib.contextmanager
-def _candidate(root: Path, base_sha: str, head_sha: str):
-    """Yield a clean temporary worktree with the single-parent squash history GitHub will create."""
+def _candidate(root: Path, base_sha: str, head_sha: str, *, preserve_history: bool = False):
+    """Yield the squash or two-parent merge candidate used by the selected GitHub merge method."""
     tmp = Path(tempfile.mkdtemp(prefix="alt-land-candidate-"))
     path = tmp / "candidate"
     try:
@@ -414,15 +517,16 @@ def _candidate(root: Path, base_sha: str, head_sha: str):
         if worktree.returncode != 0:
             raise LandError(f"cannot build the merge candidate worktree: "
                             f"{((worktree.stderr or '') + (worktree.stdout or '')).strip()[-200:]}")
-        merged = _git(path, "merge", "--squash", head_sha, timeout=300)
+        method = ["--no-ff", "--no-commit"] if preserve_history else ["--squash"]
+        merged = _git(path, "merge", *method, head_sha, timeout=300)
         if merged.returncode != 0:
             raise LandError("the base-plus-head merge candidate does not merge cleanly — GitHub would refuse "
                             f"this merge too: {((merged.stderr or '') + (merged.stdout or '')).strip()[-200:]}")
         committed = _git(path, "-c", "user.name=alt land", "-c", "user.email=alt-land@localhost",
-                         "-c", "commit.gpgsign=false", "commit", "-m", "alt land synthetic squash candidate",
+                         "-c", "commit.gpgsign=false", "commit", "-m", "alt land synthetic merge candidate",
                          timeout=300)
         if committed.returncode != 0:
-            raise LandError("cannot commit the synthetic squash candidate: "
+            raise LandError("cannot commit the synthetic merge candidate: "
                             f"{((committed.stderr or '') + (committed.stdout or '')).strip()[-200:]}")
         yield path
     finally:
@@ -458,13 +562,15 @@ def _candidate(root: Path, base_sha: str, head_sha: str):
                 raise LandError(f"candidate cleanup failed: {detail}")
 
 
-def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) -> tuple[bool, dict | None]:
-    """Squash-merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
+def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
+           *, preserve_history: bool = False) -> tuple[bool, dict | None]:
+    """Merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
     local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
     PR head changed after the commit whose provenance and checks this invocation validated."""
-    m = _run(["gh", "pr", "merge", str(number), "--squash", "--delete-branch",
+    method = ["--merge"] if preserve_history else ["--squash", "--delete-branch"]
+    m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
-    after = _pr_view(root, branch) or {}
+    after = _pr_view(root, str(number)) or {}
     if after.get("state") != "MERGED":
         raise LandError(f"gh pr merge #{number}: "
                         f"{((m.stderr or '') + (m.stdout or '')).strip()[-300:] or 'PR is not merged'}")
@@ -485,12 +591,13 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str) 
     return True, (rows[0] if rows else None)
 
 
-def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str) -> tuple[bool, dict | None, dict]:
+def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
+                          preserve_history: bool = False) -> tuple[bool, dict | None, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
     base_sha, head_sha = pair["base_sha"], pair["head_sha"]
     try:
         _assert_pair_current(root, pair)
-        with _candidate(root, base_sha, head_sha) as path:
+        with _candidate(root, base_sha, head_sha, preserve_history=preserve_history) as path:
             tests = _local_suite(path, test_cmd)
     except LandError as exc:
         _note(f"not merging: {exc}")
@@ -518,17 +625,26 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str) -> tuple[bool, 
         tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
         return False, None, tests
-    merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha)
+    if before_merge:
+        before_merge()
+    merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
+                              preserve_history=preserve_history)
     return merged, main_run, tests
 
 
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int = 600, paths: str | None = None, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
-         authority: dict | None = None) -> dict:
+         authority: dict | None = None, adopt_pr: int | None = None,
+         expected_head: str | None = None, reason: str | None = None) -> dict:
     """Run the whole sequence from the current worktree; returns the JSON-ready result object."""
     if not message.strip():
         raise LandError("--message is empty")
+    if adopt_pr is not None:
+        if adopt_pr <= 0 or not re.fullmatch(r"[0-9a-f]{40}", expected_head or "") or not (reason or "").strip():
+            raise LandError("--adopt-pr requires a positive PR number, full --expected-head SHA, and --reason")
+    elif expected_head is not None or reason is not None:
+        raise LandError("--expected-head and --reason require --adopt-pr")
     root = Path(_need(_git(Path(cwd or Path.cwd()), "rev-parse", "--show-toplevel"), "not a git repository"))
     git_dir = Path(_need(_git(root, "rev-parse", "--git-dir"), "cannot resolve the git dir"))
     if not git_dir.is_absolute():
@@ -570,17 +686,20 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
     # Record the branch tip before anything is staged or committed: a later force may replace only this exact
     # remote history, and a push from another worker after this point must make the lease fail.
-    recorded_tip = _fetch_remote_tip(root, branch)
+    adoption, pr = _adoption(root, project, slug, task, branch, base, adopt_pr, expected_head, reason)
+    publish_branch = adoption["branch"] if adoption else branch
+    recorded_tip = None if adoption else _fetch_remote_tip(root, branch)
     task_ref = f"{project}/{slug}"
     try:
-        missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
+        missing = git_policy.commits_missing_task_trailer(
+            root, base, task_ref, adopted_head=adoption["head"] if adoption else None)
     except git_policy.GitPolicyError as exc:
         raise LandError(f"cannot verify commit provenance: {exc}") from exc
     if missing:
         sample = ", ".join(sha[:12] for sha in missing[:5])
         raise LandError(
             f"branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
-            "refusing before staging, pushing, or contacting GitHub"
+            "refusing before staging or pushing" + ("" if adoption else ", or contacting GitHub")
         )
     if paths is not None:
         lease = [p.strip() for p in paths.split(",") if p.strip()]
@@ -598,14 +717,18 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if outside:
         raise LandError(f"changes outside the lease ({', '.join(lease)}, from {lease_src}) — "
                         f"staging nothing: {', '.join(outside)}")
+    if adoption:
+        _adoption_scope(root, base, lease)
+        _record_adoption(project, slug, adoption, authority, dry_run=dry_run)
     commit, staged = None, []
     if not groups:
         _note("working tree clean — nothing to commit")
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
-                "replaced": [], "local_tests": None, "dry_run": True}
-    pr = _pr_view(root, branch)
+                "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption}
+    if not adoption:
+        pr = _pr_view(root, branch)
     if pr is not None and pr.get("state") == "MERGED":
         if groups:
             raise LandError(f"PR #{pr.get('number')} for {branch!r} is already merged — this branch has landed; "
@@ -641,26 +764,44 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             _note(f"committed {commit[:7]} ({len(staged)} path(s))")
         else:
             _note("staged changes match HEAD — nothing to commit")
-    replaced = _push(root, branch, base, task_ref, recorded_tip)
-    pushed_head = _need(_git(root, "rev-parse", f"origin/{branch}"), "cannot capture the pushed PR head")
+    replaced = _push(root, publish_branch, base, task_ref, recorded_tip,
+                     source_branch=branch if adoption else None)
+    pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
     _note(f"pushed head {pushed_head}")
-    pr = _ensure_pr(root, branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
+    pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
-    pair = _snapshot_pair(root, branch, number, base, pushed_head)
+    pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
     checks = _checks_value(root, number, pair)
     deadline = time.monotonic() + max(wait, 0)
     while checks == "pending" and time.monotonic() < deadline:
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
         checks = _checks_value(root, number, pair)
     merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
+    def before_merge():
+        if adoption:
+            current_pr = _pr_view(root, str(number)) or {}
+            if (current_pr.get("number") != adoption["number"] or current_pr.get("url") != adoption["url"]
+                    or current_pr.get("isCrossRepository") is not False):
+                raise LandError("adopted PR identity changed before merge")
+            if (current_pr.get("isDraft") is not False
+                    or current_pr.get("reviewDecision") not in ("", "APPROVED")):
+                raise LandError("adopted PR is not review-ready or has outstanding required reviews/changes")
+            _assert_pair_current(root, pair)
+        current = S.load_task(project, slug)
+        _require_current_publisher(project, slug, current, authority)
+        if current.get("hold_merge"):
+            raise LandError(f"task carries a merge hold: {current['hold_merge']}")
     if merge and not merged:
         if checks == "none-configured":
-            merged, main_run, local_tests = _merge_on_local_suite(root, pair, test_cmd)
+            merged, main_run, local_tests = _merge_on_local_suite(
+                root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption))
         elif checks == "pass":
             _assert_pair_current(root, pair)
-            merged, main_run = _merge(root, branch, number, base, pushed_head)
+            before_merge()
+            merged, main_run = _merge(root, publish_branch, number, base, pushed_head,
+                                      preserve_history=bool(adoption))
         else:
             _note(f"not merging: checks are {checks!r}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged, "main_run": main_run,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
-            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests}
+            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption}

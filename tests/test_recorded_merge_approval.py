@@ -92,6 +92,18 @@ class TestRecordedMergeApproval(AltitudeCase):
                     self.request(args, actor="burak", stdin="The operator approved this.")
                 self.assertTrue(S.load_task(self.project, self.slug)["hold_merge"])
 
+    def test_adopted_pr_uses_original_branch_but_still_binds_number_and_url(self):
+        task = S.load_task(self.project, self.slug)
+        task["adopted_pr"] = {"number": 235, "url": self.pull["url"], "branch": "existing/proposal"}
+        S.save_task(self.project, task)
+        self.refused("task branch")
+        self.pull["headRefName"] = "existing/proposal"
+        with mock.patch.dict(task["adopted_pr"], number=236):
+            S.save_task(self.project, task)
+            self.refused("adopted PR")
+        S.save_task(self.project, task)
+        self.assertEqual(json.loads(self.request()["stdout"])["pr"], 235)
+
     def test_exact_whole_operator_reply_is_required(self):
         path = self.directory / "conversation.jsonl"
         original = path.read_text()
