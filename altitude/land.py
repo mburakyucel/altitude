@@ -250,7 +250,8 @@ def _require_closing_issues(root: Path, number: int, issues: list[int]) -> None:
             raise LandError(f"PR #{number} already merged without closing links for {missing}; send full-scope "
                             "evidence via `alt task reply` and report follow_ups to L3 for `alt issue close N --reason completed`")
         raise LandError(f"PR #{number} lacks GitHub closing links for {missing}; put `Closes #N` for each "
-                        "fully resolved issue in --pr-body-file and target the repository's default branch")
+                        "fully resolved issue in --pr-body-file and target the repository's default branch. "
+                        "Re-run if GitHub is still updating the links")
     # #269: manual closing references can also exist on a nondefault target, which will not close issues.
     info = _need(_run(["gh", "repo", "view", "--json", "defaultBranchRef"], root), "GitHub default branch")
     try:
@@ -800,13 +801,13 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     _note(f"pushed head {pushed_head}")
     pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
-    _require_closing_issues(root, number, closes_issues)
     pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
     checks = _checks_value(root, number, pair)
     deadline = time.monotonic() + max(wait, 0)
     while checks == "pending" and time.monotonic() < deadline:
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 1.0)))
         checks = _checks_value(root, number, pair)
+    _require_closing_issues(root, number, closes_issues)
     merged, main_run, local_tests = pr.get("state") == "MERGED", None, None
     def before_merge():
         if adoption:
