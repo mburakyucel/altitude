@@ -245,6 +245,13 @@ reproduction. The affected project's incident evidence, tasks and coordinator co
 that project. Reporting creates only a GitHub issue; Altitude's operator/coordinator selects any
 implementation separately. The reporting L3 does not repair Altitude or create an Altitude recovery task.
 
+For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
+failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
+and restart summaries expose the gaps. Known links survive repeat faults and restarts; an uncertain
+attempt blocks another creation until the operator checks existing issues. The coordinator can
+attach a verified match with `alt issue upstream --incident <id> --url <url>`. Reporting remains
+explicitly authorized; historical publication/backfill is a separate decision.
+
 ## Remove a project
 
 In the project's **More actions** menu, **Remove project** detaches L3 and stops Altitude

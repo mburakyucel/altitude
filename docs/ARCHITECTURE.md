@@ -237,9 +237,10 @@ reports restored conversation history so First run waits for successful registra
 that history without interpreting its old replies or errors as a fresh startup result. Reset
 remains a separate session rotation within a managed project.
 
-`STATE.md` is regenerated from active task records and contains only work relevant to the next L3
-turn. Archived tasks and incident history remain available as audit evidence without being loaded
-into L3 context.
+`STATE.md` is regenerated from active task records and a bounded incident-reporting summary relevant
+to the next L3 turn. The summary counts missing, failed, uncertain and confirmed fault-kind reports,
+and shows up to five outcomes with gaps first. Archived tasks and full incident history remain audit
+evidence available through inspection commands.
 
 ## Isolation and landing
 
@@ -423,10 +424,28 @@ The same issue parser and handler serve the project-bound broker/MCP transport a
 API. Upstream bodies contain only caller-authored expected behavior, actual behavior, reproduction,
 and optional version. The handler rejects recognizable credentials, home paths and private evidence
 references before invoking `gh issue create`. It returns the confirmed URL or an actionable failure,
-and records only actor, title and URL in an `issue-upstream` event in the calling project. It reads no
-incidents or conversations, transfers no fault evidence, queues no L3 messages and creates no tasks.
+and records actor, title and URL in an `issue-upstream` event in the calling project. Incident evidence
+files and conversations never supply public content. Reporting queues no L3 messages and creates no tasks.
 The reporting project's L3 does not repair Altitude; Altitude's operator/coordinator selects any
 implementation separately. There is no automatic intake from issues.
+
+`--incident <id>` binds reporting to a system incident in the calling project's index. System incidents
+carry a `fault_key` to the existing source-project/kind ledger record; its `upstream` outcome retains
+status, URL, reason, actor, timestamp and the incident that recorded it. Incident inspection projects
+this shared outcome onto each linked incident. The identity is the existing fault kind, not inferred
+semantic matching; repeated notifications and later incident windows retain the same linkage.
+Unlinked historical incidents show missing delivery without inferred linkage or bulk backfill.
+
+A short fault lock compares and saves the outcome before external IO. A persisted uncertain receipt
+precedes creation, so interruption, timeout, nonzero exit or an unconfirmed response blocks another
+create. Proven prepublication failures retain actionable failed status. Confirmed delivery returns
+the known URL without publication. `--incident <id> --url <url>` verifies only that issue at the fixed
+upstream target with a GitHub read and attaches it; it can resolve uncertainty or explicitly share a
+known matching report across kinds. Failed verification retains the prior outcome. Finalization
+compares the saved receipt so a late result cannot overwrite a concurrently verified link.
+Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
+`STATE.md`, and fault/restart coordinator messages expose status and gaps without granting reporting
+authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
 
 A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle

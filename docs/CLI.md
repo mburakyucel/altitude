@@ -107,7 +107,7 @@ completes authorized work; it grants no automatic backlog intake or general L2 i
 ### Upstream Altitude defects
 
 ```sh
-alt issue upstream --title "Fictional resume defect" - <<'JSON'
+alt issue upstream --incident I-20260908-123456 --title "Fictional resume defect" - <<'JSON'
 {
   "expected": "The fictional Atlas task resumes once.",
   "actual": "The task remains blocked.",
@@ -116,6 +116,9 @@ alt issue upstream --title "Fictional resume defect" - <<'JSON'
 }
 JSON
 ```
+
+Use the actual local system incident ID from `alt incident list`. The incident ID is tracking
+metadata and is never added to the public body. Reports unrelated to a system incident can omit it.
 
 L3 can explicitly report an Altitude defect from any managed project. The command creates only a
 GitHub issue in the installation's Altitude issue repository; it does not fix Altitude, create a
@@ -150,8 +153,33 @@ with `project`, `operation: "upstream"`, `title` and `body` (the same JSON strin
 remain denied. Success returns the issue URL and writes one `issue-upstream` event with actor,
 title and URL in the calling project's log, without the report body. Failures name configuration,
 GitHub authentication/access, or an unconfirmed result without echoing GitHub's private error output.
-After a timeout or unconfirmed response, the operator checks the target's issues before retrying to
-avoid duplicates; L3's GitHub read broker remains project-local.
+With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`, `failed`, and
+`uncertain` carry an actionable reason. `alt incident list` and project API incident rows include an
+`upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded
+outcomes. Coordinator state and fault/restart messages summarize fault-kind counts and up to five
+outcomes, showing gaps first. Inspect the full list for the remaining rows.
+
+Confirmed links are reused without another creation, including after restart or a later incident
+window for the same source project/fault kind. Different kinds share a report only through an
+explicit verified link. The daemon saves uncertainty before publication: a timeout, interrupted
+request, nonzero GitHub exit or unconfirmed response may have created the issue and prevents another
+create. Local validation, configuration or executable failures are `failed`; a caller can explicitly
+try again after correcting those prepublication failures. No outcome triggers an automatic retry.
+
+The operator checks existing upstream issues after uncertainty. To attach a known match:
+
+```sh
+alt issue upstream --incident I-20260908-123456 --url https://github.com/example/altitude/issues/42
+```
+
+The URL must name an issue in the configured product repository. This form accepts no title or body;
+altd verifies the URL with a GitHub read before recording it. Failure leaves the earlier status intact,
+and an existing confirmed link cannot be replaced with a different URL. A late publication result
+cannot overwrite a concurrently verified link. HTTP uses the same optional `incident` and `url`
+fields. L3's general GitHub read broker remains project-local; this operation reads only the supplied
+upstream issue. Missing status does not authorize publication. Historical incidents without a tracked
+fault identity remain visibly missing; bulk publication/backfill and uncertain-result creation retries
+require a separate operator decision and are not supported by this operation.
 
 ## Task file leases
 
