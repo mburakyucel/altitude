@@ -531,6 +531,27 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     return {**row, "position": waiting + 1}
 
 
+def queue_upstream_issue(project: str, url: str, *, checkout: Path) -> dict:
+    """One public-link notification per receiving project and issue, across source projects and restarts."""
+    url = url.lower()
+    with S.project_lock(project):
+        if not config.is_managed(project) or config.project_path(project) != checkout:
+            raise ValueError("The local development project registration changed.")
+        rows = _queue_rows(queue_path(project))
+        for row in rows:
+            if row.get("upstream_url") == url:
+                return {"status": "queued", "target": project, "message_id": row["id"]}
+        for event in S.read_project_log(project, limit=0):
+            if event.get("kind") == "upstream-notification-received" and event.get("url") == url:
+                return {"status": "received", "target": project, "message_id": event["message_id"]}
+        row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": "upstream-issue", "role": "server",
+               "upstream_url": url, "text": f"An upstream Altitude issue is confirmed: {url}\n\n"
+               "This notification assigns no work. Implementation decisions belong to this project's "
+               "coordinator and operator under their own authority."}
+        _write_queue(queue_path(project), [*rows, row])
+        return {"status": "queued", "target": project, "message_id": row["id"]}
+
+
 def drop_queued(project: str, message_id: str) -> bool:
     """Drop one of Burak's chat messages that has not started. Server work is not editable."""
     path = queue_path(project)
@@ -573,6 +594,11 @@ def deliver_queued(project: str) -> dict | None:
                     current = _queue_rows(path)
                     if [row.get("id") for row in current[:take]] != selected_ids:
                         return False
+                    for row in selected:
+                        if row.get("upstream_url"):
+                            # #277: preserve deduplication through the queue-to-chat crash window.
+                            S.project_log(project, "upstream-notification-received", url=row["upstream_url"],
+                                          message_id=row["id"])
                     _write_queue(path, current[take:])
                     return True
 

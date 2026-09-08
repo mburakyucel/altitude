@@ -464,9 +464,25 @@ API. Upstream bodies contain only caller-authored expected behavior, actual beha
 and optional version. The handler rejects recognizable credentials, home paths and private evidence
 references before invoking `gh issue create`. It returns the confirmed URL or an actionable failure,
 and records actor, title and URL in an `issue-upstream` event in the calling project. Incident evidence
-files and conversations never supply public content. Reporting queues no L3 messages and creates no tasks.
+files and conversations never supply public content. Reporting creates no tasks.
 The reporting project's L3 does not repair Altitude; Altitude's operator/coordinator selects any
 implementation separately. There is no automatic intake from issues.
+
+Confirmed creation and verified linkage notify the registered local `altitude` development project
+only when its Git origin matches the confirmed issue repository. Missing, removed, or nonmatching
+projects remain issue-only. `server.notify_upstream_issue` checks the existing registration and origin
+under the receiving project's activity guard; queue admission rechecks the same checkout under its
+project lock. The fixed server message contains only the public URL and a statement that work decisions
+belong to the receiving coordinator/operator. It carries no source project, incident, private evidence,
+conversation, task instruction, or task association, and changes no receiving task or provider session.
+
+`l3.queue_upstream_issue` atomically appends to the existing queue under the receiving project lock.
+Pending rows and all retained `upstream-notification-received` project events deduplicate by receiving
+project and normalized full issue URL, including reports from other source projects and daemon restart.
+The queue claim records its event before removing the row, so the queue-to-chat gap cannot produce
+another notification. `received` means the queue consumer claimed it, not that a model completed a turn;
+an exit after dequeue retains the existing queue's delivery limits. Ordinary queue/chat surfaces show
+the notification, with no new page or task lifecycle. A receipt grants no repair or resume authority.
 
 `--incident <id>` binds reporting to a system incident in the calling project's index. System incidents
 carry a `fault_key` to the existing source-project/kind ledger record; its `upstream` outcome retains
@@ -485,6 +501,12 @@ compares the saved receipt so a late result cannot overwrite a concurrently veri
 Outcome events stay in the originating project's log. `alt incident list`, project API incident rows,
 `STATE.md`, and fault/restart coordinator messages expose status and gaps without granting reporting
 authority, clearing a fault, assigning repair ownership, or retrying an uncertain result.
+Publication is confirmed before notification is attempted. Its separate `notification` outcome records
+`queued`, `received`, `unavailable`, or `failed` in the existing incident outcome and source project event
+log. Queue failures retain publication success; a repeated confirmed incident command retries only the
+notification. Reports without an incident still notify after success and expose queue failure as a
+source-project FYI. Failed or uncertain publication and failed link verification never notify. There is
+no automatic publication retry or historical notification backfill.
 
 A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
 backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle

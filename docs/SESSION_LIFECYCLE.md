@@ -291,8 +291,10 @@ ledger if it is absent. A failed resume blocks the task with an incident and lea
 conversation to its project's L3. A project's L3 reports an upstream Altitude defect through
 [`alt issue upstream`](CLI.md#upstream-altitude-defects) with a fictional or redacted reproduction;
 local incidents and project-local recovery work stay with the affected project. Reporting creates
-only an issue at the daemon's configured product target, without waking Altitude L3, creating tasks,
-or moving evidence. The reporting L3 does not repair Altitude or create an Altitude recovery task;
+an issue at the daemon's configured product target. Confirmed creation or verified linkage sends one
+fixed public issue-link notification to registered local `altitude` when its Git origin matches that
+target. Without a matching project, reporting remains issue-only. The notification moves no evidence
+and creates, reuses, resumes, or coordinates no receiving-project task. The reporting L3 does not repair Altitude;
 Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
 to the calling project's origin and accept no repository override. A cross-provider
 continuation is a deliberate, recorded fresh attempt based on saved work: when a worker's window runs
@@ -366,6 +368,14 @@ cannot be repeated for that identity. The operator checks existing upstream issu
 attach a verified match with `--incident <id> --url <url>`, which performs only a GitHub read.
 Failed prepublication checks retain an actionable reason. No outcome resumes tasks or grants repair
 ownership; historical backfill and uncertain-result retry remain separate operator decisions.
+Local notification has a separate `queued`, `received`, `unavailable`, or `failed` outcome in incident
+inspection and coordinator summaries. Publication success survives queue failure; repeating a confirmed
+incident command retries notification without another GitHub creation. The receiving queue and retained
+project event log deduplicate the full issue URL across source projects and restarts. A queue claim saves
+its receipt before dequeue, preventing a second notification in the gap before chat is written. `received`
+records that claim rather than model completion; abrupt exit after dequeue retains the queue's existing
+delivery limits. The ordinary server-triggered queue/chat turn has no task association. A notification
+does not prove repair, clear a blocker, alter a hold, or change an originating provider conversation.
 L3 may use `alt issue close <number> --reason completed|not-planned` for requested closure or to
 reconcile verified completion of an authorized delivery with `completed`, without another routine
 operator request. Unrelated autonomous backlog cleanup remains unauthorized. It follows the same coordinator/socket boundary, publishes no text,

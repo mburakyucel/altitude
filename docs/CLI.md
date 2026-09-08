@@ -174,8 +174,10 @@ Use the actual local system incident ID from `alt incident list`. The incident I
 metadata and is never added to the public body. Reports unrelated to a system incident can omit it.
 
 L3 can explicitly report an Altitude defect from any managed project. The command creates only a
-GitHub issue in the installation's Altitude issue repository; it does not fix Altitude, create a
-recovery task, wake Altitude's L3, or copy local incidents or conversations. Altitude's
+GitHub issue in the installation's Altitude issue repository. After confirmed creation or verified
+linkage, it sends one fixed issue-link notification to registered local `altitude` if that project's
+Git origin matches the upstream repository. Without a matching project it remains issue-only. It does
+not fix Altitude, create a recovery task, or copy local incidents or conversations. Altitude's
 operator/coordinator selects implementation separately. Ordinary recovery for the project's own
 problems stays in that project. Reporting does not enable automatic issue-to-task intake.
 
@@ -215,6 +217,22 @@ With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`,
 `upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded
 outcomes. Coordinator state and fault/restart messages summarize fault-kind counts and up to five
 outcomes, showing gaps first. Inspect the full list for the remaining rows.
+
+The separate `upstream.notification` object reports `queued` (accepted by the local queue), `received`
+(claimed by its consumer), `unavailable` (no matching registered development project), or `failed`
+(local project/queue access failed), with a target/message ID or an actionable reason. These outcomes
+also appear in coordinator summaries and source-project `upstream-notification` events. The receiving
+project's existing queue/chat shows the fixed public link without a source conversation, private
+evidence, task instructions, or receiving task association. Notification cannot create, reuse, resume,
+or coordinate its tasks; receiving L3/operator chooses any work under its own authority.
+
+Notification deduplication uses receiving project plus normalized full issue URL across source projects
+and restarts, retaining consumed receipts in the existing project event log. `received` records the
+queue claim, not model completion; an exit after dequeue retains the queue's ordinary delivery limits.
+Queue failure never changes confirmed publication to failed publication. For a tracked report, repeat
+the confirmed incident command to retry notification only; no second issue is posted. An untracked
+report still returns its successful URL and leaves a local FYI on queue failure; do not repeat creation.
+No historical notification backfill runs when a development project is registered later.
 
 Confirmed links are reused without another creation, including after restart or a later incident
 window for the same source project/fault kind. Different kinds share a report only through an

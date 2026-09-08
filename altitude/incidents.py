@@ -160,7 +160,7 @@ def index(project: str | None = None) -> list[dict]:
 
 
 def upstream_delivery(project: str, incident: str, *, outcome: dict | None = None,
-                      expected: dict | None = None) -> dict:
+                      expected: dict | None = None, notification: dict | None = None) -> dict:
     """Read or compare-and-save delivery on the incident's existing project/kind fault identity."""
     if not isinstance(incident, str) or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", incident):
         raise ValueError("alt issue upstream: invalid incident id")
@@ -175,6 +175,9 @@ def upstream_delivery(project: str, incident: str, *, outcome: dict | None = Non
         if key not in faults or not (source == project or source is None and project == "altitude"):
             raise ValueError("alt issue upstream: incident fault identity is unavailable in this project")
         current = row["upstream"]
+        if notification is not None:
+            expected = current
+            outcome = {**current, "notification": notification}
         if outcome is None:
             return current
         if current != expected:
@@ -198,6 +201,8 @@ def upstream_summary(project: str) -> str:
     for row in ordered[:5]:
         outcome = row["upstream"]
         lines.append(f"- {row['id']}: {outcome['status']} — {outcome.get('url') or outcome['reason']}")
+        if notice := outcome.get("notification"):
+            lines.append(f"  Local notification: {notice['status']} — {notice.get('reason') or notice['target']}")
     lines.append("Inspect all links and gaps with `alt incident list`; reporting does not assign repair work.")
     return "\n".join(lines)
 

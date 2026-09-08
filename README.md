@@ -256,8 +256,10 @@ remain in the machine fault ledger when it is absent.
 A project's L3 reports an upstream Altitude defect with
 [`alt issue upstream`](docs/CLI.md#upstream-altitude-defects), supplying a fictional or redacted
 reproduction. The affected project's incident evidence, tasks and coordinator conversation stay in
-that project. Reporting creates only a GitHub issue; Altitude's operator/coordinator selects any
-implementation separately. The reporting L3 does not repair Altitude or create an Altitude recovery task.
+that project. After confirmed creation or verified linkage, a registered local `altitude` development
+project receives one fixed issue-link notification when its Git origin matches the upstream repository.
+Installations without that matching project remain issue-only. Altitude's operator/coordinator selects
+any implementation separately; reporting never creates, reuses, or resumes a receiving-project task.
 
 For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
 failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
@@ -265,6 +267,11 @@ and restart summaries expose the gaps. Known links survive repeat faults and res
 attempt blocks another creation until the operator checks existing issues. The coordinator can
 attach a verified match with `alt issue upstream --incident <id> --url <url>`. Reporting remains
 explicitly authorized; historical publication/backfill is a separate decision.
+Local notification status is separate from publication status in incident inspection and coordinator
+summaries. The receiving queue and chat carry only the fixed public link, with no private evidence or
+task association. Repeating a confirmed incident command retries a failed notification without posting
+another issue; the receiving project's queue and retained event receipts deduplicate the full issue URL
+across source projects and restarts.
 
 ## Remove a project
 
