@@ -153,6 +153,33 @@ GitHub authentication/access, or an unconfirmed result without echoing GitHub's 
 After a timeout or unconfirmed response, the operator checks the target's issues before retrying to
 avoid duplicates; L3's GitHub read broker remains project-local.
 
+## Task file leases
+
+`alt task paths <slug> <complete-comma-separated-lease>` is available to the operator and the
+project's L3 through its coordinator transport, and denied to L2. It replaces the complete lease
+in any task state, so include existing paths that still belong to the task. Status exposes the
+saved lease; the `paths` event records actor, previous paths and assigned paths. Assignment alone
+does not resume a task or change its owner, attempt, session, worktree, branch or merge hold.
+
+For a fictional `demo` recovery task missing `docs/archive/`:
+
+1. **L2:** inspect `alt task status "$ALTITUDE_TASK"`, checkpoint `progress.md`, then run
+   `alt task block "$ALTITUDE_TASK" --reason "Please add docs/archive/ to my lease to review the preserved documentation."`
+   and stop before editing or applying that scope. This goes to L3 without `--fault` or an
+   operator escalation flag. L2 cannot claim paths itself and must not use `alt land --paths`
+   to bypass the recorded lease.
+2. **L3:** inspect `alt task status recover-demo` and the scope request through the project's
+   coordinator transport. For authorized scope and an empty lease, run
+   `alt task paths recover-demo docs/archive/`. If the task also needs its existing `README.md`
+   scope, use `alt task paths recover-demo README.md,docs/archive/`. A failed assignment leaves
+   the request blocked; a decision beyond the authorized scope follows the normal escalation path.
+3. **L3:** inspect `alt task status recover-demo` again. Only after the required lease is recorded,
+   send `alt task message recover-demo "docs/archive/ is recorded in your lease; continue reviewing in your worktree."`.
+   The message requests the normal daemon resume of the same owner session.
+4. **L2:** on resume, verify the recorded lease in `alt task status "$ALTITUDE_TASK"` and resolve
+   the scope question against L3's reply with `alt task resolve` before continuing. Work stays in
+   the same task worktree and goes through the usual staging lease, checks, hold and PR path.
+
 ## Dirty-checkout recovery
 
 `alt task preserve-checkout <slug> --reason "…"` asks altd to preserve the selected project's dirty
@@ -164,19 +191,24 @@ once the snapshot is saved. `alt task events <slug> --json` includes the request
 the `checkout-preserved` branch and immutable SHA. Branches are local, uniquely named and never
 overwritten, automatically pushed or deleted. Retention ends only with explicit operator removal.
 
-For a fictional `example` project with dirty main exactly at `origin/main`:
+L3 or the operator performs these steps for a fictional `example` project with dirty main exactly
+at `origin/main`. L3 uses its project-bound coordinator transport without a project flag; the
+operator's shell selects the project by inserting `--project example` after `alt` in these commands:
 
-1. Stop editing that checkout during preservation. Inspect `alt --project example repo` and the
-   intended task with `alt --project example task status reconcile-edits`. Use an existing
+1. Stop editing that checkout during preservation. Inspect `alt repo` and the
+   intended task with `alt task status reconcile-edits`. Use an existing
    unlaunched blocked task; `--source recovery` controls fault notifications, not Git privileges.
-2. Run `alt --project example task preserve-checkout reconcile-edits --reason "Preserve existing edits for review in the task PR"`.
-3. Wait for `alt --project example task status reconcile-edits` to show the completed request and
+2. Run `alt task preserve-checkout reconcile-edits --reason "Preserve existing edits for review in the task PR"`.
+3. Wait for `alt task status reconcile-edits` to show the completed request and
    its `checkout_archive` branch and SHA. A successful preservation leaves clean main at `origin/main`
    and keeps the task blocked. Snapshot commits live only on the local archive branch.
-4. Give the owner the branch, SHA and reconciliation scope with
-   `alt --project example task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
-   This message requests resume. Ensure the task's lease covers the intended changes using
-   `alt task paths` if needed. The owner inspects the snapshot before staging and publishing it.
+4. Inspect the intended reconciliation scope and the task's lease. L3 or the operator assigns
+   any missing scope with `alt task paths reconcile-edits <complete-comma-separated-lease>`,
+   retaining existing required paths, then verifies the recorded lease in task status.
+5. Give the owner the branch, SHA and reconciliation scope with
+   `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
+   This message requests resume. The owner verifies its lease and inspects the snapshot before
+   applying, staging and publishing it; later missing scope uses the [L2-to-L3 route](#task-file-leases).
    Resume any other blocked task separately with `alt task resume <slug> --reason "Checkout is clean after preservation"`.
 
 In the owner's isolated worktree, inspect and apply using the recorded immutable SHA:

@@ -220,7 +220,10 @@ When uncommitted changes block task dispatch, L3 or the operator can use
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
 changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
 snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
-The task owner inspects and applies the changes in its isolated worktree and delivers through a PR.
+The task owner inspects and applies the changes within its recorded lease in its isolated worktree
+and delivers through a PR. Missing scope goes through an ordinary L2 block to L3. L3 assigns the
+complete lease with `alt task paths`, verifies it in task status, and messages the same owner to
+resume; L2 checks the recorded scope before applying work. See [file leases](docs/CLI.md#task-file-leases).
 Archives remain local until explicit operator removal; Altitude never pushes or deletes them.
 Existing stash records and stashes remain readable and recoverable. Ordinary dispatch still
 requires clean main at `origin/main`; a restart does not clear an unresolved checkout fault.

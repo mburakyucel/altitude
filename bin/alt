@@ -235,7 +235,7 @@ def main(argv=None) -> None:
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
     pc.add_argument("slug"); pc.add_argument("--reason", required=True)
-    tp = ts.add_parser("paths", help="set or repair a task's comma-separated file lease in any state")
+    tp = ts.add_parser("paths", help="L3/operator: replace the complete comma-separated file lease; L2 requests changes through task block")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
@@ -279,6 +279,10 @@ def main(argv=None) -> None:
     config.ensure_root()
     c = args.cmd
     if ACTOR == "l2" and (c, getattr(args, "tcmd", None)) not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
+        if (c, getattr(args, "tcmd", None)) == ("task", "paths"):
+            sys.exit('alt task paths: not available to an L2 worker; ask L3 to assign the missing scope with '
+                     'alt task block "$ALTITUDE_TASK" --reason "Need lease paths <paths> for <reason>"; '
+                     'after resume, verify the recorded lease with alt task status "$ALTITUDE_TASK"')
         sys.exit(f"alt {c}: not available to an L2 worker; use status, messages, reply, block, done, or land")
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "icmd", None) if c == "incident" else
