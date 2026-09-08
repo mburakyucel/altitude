@@ -31,6 +31,14 @@ shell commands. L3 turns persist bounded shell command text with their tool evid
 ad-hoc commands are visible and can become stable verbs. Its process is read-only on the deployment
 checkout on either engine; source changes always belong to one L2 worktree and PR.
 
+The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. L3 carries
+the relevant discussion, superseding corrections and uncertainty into briefs and steering, cleans
+obvious transcription artifacts, and cites operator authority separately from its recommendations.
+Clearly generalizable feedback follows the existing task/PR path to the narrowest authoritative
+instruction source; task-specific steering stays scoped. L3 distinguishes queued work, merged rules
+and their effective loading. These are coordinator instructions, with no runtime classifier or memory
+store and no expansion of project-local or upstream reporting authority.
+
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the

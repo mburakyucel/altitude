@@ -51,6 +51,13 @@ native `@AGENTS.md` import. Managed repositories keep their own rules and need n
 The global L2/L3 personas describe roles and retain explicit reading instructions without embedding
 Altitude-specific rules. No session rotation or extra engine policy is needed for this reference.
 
+The [L3 persona](../personas/l3.md) directs compiled discussion handoffs and persistence of clearly
+reusable feedback through an appropriately scoped task/PR. Its report names the instruction source
+and distinguishes queued, merged and effective changes. Project rules are referenced each turn;
+personas follow the existing engine loading path, supplied per invocation or at fresh session creation.
+A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
+an existing session has loaded it. One-off steering remains in the task conversation.
+
 Codex's [native discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) follows the
 repository root through cwd; Claude's [native import](https://code.claude.com/docs/en/memory#agentsmd)
 resolves `@AGENTS.md` relative to `CLAUDE.md`. Fixture tests verify the reference and prompt paths;
