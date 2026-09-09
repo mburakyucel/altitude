@@ -23,7 +23,7 @@ export default defineConfig({
     },
     headless: true,
     screenshot: "only-on-failure",
-    trace: "on",
+    trace: "retain-on-failure",
   },
   projects: [
     {

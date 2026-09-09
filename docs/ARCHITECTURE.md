@@ -718,9 +718,11 @@ the [coverage matrix](DEVELOPMENT.md#coverage-and-limits) identifies unproven ex
 The same browser specs run at 390×844 with mobile user agent and touch and at 1440×900. The
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
-appearing and disappearing, and saves named screenshots. Screenshots, traces and reports stay
-under ignored `web/ui-artifacts/`; local landing retains them with its candidate evidence in the
-task folder. Captures needed for review remain accessible outside Git.
+appearing and disappearing, and saves named screenshots on passing and failing walkthroughs.
+Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`; local landing
+copies only the self-contained HTML report with its attachments alongside the candidate logs and
+result record in the task folder. Raw results and browser configuration are not copied again.
+Captures needed for review remain accessible outside Git.
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
 Hosted CI and its artifact upload are suspended for this repository. Every local test, build and
