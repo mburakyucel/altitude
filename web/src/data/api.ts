@@ -271,6 +271,7 @@ export const TaskMessageSchema = z
     at: z.string().nullish(),
     role: z.enum(["burak", "l2", "l3"]),
     text: z.string(),
+    delivery: z.object({ state: z.enum(["queued", "delivered", "unconfirmed"]), at: z.string().nullable() }).nullish(),
   })
   .passthrough();
 
@@ -342,6 +343,17 @@ export const TaskViewSchema = z
     report_json: z.unknown().nullish(),
     token_usage: TokenUsageSchema.nullish(),
     live: z.unknown().nullish(),
+    activity: z.object({
+      generation: z.string().nullable(),
+      state: z.enum(["available", "empty", "unavailable"]),
+      commentary: z.object({ id: z.string(), text: z.string(), at: z.string().nullable(), time_kind: z.enum(["source", "unknown"]) }).nullable(),
+      observation: z.object({ at: z.string().nullable(), label: z.string() }).nullable(),
+      error: z.string().optional(),
+    }).nullish(),
+    steering: z.object({
+      state: z.enum(["running", "stopping", "stopped", "resuming", "stop_unconfirmed", "idle"]),
+      stop_id: z.string().nullable(), generation: z.string().nullable(), error: z.string().nullable(),
+    }).nullish(),
   })
   .passthrough();
 
@@ -511,7 +523,7 @@ export function useTask(project: string, slug: string) {
   return useQuery({
     queryKey: ["task", project, slug],
     queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
-    refetchInterval: (query) => query.state.data?.question?.status === "open" || query.state.data?.question_group?.questions.some((q) => q.status === "open") ? 2_000 : pollInterval(),
+    refetchInterval: (query) => query.state.data?.state === "running" || ["stopping", "stop_unconfirmed", "resuming"].includes(query.state.data?.steering?.state ?? "") || query.state.data?.question?.status === "open" || query.state.data?.question_group?.questions.some((q) => q.status === "open") ? 2_000 : pollInterval(),
     enabled: Boolean(project && slug),
   });
 }
@@ -634,6 +646,8 @@ export interface TaskActionInput {
   project: string;
   slug: string;
   action: string;
+  generation?: string | null;
+  stop_id?: string | null;
   reason?: string;
 }
 
@@ -705,6 +719,7 @@ export interface L2MessageInput {
   project: string;
   slug: string;
   text: string;
+  stop_id?: string;
   question_id?: string;
   revision?: number;
   group_id?: string;

@@ -50,6 +50,9 @@ test("removal detaches L3: confirm, cancel, denied, error, pending, navigation",
     expect(removed.status()).toBe(500);
     expect((await removed.json()).error).toContain("unknown project 'sample-project'; register it first");
   }
+  const savedTask = await request.get(`${service}/api/task/sample-project/existing-work`);
+  expect(savedTask.status()).toBe(200);
+  expect((await savedTask.json()).activity).toMatchObject({ state: "unavailable", commentary: null });
   for (const suffix of ["", "/tasks/existing-work", "/tasks/existing-work/report"]) {
     await walk.open(`${service}/projects/sample-project${suffix}`);
     await walk.state(`10-old-route-${suffix.replaceAll("/", "-") || "project"}`, { visible: [page.getByRole("heading", { name: "Project not managed", exact: true })], hidden: [more, page.getByRole("textbox", { name: "Message L3 about sample-project" })] });

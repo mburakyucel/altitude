@@ -201,7 +201,8 @@ class TestForegroundUnits(AltitudeCase):
 
     def test_incident_171446_stop_uses_the_owned_unit_and_refuses_live_descendants(self):
         paths = engines._codex_paths(self.job_root, "worker")
-        S.write_json(paths["record"], {"engine": "claude", "id": "worker", "unit": "owned.service"})
+        unit = engines._claude_unit("worker")
+        S.write_json(paths["record"], {"engine": "claude", "id": "worker", "unit": unit})
         for alive in (True, False):
             with self.subTest(alive=alive), mock.patch.object(engines, "_unit_active", return_value=alive), \
                  mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
@@ -213,7 +214,7 @@ class TestForegroundUnits(AltitudeCase):
                 else:
                     engines.remove_l2_worker("claude", "worker", job_root=self.job_root)
                     self.assertTrue(S.read_json(paths["record"])["stopped"])
-                self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", "owned.service"])
+                self.assertEqual(run.call_args.args[0], [engines.SYSTEMCTL_BIN, "--user", "stop", unit])
                 registry_stop.assert_not_called()
 
     def test_incident_171446_legacy_adoption_requires_unit_and_session_transcript(self):

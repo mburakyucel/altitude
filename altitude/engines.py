@@ -615,6 +615,245 @@ def _codex_usage(events: list[dict]) -> dict:
     return {}
 
 
+_FILE_TOOLS = {"Read", "Edit", "Write", "MultiEdit", "NotebookEdit"}
+_SUMMARY_KEYS = ("description", "command", "file_path", "notebook_path", "path", "pattern", "query", "skill", "url",
+                 "prompt", "text", "message")
+_SHELL = re.compile(r"^(?:/(?:usr/)?bin/)?(?:ba|z|da)?sh\s+-l?c\s+(['\"])(.*)\1$", re.S)
+_TASK_MESSAGE = re.compile(r"^Message from \w+ \(")
+
+
+def _hide_reasoning(record: dict) -> dict:
+    """Model reasoning stays on the machine: Claude thinking blocks disappear from the record and a Codex
+    reasoning item keeps only its shell. Applied to the redacted copy, so raw mode never carries it either."""
+    message = record.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), list):
+        message["content"] = [b for b in message["content"]
+                              if not (isinstance(b, dict) and str(b.get("type") or "").endswith("thinking"))]
+    item = record.get("item")
+    if isinstance(item, dict) and item.get("type") == "reasoning":
+        record["item"] = {k: v for k, v in item.items() if k in ("id", "type", "status")}
+    return record
+
+
+def _claude_path(session_id: str) -> Path | None:
+    if not session_id or "/" in session_id or "\\" in session_id:
+        return None
+    matches = list((config.HOME / ".claude" / "projects").glob(f"*/{session_id}.jsonl"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _one_line(text, limit: int = 160) -> str:
+    line = " ".join(str(text or "").split())
+    return line if len(line) <= limit else line[:limit - 1] + "…"
+
+
+def _relative(path, worktree: str) -> str:
+    """A path inside the task's worktree reads as the repository path, the way the worker names it."""
+    path = str(path or "")
+    root = worktree.rstrip("/")
+    return path[len(root) + 1:] if root and path.startswith(root + "/") else path
+
+
+def _shell_command(command) -> str:
+    """The command as typed: Codex wraps it in `bash -lc '…'`."""
+    match = _SHELL.match(str(command or "").strip())
+    if not match:
+        return str(command or "")
+    quote, inner = match.groups()
+    return inner.replace("'\\''", "'") if quote == "'" else inner
+
+
+def _first_text(value: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        if isinstance(value.get(key), str) and value[key].strip():
+            return value[key]
+    return ""
+
+
+def _transcript_row(source: str, kind: str, role: str, text: str = "", *, type: str = "event", at=None, **fields) -> dict:
+    row = {"source": source, "kind": kind, "role": role, "type": type, "at": at, "text": text}
+    row.update({k: v for k, v in fields.items() if v is not None})
+    return row
+
+
+def _tool_call(block: dict, worktree: str, at) -> dict:
+    """One Claude tool_use block: the tool, a one-line summary, and the call's own detail as text (the full
+    command, an edit as removed and added lines, a written file's content, otherwise the input)."""
+    name = str(block.get("name") or "tool")
+    inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+    tool_use_id = str(block.get("id") or "") or None
+    if name == "Bash":
+        command = str(inp.get("command") or "")
+        return _transcript_row("claude", "command", "assistant", command, type="tool_use", at=at, tool=name,
+                    summary=_one_line(command), tool_use_id=tool_use_id)
+    if name in _FILE_TOOLS:
+        path = _relative(inp.get("file_path") or inp.get("notebook_path"), worktree)
+        old, new = str(inp.get("old_string") or ""), str(inp.get("new_string") or "")
+        if name == "Write":
+            detail = str(inp.get("content") or "")
+        elif old or new:
+            detail = "\n".join([f"- {line}" for line in old.splitlines()] + [f"+ {line}" for line in new.splitlines()])
+        else:
+            detail = ""
+        return _transcript_row("claude", "file", "assistant", detail, type="tool_use", at=at, tool=name, summary=path,
+                    tool_use_id=tool_use_id)
+    summary = _first_text(inp, _SUMMARY_KEYS) or (json.dumps(inp, ensure_ascii=False) if inp else "")
+    return _transcript_row("claude", "tool", "assistant", json.dumps(inp, ensure_ascii=False, indent=2) if inp else "",
+                type="tool_use", at=at, tool=name, summary=_one_line(summary), tool_use_id=tool_use_id)
+
+
+def _result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for part in content:
+        if isinstance(part, dict):
+            parts.append(part["text"] if isinstance(part.get("text"), str) else f"[{part.get('type') or 'block'}]")
+    return "\n".join(parts)
+
+
+def _claude_rows(record: dict, worktree: str) -> list[dict]:
+    """Rows for one record of Claude's session JSONL, one per content block in the order the model wrote them."""
+    typ = str(record.get("type") or "event")
+    at = record.get("timestamp")
+    message = record.get("message") if isinstance(record.get("message"), dict) else {}
+    content = message.get("content")
+    rows: list[dict] = []
+    if typ in ("user", "assistant"):
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content}] if isinstance(content, str) else []
+        injected = typ == "user" and bool(record.get("isMeta") or record.get("isCompactSummary"))
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "text":  # injected context (caveats, skill text, a compaction summary) is not a prompt
+                text = str(block.get("text") or "")
+                rows.append(_transcript_row("claude", "engine" if injected else "message", "system" if injected else typ, text,
+                                 type=typ, at=at))
+            elif btype == "tool_use":
+                rows.append(_tool_call(block, worktree, at))
+            elif btype == "tool_result":
+                rows.append(_transcript_row("claude", "result", "tool", _result_text(block), type="tool_result", at=at,
+                                 tool_use_id=str(block.get("tool_use_id") or "") or None,
+                                 error=bool(block.get("is_error"))))
+    elif typ == "attachment":  # a task message, delivered by the inbox hook at the worker's checkpoint
+        attachment = record.get("attachment") if isinstance(record.get("attachment"), dict) else {}
+        parts = attachment.get("content") if isinstance(attachment.get("content"), list) else []
+        rows.extend(_transcript_row("claude", "message", "user", text, type="task-message", at=at)
+                    for text in parts if isinstance(text, str) and _TASK_MESSAGE.match(text))
+    elif typ == "system":
+        text = record.get("content") if isinstance(record.get("content"), str) else ""
+        rows.append(_transcript_row("claude", "message" if text else "engine", "system", text,
+                         type=str(record.get("subtype") or typ), at=at))
+    return rows or [_transcript_row("claude", "engine", "system", "", type=typ, at=at)]
+
+
+def _codex_error(record: dict) -> str:
+    error = record.get("error") if isinstance(record.get("error"), dict) else {}
+    return _first_text(record, ("message",)) or _first_text(error, ("message",)) or json.dumps(record)
+
+
+def _codex_rows(record: dict, worktree: str) -> list[dict]:
+    """Rows for one event of a Codex thread. A command item carries its command and its output together."""
+    typ = str(record.get("type") or "event")
+    item = record.get("item") if isinstance(record.get("item"), dict) else {}
+    item_type = str(item.get("type") or "")
+    if typ in ("error", "turn.failed"):
+        return [_transcript_row("codex", "error", "system", _codex_error(record), type=typ)]
+    if not item_type or item_type == "reasoning":
+        return [_transcript_row("codex", "engine", "system", "", type=typ)]
+    item_id = str(item.get("id") or "") or None
+    status = item.get("status") if isinstance(item.get("status"), str) else None
+    if item_type == "agent_message":
+        return [_transcript_row("codex", "message", "assistant", str(item.get("text") or ""), type=typ)]
+    if item_type == "error":
+        return [_transcript_row("codex", "error", "system", _first_text(item, ("message", "text")), type=typ)]
+    if item_type == "command_execution":
+        command = _shell_command(item.get("command"))
+        return [_transcript_row("codex", "command", "assistant", command, type=typ, tool="command", summary=_one_line(command),
+                     tool_use_id=item_id, status=status, output=str(item.get("aggregated_output") or ""),
+                     error=item.get("exit_code") not in (None, 0))]
+    if item_type == "file_change":
+        changes = item.get("changes") if isinstance(item.get("changes"), list) else []
+        lines = [f"{c.get('kind') or 'change'} {_relative(c.get('path'), worktree)}".rstrip()
+                 for c in changes if isinstance(c, dict)]
+        return [_transcript_row("codex", "file", "assistant", "\n".join(lines), type=typ, tool="file_change",
+                     summary=_one_line(", ".join(lines)), tool_use_id=item_id, status=status)]
+    if item_type == "mcp_tool_call":
+        summary = ".".join(str(item.get(k) or "") for k in ("server", "tool") if item.get(k)) or item_type
+    else:
+        summary = _first_text(item, ("query", "text", "message", "command")) or item_type
+    return [_transcript_row("codex", "tool", "assistant", _first_text(item, ("text", "output", "result", "message")), type=typ,
+                 tool=item_type, summary=_one_line(summary), tool_use_id=item_id, status=status)]
+
+
+def transcript_engine(task: dict) -> str:
+    return str(task.get("l2_engine") or "claude")
+
+
+def transcript_sources(task: dict, *, job_root: Path) -> list[tuple[Path, dict]]:
+    """Task-selected session evidence and any owning turn, oldest first."""
+    engine = transcript_engine(task)
+    if engine == "codex":
+        return [(path, S.read_json(path.parent / f"{path.name.split('.')[0]}.json", None) or {})
+                for path in codex_turns(job_root, str(task.get("session_id") or ""))]
+    path = _claude_path(str(task.get("session_id") or "")) if engine == "claude" else None
+    return [(path, {})] if path and path.is_file() else []
+
+
+def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
+    """Project only public text/tools; the caller also uses this sanitized record for Raw events."""
+    _hide_reasoning(record)
+    if engine == "codex":
+        rows = _codex_rows(record, worktree)
+        for row in rows:
+            row["at"] = record.get("timestamp")
+        return rows
+    if engine == "claude":
+        return _claude_rows(record, worktree)
+    return []
+
+
+def activity_source(task: dict, *, job_root: Path) -> tuple[Path, dict] | None:
+    """Only the current owned invocation can supply a current direction preview."""
+    identity = str(task.get("agent_id") or "")
+    if not re.fullmatch(r"[\w-]+", identity):
+        return None
+    paths = _codex_paths(job_root, identity)
+    try:
+        record = S.read_json(paths["record"], None)
+    except (OSError, ValueError):
+        return None
+    if (not isinstance(record, dict) or record.get("id") != identity
+            or record.get("engine") != transcript_engine(task)
+            or record.get("session_id") != task.get("session_id")):
+        return None
+    return paths["stdout"], record
+
+
+def session_context_source(task: dict) -> Path | None:
+    """The selected native session can corroborate source time and inbox-hook attachments."""
+    return _claude_path(str(task.get("session_id") or "")) if transcript_engine(task) == "claude" else None
+
+
+def delivered_context(engine: str, record: dict) -> list[str]:
+    """Positive native hook delivery evidence; ordinary text/tool output is never a receipt."""
+    attachment = record.get("attachment")
+    if (engine != "claude" or record.get("type") != "attachment" or not isinstance(attachment, dict)
+            or attachment.get("type") != "hook_additional_context"):
+        return []
+    content = attachment.get("content")
+    return [text for text in content if isinstance(text, str)] if isinstance(content, list) else []
+
+
+def public_message_identity(engine: str, record: dict) -> str | None:
+    message = record.get("message") if engine == "claude" else record.get("item")
+    return str(message["id"]) if isinstance(message, dict) and message.get("id") else None
+
+
 # Passive task accounting reads provider evidence only. Cursors contain offsets and numeric
 # deduplication ledgers, never transcript text; callers persist one cursor per engine per task.
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")
@@ -1090,10 +1329,16 @@ def codex_l3_mcp(broker: str) -> None:
 
 def _unit_active(unit: str) -> bool:
     if not unit:
-        return False
+        raise RuntimeError("Worker unit identity is unavailable")
     p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30,
                        env=codex_env(retain_user_bus=True))
-    return (p.stdout or "").strip() in ("active", "activating", "deactivating")
+    state = (p.stdout or "").strip()
+    if p.returncode in (0, 3):
+        if state in ("active", "activating", "deactivating", "reloading", "refreshing", "maintenance"):
+            return True
+        if state in ("inactive", "failed"):
+            return False
+    raise RuntimeError("Worker unit status is unavailable")
 
 
 def _worker_events(path: Path, engine: str) -> list[dict]:
@@ -1101,7 +1346,7 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
     if engine == "codex":
         return events
     # I-20260907-171446: read the owned CLI's actual result/error, not the shared daemon registry.
-    return [{"type": "thread.started", "thread_id": e["session_id"], "model": e.get("model")}
+    return [{"type": "thread.started", "thread_id": e.get("session_id"), "model": e.get("model")}
             if e.get("type") == "system" and e.get("subtype") == "init" else
             {"type": "turn.failed" if e.get("is_error") else "turn.completed",
              "message": e.get("errors") or e.get("result") or e.get("subtype"), "usage": e.get("usage")}
@@ -1125,15 +1370,16 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             record.update(metadata)
             S.write_json(paths["record"], record)
     proc = _codex_processes.get(worker_id)
-    alive = proc.poll() is None if proc is not None else _unit_active(str(record.get("unit") or ""))
-    if proc is not None and not alive:
+    process_alive = proc is not None and proc.poll() is None
+    alive = process_alive or _unit_active(str(record.get("unit") or ""))
+    if proc is not None and not process_alive:
         _codex_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
-    if record.get("stopped"):
-        state, status = "stopped", "exited"
-    elif alive:
+    if alive:
         state, status = "working", "busy"
+    elif record.get("stopped"):
+        state, status = "stopped", "exited"
     elif completed:
         state, status = "done", "exited"
     else:
@@ -1154,6 +1400,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
                              default=paths["record"].stat().st_mtime),
             "startedAt": record.get("started_at"), "engine": engine,
             "resumed": bool(record.get("resume")),
+            "input_delivered": record.get("input_delivered") is True,
             "engine_model": next((e["model"] for e in events if e.get("model")), record.get("engine_model")),
             "engine_reasoning_effort": record.get("engine_reasoning_effort")}
     # Auto may retry only a settled rejection with the entire turn proving no assistant/tool activity.
@@ -1217,16 +1464,19 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "started_at": datetime.now(timezone.utc).isoformat(),
               "codex_home": str(_codex_home(codex_env(extra_env))),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
-              "launch_model": model, "launch_effort": effort}
+              "launch_model": model, "launch_effort": effort, "input_delivered": False}
     S.write_json(paths["record"], record)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
             proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+        input_written = False
         try:
-            proc.stdin.write(text.encode("utf-8"))
+            data = text.encode("utf-8")
+            written = proc.stdin.write(data)
             proc.stdin.close()
+            input_written = written == len(data)
         except (BrokenPipeError, OSError):
             pass
         _codex_processes[worker_id] = proc
@@ -1239,14 +1489,16 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             if not thread_id:
                 time.sleep(0.05)
         thread_id = thread_id or _codex_thread(_worker_events(paths["stdout"], engine))
-        if not thread_id or (resume and thread_id != resume):
+        if not input_written or not thread_id or (resume and thread_id != resume):
             codex_stop(worker_id, job_root=root)
             row = codex_worker(worker_id, job_root=root) or {}
-            detail = (f"resumed a different {engine.title()} thread" if thread_id else
+            detail = ("worker input handoff failed" if not input_written else
+                      f"resumed a different {engine.title()} thread" if thread_id else
                       row.get("detail") or "no session initialization event")
             return {"stdout": "", "stderr": str(detail), "returncode": 1, "agent": row,
                     "rejection": row.get("rejection"), "safe_to_retry": not thread_id and row.get("safe_to_retry", False)}
         record["session_id"] = thread_id
+        record["input_delivered"] = True
         S.write_json(paths["record"], record)
         row = codex_worker(worker_id, job_root=root)
         return {"stdout": "", "stderr": "", "returncode": 0, "agent": row,
@@ -1260,24 +1512,32 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         raise
 
 
+def _owned_unit(record: dict, worker_id: str) -> str:
+    engine = record.get("engine") if isinstance(record, dict) else None
+    expected = _codex_unit(worker_id) if engine == "codex" else _claude_unit(worker_id) if engine == "claude" else None
+    if not expected or record.get("id") != worker_id or record.get("unit") != expected:
+        raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
+    return expected
+
+
 def codex_stop(worker_id: str, *, job_root: Path) -> str:
     """Stop the worker's transient unit; `KillMode=control-group` takes every descendant with it."""
     paths = _codex_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
-    if not isinstance(record, dict):
-        return "Codex worker record already absent"
-    unit = str(record.get("unit") or "")
+    unit = _owned_unit(record, worker_id)
     subprocess.run([SYSTEMCTL_BIN, "--user", "stop", unit], capture_output=True, text=True, timeout=120,
                    env=codex_env(retain_user_bus=True))
-    proc = _codex_processes.pop(worker_id, None)
+    proc = _codex_processes.get(worker_id)
     if proc is not None:
         try:
             proc.wait(timeout=10)
         except (subprocess.TimeoutExpired, OSError):
             proc.kill()
+            proc.wait(timeout=10)
     if _unit_active(unit):
         raise RuntimeError(f"Codex worker {worker_id} is still running after stop")
-    record["stopped"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _codex_processes.pop(worker_id, None)
+    record["stopped"] = record.get("stopped") or datetime.now(timezone.utc).isoformat(timespec="seconds")
     S.write_json(paths["record"], record)
     return "Codex worker stopped"
 
@@ -1296,8 +1556,40 @@ def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path
 
 def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
     if engine == "claude" and not _codex_paths(job_root, worker_id)["record"].exists():
-        return claude_stop(worker_id)  # I-20260907-171446: never stop an adopted job's shared daemon.
+        # I-20260907-171446: stop only the adopted job; its absence from a registry is not termination proof.
+        job = S.read_json(JOBS_DIR / worker_id / "state.json", None)
+        if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
+            raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
+        note = claude_stop(worker_id)
+        if _unit_active(_claude_unit(job["name"])):
+            raise RuntimeError(f"Worker {worker_id} is still running after stop")
+        return note
     return codex_stop(worker_id, job_root=job_root)
+
+
+def worker_termination(task: dict, *, job_root: Path) -> bool | None:
+    """Read-only termination evidence: unknown ownership/status never means stopped."""
+    identity = task.get("agent_id")
+    if not identity:
+        return None
+    try:
+        record = S.read_json(_codex_paths(job_root, identity)["record"], None)
+        if record is not None:
+            if (not isinstance(record, dict) or record.get("id") != identity
+                    or record.get("engine") != transcript_engine(task)
+                    or record.get("session_id") != task.get("session_id")):
+                return None
+            unit = _owned_unit(record, identity)
+        elif transcript_engine(task) == "claude":
+            job = S.read_json(JOBS_DIR / identity / "state.json", None)
+            if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
+                return None
+            unit = _claude_unit(job["name"])
+        else:
+            return None
+        return not _unit_active(unit)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        return None
 
 
 def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:

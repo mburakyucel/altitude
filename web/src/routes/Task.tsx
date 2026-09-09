@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import { Link, NavLink, useLocation, useMatch, useParams } from "react-router";
+import type { ReactNode, RefObject } from "react";
+import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
@@ -10,6 +10,9 @@ import { agoText, when } from "../data/observed";
 import { questionPath } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
+import { TaskActivity } from "../components/TaskActivity";
+import { SteeringControls, useTaskSteering } from "../components/TaskSteering";
+import type { Steering } from "../components/TaskSteering";
 import { Question, QuestionSet } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
@@ -112,7 +115,8 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = held ? "Queued" : state === "blocked"
+  const label = task.steering?.state === "stopped" ? "Stopped" : task.steering?.state === "stopping" ? "Stopping…"
+    : task.steering?.state === "resuming" ? "Waiting to resume" : held ? "Queued" : state === "blocked"
     ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : task.question?.status === "open" ? "Needs your answer" : "Paused"
     : sentence(state || "unknown");
   const dot: Facts["dot"] =
@@ -151,7 +155,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     finished,
     canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && Boolean(task.question)),
     canStop: state === "running",
-    canResume: (state === "blocked" || task["can_continue"] === true) && task.question?.status !== "open",
+    canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     hint:
       state === "queued"
@@ -166,9 +170,11 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
-function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending }: {
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, showLive, phone, selection, onEscapeOwnership }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
   draft: string; setDraft: (value: string) => void; pending: string | null; setPending: (value: string | null) => void;
+  steering: Steering; showLive: () => void; phone: boolean;
+  selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -240,6 +246,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     setPending(text);
     try {
       const row = await sendL2Message({ project, slug: task.slug, text,
+        ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
         ...(group && group.questions.length > 1 && context && inGroup(context)
           ? { group_id: group.id, group_revision: group.revision }
           : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
@@ -297,7 +304,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question) {
-      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} /> :
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
+        receipt={message.delivery ? message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed" : undefined} /> :
         <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />);
     }
   });
@@ -333,16 +342,23 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {current?.design_url && questionOffscreen ? <a href={current.design_url} target="_blank" rel="noopener noreferrer">View preview · v{current.revision}</a> : null}
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
-      {facts.canMessage ? <div className="convo-dock"><Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send}
+      {facts.canMessage ? <div className="convo-dock">
+        {steering.state === "running" && !(task.state === "blocked" && current) ? <TaskActivity activity={task.activity} refresh={refresh} /> : null}
+        {steering.state !== "idle" ? <div className="task-dock-controls">
+          <button type="button" className="link" onClick={showLive}>View live session</button>
+          <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />
+        </div> : null}
+        <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send} selection={selection} onEscapeOwnership={onEscapeOwnership}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
-        hint={task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
+        sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
+        hint={steering.state === "stopped" ? "Send a correction to continue this session." : ["stopping", "stop_unconfirmed"].includes(steering.state) ? "Keep editing while Stop is confirmed." : task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
     </section>
   );
 }
 
-// ---- Stop and Reject: quiet text buttons, an inline confirm, no browser dialog (SPEC.md §3.10) --
+// ---- Reject and operational Resume (SPEC.md §3.10) ---------------------------------------------
 
-type Confirm = "" | "stop" | "reject";
+type Confirm = "" | "reject";
 
 function useTaskActions(project: string, slug: string) {
   const queryClient = useQueryClient();
@@ -378,11 +394,6 @@ function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<t
   return (
     <>
       {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}>{actions.pending ? "Resuming…" : "Resume"}</button> : null}
-      {facts.canStop ? (
-        <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("stop")}>
-          Stop
-        </button>
-      ) : null}
       {facts.canReject ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("reject")}>
           Reject
@@ -394,14 +405,13 @@ function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<t
 
 function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> }) {
   if (!actions.confirm) return null;
-  const stop = actions.confirm === "stop";
-  const question = stop ? "Stop this task?" : "Reject this task?";
+  const question = "Reject this task?";
   return (
     <div className="task-confirm" role="group" aria-label={question}>
       <p className="task-confirm-text">
-        {stop ? "Stop this task? Its worker ends; the branch stays." : "Reject this task? Its worker ends and the task is archived."}
+        Reject this task? Its worker ends and the task is archived.
       </p>
-      {stop ? null : (
+      {(
         <input
           className="field"
           aria-label="Reason (optional)"
@@ -413,7 +423,7 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
       <div className="task-confirm-actions">
         <button type="button" className="btn btn-primary" disabled={actions.pending} onClick={actions.run}>
           {actions.pending ? <span className="spinner" aria-hidden /> : null}
-          {stop ? "Stop" : "Reject"}
+          Reject
         </button>
         <button type="button" className="btn btn-ghost" disabled={actions.pending} onClick={() => actions.open("")}>
           Cancel
@@ -421,7 +431,7 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
       </div>
       {actions.error ? (
         <p className="text-meta text-danger" role="alert">
-          Could not {stop ? "stop" : "reject"} the task.{" "}
+          Could not reject the task.{" "}
           <button type="button" className="link" onClick={actions.run}>
             Retry
           </button>
@@ -475,12 +485,13 @@ function TaskPage({
   liveRoute: boolean;
   readOnly: boolean;
   checking: boolean;
-  refresh: () => void;
+  refresh: () => Promise<unknown>;
   detailsOpen: boolean;
   setDetailsOpen: (open: boolean) => void;
 }) {
   const { phone, panelInline } = useViewport();
   const location = useLocation();
+  const navigate = useNavigate();
   const back = useTaskBack(project);
   const projectQuery = useProject(project);
   const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
@@ -488,6 +499,9 @@ function TaskPage({
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
+  const selection = useRef<{ start: number; end: number } | null>(null);
+  const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
+  const steering = useTaskSteering(project, task, refresh);
   const actions = useTaskActions(project, task.slug);
   const resumeError = facts.canResume && actions.error && !actions.confirm
     ? <p className="task-line text-danger" role="alert">Could not resume. Try again.</p> : null;
@@ -520,9 +534,23 @@ function TaskPage({
       </> : null}
     </div>
   </Overlay> : null;
+  useEffect(() => {
+    if (phone || readOnly || voiceOwnsEscape || actions.confirm || steering.state !== "running") return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented ||
+          target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") ||
+          document.querySelector('[role="dialog"], [role="menu"], [aria-haspopup][aria-expanded="true"], .overlay')) return;
+      event.preventDefault();
+      steering.stop();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [phone, readOnly, voiceOwnsEscape, actions.confirm, steering]);
+  const showLive = () => { if (phone) void navigate(`${base}/live${location.search}`, { replace: true, state: location.state }); else setPanelOpen(true); };
 
-  const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} /></ProseRepository>;
-  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} /></ProseRepository>;
+  const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={steering} readOnly={readOnly} /></ProseRepository>;
+  const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} showLive={showLive} phone={phone} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} /></ProseRepository>;
 
   if (phone) {
     return (
@@ -619,7 +647,7 @@ function TaskSkeleton({ phone }: { phone: boolean }) {
 
 /**
  * The task page (SPEC.md §3.10): the operator's conversation with the L2 beside the worker's live
- * session, Stop and Reject with an inline confirm; on the phone a state line and two tabs, the
+ * session, direct Stop and confirmed Reject; on the phone a compact header and two tabs, the
  * composer pinned above the tab bar on the Conversation tab. `/live` selects the Live session tab and
  * opens the desktop panel.
  */
@@ -650,6 +678,6 @@ export default function Task() {
         </p>
       </div>
     );
-  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => { void task.refetch(); }} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
+  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => task.refetch({ throwOnError: true })} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
   return <>{header}{content}</>;
 }

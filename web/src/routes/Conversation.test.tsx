@@ -678,6 +678,23 @@ describe("Conversation", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(2);
   });
 
+  it("an ambiguous server failure restores both drafts and asks for a read before another send", async () => {
+    let release!: (response: Response) => void;
+    const waiting = new Promise<Response>((resolve) => { release = resolve; });
+    const fetchMock = mockFetch({ post: () => waiting });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const field = screen.getByLabelText("Message L3 about altitude");
+    await user.type(field, "Original message");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "New thought");
+    await act(async () => { release(jsonResponse({ error: "Acceptance could not be confirmed" }, 500)); });
+    expect(field).toHaveValue("Original message\nNew thought");
+    expect(region.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(within(region).queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(1);
+  });
+
   it("queues while L3 is mid-turn: Queue appends a queued row with Remove, and Remove posts the id", async () => {
     const queuedRow = { id: "q1", at: ago(0), trigger: "chat", role: "user", text: "After that, the badge", position: 1 };
     // The server keeps the queue: a poll after Queue lists the row, a poll after Remove no longer does.

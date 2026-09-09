@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
@@ -111,8 +111,8 @@ const transcript = {
 interface StubOptions {
   repository?: string | null;
   overview?: typeof overview;
-  message?: () => Response;
-  action?: () => Response;
+  message?: () => Response | Promise<Response>;
+  action?: () => Response | Promise<Response>;
   task?: () => Response;
 }
 
@@ -257,7 +257,7 @@ describe("Task on desktop", () => {
     expect(String(fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"))?.[0])).toContain(
       "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
     );
-    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 
@@ -280,24 +280,22 @@ describe("Task on desktop", () => {
     expect(await screen.findByRole("dialog", { name: "Live session" })).toBeInTheDocument();
   });
 
-  it("stops a task through an inline confirm, never a browser dialog", async () => {
+  it("requests Stop once without confirmation and keeps the draft editable until evidence arrives", async () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Stop" }));
-    const group = screen.getByRole("group", { name: "Stop this task?" });
-    expect(group).toHaveTextContent("Stop this task? Its worker ends; the branch stays.");
-    await user.click(within(group).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("group", { name: "Stop this task?" })).toBeNull();
-    expect(actionCall(fetchMock)).toBeUndefined();
-
-    await user.click(screen.getByRole("button", { name: "Stop" }));
-    await user.click(within(screen.getByRole("group", { name: "Stop this task?" })).getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
-    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "stop" });
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Stop this task?" })).toBeNull());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "stop", generation: null });
+    expect(screen.queryByRole("group", { name: "Stop this task?" })).toBeNull();
+    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(field).toHaveValue("Keep this draft");
+    expect(field).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await user.type(field, " and edit it");
+    expect(field).toHaveValue("Keep this draft and edit it");
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
@@ -321,15 +319,14 @@ describe("Task on desktop", () => {
     });
   });
 
-  it("keeps the confirm open with a Retry when the action fails", async () => {
+  it("shows an unconfirmed Stop with status recheck when its request fails", async () => {
     stub(running, { action: () => jsonResponse({ error: "altd is restarting" }, 503) });
     const { user } = renderApp({ route });
-
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     await user.click(screen.getByRole("button", { name: "Stop" }));
-    const group = screen.getByRole("group", { name: "Stop this task?" });
-    await user.click(within(group).getByRole("button", { name: "Stop" }));
-    expect(await within(group).findByRole("alert")).toHaveTextContent("Could not stop the task. Retry");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The worker may still be running.");
+    expect(screen.getByRole("button", { name: "Check status" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
   it("says what a queued task waits for where the session would be", async () => {
@@ -612,7 +609,7 @@ describe("Task on the phone", () => {
     expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Live session" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThan(0);
 
     await user.click(within(tabs).getByRole("link", { name: "Live session" }));
     expect(within(tabs).getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
@@ -622,17 +619,62 @@ describe("Task on the phone", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("confirms Stop inside task details", async () => {
+  it("keeps Stop directly beside the composer on phone", async () => {
     setViewport(390);
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
-
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    await user.click(screen.getByRole("button", { name: "Task details" }));
-    await user.click(screen.getByRole("button", { name: "Stop" }));
-    const group = screen.getByRole("group", { name: "Stop this task?" });
-    await user.click(within(group).getByRole("button", { name: "Stop" }));
+    const stop = screen.getByRole("button", { name: "Stop" });
+    expect(stop.closest(".convo-dock")).toBeInTheDocument();
+    await user.click(stop);
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+  });
+
+  it.each([409, 500, 200])("keeps send outcome %i and newer typing across a Live session switch", async (status) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { finish = resolve; });
+    let record = running;
+    stub(running, { message: () => response, task: () => jsonResponse(record) });
+    const { user } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Original message");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "New thought");
+    await user.click(screen.getByRole("button", { name: "View live session" }));
+    expect(screen.queryByLabelText("Message the L2")).toBeNull();
+    const message = { id: "after-view-switch", at: new Date().toISOString(), role: running.messages[0]!.role, text: "Original message" };
+    if (status === 200) record = { ...running, messages: [...running.messages, message] };
+    await act(async () => { finish(jsonResponse(status === 200 ? { ok: true, message } : { error: "Send failed" }, status)); });
+    await user.click(screen.getByRole("link", { name: "Conversation" }));
+    expect(screen.getByLabelText("Message the L2")).toHaveValue(status === 200 ? "New thought" : "Original message\nNew thought");
+    if (status === 409) expect(screen.getByRole("alert")).toHaveTextContent("Not sent. Retry");
+    else if (status === 500) {
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    } else {
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.getAllByText("Original message")).toHaveLength(1);
+    }
+  });
+
+  it("does not restore an earlier task's failed send into the destination task", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { finish = resolve; });
+    const fetchMock = stub(running, { message: () => response });
+    const originalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => String(input).includes("/api/task/altitude/other-task")
+      ? jsonResponse({ ...running, slug: "other-task", title: "Other task", messages: [] }) : originalFetch(input, init));
+    const { user, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "Old task message");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(() => router.navigate("/projects/altitude/tasks/other-task"));
+    await screen.findByRole("heading", { name: "Other task" });
+    await user.type(screen.getByLabelText("Message the L2"), "Destination draft");
+    await act(async () => { finish(jsonResponse({ error: "Old request failed" }, 500)); });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("Destination draft");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the fault line and the decision card on the phone too", async () => {
@@ -641,5 +683,183 @@ describe("Task on the phone", () => {
     renderApp({ route });
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(document.querySelector(".task-line")).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+  });
+});
+
+describe("L2 activity and steering", () => {
+  const activity = {
+    generation: "worker-1", state: "available", commentary: { id: "words-1", text: "I am checking the saved retry behavior.", at: new Date(Date.now() - 20_000).toISOString(), time_kind: "source" },
+    observation: { label: "Tool output observed", at: new Date(Date.now() - 5000).toISOString() },
+  };
+  const steering = { state: "running", stop_id: null as string | null, generation: "worker-1", error: null };
+  const active = { ...running, steering, activity };
+  it.each([390, 1440])("replaces public words without adding replies, marks stale and missing evidence at %i", async (width) => {
+    setViewport(width);
+    stub(active);
+    const { queryClient, user } = renderApp({ route });
+    const preview = await screen.findByRole("region", { name: "L2 activity" });
+    const update = async (next: unknown) => act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], next); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(within(preview).getByText(activity.commentary.text)).toBeInTheDocument();
+    const replies = document.querySelectorAll('[data-role="l2"]').length;
+    await user.click(within(preview).getByRole("button", { name: "Expand" }));
+    expect(preview).toHaveAttribute("data-expanded");
+    const next = { ...activity, commentary: { ...activity.commentary, id: "words-2", text: "Now checking the message race.", at: null, time_kind: "unknown" }, observation: { ...activity.observation, at: ago(5) } };
+    await update({ ...active, activity: next });
+    expect(within(preview).queryByText(activity.commentary.text)).toBeNull();
+    expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
+    expect(within(preview).getByText("Time unavailable")).toBeInTheDocument();
+    expect(within(preview).getByText(/No new activity for [45] min/)).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-role="l2"]').length).toBe(replies);
+    await update({ ...active, activity: { ...next, state: "unavailable", commentary: null, observation: null } });
+    expect(within(preview).getByText("Activity unavailable")).toBeInTheDocument();
+    expect(within(preview).getByText("Last known update.")).toBeInTheDocument();
+    expect(within(preview).getByText("Now checking the message race.")).toBeInTheDocument();
+    await update({ ...active, activity: { ...activity, generation: "worker-2", state: "empty", commentary: null, observation: null } });
+    expect(within(preview).getByText("No public update yet.")).toBeInTheDocument();
+    expect(within(preview).queryByText("Now checking the message race.")).toBeNull();
+  });
+
+  it.each([390, 1440])("preserves draft/selection through views and Stop, then sends an explicit correction at %i", async (width) => {
+    setViewport(width);
+    let record = active;
+    const fetchMock = stub(active, { task: () => jsonResponse(record) });
+    const { user, queryClient } = renderApp({ route });
+    const update = async (next: typeof active) => { record = next; await act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], next); await new Promise((resolve) => setTimeout(resolve, 0)); }); };
+    const convo = await screen.findByRole("region", { name: "Task conversation" });
+    let field = within(convo).getByRole("textbox") as HTMLTextAreaElement;
+    await user.type(field, "Keep this correction");
+    field.setSelectionRange(2, 7); fireEvent.select(field);
+    await user.click(within(convo).getByRole("button", { name: "View live session" }));
+    const live = screen.getByRole("region", { name: "Live session" });
+    expect(within(live).getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    if (width === 390) {
+      await user.click(screen.getByRole("link", { name: "Conversation" }));
+      field = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(7);
+    }
+    const controls = within(screen.getByRole("region", { name: "Task conversation" }));
+    await user.click(controls.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body)).generation).toBe("worker-1");
+    expect(field).toHaveValue("Keep this correction");
+    expect(controls.getByRole("button", { name: "Send" })).toBeDisabled();
+    await update({ ...active, state: "blocked", steering: { ...steering, state: "stopping" } });
+    expect(controls.queryByRole("button", { name: "Continue session" })).toBeNull();
+    await update({ ...active, state: "blocked", steering: { ...steering, state: "stopped", stop_id: "stop-1" } });
+    expect(controls.getByRole("button", { name: "Continue session" })).toBeInTheDocument();
+    await user.click(controls.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(true));
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Keep this correction", stop_id: "stop-1" });
+    expect(field).toHaveValue("");
+  });
+
+  it("Continue retains an unsent draft and waits for authoritative running evidence", async () => {
+    const stopped = { ...active, state: "blocked", steering: { ...steering, state: "stopped", stop_id: "stop-1" } };
+    const fetchMock = stub(stopped);
+    const { user } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Unsent thought");
+    await user.click(screen.getByRole("button", { name: "Continue session" }));
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", action: "resume", stop_id: "stop-1" });
+    expect(screen.getByText("Waiting to resume")).toBeInTheDocument();
+    expect(field).toHaveValue("Unsent thought");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(false);
+  });
+
+  it("a replacement generation releases a local Stop and an older response cannot overwrite its controls", async () => {
+    let record = active;
+    let finishOld!: (response: Response) => void;
+    const oldRequest = new Promise<Response>((resolve) => { finishOld = resolve; });
+    let calls = 0;
+    const fetchMock = stub(active, {
+      task: () => jsonResponse(record),
+      action: () => ++calls === 1 ? oldRequest : jsonResponse({ ok: true }),
+    });
+    const { user, queryClient } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Keep the draft");
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    record = { ...active, steering: { ...steering, generation: "worker-2" }, activity: { ...activity, generation: "worker-2" } };
+    await act(async () => {
+      queryClient.setQueryData(["task", "altitude", "fix-timer"], record);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByText("Stopping…")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(calls).toBe(2));
+    await act(async () => { finishOld(jsonResponse({ error: "Old generation refused" }, 409)); });
+    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    expect(screen.queryByText(/Stop unconfirmed/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field).toHaveValue("Keep the draft");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/task/action"))
+      .map(([, init]) => JSON.parse(String(init?.body)).generation)).toEqual(["worker-1", "worker-2"]);
+  });
+
+  it("accepted L2 sends stay saved when refresh fails and leave a newer draft untouched", async () => {
+    let accept!: (response: Response) => void;
+    const pendingSend = new Promise<Response>((resolve) => { accept = resolve; });
+    let failRead = false;
+    const fetchMock = stub(active, {
+      message: () => pendingSend,
+      task: () => failRead ? jsonResponse({ error: "Read unavailable" }, 503) : jsonResponse(active),
+    });
+    const { user } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Saved correction");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "Next draft");
+    failRead = true;
+    await act(async () => { accept(jsonResponse({ ok: true, message: {
+      id: "saved-correction", role: running.messages[0]?.role, at: new Date().toISOString(), text: "Saved correction",
+      delivery: { state: "queued", at: null },
+    } })); });
+    await screen.findByText(/Showing saved conversation/);
+    expect(field).toHaveValue("Next draft");
+    expect(screen.getAllByText("Saved correction")).toHaveLength(1);
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"))).toHaveLength(1);
+  });
+
+  it("Escape respects draft, overlay, recording and composition before stopping the worker", async () => {
+    installVoiceBrowser();
+    const fetchMock = stub(active);
+    const { user } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.click(field); await user.keyboard("{Escape}");
+    expect(actionCall(fetchMock)).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Live session" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull(); expect(actionCall(fetchMock)).toBeUndefined();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await screen.findByRole("button", { name: "Stop voice input" });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await screen.findByRole("button", { name: "Start voice input" });
+    expect(actionCall(fetchMock)).toBeUndefined();
+    await user.click(screen.getByRole("heading", { name: "Fix the timer" }));
+    fireEvent.keyDown(document.body, { key: "Escape", isComposing: true });
+    expect(actionCall(fetchMock)).toBeUndefined();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
+  });
+
+  it("shows receipts on the existing bubble and removes the preview on a question block or completion", async () => {
+    const message = { ...running.messages[0]!, delivery: { state: "queued", at: null } };
+    stub({ ...active, messages: [message] });
+    const { queryClient } = renderApp({ route });
+    await screen.findByText("Queued · waiting for a checkpoint");
+    const update = (next: unknown) => act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], next); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await update({ ...active, messages: [{ ...message, delivery: { state: "delivered", at: ago(1) } }] });
+    expect(screen.getByText("Delivered to session")).toBeInTheDocument();
+    expect(screen.queryByText("Queued · waiting for a checkpoint")).toBeNull();
+    expect(screen.getAllByText(message.text)).toHaveLength(1);
+    await update({ ...active, state: "blocked", steering: { ...steering, state: "idle" }, question: decision, messages: running.messages });
+    expect(screen.queryByRole("region", { name: "L2 activity" })).toBeNull();
+    expect(screen.getByText(decision.question)).toBeInTheDocument();
+    await update({ ...done, steering: { ...steering, state: "idle" } });
+    expect(screen.queryByRole("textbox")).toBeNull(); expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
 });

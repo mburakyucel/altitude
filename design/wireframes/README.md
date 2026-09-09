@@ -6,6 +6,13 @@
 maintained project/task and composer boards. `gen.py` generates those boards from shared sources.
 Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` and `conversation.pw.ts`
 save review captures under ignored `web/ui-artifacts/`. Native keyboard acceptance uses a real phone.
+## L2 activity and steering
+
+[Review the interactive activity and steering board](l2-progress/board.html) and its
+[interaction and engine feasibility notes](l2-progress/PROPOSAL.md). The operator approved the
+preview and steering for #302 on 2026-09-09; the delivered application remains held for review.
+Stop stays directly accessible beside the composer and in Live session on phone and desktop;
+task metadata and Reject remain in the compact phone details sheet.
 
 ## Approved conversation-first design
 

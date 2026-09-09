@@ -129,7 +129,7 @@ class TestCodexAdapter(AltitudeCase):
     def test_stop_ends_the_unit_and_stamps_the_record(self):
         wid = "w-stop"
         paths = engines._codex_paths(self.job_root, wid)
-        S.write_json(paths["record"], {"id": wid, "name": "n", "pid": 1, "unit": "altitude-codex-w-stop.service",
+        S.write_json(paths["record"], {"id": wid, "engine": "codex", "name": "n", "pid": 1, "unit": "altitude-codex-w-stop.service",
                                        "started_at": "t", "session_id": "thr-3", "stopped": None})
         paths["stdout"].write_text("")
         done = subprocess.CompletedProcess([], 0, "", "")

@@ -50,7 +50,7 @@ def _fault_lock():
 
 def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
                          expected_block_id: object = T._UNSET,
-                         expected_owner: dict | None = None) -> tuple[bool | None, bool]:
+                         expected_owner: dict | None = None, *, expected_task: dict | None = None) -> tuple[bool | None, bool]:
     """Return (changed blocker, is a repair task); None means no applicable task observation.
 
     The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
@@ -61,13 +61,22 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
         task = S.load_task(project, slug)
     except (KeyError, OSError, ValueError):
         return None, False
+    def matches(row):
+        # #302: a newer accepted wake, worker, question or Stop owns the task. Retain fault
+        # evidence without replacing that lifecycle, even when resume keeps the old block ID.
+        return ((expected_block_id is T._UNSET or row.get("block_id") == expected_block_id)
+                and (expected_task is None or all(row.get(key) == expected_task.get(key) for key in
+                     ("state", "block_id", "resume_request", "agent_id", "session_id", "stop_id", "daemon_request"))))
+    if not matches(task):
+        return None, task.get("source") == "recovery"
     tag = {"waiting_on": "l3", "fault": kind}
     touched = None
     if task.get("state") in ("queued", "running", "reported"):
         try:
             T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag,
                     expected_owner=expected_owner,
-                    expected_block_id=task.get("block_id") if expected_block_id is T._UNSET else expected_block_id)
+                    expected_block_id=task.get("block_id") if expected_block_id is T._UNSET else expected_block_id,
+                    expected_agent_id=task.get("agent_id"), expected_session_id=task.get("session_id"))
             touched = True
         except T.TransitionError:
             pass
@@ -82,7 +91,7 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
             if (task.get("state") == "blocked"
                     and (expected_owner is None or (T.report_owner(task) == expected_owner and not any(
                         row.get("wake", True) for row in T.pending(project, slug))))
-                    and (expected_block_id is T._UNSET or task.get("block_id") == expected_block_id)):
+                    and matches(task)):
                 touched = task.get("fault") != kind or task.get("blocked_reason") != reason
                 if touched:
                     T._supersede_resume(task)
@@ -92,7 +101,8 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None,
-                 expected_block_id: object = T._UNSET, expected_owner: dict | None = None) -> dict | None:
+                 expected_block_id: object = T._UNSET, expected_owner: dict | None = None,
+                 expected_task: dict | None = None) -> dict | None:
     """Block the faulting task; deduplicate incidents by source project and kind for 24 hours.
 
     Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
@@ -103,7 +113,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
     touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail}", kind,
-                                          expected_block_id, expected_owner)
+                                          expected_block_id, expected_owner, expected_task=expected_task)
                        if project and task else (False, False))
     if expected_owner is not None and touched is None:
         return None  # #323: superseded verification creates neither a fault nor coordinator work.

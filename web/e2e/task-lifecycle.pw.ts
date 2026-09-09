@@ -41,9 +41,7 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   await walk.state("03-running-input-queued", {
     visible: [conversation.getByText("Include the failure reason in the result.", { exact: true })], hidden: [],
   });
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
   await expect.poll(async () => (await task()).daemon_request?.status).toBe("done");
   expect((await task()).state).toBe("blocked");
   expect((await workers()).workers[resumed.agent_id].state).toBe("stopped");
@@ -58,7 +56,7 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   await page.reload();
   await walk.state("05-rejected-read-only", {
     visible: [page.getByText("Rejected", { exact: true }).first()],
-    hidden: [field, page.getByRole("button", { name: "Stop", exact: true }), page.getByRole("button", { name: "Reject", exact: true })],
+    hidden: [field, page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }), page.getByRole("button", { name: "Reject", exact: true })],
   });
   const archived = await task();
   expect(archived.daemon_request.status).toBe("done");
@@ -273,26 +271,23 @@ test("an operational stop resumes the saved L2 without inventing a decision; a f
   const workers = async () => (await (await request.get("/fixture/workers")).json());
   const initial = await task();
   await walk.open(`/projects/atlas/tasks/${slug}`);
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
-  await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
   await expect.poll(async () => (await task()).daemon_request?.status).toBe("done");
   expect((await task()).state).toBe("blocked");
   expect((await task()).question).toBeNull();
   await page.reload();
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
-  const resume = page.getByRole("button", { name: "Resume", exact: true });
+  const resume = page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Continue session", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   await walk.state("01-stopped-with-operational-resume", {
     visible: [resume, page.getByRole("textbox", { name: "Message the L2", exact: true })],
-    hidden: [conversation.locator("[data-question-id]"), page.getByRole("button", { name: "Stop", exact: true })],
+    hidden: [conversation.locator("[data-question-id]"), page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true })],
   });
   const stateLine = page.locator(".task-state-line");
   const stateLineHeight = info.project.name === "phone" ? (await stateLine.boundingBox())!.height : 0;
   await page.route("**/api/task/action", (route) => route.fulfill({ status: 503, json: { error: "The resume request could not be saved." } }), { times: 1 });
   await resume.click();
-  const error = page.getByRole("alert").filter({ hasText: "Could not resume. Try again." });
-  await walk.state("02-resume-request-failed", { visible: [error, resume], hidden: [page.getByRole("button", { name: "Resuming…", exact: true })] });
+  const error = conversation.getByRole("alert").filter({ hasText: "Could not confirm continuation." });
+  await walk.state("02-resume-request-failed", { visible: [error, resume], hidden: [conversation.getByText("Waiting to resume", { exact: true })] });
   if (info.project.name === "phone") {
     await expect.poll(async () => (await stateLine.boundingBox())!.height, {
       message: "The resume error must not squeeze the readable task status into a vertical stack",
@@ -305,8 +300,8 @@ test("an operational stop resumes the saved L2 without inventing a decision; a f
   await page.route("**/api/task/action", async (route) => { await gate; await route.continue(); }, { times: 1 });
   try {
     await resume.click();
-    const pending = page.getByRole("button", { name: "Resuming…", exact: true });
-    await expect(pending).toBeDisabled();
+    const pending = conversation.getByText("Waiting to resume", { exact: true });
+    await expect(resume).toBeHidden();
     await walk.state("03-resume-request-pending", { visible: [pending], hidden: [error] });
   } finally { release(); }
   await expect.poll(async () => (await task()).state).toBe("running");
@@ -320,9 +315,8 @@ test("an operational stop resumes the saved L2 without inventing a decision; a f
   const overview = await (await request.get("/api/overview")).json();
   expect(overview.queue.some((row: { slug: string }) => row.slug === slug)).toBe(false);
   await page.reload();
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await walk.state("04-saved-session-resumed", {
-    visible: [page.getByRole("button", { name: "Stop", exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
+    visible: [page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
     hidden: [resume, conversation.locator("[data-question-id]"), conversation.getByText("Decision recorded", { exact: true })],
   });
 });

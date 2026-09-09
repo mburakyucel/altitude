@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, state as S, tasks as T, transcript
+from altitude import config, dispatch, engines, state as S, tasks as T, transcript
 
 
 def _stamp(minutes: int, seconds: int = 0) -> str:
@@ -43,7 +43,10 @@ class TestCodexTranscript(AltitudeCase):
 
     def test_every_turn_in_time_order_with_prompts_commands_and_file_changes(self):
         T.brief(self.project, self.slug, "# Brief\nDo it")
-        T.message(self.project, self.slug, "burak", "Prefer the smaller diff")
+        message = T.message(self.project, self.slug, "burak", "Prefer the smaller diff")
+        task = S.load_task(self.project, self.slug)
+        task["message_deliveries"] = {message["id"]: {"agent_id": "w2", "session_id": "thread-1", "at": _stamp(10)}}
+        S.save_task(self.project, task)
         self.old.write_text(json.dumps({"type": "item.completed", "item": {
             "id": "item_1", "type": "command_execution", "command": "/bin/bash -lc 'make test'",
             "aggregated_output": "ok\n", "exit_code": 0, "status": "completed"}}) + "\n")
@@ -81,6 +84,9 @@ class TestCodexTranscript(AltitudeCase):
 
     def test_a_resume_that_delivered_nothing_shows_the_continue_prompt(self):
         self.new.write_text(json.dumps({"type": "thread.started", "thread_id": "thread-1"}) + "\n")
+        record = S.read_json(self.root / "w2.json")
+        record["input_delivered"] = True
+        S.write_json(self.root / "w2.json", record)
         first = self._view()
         prompts = [e["text"] for e in first["events"] if e["role"] == "user"]
         self.assertEqual(prompts, [transcript.RESUME_PROMPT])  # no brief on disk, so turn 1 shows no prompt
@@ -96,7 +102,7 @@ class TestCodexTranscript(AltitudeCase):
                 self._view(**changed)
 
     def test_no_browser_path_and_redaction_policy(self):
-        self.assertIsNone(transcript._claude_path("../../etc/passwd"))
+        self.assertIsNone(engines._claude_path("../../etc/passwd"))
         for project, slug in (("../etc", self.slug), (self.project, "../status"), ("unmanaged", "task")):
             with self.assertRaises(transcript.TranscriptAccessError):
                 transcript.view(project, slug, engine="codex", session_id="x")

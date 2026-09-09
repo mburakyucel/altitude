@@ -207,15 +207,18 @@ This is a read-time presentation of durable text: no message rewrite, provider r
 per-mention lookup occurs. Existing links and code remain intact, and missing repository metadata
 leaves unqualified references as text. Switching projects supplies the destination's repository.
 
-A message from Burak (task page, chat through L3, or `alt task message`) is appended to the task's durable
-conversation and to its inbox. Nothing is killed. A running Claude L2 receives the inbox at its next checkpoint:
-the inbox hook returns it as additional context after a tool call, or as the reason to keep going when the
-session is about to stop. A running Codex L2 receives it when its current turn ends and the message resumes the
-thread with the inbox. For a blocked task the same locked append records a due `resume_after` request. The L3
+A message from the operator (task page, chat through L3, or `alt task message`) is appended to the task's durable
+conversation and to its inbox. Nothing is killed. The engine seam supplies the inbox at a native hook
+checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
+worker retains the fault path even with pending steering. For a blocked task the same locked append
+records a due `resume_after` request, except when Stop holds the inbox. The L3
 CLI returns without fetching or writing the deployment checkout; altd sees the durable request on its next tick
 and its keyed resume runner coalesces a simultaneous API wake, retry, or available WIP slot. Before provider launch it
-persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox. Delivered
-messages leave the inbox; the conversation keeps them, and a message appended after that snapshot remains
+persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox.
+Claimed messages remain labeled Queued. A successful stdin handoff, matching session initialization
+and bound replacement record delivery for that exact batch. A correlated native hook attachment also
+proves handoff; inbox absence or new assistant output does not. Missing evidence says Delivery
+unconfirmed, without recommending a duplicate send. The conversation keeps each message, and a message appended after that snapshot remains
 for the running worker's next checkpoint. An explicit question block supersedes earlier wake requests:
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
 authorizes another turn. An L2's question goes to L3 first: L3's `alt task message` requests that
@@ -419,9 +422,28 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    An explicit resume receipt also consumes only its original block and request; it cannot remove the
    timer for an answer that arrived after a newer question.
 
-**Stop** (task page, `alt task stop --reason …`) runs in altd, blocks the task first, and then stops its worker,
-so the poll never reads the exiting worker as a death. A message or `alt task resume --reason …` brings the same
-session back; `alt task reject --reason …` ends the task and removes its worker in altd. An L2 that blocks with
+Fault bookkeeping checks its observed block, resume request, worker/session and Stop or daemon
+operation before changing the task. A message accepted after a worker-exit block keeps its wake;
+a replacement worker or newer question keeps ownership. The incident evidence remains recorded.
+An engine failure with an older queued message still follows the fault path.
+
+**Stop** is directly accessible beside the composer and in Live session on phone and desktop.
+It queues one operation in altd without confirmation, records the observed worker and Stop identity,
+holds inbox delivery immediately, blocks the task and stops the worker with its descendants. The poll
+never reads the exiting worker as a death or lets concurrent final output undo Stop. The page says
+Stopping until termination is evidenced, and Stop unconfirmed if termination cannot be established.
+Check status reads evidence; it does not repeat the Stop command. Drafts stay editable throughout.
+Desktop Escape requests Stop only when no input, dialog, recording, menu or overlay owns it.
+
+Earlier and racing messages stay held until a correction or Continue explicitly names the confirmed
+Stop the page observed. A stale running tab can queue a message but cannot undo Stop. Continue keeps
+the unsent draft; a correction is appended after held messages. The existing daemon resume preserves
+the session, attempt, launch model and dirty worktree. Capacity holds remain Waiting to resume.
+The continued turn supplies its own completion; a completion requested before Stop cannot finish
+the replacement worker. Failed sends restore their text alongside newer draft edits even when
+the operator switches to Live session before the response arrives. Accepted sends remain sent.
+`alt task resume --reason …` is also an explicit continuation; Reject ends the task and removes its
+worker in altd. Stop does not undo completed external effects. An L2 that blocks with
 `--fault` takes the system-fault path instead of asking Burak: the task, incident, FYI and L3
 notification all stay in its project. Incidents use the source project and kind for a 24-hour window;
 another task newly blocked by that kind or changed same-kind details still notify its L3 with the
@@ -723,11 +745,23 @@ Phone Conversation and Live session tabs remain visible while typing hides the g
 navigation. Keyboard dismissal restores that navigation without clearing the draft or selection;
 local view changes retain the draft, while leaving the task follows the existing discard rule.
 The compact header names L2 activity and Merge held independently. Full block/hold reasons,
-metadata and existing Stop/Reject/Resume confirmations open in task details; desktop keeps direct
-operational actions. Faults retain a visible cause and the L3 notification. An open question stays
-at its conversation anchor with View question/Latest messages and no generic Resume. Disclosure,
+metadata, Reject with confirmation and operational Resume open in task details. Stop and Continue
+remain directly accessible in both views on phone and desktop. Faults retain a visible cause and
+the L3 notification. An open question stays at its conversation anchor with View question/Latest
+messages and no generic Resume. Disclosure,
 keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
 preserves bottom-follow or the older message being read, and sending resumes following.
+
+Conversation shows a replacing two-line preview of the current worker's public words above its
+composer. Expand reveals the full update after existing redaction. Prose uses its native source time
+only when identifiable; untimed words say Time unavailable. Recorded output has a separate observed
+age. No new output for 60 seconds reads as quiet, without inferring useful progress or failure.
+Missing commentary, an empty source and an unavailable source are distinct. Resume clears the old
+direction until the new worker emits public output. Questions, decisions and explicit results stay
+durable in Conversation; older worker output remains only in Live session under existing retention.
+No summarizer or duplicate reply is generated. View changes preserve the draft and selection;
+blocked questions use the existing question conversation, and finished tasks remove the preview,
+composer and Stop.
 
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline

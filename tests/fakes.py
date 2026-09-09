@@ -24,7 +24,7 @@ class FakeL2:
                 return result
         worker_id = f"fixture-worker-{len(self.calls)}"
         row = {"id": worker_id, "sessionId": session_id or f"fixture-session-{len(self.calls)}",
-               "state": "working", "status": "busy", "engine_model": kwargs.get("model")}
+               "state": "working", "status": "busy", "engine_model": kwargs.get("model"), "input_delivered": True}
         self.workers[worker_id] = row
         return {"returncode": 0, "stdout": "", "stderr": "", "agent": dict(row)}
 

@@ -118,7 +118,10 @@ releases its hold. The owner then rechecks and lands normally.
   L3 reports what is queued, merged and effective. Rules stay in their appropriate
   project or role source; see the [L3 persona](personas/l3.md).
 - **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
-  session, and follow its PR and report. Messages queue for the engine's next checkpoint.
+  session, and follow its PR and report. A replacing public update and recorded activity show what
+  is visible from the current worker. Messages queue for the engine's next checkpoint, with delivery
+  labeled only when evidenced. Stop holds queued messages until an explicit correction or Continue
+  resumes the saved session; file edits and the draft remain intact.
   An explicit question block survives worker exit and restart; older queued messages do not
   resume it. A later message or explicit Resume brings the session back.
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.
@@ -294,6 +297,15 @@ accepting a design leaves any merge hold intact. See [publishing a task design](
 The [model-to-UI flow](docs/ARCHITECTURE.md#from-model-judgment-to-a-task-question-or-preview)
 explains how owners invoke the CLI, how coordinator transports differ, and where questions,
 previews and decisions persist.
+
+Above the task composer, the latest public L2 words appear in an expandable two-line preview with
+their own timestamp. Recorded activity has a separate age; quiet, missing and unavailable evidence
+are explicit. Older output stays in Live session under existing retention, without duplicate replies
+or model-generated summaries. Stop is directly accessible in both views on phone and desktop.
+Desktop Escape stops only when no input, dialog, recording, menu or overlay owns the key. Stopping
+keeps the draft editable; only confirmed termination enables correction or Continue. Continue keeps
+the unsent draft, while sending a correction resumes with earlier queued messages followed by that
+correction. Switching views preserves the draft and selection. Finished tasks are read-only.
 
 Project conversations keep their own history and waiting messages. Switching projects clears the
 unsent draft and local reply state; a turn already sent finishes in its original project. Returning
