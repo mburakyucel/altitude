@@ -31,7 +31,9 @@ async function createGroup(request: APIRequestContext) {
 async function send(page: Page, text: string) {
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   await page.getByRole("textbox", { name: "Message the L2", exact: true }).fill(text);
+  const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/l2/message" && response.request().method() === "POST");
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await saved).ok(), "The pending bubble is not evidence of a saved message").toBe(true);
   await expect(conversation.locator(".bubble").filter({ hasText: text })).toBeVisible();
 }
 async function modelCheckpoint(request: APIRequestContext, slug: string) {
@@ -248,8 +250,8 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
   await expect(field).toBeEnabled();
   await expect(accept).toBeEnabled();
   await walk.state("01-requeued-question-still-actionable", {
-    visible: [card, field, accept, page.getByText("Queued", { exact: true }).first(), conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })],
-    hidden: [page.getByRole("button", { name: "Resume", exact: true })],
+    visible: [card, field, accept, page.getByText("Queued", { exact: true }).first(), ...(info.project.name === "phone" ? [] : [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })])],
+    hidden: [page.getByRole("button", { name: "Resume", exact: true }), ...(info.project.name === "phone" ? [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })] : [])],
   });
   const followup = "Could we roll back after day seven?";
   await send(page, followup);

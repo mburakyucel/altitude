@@ -208,6 +208,14 @@ deletions remain blocked.
 
 ## Project conversations
 
+Phone chat keeps project/task identity and a short activity status in one header, with text,
+microphone and send controls together in a compact composer. Last-answer time, engine selection,
+task metadata and operational actions open in details. Blocked and merge-held status stay distinct;
+full reasons are available there, while actionable failures and the original question remain visible.
+Bottom navigation hides during detected software keyboard use and returns on dismissal. Drafts,
+selection and older-message reading position survive the change; task Conversation/Live session
+tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
+
 PR and issue references in L3 and L2 prose, decisions, and reports are clickable, including saved
 messages. `PR #250` and `pull request #250` open the project's pull request; `issue #247` and
 `#247` use GitHub's issue route, which also resolves pull requests. `owner/repo#247` names its own

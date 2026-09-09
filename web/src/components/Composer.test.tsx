@@ -121,6 +121,7 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send" }).textContent).toBe("");
     expect(screen.getByLabelText("Recording time")).toHaveTextContent("0:00");
+    expect(screen.getByRole("status")).toHaveTextContent("Listening… Stop to add text, or Send.");
     expect(field).toHaveAttribute("placeholder", "");
     expect(field).toHaveValue("Keep this");
 
@@ -246,10 +247,12 @@ describe("Composer", () => {
   it("Denied: the mic shows disabled and the hint says typing works", async () => {
     installVoiceBrowser();
     vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValue(new DOMException("denied", "NotAllowedError"));
-    const { user, field } = mount({ initial: "still here" });
+    const { user, field } = mount({ initial: "still here", busy: true });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     expect(await screen.findByText("Microphone blocked in the browser. Typing works.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Microphone blocked in the browser. Typing works.");
+    expect(screen.queryByText("L3 is mid-turn · runs next")).toBeNull();
     expect(field).toHaveValue("still here");
     await user.type(field, " and typing");
     expect(field).toHaveValue("still here and typing");

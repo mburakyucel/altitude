@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { transcribeVoice } from "../data/api";
 
@@ -28,11 +28,11 @@ export interface ComposerProps {
   onSubmit: (text: string) => void | Promise<void>;
   placeholder: string;
   ariaLabel: string;
-  /** L3 is mid-turn: the arrow queues and the hint says the message runs next (SPEC.md §4.2). */
+  /** L3 is mid-turn: the arrow queues; desktop also explains that the message runs next. */
   busy?: boolean;
-  /** The hint under the field when no state claims it (12px muted). */
+  /** The desktop hint under the field when no state claims it (12px muted). */
   hint?: ReactNode;
-  /** The left pill: the engine pin on L3 chat; none on a task. */
+  /** The desktop pill: the engine pin on L3 chat; phone uses project details. */
   pill?: ReactNode;
   disabled?: boolean;
   autoFocus?: boolean;
@@ -209,6 +209,28 @@ export default function Composer({
   const unavailable = voiceUnavailable();
   const canvas = useWaveform(stream, phase === "listening");
 
+  useLayoutEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    const sizeField = () => {
+      node.style.height = "auto";
+      node.style.height = `${node.scrollHeight}px`;
+    };
+    sizeField();
+    let width = node.clientWidth;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (width === node.clientWidth) return;
+      width = node.clientWidth;
+      sizeField();
+    });
+    observer?.observe(node);
+    window.addEventListener("resize", sizeField);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", sizeField);
+    };
+  }, [value, phase]);
+
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -236,7 +258,7 @@ export default function Composer({
     queueMicrotask(() => {
       const node = field.current;
       if (!node) return;
-      node.focus();
+      node.focus({ preventScroll: true });
       if (position != null) node.setSelectionRange(position, position);
     });
   }, []);
@@ -454,6 +476,7 @@ export default function Composer({
   const micDisabled = denied || disabled || transcribing;
 
   let hintText: ReactNode = hint ?? null;
+  let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
   if (refused != null) {
@@ -470,18 +493,25 @@ export default function Composer({
   } else if (transcribing) {
     hintRole = "status";
     hintText = "Transcribing…";
+  } else if (listening) {
+    hintRole = "status";
+    hintText = phase === "starting" ? "Opening microphone…" : "Listening… Stop to add text, or Send.";
   } else if (voiceFailure) {
     hintTone = "danger";
     hintRole = "alert";
     hintText = voiceFailure;
-  } else if (busy) {
-    hintRole = "status";
-    hintText = "L3 is mid-turn · runs next";
   } else if (denied) {
     hintTone = "danger";
+    hintRole = "alert";
     hintText = "Microphone blocked in the browser. Typing works.";
   } else if (unavailable === "insecure") {
     hintText = "Voice needs HTTPS";
+  } else {
+    routineHint = true;
+    if (busy) {
+      hintRole = "status";
+      hintText = "L3 is mid-turn · runs next";
+    }
   }
 
   return (
@@ -548,7 +578,7 @@ export default function Composer({
         </div>
       </div>
       {hintText ? (
-        <p id={hintId} className={`composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} role={hintRole}>
+        <p id={hintId} className={`composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole}>
           {hintText}
         </p>
       ) : null}

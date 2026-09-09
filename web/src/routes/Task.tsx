@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { ReactNode } from "react";
 import { Link, NavLink, useLocation, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseRepository } from "../components/Prose";
@@ -14,7 +15,9 @@ import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
+import { PhoneHeader } from "../shell/PhoneHeader";
 import LiveSession from "./LiveSession";
+import "./task-details.css";
 
 // TaskView is a passthrough schema: everything the server sends beyond the declared fields (attempt,
 // session_id, l2_engine, prs, hold_merge, fault, ...) arrives typed `unknown`, so narrow it here.
@@ -49,8 +52,9 @@ interface Chip {
 
 interface Facts {
   state: string;
+  label: string;
   dot: "running" | "waiting" | "danger" | "idle";
-  /** The state chip, engine and model, PR with its checks state, hold reason (SPEC.md §3.10). */
+  /** Compact state, engine/model and PR with its checks state; full reasons are disclosed. */
   chips: Chip[];
   /** The muted line under the title: attempt, when it started or finished, context used. */
   sub: string;
@@ -58,8 +62,8 @@ interface Facts {
   waiting: string | null;
   /** A block that is a fault: the one-sentence reason, and L3 has been told. */
   fault: string | null;
-  /** A block waiting on L3's answer, or on the operator before the decision row arrives. */
-  blocked: string | null;
+  blockReason: string;
+  holdReason: string;
   engineLabel: string;
   finished: boolean;
   canMessage: boolean;
@@ -70,8 +74,10 @@ interface Facts {
   hint: string;
 }
 
-function oneSentence(text: string): string {
+function faultSummary(text: string): string {
   const first = text.trim().split(/(?<=[.!?])\s+/)[0] ?? "";
+  // The complete fault remains in Task details; its permanent notice leaves room for messages.
+  if (first.length > 100) return `${first.slice(0, 100).replace(/\s+\S*$/, "")}…`;
   return /[.!?]$/.test(first) ? first : `${first}.`;
 }
 
@@ -106,7 +112,9 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = held ? "Queued" : sentence(state || "unknown");
+  const label = held ? "Queued" : state === "blocked"
+    ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : task.question?.status === "open" ? "Needs your answer" : "Paused"
+    : sentence(state || "unknown");
   const dot: Facts["dot"] =
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
 
@@ -131,12 +139,14 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
   return {
     state,
+    label,
     dot,
-    chips: [{ text: label }, ...(engineChip ? [{ text: engineChip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: `Merge held · ${hold}`, tone: "held" as const }] : [])],
+    chips: [{ text: label }, ...(engineChip ? [{ text: engineChip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
-    fault: faultKind ? `${oneSentence(reason || `A ${faultKind} fault blocked the task`)} L3 has been told.` : null,
-    blocked: waitsOnL3 ? `Waits for L3's answer${reason ? ` · ${reason}` : ""}` : null,
+    fault: faultKind ? `${faultSummary(reason || `A ${faultKind} fault blocked the task`)} L3 has been told.` : null,
+    blockReason: state === "blocked" ? reason : "",
+    holdReason: hold,
     engineLabel,
     finished,
     canMessage: state === "running" || state === "blocked" || (state === "queued" && Boolean(task.question)),
@@ -171,6 +181,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
   const current = task.question?.status === "open" ? task.question : undefined;
   const scroller = useRef<HTMLDivElement>(null);
+  const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
   const followedAnchor = useRef("");
   const following = useRef(!questionId);
@@ -180,6 +191,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const [accessRefresh, setAccessRefresh] = useState(0);
   const messages = task.messages ?? [];
   const anchorKey = `${location.key}:${questionId ?? ""}:${revision ?? ""}`;
+  const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
+    const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
+    setQuestionOffscreen(Boolean(anchor && (anchor.getBoundingClientRect().bottom < node.getBoundingClientRect().top || anchor.getBoundingClientRect().top > node.getBoundingClientRect().bottom)));
+  }, [current?.id, current?.revision]);
   const jumpTo = useCallback((question: Decision) => {
     const node = anchors.current.get(`${question.id}:${question.revision}`);
     const container = scroller.current;
@@ -203,12 +218,14 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     if (!node || !column || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (following.current) node.scrollTop = node.scrollHeight;
+      viewportHeight.current = node.clientHeight;
       setLatest(!following.current && node.scrollHeight - node.scrollTop - node.clientHeight > 48);
+      updateQuestionVisibility(node);
     });
     observer.observe(column);
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [updateQuestionVisibility]);
   const send = async (text: string) => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -291,10 +308,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       {target && current && !inGroup(target) && (target.id !== current.id || target.revision !== current.revision) ? <p className="conversation-notice">This question has been replaced. <Link to={questionPath(current)} state={location.state} replace>View current question</Link></p> : null}
       <div className="convo-scroll" ref={scroller} onScroll={(event) => {
         const node = event.currentTarget;
+        // Keyboard/composer resize can emit a scroll before ResizeObserver restores bottom-follow.
+        if (node.clientHeight !== viewportHeight.current) return;
         following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
         setLatest(!following.current);
-        const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
-        setQuestionOffscreen(Boolean(anchor && (anchor.getBoundingClientRect().bottom < node.getBoundingClientRect().top || anchor.getBoundingClientRect().top > node.getBoundingClientRect().bottom)));
+        updateQuestionVisibility(node);
       }}>
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
@@ -423,24 +441,6 @@ function Chips({ chips }: { chips: Chip[] }) {
   );
 }
 
-function BlockLines({ facts }: { facts: Facts }) {
-  if (facts.fault) {
-    return (
-      <p className="task-line text-danger" role="status">
-        {facts.fault}
-      </p>
-    );
-  }
-  if (facts.blocked) {
-    return (
-      <p className="task-line text-muted" role="status">
-        {facts.blocked}
-      </p>
-    );
-  }
-  return null;
-}
-
 function ChipText({ chip }: { chip: Chip }) {
   return chip.href ? <a href={chip.href} target="_blank" rel="noopener noreferrer">{chip.text}</a> : chip.text;
 }
@@ -462,28 +462,28 @@ function TaskPage({
   readOnly,
   checking,
   refresh,
+  detailsOpen,
+  setDetailsOpen,
 }: {
   project: string;
   task: TaskView;
-  overview: Overview | undefined;
+  overview: UseQueryResult<Overview>;
   liveRoute: boolean;
   readOnly: boolean;
   checking: boolean;
   refresh: () => void;
+  detailsOpen: boolean;
+  setDetailsOpen: (open: boolean) => void;
 }) {
   const { phone, panelInline } = useViewport();
   const location = useLocation();
   const back = useTaskBack(project);
   const projectQuery = useProject(project);
-  const facts = taskFacts(task, overview, project, projectQuery.data?.repository);
+  const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
   const decision = task.question?.status === "open" ? task.question : undefined;
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  // A block on the operator shows its card; the reason line stands in until the row has loaded.
-  const blockFacts =
-    facts.state === "blocked" && !decision && !facts.fault && !facts.blocked && !facts.waiting && overview
-      ? { ...facts, blocked: str(task["blocked_reason"]) || "Blocked" }
-      : facts;
+  const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
   const actions = useTaskActions(project, task.slug);
   const resumeError = facts.canResume && actions.error && !actions.confirm
     ? <p className="task-line text-danger" role="alert">Could not resume. Try again.</p> : null;
@@ -495,6 +495,27 @@ function TaskPage({
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
+  const detailsButton = <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button>;
+  const faultNotice = facts.fault ? <p className="task-line task-fault text-danger" role="status">{facts.fault}</p> : null;
+  const details = detailsOpen ? <Overlay label="Task details" side={phone ? "bottom" : "right"} onClose={closeDetails}>
+    <div className="task-details">
+      <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
+      <p className="task-details-title">{title}</p>
+      {phone ? <>
+        {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
+        <Chips chips={facts.chips} />
+        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
+      </> : null}
+      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
+      {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
+      {decision ? <Link className="btn btn-ghost" to={questionPath(decision)} state={location.state} replace onClick={closeDetails}>View question</Link> : null}
+      {phone ? <>
+        <div className="task-actions"><ActionButtons facts={facts} actions={actions} /></div>
+        <ConfirmRow actions={actions} />
+        {resumeError}
+      </> : null}
+    </div>
+  </Overlay> : null;
 
   const panel = <ProseRepository value={projectQuery.data?.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} /></ProseRepository>;
   const conversation = <ProseRepository value={projectQuery.data?.repository}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} /></ProseRepository>;
@@ -502,24 +523,9 @@ function TaskPage({
   if (phone) {
     return (
       <div className="task-page" data-phone>
-        <div className="task-phone-head">
-          <p className="task-state-line">
-            <span className="dot" data-state={facts.dot} aria-hidden />
-            {facts.chips.map((chip, index) => (
-              <span key={chip.text} data-tone={chip.tone}>
-                {index > 0 ? " · " : ""}
-                <ChipText chip={chip} />
-              </span>
-            ))}
-          </p>
-          <div className="task-actions">
-            <ActionButtons facts={facts} actions={actions} />
-          </div>
-          <ConfirmRow actions={actions} />
-          {resumeError}
-          <BlockLines facts={blockFacts} />
-          <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
-        </div>
+        {faultNotice}
+        {!detailsOpen ? resumeError : null}
+        {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
         <nav className="task-tabs" aria-label="Task views">
           <NavLink className="task-tab" to={`${base}${location.search}`} replace state={location.state} end>
             Conversation
@@ -529,6 +535,7 @@ function TaskPage({
           </NavLink>
         </nav>
         {liveRoute ? panel : conversation}
+        {details}
       </div>
     );
   }
@@ -542,6 +549,7 @@ function TaskPage({
           </button>
           <div className="task-actions">
             <ActionButtons facts={facts} actions={actions} />
+            {detailsButton}
             <button
               type="button"
               className="icon-btn"
@@ -559,10 +567,10 @@ function TaskPage({
         </h1>
         {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
         <Chips chips={facts.chips} />
-        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview?.engines} />
+        <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
         <ConfirmRow actions={actions} />
         {resumeError}
-        <BlockLines facts={blockFacts} />
+        {faultNotice}
       </header>
       <div className="task-body">
         <div className="task-main">{conversation}</div>
@@ -576,6 +584,7 @@ function TaskPage({
           )
         ) : null}
       </div>
+      {details}
     </div>
   );
 }
@@ -618,9 +627,16 @@ export default function Task() {
   const task = useTask(project, slug);
   const overview = useOverview();
   const { phone } = useViewport();
-  if (task.isPending) return <TaskSkeleton phone={phone} />;
-  if (task.isError && !task.data) {
-    return (
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  useEffect(() => setDetailsOpen(false), [project, slug]);
+  const facts = task.data ? taskFacts(task.data, overview.data, project) : null;
+  const header = phone ? <PhoneHeader overview={overview} onTitleClick={facts ? () => setDetailsOpen(true) : undefined} status={facts ?
+    <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden />L2 · <span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span> : undefined
+  }>{facts ? <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button> : null}</PhoneHeader> : null;
+  let content: ReactNode;
+  if (task.isPending) content = <TaskSkeleton phone={phone} />;
+  else if (task.isError && !task.data) {
+    content = (
       <div className="page">
         <p className="text-danger">
           Could not load the task.{" "}
@@ -630,8 +646,6 @@ export default function Task() {
         </p>
       </div>
     );
-  }
-  return (
-    <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview.data} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => { void task.refetch(); }} />
-  );
+  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => { void task.refetch(); }} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
+  return <>{header}{content}</>;
 }

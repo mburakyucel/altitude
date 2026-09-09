@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { streamChat, useChatDequeue, useL3Engine } from "../data/api";
+import { streamChat, useChatDequeue } from "../data/api";
 import type { ChatMessage, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
 import { ProseRepository } from "../components/Prose";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
+import { L3EngineSelect } from "../components/L3EngineSelect";
+import { useViewport } from "../shell/breakpoints";
 import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
 import { TaskCard } from "../components/TaskCard";
 import type { SystemTurn } from "../components/SystemLine";
@@ -162,10 +164,11 @@ export default function Conversation({
   const queryClient = useQueryClient();
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const viewportHeight = useRef(0);
   const [draft, setDraft] = useState("");
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
-  const pin = useL3Engine(name);
+  const { phone } = useViewport();
 
   const view = chat.data;
   const activeId = view?.active?.id ?? null;
@@ -201,6 +204,7 @@ export default function Conversation({
     if (!node || !column || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (following.current) node.scrollTop = node.scrollHeight;
+      viewportHeight.current = node.clientHeight;
     });
     observer.observe(column);
     observer.observe(node);
@@ -320,24 +324,6 @@ export default function Conversation({
     );
   }
 
-  const engine = view?.engine ?? "";
-  const pill = (
-    <select
-      className="composer-pill-select"
-      aria-label="L3 engine"
-      value={engines.some((e) => e.engine === engine) ? engine : ""}
-      disabled={pin.isPending}
-      onChange={(event) => pin.mutate(event.target.value || null)}
-    >
-      <option value="">Auto</option>
-      {engines.map((e) => (
-        <option key={e.engine} value={e.engine}>
-          {e.label}
-        </option>
-      ))}
-    </select>
-  );
-
   return (
     <ProseRepository value={project.data?.repository}>
     <section className="convo" aria-label="Conversation">
@@ -346,6 +332,8 @@ export default function Conversation({
         ref={scroller}
         onScroll={(event) => {
           const node = event.currentTarget;
+          // A viewport resize can dispatch scroll before ResizeObserver restores bottom following.
+          if (node.clientHeight !== viewportHeight.current) return;
           following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
         }}
       >
@@ -367,9 +355,9 @@ export default function Conversation({
           {rows}
           {queued.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
-              {queued.map((row) => (
+              {queued.map((row, index) => (
                 <li key={row.id} className="queued-row">
-                  <span className="queued-text">{row.text}</span>
+                  <span className="queued-text"><span>{row.text}</span><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></span>
                   {!row.trigger || row.trigger === "chat" ? (
                     <button type="button" className="link" onClick={() => dequeue.mutate(row.id)}>
                       Remove
@@ -389,7 +377,7 @@ export default function Conversation({
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}
-          pill={pill}
+          pill={phone ? undefined : <L3EngineSelect name={name} engine={view?.engine ?? ""} engines={engines} />}
           hint="L3 answers or creates one task. Shift + Enter for a new line."
         />
       </div>

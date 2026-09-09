@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
@@ -10,6 +11,8 @@ import { TaskCard } from "../components/TaskCard";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
+import { PhoneHeader } from "../shell/PhoneHeader";
+import { L3EngineSelect } from "../components/L3EngineSelect";
 import { decisionsFor, managedProjects } from "../shell/projects";
 import { useStarting } from "../shell/starting";
 import Conversation from "./Conversation";
@@ -167,9 +170,10 @@ export function statusParts(
   return parts;
 }
 
-function HeaderMenu({ name, designViewer, starting }: {
-  name: string; designViewer: string; starting: boolean;
+function HeaderMenu({ name, designViewer, starting, details }: {
+  name: string; designViewer: string; starting: boolean; details?: ReactNode;
 }) {
+  const { phone } = useViewport();
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState<"" | "reset" | "remove">("");
   const [error, setError] = useState("");
@@ -230,25 +234,8 @@ function HeaderMenu({ name, designViewer, starting }: {
     </div>
   );
 
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className="icon-btn"
-        aria-label="More actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={pending}
-        onClick={() => (open ? close() : setOpen(true))}
-      >
-        <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
-          <circle cx="4" cy="10" r="1.6" fill="currentColor" />
-          <circle cx="10" cy="10" r="1.6" fill="currentColor" />
-          <circle cx="16" cy="10" r="1.6" fill="currentColor" />
-        </svg>
-      </button>
-      {open ? (
-        <div role="menu" className="menu" aria-label="Project actions">
+  const menu = (
+        <div role="menu" className={phone ? "project-details-actions" : "menu"} aria-label="Project actions">
           {confirm === "reset" ? (
             confirmRow(
               "Reset the L3 conversation?",
@@ -284,7 +271,32 @@ function HeaderMenu({ name, designViewer, starting }: {
             </a>
           ) : null}
         </div>
-      ) : null}
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="More actions"
+        aria-haspopup={phone ? "dialog" : "menu"}
+        aria-expanded={open}
+        disabled={pending}
+        onClick={() => (open ? close() : setOpen(true))}
+      >
+        <svg aria-hidden viewBox="0 0 20 20" width="20" height="20">
+          <circle cx="4" cy="10" r="1.6" fill="currentColor" />
+          <circle cx="10" cy="10" r="1.6" fill="currentColor" />
+          <circle cx="16" cy="10" r="1.6" fill="currentColor" />
+        </svg>
+      </button>
+      {open ? phone ? <Overlay label="Project details" side="bottom" onClose={close}>
+        <div className="sheet project-details">
+          <div className="sheet-heading"><h2>{name}</h2><button type="button" className="btn btn-ghost" onClick={close} disabled={pending}>Close details</button></div>
+          {details}
+          {menu}
+        </div>
+      </Overlay> : menu : null}
     </div>
   );
 }
@@ -299,6 +311,7 @@ function ProjectHeader({
   panelToggle,
   panelOpen,
   onTogglePanel,
+  overview,
 }: {
   name: string;
   project: UseQueryResult<ProjectView>;
@@ -309,9 +322,12 @@ function ProjectHeader({
   panelToggle: boolean;
   panelOpen: boolean;
   onTogglePanel: () => void;
+  overview: UseQueryResult<Overview>;
 }) {
   const start = useL3Start(name);
   const sessionId = str(dict(project.data?.l3).session_id);
+  const sessionEngine = engines.find((e) => e.engine === str(project.data?.l3?.engine))?.label;
+  const model = str(project.data?.l3?.engine_model);
   const neverStarted =
     project.isSuccess && chat.isSuccess && !sessionId && chat.data.history.length === 0 && !chat.data.active;
   const status = project.isError
@@ -319,6 +335,25 @@ function ProjectHeader({
     : neverStarted
       ? "L3 has not started"
       : statusParts(chat.data, project.data, decisions, engines).join(" · ");
+  const engine = engines.find((e) => e.engine === chat.data?.engine)?.label;
+  const compactStatus = project.isError ? "Could not read project" : neverStarted ? "L3 · Not started"
+    : !chat.data ? "L3 · Loading…" : chat.data.active ? chat.data.active.trigger === "chat" ? "L3 · Answering" : `L3 · Handling ${handling(chat.data.active.trigger)}` : chat.data.busy ? "L3 · Busy" : "L3 · Ready";
+  const startButton = neverStarted ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
+    {start.isPending ? "Starting…" : "Start L3"}
+  </button> : null;
+  const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} details={<>
+    <p className="text-meta text-muted">{status}</p>
+    {sessionEngine || model ? <p className="text-meta text-muted">Session: {[sessionEngine, model].filter(Boolean).join(" · ")}</p> : null}
+    <label className="project-engine">L3 engine <L3EngineSelect name={name} engine={chat.data?.engine ?? ""} engines={engines} /></label>
+  </>} />;
+
+  if (!showName) return <>
+    <PhoneHeader overview={overview} status={`${compactStatus}${engine ? ` · ${engine}` : ""}`}>
+      {startButton}{menu}
+    </PhoneHeader>
+    {project.isError ? <p className="convo-error text-danger" role="alert">{project.error.message} <button type="button" className="link" onClick={() => void project.refetch()}>Retry</button></p> : null}
+    {start.isError ? <p className="convo-error text-danger" role="alert">{start.error.message}</p> : null}
+  </>;
 
   return (
     <header className="project-header">
@@ -329,16 +364,7 @@ function ProjectHeader({
         </p>
         {start.isError ? <p className="text-meta text-danger" role="alert">{start.error.message}</p> : null}
       </div>
-      {neverStarted ? (
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={start.isPending}
-          onClick={() => start.mutate()}
-        >
-          {start.isPending ? "Starting…" : "Start L3"}
-        </button>
-      ) : null}
+      {startButton}
       {panelToggle ? (
         <button
           type="button"
@@ -353,7 +379,7 @@ function ProjectHeader({
           </svg>
         </button>
       ) : null}
-      <HeaderMenu name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />
+      {menu}
     </header>
   );
 }
@@ -381,18 +407,24 @@ export default function ProjectPage() {
 
   if (overview.isPending) {
     return (
+      <>
+      {phone ? <PhoneHeader overview={overview} status="L3 · Loading…" /> : null}
       <div className="page" aria-label="Loading">
         <div className="skeleton h-6 w-48" />
       </div>
+      </>
     );
   }
   // Nothing managed, or First run is still starting a project (the overview lists it as managed
   // before L3's first reply, whatever route the operator is on): First run stays up.
   if (overview.isSuccess && (managedProjects(overview.data).length === 0 || starting)) {
     return (
+      <>
+      {phone ? <PhoneHeader overview={overview} /> : null}
       <div className="page first-run-page">
         <FirstRun overview={overview} />
       </div>
+      </>
     );
   }
 
@@ -401,6 +433,7 @@ export default function ProjectPage() {
   return (
     <div className="project-page">
       <ProjectHeader
+        overview={overview}
         name={name}
         project={project}
         chat={chat}

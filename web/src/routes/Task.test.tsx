@@ -151,6 +151,29 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it.each([390, 1440])("keeps independent block and merge reasons discoverable at %i pixels", async (width) => {
+    setViewport(width);
+    const holdReason = "Wait for the operator to review the complete phone and desktop evidence before merging this pull request.";
+    stub({ ...askingL3, hold_merge: holdReason, question: { ...decision, audience: "l3" }, questions: [{ ...decision, audience: "l3" }] });
+    const { user } = renderApp({ route });
+    const opener = await screen.findByRole("button", { name: "Task details" });
+    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.queryByText(holdReason)).toBeNull();
+    expect(screen.queryByText(askingL3.blocked_reason)).toBeNull();
+    const field = screen.getByRole("textbox", { name: "Message the L2" });
+    await user.type(field, "Preserve this draft.");
+    await user.click(opener);
+    const details = screen.getByRole("dialog", { name: "Task details" });
+    expect(within(details).getByText(holdReason)).toBeInTheDocument();
+    expect(within(details).getByText(askingL3.blocked_reason)).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "View question" })).toHaveAttribute("href", `${route}?question=q-timer&revision=1`);
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
+    expect(opener).toHaveFocus();
+    expect(field).toHaveValue("Preserve this draft.");
+  });
+
   it("shows the header rows, the conversation, and the live session panel for a running task", async () => {
     setViewport(1440);
     const fetchMock = stub(running);
@@ -295,7 +318,7 @@ describe("Task on desktop", () => {
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    expect(screen.getByText("Needs your answer")).toBeInTheDocument();
     const convo = screen.getByRole("region", { name: "Task conversation" });
     const card = convo.querySelector("[data-question-id=\"q-timer\"]")!;
     expect(card).toHaveTextContent("Should the timer keep the old default?");
@@ -305,15 +328,16 @@ describe("Task on desktop", () => {
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
   });
 
-  it("says a block waits for L3's answer", async () => {
+  it("discloses the full L3 block reason without a permanent paragraph", async () => {
     stub(askingL3);
-    renderApp({ route });
+    const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    const line = document.querySelector(".task-line");
-    expect(line).toHaveAttribute("role", "status");
-    expect(line).toHaveTextContent("Waits for L3's answer · which suite covers the timer");
-    expect(line).not.toHaveClass("text-danger");
+    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.queryByText("which suite covers the timer")).toBeNull();
+    expect(document.querySelector(".task-line")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Task details" }));
+    expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
   });
 
   it("shows a fault as one red sentence and says L3 has been told", async () => {
@@ -327,11 +351,25 @@ describe("Task on desktop", () => {
     expect(line).toHaveClass("text-danger");
   });
 
+  it("keeps an unpunctuated fault concise and discloses its complete reason", async () => {
+    const reason = `The verification browser could not start ${"while checking the configured environment ".repeat(12)}`.trim();
+    stub({ ...faulted, blocked_reason: reason });
+    const { user } = renderApp({ route });
+    const opener = await screen.findByRole("button", { name: "Task details" });
+    const notice = document.querySelector(".task-fault");
+    expect(notice).toHaveTextContent("The verification browser could not start");
+    expect(notice).toHaveTextContent("… L3 has been told.");
+    expect(notice!.textContent!.length).toBeLessThanOrEqual(120);
+    await user.click(opener);
+    expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText(reason)).toBeInTheDocument();
+  });
+
   it.each([390, 1440])("links the PR in a new tab at %i pixels when the repository is known", async (width) => {
     setViewport(width);
     stub(done, { repository: "https://github.com/example/project" });
-    renderApp({ route });
+    const { user } = renderApp({ route });
 
+    if (width === 390) await user.click(await screen.findByRole("button", { name: "Task details" }));
     const link = await screen.findByRole("link", { name: "PR #202 merged · main checks passed" });
     expect(link).toHaveAttribute("href", "https://github.com/example/project/pull/202");
     expect(link).toHaveAttribute("target", "_blank");
@@ -341,8 +379,9 @@ describe("Task on desktop", () => {
   it.each([390, 1440])("keeps the PR as text at %i pixels when the repository is null", async (width) => {
     setViewport(width);
     stub(done, { repository: null });
-    renderApp({ route });
+    const { user } = renderApp({ route });
 
+    if (width === 390) await user.click(await screen.findByRole("button", { name: "Task details" }));
     expect(await screen.findByText("PR #202 merged · main checks passed", { exact: false })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /PR #202/ })).toBeNull();
   });
@@ -517,14 +556,15 @@ describe("Task on the phone", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(document.querySelector(".task-state-line")).toHaveTextContent("Running · Opus on Claude");
+    expect(document.querySelector(".task-state-line")).toHaveTextContent("L2 · Running");
+    expect(screen.queryByText("Opus on Claude")).toBeNull();
     const tabs = screen.getByRole("navigation", { name: "Task views" });
     expect(within(tabs).getByRole("link", { name: "Conversation" })).toHaveAttribute("aria-current", "page");
     expect(within(tabs).getByRole("link", { name: "Live session" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("region", { name: "Task conversation" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Live session" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
 
     await user.click(within(tabs).getByRole("link", { name: "Live session" }));
     expect(within(tabs).getByRole("link", { name: "Live session" })).toHaveAttribute("aria-current", "page");
@@ -534,12 +574,13 @@ describe("Task on the phone", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("confirms Stop inline under the state line", async () => {
+  it("confirms Stop inside task details", async () => {
     setViewport(390);
     const fetchMock = stub(running);
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    await user.click(screen.getByRole("button", { name: "Task details" }));
     await user.click(screen.getByRole("button", { name: "Stop" }));
     const group = screen.getByRole("group", { name: "Stop this task?" });
     await user.click(within(group).getByRole("button", { name: "Stop" }));

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useLocation, useMatch, useNavigate } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useTask } from "../data/api";
@@ -60,7 +61,12 @@ function Switcher({
 /** The 54px phone header (SPEC.md §2.2): the project name with a chevron on project tabs, a back control
  * and the task's title on a pushed task page (§3.10), a back control, the crumb and Open task on a
  * pushed decision page (§3.9), "Altitude" on the global tabs. */
-export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }) {
+export function PhoneHeader({ overview, status, children, onTitleClick }: {
+  overview: UseQueryResult<Overview>;
+  status?: ReactNode;
+  children?: ReactNode;
+  onTitleClick?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -79,6 +85,12 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
   const isProject = Boolean(name) && managed.some((p) => p.name === name);
   // Hidden chevron and no sheet when exactly one project is managed and no folder is unmanaged.
   const switchable = isProject && (managed.length > 1 || unmanagedFolders(data).length > 0);
+  const title = taskMatch ? task.data?.title || taskMatch.params.slug
+    : decisionMatch ? from === "needs" ? "Needs you" : name : isProject ? name : "Altitude";
+  const titleContent = <span className="phone-heading">
+    <span className="truncate">{title}</span>
+    {status ? <span className="phone-status" aria-live="polite">{status}</span> : null}
+  </span>;
 
   const back = () => {
     if (taskViewMatch) taskBack();
@@ -98,40 +110,36 @@ export function PhoneHeader({ overview }: { overview: UseQueryResult<Overview> }
       ) : (
         <span className="icon-btn invisible" aria-hidden />
       )}
+      <h1 className="phone-title" aria-label={title}>
       {switchable && !pushed ? (
         <button
           type="button"
           className="phone-title phone-title-button"
+          aria-label={title}
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen(true)}
         >
-          <span className="truncate">{name}</span>
+          {titleContent}
           <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
             <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-      ) : (
-        <h1 className="phone-title">
-          <span className="truncate">
-            {taskMatch
-              ? task.data?.title || taskMatch.params.slug
-              : decisionMatch
-                ? from === "needs"
-                  ? "Needs you"
-                  : name
-                : isProject
-                  ? name
-                  : "Altitude"}
-          </span>
-        </h1>
-      )}
+      ) : onTitleClick ? (
+        <button type="button" className="phone-title phone-title-button" aria-label={`${title} details`} aria-haspopup="dialog" onClick={onTitleClick}>
+          {titleContent}
+        </button>
+      ) : titleContent}
+      </h1>
+      {data?.queue.length ? <Link className="icon-btn phone-needs" to="/" aria-label={`Needs you, ${data.queue.length} pending`}>
+        <span className="badge">{data.queue.length}</span>
+      </Link> : null}
       {decisionMatch ? (
         <Link className="btn btn-ghost task-action" to={`/projects/${name}/tasks/${decisionMatch.params.slug}`} state={{ tab: activeTabState(from) }}>
           Open task
         </Link>
       ) : (
-        <span className="icon-btn invisible" aria-hidden />
+        children ?? <span className="icon-btn invisible" aria-hidden />
       )}
       {open ? <Switcher overview={overview} current={name} onClose={() => setOpen(false)} /> : null}
     </header>

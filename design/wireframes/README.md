@@ -1,5 +1,17 @@
 # Altitude product design
 
+## Approved compact mobile chat
+
+[Compare current and proposed phone layouts](mobile-chat/index.html), with
+[illustrative gains and interaction rules](MOBILE_CHAT.md). The operator approved the complete
+layout on 2026-09-09. The resulting implementation PR remains held for review.
+`mobile_chat.py`, called by `gen.py`, owns its board, CSS and script; the comparison page is
+hand-authored HTML and uses captures from the isolated app fixture.
+The task-status examples add long blocked/merge-held reasons, both together, operator questions,
+faults and operational pauses at phone and desktop sizes. `TaskStatusProposal.html` is the
+desktop companion. Baseline screenshots and wireframe measurements document the design comparison;
+application checks and real phone keyboard acceptance provide separate implementation evidence.
+
 ## Approved conversation-first design
 
 [Review the Needs you / L2 conversation design](CONVERSATION_FIRST.md), with
@@ -36,17 +48,17 @@ Phone headers, composers and tab bars stay docked while content scrolls inside t
 
 | Board | Files | What it shows |
 | --- | --- | --- |
-| Project | `Project.html`, `MobileProject.html` | The rail (Needs you, projects with state dot and count, unmanaged folders, engine readout, Monitor, operator). The project's conversation with L3: operator bubbles, L3 prose, an inline task card for a task the turn created, one folded system line, the composer with engine pin and microphone. The work panel: Needs you cards, Active rows, Done this week folded. On the phone the project name in the header is the switcher, and the tab bar is Chat, Work, Needs you, Monitor. |
+| Project | `Project.html`, `MobileProject.html` | The rail (Needs you, projects with state dot and count, unmanaged folders, engine readout, Monitor, operator). L3 conversation with task cards and folded system lines beside the work panel. Phone combines identity/status in one header and text/mic/send in one row; engine selection and metadata open in details. Chat, Work, Needs you, Monitor return after keyboard dismissal. |
 | Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with dot and count, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
 | Project work | `MobileWork.html` | The work panel as the phone's Work tab: same sections and cards as the desktop panel. |
 | Needs you and L2 decisions | `ConversationFirst*.html`, `MobileConversationFirst*.html` | Six examples: questions upfront, immediate single choices, grouped picks, follow-up, partial/irrelevant closure, and resumed work. Shared recovery/input appendix. |
-| Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, labelled L3 prose, attempt/age/context metadata and PR/check chips. Phone actions sit at the end of the state line, above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
+| Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, labelled L3 prose, attempt/age/context metadata and PR/check chips. Phone details hold metadata and existing operational actions; concise status stays in the header above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
 | Task overlay and states | `TaskOverlay.html`, `TaskStates.html` | The live panel overlays the main pane below 1280px. Inline Stop/Reject confirmations, L3 block, held resume, connecting, streaming, paused, unavailable, finished/empty conversation, and message failure. |
 | Report | `Report.html`, `MobileReport.html` | Full report and digest as plain sections, with a back link to the task. |
 | Monitor | `Monitor.html`, `MobileMonitor.html`, `MonitorStates.html` | Configured engine seats, reserve lines, reading ages, stale chips, routing and Sessions (N). Loading, error, no reading, one engine, and empty states. The route boards also show the restart banner above the header/content. |
 | Restart banner states | `RestartStates.html` | Pending at the quiet point, waiting with a named reason, under way with the button gone, and absent after the new process answers. |
 | First run | `FirstRun.html` | No managed project yet: the folders Altitude found, pick one, Start L3. |
-| Composer states | `ComposerStates.html` | Phone-width examples of idle, typing, listening (Cancel, Stop, arrow), transcribing, landed, busy, denied, unavailable, failed and send refusal. Every state has one send control: the accent arrow. Busy and voice hints sit below the field; no transcript box or Undo chip appears. |
+| Composer states | `ComposerStates.html` | Phone-width examples of idle, typing, listening (Cancel, Stop, arrow), transcribing, landed, busy, denied, unavailable, failed and send refusal. Every state has one send control: the accent arrow. Routine hints have no phone row; relevant voice and failure explanations remain visible. No transcript box or Undo chip appears. |
 | System turns in chat | `SystemTurnStates.html` | A landed report, a fault, a restart, or an FYI is one folded line in the conversation: one turn, several grouped, expanded, in progress, fault, FYI. |
 | Conversation and report states | `ConversationStates.html` | L3 never started, empty conversation, loading and cached-error rows, report loading, empty and error. |
 | Project lifecycle states | `ProjectLifecycleStates.html` | The removal confirmation that detaches L3, cancellation, pending, denial/error, navigation, and attachment again with saved history. The same controls fit phone and desktop. |

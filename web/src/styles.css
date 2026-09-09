@@ -619,7 +619,7 @@
 /* The phone header and tab bar (§2.2). */
 .phone-header {
   display: flex;
-  height: var(--phone-header-h);
+  min-height: var(--phone-header-h);
   flex: none;
   align-items: center;
   gap: 4px;
@@ -638,6 +638,7 @@
   font-size: var(--text-card-title);
   font-weight: 600;
 }
+.phone-title-button { width: 100%; }
 .phone-title-button {
   min-height: var(--target-min);
   padding: 0 8px;
@@ -646,6 +647,26 @@
   background: transparent;
   cursor: pointer;
 }
+.phone-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.25;
+}
+.phone-heading > .truncate { max-width: 100%; }
+.phone-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+.phone-needs { display: none; }
+.shell[data-keyboard] .phone-needs { display: inline-flex; }
+.shell[data-keyboard] .tab-bar { display: none; }
+.shell[data-phone][data-keyboard] .convo-dock { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+.shell[data-keyboard] { --tab-bar-h: 0px !important; }
+.shell[data-phone] .phone-toast { position: absolute; }
+.shell[data-phone] .toast button { min-height: 44px; min-width: 44px; }
 .tab-bar {
   display: grid;
   height: var(--tab-bar-h);
@@ -726,6 +747,12 @@
   border-radius: var(--radius-card) var(--radius-card) 0 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+.shell[data-phone] .overlay {
+  top: var(--viewport-top, 0px);
+  bottom: auto;
+  height: var(--viewport-height, 100dvh);
+}
+.shell[data-phone] .overlay-panel { max-height: 90%; }
 .overlay[data-side="center"] {
   align-items: center;
   justify-content: center;
@@ -750,6 +777,14 @@
   border-radius: var(--radius-pill);
   background: var(--border);
 }
+.sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sheet-heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-card-title); font-weight: 600; }
+.project-details { padding: 16px; gap: 16px; }
+.project-details-actions { display: flex; flex-direction: column; }
+.project-engine { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.project-details .composer-pill-select { min-height: 44px; }
+.queued-status { display: block; font-size: var(--text-meta); }
+.shell[data-phone] .queued-row > .link { min-width: 44px; min-height: 44px; }
 
 /* First run (§3.12). */
 .first-run-page {
@@ -1122,8 +1157,11 @@
   font-size: var(--text-meta);
 }
 .shell[data-phone] .restart-banner {
-  padding: 10px 16px;
+  gap: 4px;
+  padding: 2px 12px;
 }
+.restart-banner-summary { flex: 1; }
+.sheet .restart-banner-text { flex: none; }
 .restart-banner-text {
   display: flex;
   min-width: 0;
@@ -1324,7 +1362,6 @@
 
 /* Task consumption stays folded beside the header facts; details fit phone and desktop. */
 .token-usage { min-width: 0; font-size: var(--text-meta); }
-.task-phone-head .token-usage { width: 100%; margin-right: 8px; }
 .token-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-height: var(--target-min); padding: 4px 0; text-align: left; color: var(--text-secondary); }
 .token-summary-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .token-coverage, .token-freshness { color: var(--text-muted); }
@@ -1479,7 +1516,7 @@
   padding: 12px 16px 8px;
 }
 .shell[data-phone] .convo-dock {
-  padding: 4px 12px 12px;
+  padding: 8px 12px;
 }
 .convo-empty,
 .convo-error {
@@ -1781,9 +1818,8 @@
   color: var(--accent-text);
 }
 
-/* ---- The composer (§3.6): one rounded field with the pill, the microphone, and Send in a row under
- * the text; a hint line under the field. Voice states live inside the field: the row carries the
- * cancel control, the waveform, the timer, and the stop control while listening. ---- */
+/* ---- The shared composer (§3.6): phone text and controls share one row; desktop keeps its
+ * engine pill and shortcut hint. Voice and actionable failures explain their current state. ---- */
 .composer {
   display: flex;
   width: 100%;
@@ -1815,7 +1851,6 @@
   font-size: 15px;
   line-height: 24px;
   resize: none;
-  field-sizing: content;
   outline: none;
 }
 .composer-field::placeholder {
@@ -1935,18 +1970,48 @@
   font-size: 12px;
 }
 .shell[data-phone] .composer-box {
-  padding: 12px 10px 8px 16px;
+  min-height: 54px;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 4px;
   border-radius: 22px;
 }
 .shell[data-phone] .composer-field {
+  min-width: 0;
+  min-height: 44px;
+  max-height: max(44px, min(120px, calc(var(--viewport-height, 100dvh) * .25)));
+  flex: 1;
+  padding: 10px 0 10px 10px;
   font-size: 16px;
+  overflow-y: auto;
+}
+.shell[data-phone] .composer-row {
+  flex: none;
+  gap: 4px;
+  margin-top: 0;
 }
 .shell[data-phone] .composer-icon {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
 }
-.shell[data-phone] .composer-pill-select {
-  font-size: 16px;
+.shell[data-phone] .composer-pill,
+.shell[data-phone] .composer-spacer,
+.shell[data-phone] .composer-hint[data-routine],
+.shell[data-phone] .composer-voice[data-frozen],
+.shell[data-phone] .composer[data-phase="starting"] .composer-field,
+.shell[data-phone] .composer[data-phase="listening"] .composer-field {
+  display: none;
+}
+.shell[data-phone] .composer[data-phase="starting"] .composer-row,
+.shell[data-phone] .composer[data-phase="listening"] .composer-row {
+  width: 100%;
+}
+.shell[data-phone] .composer-hint {
+  padding: 0 10px;
+}
+.shell[data-phone] .composer-hint .link {
+  min-height: 44px;
 }
 
 /* The live session panel (§3.10). */
@@ -2025,15 +2090,7 @@
   font-size: 15px;
 }
 
-/* The phone task page: the state line, the tab row, then the content and its pinned composer. */
-.task-phone-head {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  padding: 8px 8px 4px 16px;
-}
+/* The phone task page's compact status and local tabs. */
 .task-state-line {
   display: flex;
   min-width: 0;
@@ -2050,11 +2107,6 @@
 }
 .task-state-line [data-tone="danger"] {
   color: var(--danger);
-}
-.task-phone-head .task-confirm,
-.task-phone-head .task-line {
-  width: 100%;
-  margin-right: 8px;
 }
 .task-tabs {
   display: grid;

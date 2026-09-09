@@ -139,7 +139,7 @@ svg.i.sm{width:14px;height:14px}
 /* mobile */
 .m{width:390px;height:844px;display:grid;grid-template-rows:0 54px minmax(0,1fr) auto 84px;background:var(--surface);overflow:hidden}
 .mh{display:flex;align-items:center;padding:0 10px 0 16px;gap:8px}
-.mh .name{display:inline-flex;align-items:center;gap:4px;height:40px;padding:0 10px 0 4px;border-radius:var(--radius-control);font-size:17px;font-weight:600;color:var(--text-primary)}
+.mh .name{display:inline-flex;align-items:center;gap:4px;height:44px;padding:0 10px 0 4px;border-radius:var(--radius-control);font-size:17px;font-weight:600;color:var(--text-primary)}
 .mh .name svg{color:var(--text-muted)}
 .mh .subl{font-size:12px;color:var(--text-muted);line-height:1.2}
 .mh .sp{flex:1}
@@ -148,10 +148,15 @@ svg.i.sm{width:14px;height:14px}
 .mcol{display:flex;flex-direction:column;gap:16px;margin-top:auto;padding-bottom:12px}
 .m .me{max-width:82%;font-size:16px;padding:10px 14px}
 .m .l3{font-size:16px;line-height:1.6}
-.m .composer{border-radius:22px;padding:12px 10px 8px 16px;max-width:none}
-.m .composer .ph2,.m .composer .draft{font-size:16px}
-.m .icb{width:40px;height:40px}
-.mcomp{padding:10px 12px 8px}
+.m .composer,.compact .composer{display:flex;align-items:flex-end;gap:2px;border-radius:26px;padding:4px;max-width:none}
+.m .composer .ph2,.m .composer .draft,.compact .composer .ph2,.compact .composer .draft{font-size:16px;flex:1;min-width:0;min-height:44px;max-height:120px;overflow:auto;padding:10px 8px;line-height:24px}
+.m .crow,.compact .crow{display:contents}.m .crow>.pillbtn,.m .crow>span[style],.compact .crow>.pillbtn,.compact .crow>span[style]{display:none}
+.m .icb,.compact .icb{width:44px;height:44px}.m .hint.routine,.compact .hint.routine{display:none}
+.mcomp{padding:8px 12px}
+.phone-details>summary{list-style:none;display:flex;align-items:center;justify-content:center;width:44px;height:44px;cursor:pointer}
+.phone-details>summary::-webkit-details-marker{display:none}.phone-details[open]>summary{background:var(--accent-tint);border-radius:10px}
+.phone-details .details-panel{position:absolute;top:54px;left:12px;right:12px;z-index:3;max-height:calc(100% - 70px);overflow:auto;padding:20px;background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);font-size:14px;line-height:1.6}
+.details-panel h2{font-size:18px;margin:0 0 14px}.details-panel h3{font-size:15px;margin:18px 0 8px}.details-panel p{margin:8px 0;overflow-wrap:anywhere}.details-panel select{font:inherit;min-height:44px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text-primary)}
 .tabbar{border-top:1px solid var(--hairline);background:var(--page);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding-bottom:26px}
 .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;font-weight:500;color:var(--text-muted);position:relative}
 .tab.on{color:var(--accent-text)}
@@ -224,7 +229,7 @@ svg.i.sm{width:14px;height:14px}
 .statebox p{margin:6px 0 12px}.statebox .hint{padding-bottom:0}
 .statebox .composer{max-width:358px}.statebox .crow{flex-wrap:nowrap}
 .statebox .wave{min-width:0;overflow:hidden}.statebox .status{flex-shrink:0}
-.statebox .icb{width:40px;height:40px}.statebox .ph2,.statebox .draft{font-size:16px}
+.statebox .icb{width:44px;height:44px}.statebox .ph2,.statebox .draft{font-size:16px}
 .statebox .lab{margin-bottom:8px}.statebox .tool{font-size:12px}
 .route-content{min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px 28px 28px}
 .route-content h1{font-size:18px;margin:0 0 24px;font-weight:600}
@@ -242,10 +247,10 @@ svg.i.sm{width:14px;height:14px}
 .banner{display:flex;gap:16px;align-items:center;padding:12px 28px;background:var(--accent-tint);border-bottom:1px solid var(--accent-tint-border);font-size:13px;flex-shrink:0}
 .banner p{margin:0}.banner .btn{margin-left:auto}.banner .muted{font-size:12px}
 .m .route-content{padding:16px}.m .seats{grid-template-columns:minmax(0,1fr)}
-.m .banner{padding:10px 16px;gap:8px}.m .banner .btn{height:36px;padding:0 10px;font-size:13px}
-.task-phone{grid-template-rows:54px auto auto minmax(0,1fr) auto 84px}
+.m .banner{padding:10px 16px;gap:8px}.m .banner .btn{height:44px;padding:0 10px;font-size:13px}
+.task-phone{grid-template-rows:54px 44px minmax(0,1fr) auto 84px}
 .task-meta{padding:8px 16px;font-size:12px}.task-meta .monitor-row{gap:6px}
-.task-tabs{display:flex;border-bottom:1px solid var(--hairline);padding:4px 16px 8px;gap:24px;font-size:14px}
+.task-tabs{display:flex;align-items:center;border-bottom:1px solid var(--hairline);padding:0 16px;gap:24px;font-size:14px;min-height:44px}
 .task-tabs .on{color:var(--accent-text);border-bottom:2px solid var(--accent);padding-bottom:4px}
 .task-phone .live{border:0}.task-phone .lh{padding:0 16px;height:48px}.task-phone .lh h2{font-size:14px}
 .task-phone .lbody{padding:0 16px 16px}.task-phone .tool .n{white-space:nowrap}
@@ -322,7 +327,7 @@ def rail(selected, needs=2, first_run=False, count_alt="1", count_vt="1"):
 def composer(placeholder="Message L3 about altitude", engine=True, mobile=False, draft=None, hint=None, to=None):
     eng = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span>' if engine else (f'<span class="pillbtn">To {to}{I("chev-d","i sm")}</span>' if to else '<span style="flex:1"></span>')
     body = f'<div class="draft">{draft}</div>' if draft else f'<div class="ph2">{placeholder}</div>'
-    h = f'<div class="hint">{hint}</div>' if hint else ""
+    h = f'<div class="hint{"" if "danger" in hint else " routine"}">{hint}</div>' if hint else ""
     return (
         f'<div class="composer">{body}'
         f'<div class="crow">{eng}<span style="flex:1"></span>'
@@ -459,7 +464,7 @@ task_inner = (
     f'<div class="acts"><span class="btn ghost">Stop</span><span class="btn ghost">Reject</span><span class="ib on">{I("panel")}</span></div></div>'
     '<h1 style="display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:600;line-height:1.3"><span class="dot"></span>Design wireframes for the simplified product</h1>'
     '<div class="sub" style="font-size:13px;color:var(--text-muted)">attempt 1 · started 32 min ago · 18% of its context used</div>'
-    '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:2px"><span class="chip">Running</span><span class="chip">Fable on Claude</span><a href="#" class="chip">PR #176 open · main checks passed</a><span class="chip held">Merge held · your review</span></div>'
+    '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:2px"><span class="chip">Running</span><span class="chip">Fable on Claude</span><a href="#" class="chip">PR #176 open · main checks passed</a><details><summary class="chip held" style="cursor:pointer">Merge held · Details</summary><p>Keep this PR open until the operator reviews the phone and desktop interaction states and separately approves merging it.</p></details></div>'
     '</header>'
     '<div class="convo"><div class="col">'
     '<div class="day">Today</div>'
@@ -495,11 +500,13 @@ board("FirstRun", 1440, 900, first_inner)
 
 # =====================================================================
 # Mobile
-def mheader_project(sub="L3 answered 12 min ago"):
+def mheader_project(sub="L3 · Ready"):
     return (
         '<header class="mh"><div><span class="name">altitude' + I("chev-d","i sm") + '</span>'
         f'<div class="subl" style="padding-left:4px;margin-top:-6px">{sub}</div></div><span class="sp"></span>'
-        f'<span class="ib">{I("more")}</span></header>'
+        f'<details class="phone-details"><summary aria-label="Project details">{I("more")}</summary><div class="details-panel"><h2>altitude</h2>'
+        '<p>L3 answered 12 min ago · 3 tasks in flight · 1 waits for your review</p><label>Engine <select aria-label="L3 engine"><option>Auto</option><option>Configured engine</option></select></label>'
+        '<p>Reset L3 conversation</p><p>Remove project</p><a href="index.html">Design boards</a></div></details></header>'
     )
 
 def mheader_global(title="Altitude"):
@@ -588,17 +595,17 @@ def compose_state(phase):
     """One send control in every state; 358px examples also prove the phone row."""
     draft = phase in ("Typing", "Busy", "Landed", "Failed")
     top = '<div class="draft">Both phone and desktop need to land.</div>' if draft else '<div class="ph2">Message L3 about altitude</div>'
-    pin = f'<span class="pillbtn">Auto{I("chev-d","i sm")}</span>'
+    pin = ""
     mic = f'<span class="icb">{I("mic","i lg")}</span>'
     hint = ""
     if phase == "Listening":
-        return comp_custom('<div class="draft"></div>', pin + f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>{wave(W[:6])}<span class="status">0:07</span><span class="icb" aria-label="Stop">{I("stop","i lg")}</span>' + arrow())
+        return comp_custom('', f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>{wave(W[:6])}<span class="status">0:07</span><span class="icb" aria-label="Stop">{I("stop","i lg")}</span>' + arrow(), "Listening · Stop to edit, or send")
     if phase == "Transcribing":
         top = '<div class="draft">Both phone and desktop need to land.</div>'
         mic = f'<span class="icb dim">{I("mic","i lg")}</span>'
-        return comp_custom(top, pin + wave(W[:6]) + '<span class="status">0:07</span>' + mic + arrow(True), "Transcribing…")
+        return comp_custom(top, mic + arrow(True), "Transcribing…")
     elif phase == "Busy":
-        hint = "L3 is mid-turn · runs next"
+        hint = ""
     elif phase == "Denied":
         mic = f'<span class="icb dim">{I("mic-off","i lg")}</span>'
         hint = "Microphone blocked in the browser. Typing works."
@@ -610,7 +617,7 @@ def compose_state(phase):
     return comp_custom(top, pin + '<span style="flex:1"></span>' + mic + arrow(not draft), hint)
 
 W = [6,10,16,22,14,8,12,20,24,18,10,6,9,15,21,17,11,7,13,19,23,16,9,6,12,18,14,8]
-states = ''.join(state(label, note, '<div class="statebox">' + compose_state(label) + '</div>') for label, note in [
+states = ''.join(state(label, note, '<div class="statebox compact">' + compose_state(label) + '</div>') for label, note in [
     ("Idle", "typing enables the arrow"),
     ("Typing", "the draft sends through the arrow"),
     ("Listening", "Cancel discards; Stop edits; arrow sends at once"),
@@ -620,10 +627,10 @@ states = ''.join(state(label, note, '<div class="statebox">' + compose_state(lab
     ("Denied", "mic disabled; typing remains available"),
     ("Unavailable", "mic hidden; HTTPS hint below"),
     ("Failed", "draft stays; no message sent"),
-]) + state("Sending refused", "bubble leaves; the draft returns", '<div class="statebox">' + composer(draft="Both phone and desktop need to land.", hint='<span class="danger">Not sent. Retry.</span>') + '</div>')
+]) + state("Sending refused", "bubble leaves; the draft returns", '<div class="statebox compact">' + composer(draft="Both phone and desktop need to land.", hint='<span class="danger">Not sent. Retry.</span>') + '</div>')
 sheet_inner = (
     '<div style="padding:36px 40px 10px"><h1 style="font-size:20px;font-weight:600;margin:0">Composer states</h1>'
-    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">One composer for project chat, task conversation, and follow-ups. Each field below is phone-width: 358px inside a portrait 390px screen, with 16px text. Hints sit below the field. The accent arrow is the only send control, including while busy.</p></div>'
+    '<p style="margin:6px 0 18px;color:var(--text-muted);font-size:14px;max-width:860px">One composer for project chat and task conversation. Each field below is phone-width, with 16px text and 44px controls on one row. Only relevant voice and error hints add height. Busy status stays in the header; queued rows name their run order and retain Remove. The accent arrow is the only send control.</p></div>'
     f'<div class="sheetgrid">{states}</div>'
 )
 board("ComposerStates", 1200, 1380, sheet_inner)
@@ -680,12 +687,14 @@ sys_inner = (
 )
 board("SystemTurnStates", 1200, 1100, sys_inner)
 
-# Task on the phone: the state/actions stay above either scroll container.
+# Task on the phone: status stays visible; metadata and actions open in details.
 phone_task_header = (
-    f'<header class="mh"><span class="name">{I("chev-l")}Design wireframes</span></header>'
-    '<div class="task-meta" style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1">'
-    '<span class="dot"></span> Running · Fable on Claude · <a href="#">PR #176 open · main checks passed</a></div>'
-    '<span>Stop</span><span>Reject</span></div>'
+    f'<header class="mh"><a href="MobileWork.html" aria-label="Back" style="display:grid;place-items:center;min-width:44px;min-height:44px">{I("chev-l")}</a>'
+    '<div style="flex:1;min-width:0"><div style="font-size:17px;font-weight:600">Design wireframes</div><div class="subl">L2 · Running · Merge held</div></div>'
+    f'<details class="phone-details"><summary aria-label="Task details">{I("more")}</summary><div class="details-panel"><h2>Design wireframes for the simplified product</h2>'
+    '<p>attempt 1 · started 32 min ago · 18% context used</p><p>Engine and model · Observed tokens</p><a href="#">PR #176 open · main checks passed</a>'
+    '<h3>Merge held</h3><p>Keep this PR open until the operator reviews the phone and desktop interaction states and separately approves merging it. This restriction remains while the worker is running or blocked.</p>'
+    '<p>Stop</p><p>Reject</p><a href="MobileChatProposal.html?scene=task-blocked-held">Explore blocked and held details</a></div></details></header>'
 )
 phone_task_convo = (
     '<div class="day">Today</div>'
@@ -712,9 +721,9 @@ def state_sheet(name, title, examples, height):
     board(name, 1200, height, f'<div style="padding:28px 40px"><h1 style="font-size:20px;margin:0">{title}</h1></div><div class="sheetgrid">{content}</div>')
 
 state_sheet("TaskStates", "Task page states", [
-    ("Stop confirmation", "inline under the state line", '<p>Stop this task? Its worker ends; the branch stays.</p><span class="btn">Cancel</span> <span class="btn primary">Stop</span>'),
+    ("Stop confirmation", "in phone details; directly in desktop header", '<p>Stop this task? Its worker ends; the branch stays.</p><span class="btn">Cancel</span> <span class="btn primary">Stop</span>'),
     ("Reject confirmation", "optional reason accompanies the archive", '<p>Reject this task? Its worker ends and the task is archived.</p><div class="field">Reason (optional)</div><div class="opts"><span class="btn">Cancel</span><span class="btn primary">Reject</span></div>'),
-    ("Waiting on L3", "reason below the chips", '<span class="chip">Blocked</span><p>Waits for L3’s answer · Which recorded decision applies?</p>'),
+    ("Waiting on L3 + merge held", "complete reasons on request", '<p>L2 · Waits for L3 · Merge held</p><details><summary>Task details</summary><h3>Waits for L3</h3><p>Which recorded decision applies? The original question stays in the conversation.</p><h3>Merge held</h3><p>Keep the PR open until the operator reviews both phone and desktop states and separately approves the merge.</p></details>'),
     ("Held until resume", "Queued replaces the blocked label", '<span class="chip">Queued</span><p>Waits for resume · the window reopens at 10:30</p><div class="hint">Delivered when Altitude resumes the L2.</div>'),
     ("Connecting", "skeleton until the session arrives", '<div class="skel" style="height:50px"></div><div class="skel" style="width:75%"></div><p class="muted">Connecting to the session…</p>'),
     ("Boundaries arrived first", "retain the recorded boundary", '<div class="sep">queued → running · altd · 09:00</div><p class="muted">Connecting to the session…</p>'),
@@ -779,14 +788,18 @@ monitor_content = (
     '<div class="sessionrow"><div class="monitor-row"><span class="chip">L2</span><b>altitude / persist-paths</b><span class="muted">2 days ago</span></div><p class="muted">Codex · context 9% · idle</p><div class="meter"><i style="width:9%"></i></div></div>'
 )
 
-def restart_banner(mode="idle"):
+def restart_banner(mode="idle", mobile=False):
     message = "Altitude is restarting…" if mode == "underway" else "Altitude restarts at the next quiet moment."
     if mode == "waiting":
         message += " Waiting for an L3 turn."
-    return '<div class="banner"><div><p>Merged changes to the web app are waiting to activate. <span class="muted" title="7 September 2026, 10:00">4 files, landed 2h ago</span></p><p>' + message + '</p></div>' + ('<span class="btn primary">Restart</span>' if mode == "idle" else '') + '</div>'
+    action = '<span class="btn primary">Restart</span>' if mode == "idle" else ''
+    if mobile:
+        summary = "Restarting…" if mode == "underway" else "Update waiting" if mode == "waiting" else "Update ready"
+        return '<div class="banner" style="padding:2px 12px;min-height:48px;gap:4px"><span style="flex:1">' + summary + '</span><details class="phone-details"><summary style="width:auto;padding:0 8px">Details</summary><div class="details-panel"><h2>Update details</h2><p>Changes to the web app · 4 files · landed 2h ago</p><p>' + message + '</p></div></details>' + action + '</div>'
+    return '<div class="banner"><div><p>Merged changes to the web app are waiting to activate. <span class="muted" title="7 September 2026, 10:00">4 files, landed 2h ago</span></p><p>' + message + '</p></div>' + action + '</div>'
 
 board("Monitor", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("monitor") + '<main class="pane">' + restart_banner() + '<div class="route-content">' + monitor_content + '</div></main></div>')
-board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting") + mheader_global() + '<div class="route-content">' + monitor_content + '</div><div></div>' + tabbar("monitor") + '</div>')
+board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting", mobile=True) + mheader_global() + '<div class="route-content">' + monitor_content + '</div><div></div>' + tabbar("monitor") + '</div>')
 
 state_sheet("MonitorStates", "Monitor states", [
     ("Loading", "skeleton in the page’s shape", '<div class="skel" style="width:30%"></div><div class="skel" style="height:100px"></div><div class="skel" style="height:60px"></div>'),
@@ -814,6 +827,7 @@ state_sheet("RestartStates", "Restart banner states", [
 
 # The viewer's board list: one row per route, desktop beside phone, in the order of README.md.
 from conversation_first import generate as conversation_first_boards
+from mobile_chat import generate as mobile_chat_boards
 
 ROUTES = [
     ("Project: chat with L3, work panel beside it", "Project", "MobileProject"),
@@ -834,6 +848,7 @@ ROUTES = [
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
+ROUTES = mobile_chat_boards(OUT, board, I) + ROUTES
 for obsolete in ("Decision", "MobileDecision", "DecisionStates", "NeedsYou", "MobileNeedsYou"):
     (OUT / (obsolete + ".html")).unlink(missing_ok=True)
 sizes = {name: (w, h) for name, w, h in BOARDS}

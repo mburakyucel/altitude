@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Outlet, useParams } from "react-router";
+import { Link, Outlet, useMatch, useParams } from "react-router";
 import { ToastViewport } from "../data/Toast";
 import { useOverview } from "../data/api";
 import FirstRun from "../routes/FirstRun";
@@ -21,23 +21,42 @@ export default function AppShell() {
   const [addingFolder, setAddingFolder] = useState(false);
   const closeFirstRun = useCallback(() => setAddingFolder(false), []);
   const shell = useRef<HTMLDivElement>(null);
+  const projectPage = useMatch("/projects/:name");
+  const taskPage = useMatch("/projects/:name/tasks/:slug");
+  const taskLive = useMatch("/projects/:name/tasks/:slug/live");
 
   // The phone keyboard shrinks the visual viewport independently of 100dvh on iOS.
   useEffect(() => {
     const viewport = window.visualViewport;
     const node = shell.current;
     if (!phone || !viewport || !node) return;
+    let fullHeight = Math.max(window.innerHeight, viewport.height);
+    let width = window.innerWidth;
     const resize = () => {
       if (viewport.scale !== 1) return; // Keep native pinch zoom.
+      if (width !== window.innerWidth) {
+        width = window.innerWidth;
+        fullHeight = window.innerHeight;
+      }
+      fullHeight = Math.max(fullHeight, window.innerHeight, viewport.height);
+      const editable = document.activeElement?.matches('textarea, input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"], input[type="number"], [contenteditable="true"]');
+      // Toolbar motion and hardware-keyboard focus leave navigation in place. Once detected,
+      // follow dismissal even if focus moves to a composer control or into a details sheet.
+      node.toggleAttribute("data-keyboard", Boolean((editable || node.hasAttribute("data-keyboard")) && fullHeight - viewport.height > Math.max(120, fullHeight * 0.2)));
       node.style.setProperty("--viewport-height", `${viewport.height}px`);
       node.style.setProperty("--viewport-top", `${viewport.offsetTop}px`);
     };
     resize();
     viewport.addEventListener("resize", resize);
     viewport.addEventListener("scroll", resize);
+    document.addEventListener("focusin", resize);
+    window.addEventListener("resize", resize);
     return () => {
       viewport.removeEventListener("resize", resize);
       viewport.removeEventListener("scroll", resize);
+      document.removeEventListener("focusin", resize);
+      window.removeEventListener("resize", resize);
+      node.removeAttribute("data-keyboard");
       node.style.removeProperty("--viewport-height");
       node.style.removeProperty("--viewport-top");
     };
@@ -63,7 +82,7 @@ export default function AppShell() {
       {phone ? (
         <>
           <RestartBanner restart={overview.data?.restart} />
-          <PhoneHeader overview={overview} />
+          {(!projectPage && !taskPage && !taskLive) || missingProject ? <PhoneHeader overview={overview} /> : null}
         </>
       ) : (
         <Rail overview={overview} onAddFolder={() => setAddingFolder(true)} />
@@ -89,7 +108,7 @@ export default function AppShell() {
       <ToastViewport
         className={
           phone
-            ? "bottom-[calc(var(--tab-bar-h)+12px)] left-1/2 -translate-x-1/2"
+            ? "phone-toast bottom-[calc(var(--tab-bar-h)+12px)] left-1/2 -translate-x-1/2"
             : "bottom-6 left-[calc(var(--rail-w)+24px)]"
         }
       />

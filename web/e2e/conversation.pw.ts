@@ -70,7 +70,7 @@ function views(page: Page, info: TestInfo) {
     phone,
     main,
     convo,
-    field: main.getByRole("textbox", { name: /^Message L3 about / }),
+    field: main.getByRole("textbox", { name: /^Message L3 about /, includeHidden: true }),
     send: main.getByRole("button", { name: "Send", exact: true }),
     queue: main.getByRole("button", { name: "Queue", exact: true }),
     mic: main.getByRole("button", { name: "Start voice input", exact: true }),
@@ -81,7 +81,7 @@ function views(page: Page, info: TestInfo) {
     loading: convo.getByLabel("Loading", { exact: true }),
     lines: convo.locator(".sys-line"),
     bubble: (text: string) => convo.locator(".bubble", { hasText: text }),
-    status: main.locator(".project-header p[aria-live]"),
+    status: main.locator(phone ? ".phone-status" : ".project-header p[aria-live]"),
   };
 }
 
@@ -115,14 +115,14 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
   await walk.open(project.path);
   const lastRow = v.convo.locator(".msg-row").last();
   await walk.state("01-loaded", {
-    visible: [v.convo, v.convo.locator(".bubble").first(), v.convo.locator(".reply").first(), v.convo.getByRole("separator").first(), v.lines.first(), v.field, v.send, v.mic, v.pill],
-    hidden: [v.loading, v.main.getByText("Say what you want done."), v.queue],
+    visible: [v.convo, v.convo.locator(".bubble").first(), v.convo.locator(".reply").first(), v.convo.getByRole("separator").first(), v.lines.first(), v.field, v.send, v.mic, ...(!v.phone ? [v.pill] : [])],
+    hidden: [v.loading, v.main.getByText("Say what you want done."), v.queue, ...(v.phone ? [v.pill, v.hint] : [])],
   });
   await expect(v.send).toBeDisabled();
   await expect(v.send).toHaveText("");
   await expect(v.send.locator("svg")).toBeVisible();
   await expect(v.hint).toHaveText("L3 answers or creates one task. Shift + Enter for a new line.");
-  await expect(v.status).toContainText(/L3 answered .* on /);
+  await expect(v.status).toContainText(v.phone ? "L3 · Ready" : /L3 answered .* on /);
 
   await expect(lastRow.locator(".msg-time")).toHaveCSS("opacity", "0");
   await walk.state("02-time-in-the-gutter", {
@@ -230,10 +230,10 @@ test("a turn in progress, a failed turn, an FYI, and an empty conversation (over
   await walk.open(project.path);
   const progress = v.lines.first();
   await walk.state("01-in-progress-overlay", {
-    visible: [progress.getByText(/^L3 is handling a landed report for /), v.queue, v.hint],
-    hidden: [progress.getByRole("button", { name: "Show", exact: true }), v.send],
+    visible: [progress.getByText(/^L3 is handling a landed report for /), v.queue, ...(!v.phone ? [v.hint] : [])],
+    hidden: [progress.getByRole("button", { name: "Show", exact: true }), v.send, ...(v.phone ? [v.hint] : [])],
   });
-  await expect(v.status).toContainText(/^L3 is handling a landed report/);
+  await expect(v.status).toContainText(v.phone ? /^L3 · Handling a landed report/ : /^L3 is handling a landed report/);
 
   await clearRoutes(page);
   await overlayChat(page, project.name, (live) => ({
@@ -433,22 +433,22 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
   await walk.open(project.path);
   const list = v.convo.getByRole("list", { name: "Queued messages", exact: true });
   await walk.state("01-busy-typing-indicator-overlay", {
-    visible: [v.convo.getByRole("status", { name: "L3 is answering", exact: true }), v.queue, v.hint],
-    hidden: [v.send, list],
+    visible: [v.convo.getByRole("status", { name: "L3 is answering", exact: true }), v.queue, ...(!v.phone ? [v.hint] : [])],
+    hidden: [v.send, list, ...(v.phone ? [v.hint] : [])],
   });
-  await expect(v.status).toContainText(/^L3 is answering/);
+  await expect(v.status).toContainText(v.phone ? "L3 · Answering" : /^L3 is answering/);
   await expect(v.queue).toBeDisabled();
   await expect(v.queue).toHaveText("");
   await expect(v.queue.locator("svg")).toBeVisible();
   await walk.state("02-busy-draft-arrow-overlay", {
     action: () => v.field.fill(text),
-    visible: [v.queue, v.hint],
-    hidden: [list],
+    visible: [v.queue, ...(!v.phone ? [v.hint] : [])],
+    hidden: [list, ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.queue).toBeEnabled();
   await expect(v.queue).toHaveText("");
-  await expect(v.queue).toHaveCSS("width", v.phone ? "40px" : "36px");
-  await expect(v.queue).toHaveCSS("height", v.phone ? "40px" : "36px");
+  await expect(v.queue).toHaveCSS("width", v.phone ? "44px" : "36px");
+  await expect(v.queue).toHaveCSS("height", v.phone ? "44px" : "36px");
   await expect(v.hint).toHaveText("L3 is mid-turn · runs next");
   await walk.state("03-queued-row-overlay", {
     action: () => v.queue.click(),
@@ -481,6 +481,7 @@ test("the engine pin: Auto and the engines the API names; the pin posts and is r
   await overlayChat(page, project.name, (live) => ({ ...live, engine: pinned }));
 
   await walk.open(project.path);
+  if (v.phone) await page.getByRole("button", { name: "More actions" }).click();
   await walk.state("01-auto", { visible: [v.pill], hidden: [] });
   await expect(v.pill).toHaveValue("");
   expect(await v.pill.locator("option").allTextContents()).toEqual(["Auto", ...overview.engines.map((e) => e.label)]);
@@ -490,6 +491,7 @@ test("the engine pin: Auto and the engines the API names; the pin posts and is r
     hidden: [],
   });
   await expect(v.pill).toHaveValue(first.engine);
+  if (v.phone) await expect(v.status).toContainText(first.label);
   await v.pill.selectOption("");
   await expect(v.pill).toHaveValue("");
   await expect.poll(() => pins).toEqual([first.engine, null]);
@@ -536,9 +538,11 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await v.field.fill("Keep the draft");
   await walk.state("01-listening-three-controls-overlay", {
     action: () => v.mic.click(),
-    visible: [v.stop, v.cancel, v.send, wave, timer],
-    hidden: [v.mic, transcribing],
+    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint],
+    hidden: [v.mic, transcribing, ...(v.phone ? [v.field] : [])],
   });
+  await expect(v.hint).toHaveText("Listening… Stop to add text, or Send.");
+  await expect(v.hint).toHaveAttribute("role", "status");
   await expect(v.field).toHaveValue("Keep the draft");
   await expect(v.field).toHaveAttribute("placeholder", "");
   await expect(timer).toHaveText(/^0:0\d$/);
@@ -555,10 +559,14 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
     expect(box!.x + box!.width).toBeLessThanOrEqual(row!.x + row!.width + 1);
     expect(Math.abs(box!.y + box!.height / 2 - (row!.y + row!.height / 2))).toBeLessThan(1);
   }
+  for (const control of [v.cancel, v.stop, v.send]) {
+    await expect(control).toHaveCSS("width", v.phone ? "44px" : "36px");
+    await expect(control).toHaveCSS("height", v.phone ? "44px" : "36px");
+  }
   await walk.state("02-cancelled-with-esc-overlay", {
     action: () => page.keyboard.press("Escape"),
-    visible: [v.mic],
-    hidden: [v.stop, v.cancel, wave, timer, transcribing],
+    visible: [v.mic, v.field],
+    hidden: [v.stop, v.cancel, wave, timer, transcribing, ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.field).toHaveValue("Keep the draft");
   expect(uploads).toEqual([]);
@@ -568,17 +576,18 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await page.waitForTimeout(700);
   await walk.state("03-transcribing-overlay", {
     action: () => v.stop.click(),
-    visible: [transcribing, wave],
-    hidden: [v.stop, v.cancel],
+    visible: [transcribing, v.field, ...(!v.phone ? [wave] : [])],
+    hidden: [v.stop, v.cancel, ...(v.phone ? [wave] : [])],
   });
   await expect(v.mic).toBeDisabled();
   await expect(v.send).toBeDisabled();
   await expect(v.field).toBeEnabled();
+  await v.field.fill("Keep the edited draft");
   release();
   await walk.state("04-landed-overlay", {
-    action: () => expect(v.field).toHaveValue("Keep the draft and walk every state"),
+    action: () => expect(v.field).toHaveValue("Keep the edited draft and walk every state"),
     visible: [v.mic, v.send],
-    hidden: [transcribing, wave, timer, v.main.getByText("and walk every state", { exact: true }), v.main.getByRole("region", { name: /transcript/i })],
+    hidden: [transcribing, wave, timer, v.main.getByText("and walk every state", { exact: true }), v.main.getByRole("region", { name: /transcript/i }), ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.send).toBeEnabled();
   await expect(v.mic).toBeEnabled();
@@ -597,7 +606,7 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
     visible: [failure, v.mic],
     hidden: [transcribing, v.stop],
   });
-  await expect(v.field).toHaveValue("Keep the draft and walk every state");
+  await expect(v.field).toHaveValue("Keep the edited draft and walk every state");
   await expect(v.mic).toBeEnabled();
 });
 
@@ -632,8 +641,8 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   const transcribing = v.main.getByText("Transcribing…", { exact: true });
   await walk.state("01-send-at-once-transcribing-overlay", {
     action: () => v.send.click(),
-    visible: [transcribing, v.main.locator(".composer-wave")],
-    hidden: [v.stop, v.cancel],
+    visible: [transcribing, v.field, ...(!v.phone ? [v.main.locator(".composer-wave")] : [])],
+    hidden: [v.stop, v.cancel, ...(v.phone ? [v.main.locator(".composer-wave")] : [])],
   });
   await expect(v.send).toBeDisabled();
   await expect(v.mic).toBeDisabled();
@@ -690,17 +699,67 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   await insecure.close();
 });
 
+test("multiline draft grows within its cap, scrolls internally, and preserves bottom or older reading", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const history: Row[] = Array.from({ length: 40 }, (_, index) => ({
+    at: now(), role: "assistant", trigger: "chat", turn_id: `draft-history-${index}`,
+    text: `Message ${index + 1}. Keep this earlier discussion readable while a draft grows.`,
+  }));
+  await overlayChat(page, project.name, (live) => ({ ...live, history, active: null, busy: false, queued: [] }));
+  await walk.open(project.path);
+  await page.evaluate(async () => { await document.fonts.ready; });
+  const scroll = v.main.locator(".convo-scroll");
+  const bottomGap = () => scroll.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
+  const longDraft = Array.from({ length: 24 }, (_, index) => `Draft line ${index + 1}`).join("\n");
+  await walk.state("01-one-line-empty", { visible: [v.field, v.send], hidden: [] });
+  await expect(v.field).toHaveCSS("height", v.phone ? "44px" : "24px");
+  if (v.phone) {
+    await expect(v.main.locator(".composer-box")).toHaveCSS("height", "54px");
+    await expect(v.hint).toBeHidden();
+  }
+  await scroll.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  await walk.state("02-long-draft-at-bottom", {
+    action: () => v.field.fill(longDraft), visible: [v.field, v.send], hidden: [],
+  });
+  await expect(v.field).toHaveCSS("height", v.phone ? "120px" : "360px");
+  await expect.poll(bottomGap).toBeLessThanOrEqual(1);
+  expect(await v.field.evaluate((node) => node.scrollHeight)).toBeGreaterThan(await v.field.evaluate((node) => node.clientHeight));
+  await v.field.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  expect(await v.field.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await v.field.fill("");
+  await expect(v.field).toHaveCSS("height", v.phone ? "44px" : "24px");
+  await expect.poll(bottomGap).toBeLessThanOrEqual(1);
+
+  await scroll.evaluate((node) => { node.scrollTop = 0; });
+  const firstMessage = v.convo.getByText(history[0]!.text, { exact: true });
+  await expect(firstMessage).toBeVisible();
+  const firstTop = (await firstMessage.boundingBox())!.y;
+  await walk.state("03-long-draft-while-reading-older", {
+    action: () => v.field.fill(longDraft), visible: [firstMessage, v.field], hidden: [],
+  });
+  await expect(v.field).toHaveCSS("height", v.phone ? "120px" : "360px");
+  await expect.poll(async () => (await firstMessage.boundingBox())!.y).toBe(firstTop);
+  await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBe(0);
+  await walk.state("04-draft-collapses-reading-stays", {
+    action: () => v.field.fill("Short draft"), visible: [firstMessage, v.field], hidden: [],
+  });
+  await expect(v.field).toHaveCSS("height", v.phone ? "44px" : "24px");
+  await expect.poll(async () => (await firstMessage.boundingBox())!.y).toBe(firstTop);
+});
+
 test("the phone shows the project name once, in the header, with the composer above the tab bar @phone-only", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await walk.open(project.path);
-  const title = page.locator("header .phone-title");
+  const title = page.getByRole("heading", { level: 1, name: project.name, exact: true });
   await walk.state("01-name-once", {
     visible: [title, v.field],
-    hidden: [v.main.getByRole("heading", { level: 1 }), v.main.getByText(project.name, { exact: true })],
+    hidden: [v.main.locator(".project-header")],
   });
-  await expect(title).toHaveText(project.name);
+  await expect(title).toHaveCount(1);
   const field = await v.field.boundingBox();
   const bar = await page.getByRole("navigation", { name: "Primary", exact: true }).boundingBox();
   expect(field && bar && field.y + field.height <= bar.y).toBe(true);
