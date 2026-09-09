@@ -54,7 +54,12 @@ reusable feedback through an appropriately scoped task/PR. Its report names the 
 and distinguishes queued, merged and effective changes. Project rules are referenced each turn;
 personas follow the existing engine loading path, supplied per invocation or at fresh session creation.
 A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
-an existing session has loaded it. One-off steering remains in the task conversation.
+an existing session has loaded it. The per-invocation adapter receives the current persona file on
+fresh and resumed turns; the fresh-thread adapter embeds the current contents when starting a new
+task or coordinator session, including context rotation, and retains them on native resume.
+`tests/test_persona_loading.py` exercises real dispatch, owner resume, coordinator turns and rotation
+with captured provider commands and prompts. It verifies which authoritative source is supplied,
+not live-provider consumption or future model compliance. One-off steering remains in the task conversation.
 
 Codex's [native discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) follows the
 repository root through cwd; Claude's [native import](https://code.claude.com/docs/en/memory#agentsmd)
@@ -222,6 +227,12 @@ findings/delivery materially changes their work. The owner reassesses its plan a
 cites original authority to record obsolete members as superseded, and continues authorized work without
 asking the operator to dismiss them manually. Proposals and ongoing work are not verified delivery;
 recommendations do not supply operator authority. Remaining operator choices and proposal checkpoints stay open.
+For an unnecessary escalation that L3 settles within existing delegated authority, the L2 records
+`--l3-authority` with specific evidence and rationale against the exact L3 task message and question
+revision. The receipt attributes the answer to L3 and the authority assessment to its owning L2/attempt;
+source and revision checks do not replace the owner's substantive judgment. Partial resolution preserves
+the original audience and independent worker, capacity and fault state. Genuine operator choices still
+need original operator authority, and neither this resolution nor its receipt releases a merge hold.
 After replying to a follow-up, the L2 parks with the same question and retains its recommendation
 and required decision-maker. Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.

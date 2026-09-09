@@ -93,7 +93,7 @@ class ConversationDecisions(AltitudeCase):
                                disposition="answered", reason="14 days")
         self.assertEqual(self.current()["status"], "open")
 
-    def test_l3_can_answer_from_task_authority_only_before_operator_escalation(self):
+    def test_l3_answer_after_escalation_requires_explicit_owner_authority_assessment(self):
         change = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Drop this retention dilemma.")
         self.resolve(change, disposition="superseded", reason="Original dilemma is no longer relevant.")
         self.ask(waiting="l3")
@@ -106,6 +106,80 @@ class ConversationDecisions(AltitudeCase):
         answer = T.message(self.project, self.slug, "l3", "I believe seven days is fine.")
         with self.assertRaisesRegex(T.TransitionError, "original message with authority"):
             self.resolve(answer)
+
+    def test_owner_records_l3_authority_and_retry_cannot_replace_its_rationale(self):
+        question = self.ask("Does the assigned lease permit test changes?")
+        answer = T.message(self.project, self.slug, "l3", "The assigned lease includes tests/; proceed within that scope.")
+        basis = "Task status paths includes tests/; L3 already assigned that scope, so no operator choice remains."
+        with self.assertRaisesRegex(T.TransitionError, "original message with authority"):
+            self.resolve(answer)
+        result = self.resolve(answer, reason="Test changes are within the assigned lease.", l3_authority=basis)
+        receipt = result["resolution"]
+        self.assertEqual((result["audience"], receipt["by"], receipt["source"], receipt["message_id"]),
+                         ("operator", "l3", "task", answer["id"]))
+        self.assertEqual((receipt["l3_authority"], receipt["recorded_by"], receipt["recorded_attempt"]), (basis, "l2", 1))
+        self.assertIn(basis, T.question_context(result))
+        self.assertEqual(T.decisions(self.project), [])
+        self.assertEqual(self.resolve(answer, reason=receipt["text"], l3_authority="  " + basis + "  "), result)
+        with self.assertRaisesRegex(T.TransitionError, "already resolved"):
+            self.resolve(answer, l3_authority="A different claim.", reason=receipt["text"])
+        replacement = self.ask("Approve an expanded lease with a security policy change?")
+        with self.assertRaisesRegex(T.TransitionError, "exact question revision"):
+            self.resolve(answer, l3_authority=basis)
+        self.assertEqual(self.current()["id"], replacement["id"])
+        self.assertNotEqual(question["id"], replacement["id"])
+        self.assertEqual(self.current()["status"], "open")
+
+    def test_l3_attestation_refuses_blank_spoofed_operator_and_unbound_sources(self):
+        for role, by in (("l2", "l2"), ("l3", "l2"), (T.OPERATOR_MESSAGE_ROLE, "l3"),
+                         (T.OPERATOR_MESSAGE_ROLE, T.OPERATOR_MESSAGE_ROLE)):
+            source = T.message(self.project, self.slug, role, "Use the original brief.", by=by)
+            with self.subTest(role=role, by=by), self.assertRaisesRegex(T.TransitionError, "original L3 task message"):
+                self.resolve(source, l3_authority="The brief already settles this.")
+        source = T.message(self.project, self.slug, "l3", "The brief settles this.")
+        for empty in ("", "  ", False):
+            with self.subTest(empty=empty), self.assertRaisesRegex(T.TransitionError, "specific evidence"):
+                self.resolve(source, l3_authority=empty)
+        l3.chat_log(self.project, "user", "Keep fourteen days.", trigger="chat", turn_id="operator-decision")
+        with self.assertRaisesRegex(T.TransitionError, "original L3 task message"):
+            self.resolve({"id": "operator-decision"}, source="project", l3_authority="An L3 relay.")
+        unbound = {k: v for k, v in source.items() if k != "question_refs"}
+        with mock.patch.object(T, "task_messages", return_value=[unbound]), \
+             self.assertRaisesRegex(T.TransitionError, "exact question revision"):
+            self.resolve(source, l3_authority="The brief already settles this.")
+        old = {**source, "at": "2000-01-01T00:00:00+00:00"}
+        with mock.patch.object(T, "task_messages", return_value=[old]), \
+             self.assertRaisesRegex(T.TransitionError, "predates"):
+            self.resolve(source, l3_authority="The brief already settles this.")
+        self.assertEqual(self.current()["status"], "open")
+
+    def test_partial_l3_answer_preserves_operator_remainder_and_independent_fault_or_wait(self):
+        for waiting, fault in (("l3", "fixture-fault"), (None, None)):
+            with self.subTest(waiting=waiting, fault=fault):
+                task = S.load_task(self.project, self.slug)
+                task["fault"] = None
+                S.save_task(self.project, task)
+                question = self.ask("Are tests in scope, and may we change the security policy?")
+                self.assertEqual(question["detail"], "Are tests in scope, and may we change the security policy?")
+                task = S.load_task(self.project, self.slug)
+                task.update(waiting_on=waiting, fault=fault, resume_after="2099-01-01T00:00:00+00:00",
+                            blocked_reason="Independent recovery or capacity wait.")
+                S.save_task(self.project, task)
+                source = T.message(self.project, self.slug, "l3", "The lease covers tests; security policy still needs the operator.")
+                before = S.load_task(self.project, self.slug)
+                self.resolve(source, reason="Tests are already assigned.", l3_authority="The recorded task lease includes tests/.",
+                             remaining="May we change the security policy?")
+                after = S.load_task(self.project, self.slug)
+                for key in ("state", "waiting_on", "fault", "resume_after", "resume_request", "blocked_reason",
+                            "agent_id", "session_id", "attempt", "hold_merge"):
+                    self.assertEqual(after.get(key), before.get(key), key)
+                remainder = self.current()
+                self.assertEqual((remainder["id"], remainder["revision"], remainder["audience"]),
+                                 (question["id"], question["revision"] + 1, "operator"))
+                self.assertIsNone(remainder["recommendation"])
+                with self.assertRaisesRegex(T.TransitionError, "exact question revision"):
+                    self.resolve(source, l3_authority="The recorded task lease includes tests/.")
+                self.assertEqual([q["id"] for q in T.decisions(self.project)], [remainder["id"]])
 
     def test_project_relay_cites_actual_operator_turn_and_refuses_system_or_assistant(self):
         question = self.current()
@@ -339,6 +413,27 @@ class ConversationDecisions(AltitudeCase):
         result = self.alt(*args, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.current()["resolution"]["message_id"], message["id"])
+
+    def test_cli_l3_authority_remains_current_owner_only_and_retains_source(self):
+        question = self.ask("May I run the required local tests?")
+        message = T.message(self.project, self.slug, "l3", "The project rules require local tests.")
+        basis = "AGENTS.md requires local tests; no new operator choice is needed."
+        args = ["--project", self.project, "task", "resolve", self.slug, "--question", question["id"],
+                "--revision", str(question["revision"]), "--message", message["id"],
+                "--disposition", "answered", "--reason", "Run the required local tests.", "--l3-authority", basis]
+        env = {"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": self.project,
+               "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+        self.assertNotEqual(self.alt(*args, env=env).returncode, 0)
+        env.update(ALTITUDE_ACTOR="l2", ALTITUDE_TASK="another-task")
+        self.assertNotEqual(self.alt(*args, env=env).returncode, 0)
+        env.update(ALTITUDE_TASK=self.slug, ALTITUDE_ATTEMPT="0")
+        self.assertNotEqual(self.alt(*args, env=env).returncode, 0)
+        env["ALTITUDE_ATTEMPT"] = "1"
+        result = self.alt(*args, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = self.current()["resolution"]
+        self.assertEqual((receipt["by"], receipt["message_id"], receipt["l3_authority"]), ("l3", message["id"], basis))
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
 
     def test_legacy_timed_operational_holds_and_stops_never_become_human_questions(self):
         for actor, timed in (("altd", True), (T.OPERATOR_MESSAGE_ROLE, False), (None, True)):

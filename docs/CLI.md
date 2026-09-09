@@ -623,19 +623,27 @@ unresolved operator dilemma preserves its required decision-maker.
 ```text
 alt task resolve <slug> --question <id> --revision <n> --message <source-id> \
   --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
+  [--l3-authority <specific-evidence-and-rationale>] \
   [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
 ```
 
 `--source task` (default) cites a durable task message ID. `--source project` cites the original
 operator chat `turn_id`, available from the project's recorded chat; an L3-authored relay is not an
 operator source. The existing CLI door checks owning task and attempt, and the resolution checks
-source provenance, question/revision and actual authority. An L3 answer from recorded task authority
-can settle an L3-audience question, but cannot approve an operator-audience dilemma.
+source provenance and question/revision. An L3 answer can settle an L3-audience question. For an
+unnecessary operator escalation already settled within delegated L3 authority, the owner adds
+`--l3-authority` with the specific brief/rule/recorded-decision evidence and why it applies. This requires
+an authentic L3 task message bound to that exact question revision. The owner judges the substance;
+the command does not classify prose or prove the claim. Its receipt retains L3 attribution, source,
+authority basis and recording owner/attempt; a retry cannot substitute another rationale.
+The audience stays as recorded. Genuine operator approvals, taste, spend, paradigm and security
+choices require the original operator source; an L3 recommendation or discussion cannot supply it.
 
-Use `answered` for the operator's chosen approach. Use `superseded` when their new direction makes
+Use `answered` for the settled approach. Use `superseded` when authoritative changed direction makes
 the question irrelevant; the reason names that change, without claiming acceptance of the old
 recommendation. With `--remaining`, the operation preserves the resolved scope and publishes a new
-revision containing only the relevant unanswered parts. That remainder has no inherited default;
+revision containing only the relevant unanswered parts. That remainder keeps its audience without
+changing independent worker, capacity or fault state and has no inherited default;
 provide a recommendation only when it applies to the remaining question. Follow-ups alone require
 no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.

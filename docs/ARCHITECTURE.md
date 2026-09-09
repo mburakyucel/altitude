@@ -41,8 +41,9 @@ and operator authority from recommendations. Unchanged context does not trigger 
 The [L2 persona](../personas/l2.md) requires owners to reassess plans and open question members, record
 sourced supersession through the existing resolver and continue within authorized scope. Still-relevant
 operator decisions, proposal checkpoints, merge holds and fault-recovery verification retain their rules.
-Clearly generalizable feedback follows the existing task/PR path to the narrowest authoritative
-instruction source; task-specific steering stays scoped. L3 distinguishes queued work, merged rules
+Operator feedback about system or role behavior follows the existing task/PR path to the narrowest
+authoritative instruction source for future sessions unless scoped to a session or task; tentative
+suggestions and one-off exceptions stay scoped. L3 distinguishes queued work, merged rules
 and their effective loading. These are role instructions, with no automatic broadcast, runtime classifier
 or memory store and no expansion of project-local or upstream reporting authority.
 
@@ -902,10 +903,17 @@ receipt and defer to the timer. A restart race after stream headers returns the 
 The same L2 answers follow-ups, clarifies uncertainty, or uses [`alt task resolve`](CLI.md#conversational-decisions)
 to record an actual decision against its original message. Task/attempt ownership and source-message
 authority are checked at the existing command boundary; L3 prose cannot stand in for operator approval.
+The owning L2 can explicitly record `--l3-authority` with specific evidence and rationale when an L3
+answer settles an unnecessary escalation within existing delegated authority. The command requires an
+authentic L3 task message naming the exact question revision; the owner judges whether authority applies.
+The existing receipt keeps L3 attribution, source message, authority basis and recording owner/attempt,
+and retries cannot replace that basis. The question's audience remains unchanged. Genuine operator
+decisions still require original operator authority; ordinary messages and recommendations close nothing.
 A partial answer retains only the relevant remaining question in a new revision, without inheriting
 an unapproved recommendation. A change of direction can close the obsolete dilemma with its reason.
 The resolution preserves the source, author, time and chosen scope, without accepting an abandoned
-recommendation. Report handoff, rejection and completion close obsolete controls without accepting
+recommendation. A remainder retains the question's audience without changing independent worker,
+capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
 The shared question component appears on Needs you and at its conversation anchor. Single choices
