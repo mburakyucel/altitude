@@ -125,9 +125,12 @@ class TestSystemFault(AltitudeCase):
     def test_reporting_receipt_closure_and_unrelated_restart_do_not_repair_originating_task(self):
         from altitude import server
         source = self.project
-        make_repo(self.repo)
         checkout = self.tmp / "upstream" / "development"
-        make_repo(checkout)
+        # Each fixture needs its own origin.git even when initial commits have different timestamps.
+        for second, repo in enumerate((self.repo, checkout)):
+            stamp = f"2026-01-01T00:00:0{second}+00:00"
+            with mock.patch.dict("os.environ", {"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}):
+                make_repo(repo)
         git("remote", "set-url", "origin", "https://github.com/fictional/altitude.git", cwd=checkout)
         self.register(PROJECT, path=checkout)
         self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "fictional/altitude")

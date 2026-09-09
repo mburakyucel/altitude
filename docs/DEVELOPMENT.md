@@ -43,6 +43,9 @@ Incident IDs are project-local. Cross-project authority fixtures select a foreig
 absent from the local project, rather than assuming creation order makes IDs globally unique.
 `test_upstream_issues.py` controls the incident allocator's clock to exercise both same-second
 allocation and a second boundary while retaining real incident storage and authority checks.
+Independent Git fixtures created with `make_repo` use separate parent directories because each
+bare `origin.git` lives beside its checkout. The fault/recovery reporting test gives its two
+initial commits distinct timestamps so shared origins cannot hide behind identical commits.
 
 ## Browser walkthroughs
 
