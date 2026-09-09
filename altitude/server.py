@@ -39,7 +39,7 @@ L3_GH_READS = {
 }
 L3_TASK_TARGETS = {
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
-    "paths", "hold-merge", "done", "status", "preserve-checkout",
+    "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
 
 # The wireframe boards of any project that has them, served read-only from its own checkout so the
@@ -939,6 +939,9 @@ def tick_project(project: str) -> None:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
     try:
         dispatch.run_settings(project)
+        for task in S.list_tasks(project):
+            if (task.get("ci_recheck") or {}).get("status") in ("pending", "probing", "notifying"):
+                spawn(f"ci-recheck:{project}:{task['slug']}", dispatch.run_ci_recheck, project, task["slug"])
         if l3.queue_path(project).exists():
             request_l3_drain(project)
         for slug in dispatch.pending_task_operations(project):

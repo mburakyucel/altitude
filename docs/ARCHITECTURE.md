@@ -478,6 +478,27 @@ Coordinator messages to faulted tasks use the existing non-waking inbox marker; 
 conversation and reach the worker on a later supported resume. Operator discussion still uses its
 ordinary wake path. The original attempt, provider session, launch model, worktree and merge holds
 remain under the existing dispatch and landing rules.
+`alt task recheck-ci` registers one finite CI probe on an existing fault-blocked task through the
+same project-bound coordinator transport. The task's `ci_recheck` record binds its block, attempt,
+worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
+receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
+ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
+The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
+the latest twenty runs. Otherwise it submits one rerun of the selected project-origin run after
+persisting its baseline attempt and submission intent. Restart and uncertain submission reconcile
+attempt metadata without repeating the write. Reads stop after three failures, twenty-four rounds
+or two hours after the due time. Fresh nonexpired, nonempty artifacts created during the observed
+execution and after registration establish an upload; step conclusions alone do not. Old-run reruns
+retain their original workflow. Unchanged conclusions without upload evidence finish silently.
+Changed evidence uses one `ci-recheck` row in the existing L3 queue, retained through handling.
+Its task receipt stores the turn identity before execution; explicit successful terminal chat
+evidence repairs an interrupted receipt after restart. Delivery has two attempts and a one-hour
+deadline, including unavailable engines, with a visible terminal failure on exhaustion. Retry waits
+do not hold ordinary chat. Queue and terminal-history read failures share the bounded delivery
+storage budget. Each engine's existing transient execution boundary enforces the turn timeout
+independently of altd, with five seconds to stop its process tree. A restart after provider execution
+begins without terminal evidence ends visibly uncertain instead of launching overlapping handling.
+No probe resumes a worker, resolves a question, or releases a merge hold.
 Project-local repairs remain owned by the affected project. Its L3 reports Altitude implementation
 defects with [`alt issue upstream`](CLI.md#upstream-altitude-defects), a create-only exception to the
 project-local issue verbs. The daemon owns the product target seam: `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`

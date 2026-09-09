@@ -45,6 +45,21 @@ class TestForegroundUnits(AltitudeCase):
             return engines.resume_l2("claude", "project/worker-1", "session", "continue", **kw)
         return engines.start_l2("claude", "project/worker-1", "brief", **kw)
 
+    def test_ci_coordinator_timeout_survives_daemon_exit_on_both_engines(self):
+        for engine, execute in (("claude", engines.claude_print), ("codex", engines.codex_exec)):
+            with self.subTest(engine=engine), mock.patch.object(engines.subprocess, "Popen",
+                    side_effect=RuntimeError("fixture: execution intercepted")) as popen:
+                with self.assertRaisesRegex(RuntimeError, "intercepted"):
+                    execute("Probe evidence", cwd=self.repo, timeout=37, durable_timeout=True)
+                cmd = popen.call_args.args[0]
+                self.assertEqual(cmd[0], engines.SYSTEMD_RUN_BIN)
+                for flag in ("--property=RuntimeMaxSec=37", "--property=TimeoutStopSec=5",
+                             "--property=KillMode=control-group", "--property=SendSIGKILL=yes"):
+                    self.assertIn(flag, cmd)
+                self.assertIn("DBUS_SESSION_BUS_ADDRESS", popen.call_args.kwargs["env"])
+                child = cmd[cmd.index("--") + 1:]
+                self.assertFalse(any(arg.startswith("DBUS_SESSION_BUS_ADDRESS=") for arg in child))
+
     def test_incident_171446_launch_and_resume_share_foreground_unit_for_both_models(self):
         for model in (None, "fable"):
             for resume in (False, True):

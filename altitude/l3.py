@@ -459,7 +459,7 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
     turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger, **_slug_meta(slug)}
     lifecycle_guard = _lifecycle_guard(project)
     with lifecycle_guard:
-        claimed = claim is None or claim()
+        claimed = claim is None or claim(turn)
         if claimed:
             _active[project] = turn
     if not claimed:
@@ -468,7 +468,7 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
     try:
         yield turn
     except Exception as exc:
-        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"])
+        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"], **_slug_meta(slug))
         raise
     finally:
         with lifecycle_guard:
@@ -531,6 +531,126 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     return {**row, "position": waiting + 1}
 
 
+def _ci_storage_failure(project: str, task: dict, exc: Exception) -> dict:
+    record = task["ci_recheck"]
+    delivery = record.setdefault("delivery", {})
+    failures = delivery["queue_failures"] = delivery.get("queue_failures", 0) + 1
+    delivery["error"] = f"Coordinator evidence or queue storage failed: {exc}"
+    delivery["next_at"] = ((datetime.fromisoformat(S.now()) + timedelta(seconds=60)).isoformat(timespec="seconds")
+                           if failures < 2 else None)
+    if failures == 2 and record["status"] == "notifying":
+        record["status"] = delivery["status"] = "failed"
+    S.save_task(project, task)
+    return record
+
+
+def queue_ci_recheck(project: str, slug: str) -> dict | None:
+    """Reconcile one task's bounded coordinator receipt before ensuring its durable queue row."""
+    from . import tasks as T
+
+    with _lifecycle_guard(project), S.project_lock(project):
+        task = S.load_task(project, slug)
+        record = task.get("ci_recheck")
+        if not record or (record["status"] != "notifying" and "delivery" not in record):
+            return None
+        before = json.dumps(record, sort_keys=True)
+        now = S.now()
+        if record["status"] == "notifying" and "delivery" not in record:
+            record["delivery"] = {
+                "message_id": record["id"], "attempts": 0, "status": "pending", "next_at": now,
+                "deadline": (datetime.fromisoformat(now) + timedelta(hours=1)).isoformat(timespec="seconds"),
+            }
+            S.save_task(project, task)  # The deadline survives unavailable queue/chat evidence.
+            before = json.dumps(record, sort_keys=True)
+        delivery = record.get("delivery") or {}
+        if delivery.get("queue_failures", 0) >= 2 or (delivery.get("queue_failures")
+                                                     and (delivery.get("next_at") or "") > now):
+            return record
+        try:
+            rows = _queue_rows(queue_path(project))
+        except (OSError, ValueError) as exc:
+            return _ci_storage_failure(project, task, exc)
+        remaining = [row for row in rows if row.get("trigger") != "ci-recheck" or row.get("slug") != slug]
+        if record["status"] == "notifying":
+            running = delivery.get("status") == "running"
+            active_id = _active.get(project, {}).get("id")
+            if running and active_id == delivery.get("turn_id"):
+                return record
+            try:
+                terminal = [row for row in (chat_history(project, None) if running else [])
+                            if row.get("turn_id") == delivery.get("turn_id") and row.get("trigger") == "ci-recheck"
+                            and row.get("slug") == slug and row.get("role") in ("assistant", "error")]
+            except (OSError, ValueError) as exc:
+                return _ci_storage_failure(project, task, exc)
+            completed = any(row.get("role") == "assistant" and row.get("completed") is True for row in terminal)
+            if completed:
+                record["status"] = "done"
+                delivery.update(status="delivered", completed_at=now, next_at=None)
+                delivery.pop("error", None)
+            elif not T.ci_recheck_current(task, record):
+                record["status"] = "invalidated"
+                delivery.update(status="invalidated", next_at=None, error="Task block or lifecycle changed.")
+            elif (running and delivery.get("execution_started")
+                  and not any(isinstance(row.get("completed"), bool) for row in terminal)):
+                record["status"] = "failed"
+                delivery.update(status="failed", next_at=None,
+                                error="Coordinator execution is uncertain after restart; no terminal receipt, so it will not be replayed.")
+            elif now >= delivery["deadline"] or (running and delivery["attempts"] >= 2):
+                record["status"] = "failed"
+                delivery.update(status="failed", next_at=None, error="Coordinator delivery exhausted its bounded attempts or deadline.")
+            elif running:
+                delivery.update(status="pending", next_at=(datetime.fromisoformat(now) + timedelta(seconds=60))
+                                .isoformat(timespec="seconds"), error="Coordinator turn did not complete; one bounded retry remains.")
+        # Save before publishing or removing a queue row: either interrupted write is repairable.
+        if before != json.dumps(record, sort_keys=True):
+            S.save_task(project, task)
+        if record["status"] == "notifying":
+            row = next((row for row in rows if row.get("id") == record["id"]), None)
+            if row is None:
+                row = {"id": record["id"], "at": now, "trigger": "ci-recheck", "role": "server", "slug": slug,
+                       "text": f"CI recheck evidence for {slug}:\n{json.dumps(record.get('evidence'), sort_keys=True)}\n\n"
+                       f"Reason: {record.get('reason', '')}\n"
+                       "Inspect the task status and this fresh evidence. Reconcile affected work under its recorded authority; "
+                       "this probe did not resume its owner or release any question or merge hold. "
+                       "A passing run with tolerated upload failure does not establish artifact capacity recovery."}
+                remaining.append(row)
+            else:
+                remaining = [item for item in rows if item.get("trigger") != "ci-recheck" or item.get("slug") != slug
+                             or item.get("id") == record["id"]]
+        if rows != remaining:
+            try:
+                _write_queue(queue_path(project), remaining)
+            except (OSError, ValueError) as exc:
+                return _ci_storage_failure(project, task, exc)
+        return record
+
+
+def _ci_recheck_ready(project: str, row: dict) -> bool:
+    if row.get("trigger") != "ci-recheck":
+        return True
+    record = S.load_task(project, row["slug"]).get("ci_recheck") or {}
+    delivery = record.get("delivery") or {}
+    return (record.get("id") == row["id"] and record.get("status") == "notifying"
+            and delivery.get("status") == "pending" and delivery.get("attempts", 0) < 2
+            and (delivery.get("next_at") or "") <= S.now() < delivery.get("deadline", ""))
+
+
+def _ci_turn_timeout(project: str, slug: str | None, trigger: str, timeout: int) -> int:
+    if trigger == "ci-recheck":
+        from . import tasks as T
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            record = task["ci_recheck"]
+            delivery = record["delivery"]
+            remaining = (datetime.fromisoformat(delivery["deadline"]) - datetime.fromisoformat(S.now())).total_seconds()
+            if not T.ci_recheck_current(task, record) or remaining <= 0:
+                raise ValueError("CI coordinator delivery identity or deadline changed before execution.")
+            delivery["execution_started"] = S.now()
+            S.save_task(project, task)
+            return max(1, min(timeout, int(remaining)))
+    return timeout
+
+
 def queue_upstream_issue(project: str, url: str, *, checkout: Path) -> dict:
     """One public-link notification per receiving project and issue, across source projects and restarts."""
     url = url.lower()
@@ -570,7 +690,12 @@ def deliver_queued(project: str) -> dict | None:
     same turn so the operator's consecutive messages are read together, each on its own line and in arrival
     order. Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
-    if not config.is_managed(project) or not path.exists() or not _select(project).get("engine"):
+    if not config.is_managed(project):
+        return None
+    for row in queued(project):
+        if row.get("trigger") == "ci-recheck":
+            queue_ci_recheck(project, row["slug"])
+    if not path.exists() or not _select(project).get("engine"):
         return None
     turn_lock = lock(project)
     if not turn_lock.acquire(blocking=False):
@@ -578,7 +703,7 @@ def deliver_queued(project: str) -> dict | None:
     try:
         while True:
             with S.project_lock(project):
-                rows = _queue_rows(path)
+                rows = [row for row in _queue_rows(path) if _ci_recheck_ready(project, row)]
             if not rows:
                 return None
             take = 1
@@ -589,30 +714,50 @@ def deliver_queued(project: str) -> dict | None:
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
 
-            def claim() -> bool:
+            def claim(active_turn) -> bool:
                 with S.project_lock(project):
                     current = _queue_rows(path)
-                    if [row.get("id") for row in current[:take]] != selected_ids:
+                    eligible = [row for row in current if _ci_recheck_ready(project, row)]
+                    if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
+                    if selected[0].get("trigger") == "ci-recheck":
+                        from . import tasks as T
+                        task = S.load_task(project, selected[0]["slug"])
+                        record = task["ci_recheck"]
+                        if not T.ci_recheck_current(task, record):
+                            return False
+                        delivery = record["delivery"]
+                        delivery.update(status="running", turn_id=active_turn["id"], attempts=delivery["attempts"] + 1)
+                        delivery.pop("execution_started", None)
+                        S.save_task(project, task)
+                        return True
                     for row in selected:
                         if row.get("upstream_url"):
                             # #277: preserve deduplication through the queue-to-chat crash window.
                             S.project_log(project, "upstream-notification-received", url=row["upstream_url"],
                                           message_id=row["id"])
-                    _write_queue(path, current[take:])
+                    _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
                     return True
 
             trigger = selected[0].get("trigger") or "queued"
             slug = selected[0].get("slug") or None
-            with _active_turn(project, trigger, claim=claim, slug=slug) as active_turn:
-                if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
-                    return None
-                _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn}
-                try:
-                    return turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger,
-                                **_slug_meta(slug))
-                finally:
-                    del _turn_local.claimed
+            try:
+                with _active_turn(project, trigger, claim=claim, slug=slug) as active_turn:
+                    if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
+                        return None
+                    _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn}
+                    try:
+                        result = turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger,
+                                      **_slug_meta(slug))
+                    finally:
+                        del _turn_local.claimed
+            except Exception as exc:
+                if trigger != "ci-recheck":
+                    raise
+                result = {"completed": False, "error": str(exc)}
+            if trigger == "ci-recheck":
+                queue_ci_recheck(project, slug)
+            return result
     finally:
         turn_lock.release()
 
@@ -770,6 +915,8 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
                 model=choice.get("model"), on_text=on_text, on_start=on_start,
+                timeout=_ci_turn_timeout(project, slug, trigger, config.L3_TURN_TIMEOUT),
+                **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
                 extra_env=_l3_env(project, runtime))
         finally:
             _remove_runtime(runtime)
@@ -793,7 +940,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                  engine="claude", context_percent=pct, turns=res.get("turns"),
                  tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
-                 **_slug_meta(slug))
+                 **_slug_meta(slug), **({"completed": not bool(res.get("error"))} if trigger == "ci-recheck" else {}))
         S.regen_state_md(project)
         res.update({"context_percent": pct, "completed": not bool(res.get("error")), "turn_id": turn_id})
     return res
@@ -840,7 +987,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
         result = engines.codex_exec(
-            body, cwd=runtime, timeout=config.L3_CODEX_TURN_TIMEOUT, model=model,
+            body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
+            **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
             effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
             extra_env=_l3_env(project, runtime),
             sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
@@ -878,7 +1026,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
              context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
-             turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug))
+             turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug),
+             **({"completed": not bool(out.get("error"))} if trigger == "ci-recheck" else {}))
     S.regen_state_md(project)
     out.update({"context_percent": pct, "completed": not bool(out.get("error"))})
     return out
