@@ -309,10 +309,12 @@ def _save_claim_task(project: str, task: dict) -> None:
 
 def _rows(path: Path, what: str) -> list[dict]:
     """Read one JSONL file of messages, failing loudly on a corrupt record."""
-    if not path.exists():
+    try:
+        contents = path.read_text()
+    except FileNotFoundError:
         return []
     rows = []
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    for number, line in enumerate(contents.splitlines(), 1):
         if not line.strip():
             continue
         try:

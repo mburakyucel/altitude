@@ -197,6 +197,9 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
+Inbox reads tolerate a concurrent resume consuming the queued file. A missing inbox carries no
+delivery proof; message labels still require the recorded handoff evidence described below.
+
 Saved and arriving L3/L2 prose shares project-aware GitHub reference rendering across conversations,
 live sessions, decisions, and reports. The UI resolves `PR #250`, `issue #247`, and bare `#247`
 against `GET /api/project/<name>` repository metadata; `owner/repo#247` uses the named repository.

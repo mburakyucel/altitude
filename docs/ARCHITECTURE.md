@@ -64,7 +64,8 @@ durable resume claim fences competing wakes, holds service restart, and records 
 replacement worker so a restarted daemon adopts rather than launches it again.
 A claimed message is still queued. Successful input handoff and matching session initialization
 record delivery for the exact bound batch; native hook attachments can independently prove delivery.
-Inbox absence alone stays unconfirmed. A clean worker turn with queued steering resumes the saved
+Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
+empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
 session, while engine failures and explicit question blocks retain their existing recovery paths.
 An explicit question block needs a later message or resume request; pre-block inbox messages stay
 available but cannot wake it. Each block or escalation supersedes earlier wake requests and stamps
