@@ -613,7 +613,9 @@ The same browser specs run at 390×844 with mobile user agent and touch and at 1
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
 appearing and disappearing, and saves named screenshots. Screenshots, traces and reports stay
-under ignored `web/ui-artifacts/` and are retained briefly as fictional CI artifacts. Bundled
+under ignored `web/ui-artifacts/` and are retained briefly as fictional CI artifacts when upload
+succeeds. Artifact upload alone uses step-level `continue-on-error`; its failure remains visible
+without failing the required test job. Every test, build and candidate-identity step remains required. Bundled
 Chromium runs headlessly with a temporary profile and its browser sandbox disabled inside the
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and CI identity; [operations](OPERATIONS.md) covers service activation and mobile access.

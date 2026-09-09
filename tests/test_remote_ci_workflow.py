@@ -58,6 +58,13 @@ class RemoteCIWorkflowTests(unittest.TestCase):
             if "uses:" in line:
                 self.assertRegex(line, r"uses: actions/[a-z-]+@[0-9a-f]{40}(?: |$)")
 
+    def test_only_artifact_publication_is_non_blocking(self):
+        required, upload = self.workflow.split("      - name: Upload fictional test results\n", 1)
+        self.assertNotIn("continue-on-error:", required)
+        self.assertEqual(upload.count("continue-on-error:"), 1)
+        self.assertIn("        if: always()\n        continue-on-error: true\n", upload)
+        self.assertNotIn("      - name:", upload, "the exception must stay on the upload step alone")
+
 
 if __name__ == "__main__":
     unittest.main()
