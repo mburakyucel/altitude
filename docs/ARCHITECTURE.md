@@ -738,7 +738,7 @@ and trigger without copying its prompt, and it is the conversation's only author
 it and never infers a turn from `busy` or the last history row. A fresh mount or reconnect renders
 the record as the typing indicator for a chat turn, or as the line "L3 is handling <what>" for a
 server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
-first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the terminal
+first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
 assistant or error row wins over a raced active snapshot.
 
@@ -793,8 +793,16 @@ keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.
-The page owns its draft and its submit function, and a submit that throws is a refused send: the
-bubble leaves, the draft returns, and the hint reads "Not sent. Retry." The composer owns microphone
+The page owns its draft and submit function. A valid turn, terminal turn ID, queue receipt, or
+saved task message establishes acceptance; HTTP stream headers alone do not. After acceptance,
+a broken response stream resolves to the existing history refresh without restoring the draft or
+inventing an assistant failure. Each local stream callback belongs to its own send, so an older
+stream cannot alter a later queue request. A failed refresh is a read error, whose Retry only reads.
+Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
+receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
+Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
+after the submitted text on a new line. No text matching or automatic resend infers delivery.
+The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
@@ -867,6 +875,9 @@ the authoritative group, then refreshes their reads.
 Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or
 `group_id`/`group_revision` as context. The saved message retains the viewed member references so
 one conversational answer can settle several questions independently.
+The message endpoint returns the stored row even when its immediate resume wake fails; the saved
+resume request remains due for the existing timer. L3 queue wake failures likewise retain the queue
+receipt and defer to the timer. A restart race after stream headers returns the saved queued row.
 The same L2 answers follow-ups, clarifies uncertainty, or uses [`alt task resolve`](CLI.md#conversational-decisions)
 to record an actual decision against its original message. Task/attempt ownership and source-message
 authority are checked at the existing command boundary; L3 prose cannot stand in for operator approval.

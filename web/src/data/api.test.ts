@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, ChatViewSchema, OverviewSchema, api, streamChat } from "./api";
+import { ApiError, ChatViewSchema, OverviewSchema, api, isChatStreaming, streamChat } from "./api";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -85,7 +85,7 @@ describe("streamChat", () => {
         streamResponse([
           '{"t":"Hel',
           'lo"}\n{"t":" world"}\n',
-          '{"done":{"session_id":"s1","error":null}}\n',
+          '{"done":{"turn_id":"t1","session_id":"s1","error":null}}\n',
         ]),
       ),
     );
@@ -124,5 +124,31 @@ describe("streamChat", () => {
     const err = await streamChat("altitude", "hi", { onText: () => {} }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(409);
+  });
+
+  it.each([
+    { turn: { id: "t1", started_at: "2026-09-09T12:00:00Z", trigger: "chat" } },
+    { queued: { id: "q1", at: "2026-09-09T12:00:00Z", text: "hi", trigger: "chat", role: "user", position: 1 } },
+    { done: { turn_id: "t1", error: "The assistant failed" } },
+  ])("retains the authoritative receipt on interrupted transport: %j", async (receipt) => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }));
+    vi.stubGlobal("fetch", vi.fn(async () => response));
+    const accepted = vi.fn(() => { controller.error(new TypeError("Connection lost")); });
+    const result = streamChat("altitude", "hi", { onText: () => {}, onAccepted: accepted });
+    controller.enqueue(new TextEncoder().encode(`${JSON.stringify(receipt)}\n`));
+    await expect(result).resolves.toEqual("done" in receipt ? receipt.done : receipt);
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(isChatStreaming()).toBe(false);
+  });
+
+  it.each([null, "", '{"t":"Not a receipt"}\n'])("does not infer acceptance from HTTP 200 with body %j", async (body) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+    const accepted = vi.fn();
+    const error = await streamChat("altitude", "hi", { onText: () => {}, onAccepted: accepted }).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(isChatStreaming()).toBe(false);
   });
 });

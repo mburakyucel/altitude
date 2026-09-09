@@ -130,6 +130,7 @@ function liveReply() {
     response,
     frame(value: unknown) { controller.enqueue(new TextEncoder().encode(`${JSON.stringify(value)}\n`)); },
     close() { if (!closed) { closed = true; controller.close(); } },
+    fail() { closed = true; controller.error(new TypeError("Connection interrupted")); },
   };
 }
 
@@ -259,7 +260,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
         reply.frame({ turn });
         return reply.response;
       }
-      return streamResponse(['{"t":"Retry accepted in Alpha"}', '{"done":{}}']);
+      return streamResponse(['{"t":"Retry accepted in Alpha"}', '{"done":{"turn_id":"alpha-retried"}}']);
     });
     setViewport(width);
     const { router, user } = renderApp({ route: "/projects/alpha-project" });
@@ -519,7 +520,7 @@ describe("Conversation", () => {
   });
 
   it("refused: the bubble leaves, the draft returns, and the hint reads Not sent. Retry", async () => {
-    mockFetch({ post: () => jsonResponse({ error: "no L3 for this project" }, 500) });
+    mockFetch({ post: () => jsonResponse({ error: "no L3 for this project" }, 409) });
     const { user } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     const field = screen.getByLabelText("Message L3 about altitude");
@@ -528,6 +529,65 @@ describe("Conversation", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Retry");
     expect(field).toHaveValue("Ship it");
     expect([...region.querySelectorAll(".bubble")].map((el) => el.textContent)).not.toContain("Ship it");
+  });
+
+  it.each(["", "My next draft"])("keeps an accepted message sent after stream failure with draft '%s' and failed refresh", async (draft) => {
+    const reply = liveReply();
+    let failRefresh = false;
+    const turn = { id: "accepted-turn", started_at: ago(0), trigger: "chat" };
+    const stored = [...history, { at: ago(0), role: "user", text: "Ship it", trigger: "chat", turn_id: turn.id }];
+    const fetchMock = mockFetch({
+      chatFn: () => failRefresh ? jsonResponse({ error: "Read unavailable" }, 503) : jsonResponse({ ...chatView, history: stored, active: turn, busy: true }),
+      post: () => reply.response,
+    });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await within(region).findByText("Ship it");
+    const field = screen.getByLabelText("Message L3 about altitude");
+    await user.type(field, "Ship it");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await act(async () => { reply.frame({ turn }); });
+    if (draft) await user.type(field, draft);
+    failRefresh = true;
+    await act(async () => { reply.fail(); });
+    await within(region).findByText("Could not load the conversation.", { exact: false });
+    expect(field).toHaveValue(draft);
+    expect(region.querySelector(".composer-hint[role=alert]")).toBeNull();
+    expect(region.querySelector(".turn-failed")).toBeNull();
+    expect(within(region).getAllByText("Ship it")).toHaveLength(1);
+    failRefresh = false;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }); });
+    expect(field).toHaveValue(draft);
+    expect(within(region).getAllByText("Ship it")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(1);
+  });
+
+  it("keeps an earlier stream callback out of a later pending queue request", async () => {
+    const reply = liveReply();
+    let release!: (response: Response) => void;
+    const waiting = new Promise<Response>((resolve) => { release = resolve; });
+    let posts = 0;
+    const fetchMock = mockFetch({ post: () => ++posts === 1 ? reply.response : waiting });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const field = screen.getByLabelText("Message L3 about altitude");
+    await user.type(field, "First request");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { reply.frame({ turn: { id: "first-turn", started_at: ago(0), trigger: "chat" } }); });
+    await user.type(field, "Queued request");
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await act(async () => { reply.frame({ t: "Earlier answer" }); });
+    const pending = region.querySelector("[data-local]")!;
+    expect(pending).toHaveTextContent("Queued request");
+    expect(pending).not.toHaveTextContent("Earlier answer");
+    expect(pending.querySelector("[data-pending]")).not.toBeNull();
+    await act(async () => { reply.fail(); });
+    expect(pending).toBeInTheDocument();
+    expect(pending.querySelector("[data-pending]")).not.toBeNull();
+    await act(async () => { release(jsonResponse({ queued: { id: "queue-receipt", at: ago(0), text: "Queued request", role: "user", trigger: "chat", position: 1 } })); });
+    expect(field).toHaveValue("");
+    expect(region.querySelector(".composer-hint[role=alert]")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(2);
   });
 
   it("queues while L3 is mid-turn: Queue appends a queued row with Remove, and Remove posts the id", async () => {

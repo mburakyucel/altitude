@@ -250,6 +250,11 @@ to that project shows its saved history and any active turn. Retry sends to the 
 Switching also stops voice recording and releases the microphone; a late transcription cannot fill
 the destination draft.
 
+An accepted project or task message stays sent if its response stream, a later refresh, or the
+immediate worker wake fails. The composer stays cleared and keeps any new draft. A refused send
+restores recoverable text with Retry; an unconfirmed delivery preserves the text and asks you to
+check the conversation before sending again. A failed assistant answer belongs to the sent turn.
+
 Every fresh L3 provider session receives the project's latest 20 prior operator and assistant chat
 messages, oldest first, as labeled historical context. This includes discussion with the same
 provider before rotation. Server-triggered reports, restarts and other system events do not consume

@@ -70,6 +70,64 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   expect((await task()).messages.some((row: { text: string }) => row.text === "Too late")).toBe(false);
 });
 
+test("accepted L2 input stays sent through a failed refresh and preserves the next draft", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const slug = "prepare-index-migration";
+  const task = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json());
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const text = "Keep this accepted instruction in the running inbox.";
+  const alert = conversation.getByRole("alert").filter({ hasText: "Not sent." });
+  const retry = conversation.getByRole("button", { name: "Retry", exact: true });
+  const pending = conversation.locator(".msg-row[data-pending]");
+  const bubble = conversation.locator(".bubble").filter({ hasText: text });
+  let release!: () => void;
+  const responseGate = new Promise<void>((resolve) => { release = resolve; });
+  let saved!: () => void;
+  const savedGate = new Promise<void>((resolve) => { saved = resolve; });
+  let receipt!: { id: string };
+  // Only response transport is delayed; the real handler writes the real task message/inbox.
+  await page.route("**/api/l2/message", async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    receipt = (await response.json()).message;
+    saved();
+    await responseGate;
+    await route.fulfill({ response });
+  }, { times: 1 });
+  let offline = false;
+  let failedRead!: () => void;
+  const refreshFailed = new Promise<void>((resolve) => { failedRead = resolve; });
+  await page.route(`**/api/task/atlas/${slug}`, async (route) => {
+    if (!offline) return route.continue();
+    await route.abort("connectionfailed");
+    failedRead();
+  });
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  await field.fill(text);
+  await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  await savedGate;
+  try {
+    await expect(field).toHaveValue("");
+    await walk.state("01-message-stored-response-pending", { visible: [bubble, pending], hidden: [alert, retry] });
+    expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+    await field.fill("A different instruction I have not sent.");
+    offline = true;
+  } finally { release(); }
+  await refreshFailed;
+  await walk.state("02-accepted-refresh-failed-next-draft-retained", { visible: [bubble, field], hidden: [pending, alert, retry] });
+  await expect(field).toHaveValue("A different instruction I have not sent.");
+  const workers = await (await request.get("/fixture/workers")).json();
+  expect(workers.pending[slug].filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+  expect(workers.calls).toHaveLength(0);
+  offline = false;
+  await page.reload();
+  await walk.state("03-reconnected-message-still-sent-once", { visible: [bubble, field], hidden: [pending, alert, retry] });
+  await expect(bubble).toHaveCount(1);
+  await expect(field).toHaveValue("");
+  expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+});
+
 test("quick acceptance persists the recommendation, resumes the same L2 and clears Needs you", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "choose-validation-scope";

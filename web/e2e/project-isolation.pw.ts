@@ -169,6 +169,74 @@ test("a late accepted failure is stored in Alpha and its retry remains in Alpha"
   expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
 });
 
+for (const nextDraft of ["", "A new draft while the accepted turn answers"]) {
+  test(`an accepted turn survives a broken stream and failed refresh with ${nextDraft ? "a new" : "an empty"} draft`, async ({ page, request, service }, info) => {
+    const walk = walkthrough(page, info);
+    const v = views(page);
+    const read = async () => (await (await request.get(`${service}/api/chat/alpha`)).json());
+    const alert = v.convo.getByRole("alert").filter({ hasText: "Not sent." });
+    let offline = false;
+    const failedRead = deferred();
+    await page.route((url) => url.pathname === "/api/chat/alpha", async (route) => {
+      if (!offline) return route.continue();
+      await route.abort("connectionfailed");
+      failedRead.release();
+    });
+    await walk.open(`${service}/projects/alpha`);
+    await v.field("alpha").fill("Alpha disconnected request");
+    await v.send.click();
+    await walk.state("01-turn-accepted-before-disconnect", {
+      visible: [v.text("Alpha disconnected request"), v.queue],
+      hidden: [v.convo.locator(".msg-row[data-pending]"), alert, v.retry],
+    });
+    const accepted = await read();
+    const turnId = accepted.active.id;
+    expect(accepted.history.filter((row: { role: string; turn_id: string }) => row.role === "user" && row.turn_id === turnId)).toHaveLength(1);
+    await expect(v.field("alpha")).toHaveValue("");
+    if (nextDraft) await v.field("alpha").fill(nextDraft);
+    offline = true;
+    expect((await request.post(`${service}/fixture/disconnect`)).ok()).toBe(true);
+    await failedRead.promise;
+    await expect(v.field("alpha")).toHaveValue(nextDraft);
+    await walk.state("02-broken-stream-refresh-failed-still-sent", {
+      visible: [v.text("Alpha disconnected request"), v.field("alpha")],
+      hidden: [alert, v.retry, v.convo.locator(".msg-row[data-pending]")],
+    });
+    offline = false;
+    await page.reload();
+    await walk.state("03-reconnected-active-turn", {
+      visible: [v.text("Alpha disconnected request"), v.queue, v.convo.getByRole("status", { name: "L3 is answering", exact: true })],
+      hidden: [alert, v.retry],
+    });
+    await expect(v.field("alpha")).toHaveValue("");
+    await v.field("alpha").fill("Alpha queued after reconnect");
+    await v.queue.click();
+    await walk.state("04-accepted-busy-queue", {
+      visible: [v.queued.getByText("Alpha queued after reconnect", { exact: true })],
+      hidden: [alert, v.retry],
+    });
+    await expect(v.field("alpha")).toHaveValue("");
+    const queued = (await read()).queued;
+    expect(queued).toHaveLength(1);
+    const queueId = queued[0].id;
+    await page.reload();
+    await walk.state("05-queue-survives-reconnect", {
+      visible: [v.text("Alpha disconnected request"), v.queued.getByText("Alpha queued after reconnect", { exact: true })],
+      hidden: [alert, v.retry],
+    });
+    expect((await read()).queued.map((row: { id: string }) => row.id)).toEqual([queueId]);
+    expect((await request.post(`${service}/fixture/release/alpha`)).ok()).toBe(true);
+    await walk.state("06-disconnected-and-queued-turns-answer-once", {
+      visible: [v.text("Alpha disconnected request answered."), v.text("Alpha queued after reconnect answered.")],
+      hidden: [v.queued, alert, v.retry],
+    });
+    const final = await read();
+    expect(final.history.filter((row: { role: string; turn_id: string }) => row.role === "user" && row.turn_id === turnId)).toHaveLength(1);
+    const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;
+    expect(calls.map((row: { text: string }) => row.text)).toEqual(["Alpha disconnected request", "Alpha queued after reconnect"]);
+  });
+}
+
 test("listening, late transcription and denied microphone state reset on selection", async ({ page, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);

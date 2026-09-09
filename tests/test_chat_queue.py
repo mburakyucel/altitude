@@ -667,6 +667,72 @@ class TestChatQueue(AltitudeCase):
         self.assertNotIn(b'"queued"', payload)
         self.assertEqual(self.queue_rows(), [])
 
+    def test_restart_after_stream_open_returns_the_persisted_queue_receipt(self):
+        original_open = server.Handler._stream_open
+
+        def restart_after_headers(handler):
+            original_open(handler)
+            restarting.return_value = True
+
+        with mock.patch.object(config, "restart_in_progress", return_value=False) as restarting, \
+             mock.patch.object(server.Handler, "_stream_open", new=restart_after_headers), \
+             mock.patch.object(server, "request_l3_drain"):
+            status, payload = self.request("POST", "/api/chat", {
+                "project": self.project, "text": "Keep this through activation"})
+        self.assertEqual(status, 200)
+        lines = [json.loads(line) for line in payload.decode().splitlines() if line.startswith("{")]
+        self.assertEqual(len(lines), 1)
+        receipt = lines[0]["queued"]
+        waiting = self.chat_view()["queued"]
+        self.assertEqual([row["id"] for row in waiting], [receipt["id"]])
+        self.assertEqual(receipt["position"], 1)
+        with self.deliverable(), mock.patch.object(l3, "turn", return_value={"completed": True}) as turn:
+            server.drain_l3_queue(self.project)
+            server.drain_l3_queue(self.project)
+        turn.assert_called_once_with(self.project, "Keep this through activation", trigger="chat")
+
+    def test_busy_queue_receipt_survives_a_failed_immediate_drain_start(self):
+        release = self.hold_l3()
+        with mock.patch.object(server, "spawn", side_effect=RuntimeError("fixture thread unavailable")):
+            status, receipt = self.post_json("/api/chat", {
+                "project": self.project, "text": "Run when a worker is available"})
+        self.assertEqual(status, 200, receipt)
+        self.assertEqual([row["id"] for row in self.chat_view()["queued"]], [receipt["queued"]["id"]])
+        self.assertTrue(any("fixture thread unavailable" in line for line in self.lines))
+        release()
+        with self.deliverable(), mock.patch.object(l3, "turn", return_value={"completed": True}) as turn:
+            server.drain_l3_queue(self.project)
+            server.drain_l3_queue(self.project)
+        turn.assert_called_once_with(self.project, "Run when a worker is available", trigger="chat")
+
+    def test_task_message_receipt_survives_a_failed_immediate_wake(self):
+        task = T.new(self.project, "Message acceptance", "Keep the accepted message.")
+        task.update(state="blocked", attempt=1, blocked_reason="Await a message.")
+        S.save_task(self.project, task)
+        with mock.patch.object(server, "request_task_resume", side_effect=RuntimeError("fixture wake unavailable")):
+            status, receipt = self.post_json("/api/l2/message", {
+                "project": self.project, "slug": task["slug"], "text": "Continue after the wake recovers"})
+        self.assertEqual(status, 200, receipt)
+        message_id = receipt["message"]["id"]
+        self.assertEqual([row["id"] for row in T.task_messages(self.project, task["slug"])], [message_id])
+        self.assertEqual([row["id"] for row in T.pending(self.project, task["slug"])], [message_id])
+        self.assertEqual(S.load_task(self.project, task["slug"])["resume_request"], message_id)
+        self.assertIn(task["slug"], dispatch.resume_due(self.project))
+        self.assertTrue(any("fixture wake unavailable" in line for line in self.lines))
+
+    def test_task_message_500_is_uncertain_when_event_write_fails_after_acceptance(self):
+        task = T.new(self.project, "Uncertain task receipt", "Keep recovery honest.")
+        task.update(state="running", attempt=1)
+        S.save_task(self.project, task)
+        with mock.patch.object(S, "append_event", side_effect=OSError("fixture event write unavailable")):
+            status, response = self.post_json("/api/l2/message", {
+                "project": self.project, "slug": task["slug"], "text": "Already in the inbox"})
+        # #298: HTTP 500 alone cannot authorize an unsent Retry; persistence can precede the error.
+        self.assertEqual(status, 500, response)
+        messages = T.task_messages(self.project, task["slug"])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual([row["id"] for row in T.pending(self.project, task["slug"])], [messages[0]["id"]])
+
     def test_get_chat_exposes_one_server_owned_active_turn_until_completion(self):
         started, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)

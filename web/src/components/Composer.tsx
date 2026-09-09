@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { transcribeVoice } from "../data/api";
+import { ApiError, transcribeVoice } from "../data/api";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -23,8 +23,8 @@ type Phase = "idle" | "starting" | "listening" | "transcribing";
 export interface ComposerProps {
   value: string;
   onChange: (value: string) => void;
-  /** Send the draft. A rejection means the server refused it: the draft returns and the hint reads
-   * "Not sent. Retry." with a Retry that sends the same text again. */
+  /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
+   * transport/server failure restores it with a reminder to check the conversation first. */
   onSubmit: (text: string) => void | Promise<void>;
   placeholder: string;
   ariaLabel: string;
@@ -276,15 +276,19 @@ export default function Composer({
       if (!ready || disabled) return;
       setRefused(null);
       setVoiceFailure("");
+      draft.current = "";
       onChange("");
       try {
         await onSubmit(ready);
         focusField();
-      } catch {
+      } catch (error) {
         if (!mounted.current) return;
-        onChange(ready);
-        setRefused(ready);
-        focusField(ready.length);
+        const recovered = [text, draft.current].filter(Boolean).join("\n");
+        draft.current = recovered;
+        onChange(recovered);
+        if (error instanceof ApiError && error.status < 500) setRefused(recovered);
+        else setVoiceFailure("Could not confirm delivery. Check the conversation before sending again.");
+        focusField(recovered.length);
       }
     },
     [disabled, focusField, onChange, onSubmit],

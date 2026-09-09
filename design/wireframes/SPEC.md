@@ -317,6 +317,8 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 | Idle | placeholder, mic, arrow disabled | typing enables the arrow |
 | Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
 | Sending | the bubble shows at 60% until the server accepts it | accepted: full opacity; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
+| Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
+| Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
 | Listening | Cancel, Stop, and the same arrow, live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; the arrow or Enter: transcribe and send at once |
 | Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and arrow disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
@@ -327,6 +329,10 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
 The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
+An explicit refusal also preserves any newly typed draft after the refused text on a new line;
+Retry submits that recoverable draft. A later callback from an earlier send cannot change a newer
+pending message. `web/e2e/project-isolation.pw.ts`, `task-lifecycle.pw.ts` and `conversation.pw.ts`
+walk accepted/interrupted, failed refresh, reconnect, queued, refused and unconfirmed states at both viewports.
 
 ### 3.7 Work panel
 
@@ -481,8 +487,9 @@ toggles, reload, Back, Forward and direct-live fallback on phone and desktop.
 The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
 Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."
-for another blocked task. A failed send restores the draft and replaces the hint with "Not sent.
-Retry." The composer appears for running and blocked tasks; finished conversations stay readable.
+for another blocked task. Explicit refusal and unconfirmed delivery use the shared composer states
+in §3.6. Accepted messages stay sent through wake or refresh errors. The composer appears for
+running and blocked tasks; finished conversations stay readable.
 
 The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded
 output, subtle timestamps, and the lifecycle boundaries the record supplies (state transitions,
