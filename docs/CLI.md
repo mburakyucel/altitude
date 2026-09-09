@@ -567,6 +567,12 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
+An L2 block that publishes or revises questions queues one coordinator notification with the open group,
+including operator-directed blocks. The operator flag places those decisions in Needs you without waiting for L3; it does not
+hide their context from L3. The notification names open members, revisions and required authority so
+L3 can settle record-backed or scope portions while operator approvals remain open. Re-parking
+unchanged members queues nothing new. Faults keep their existing separate incident/notification path.
+
 For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
 `daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the
 worker or session effect, refuses a changed state or identity, and makes an identical retry idempotent.

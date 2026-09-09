@@ -408,14 +408,17 @@ def main(argv=None) -> None:
                         sys.exit(f"alt task block: attempt {attempt} is no longer current")
                 else:
                     waiting = "burak" if args.for_burak else "l3"
+                    previous_questions = {(q["id"], q["revision"])
+                                          for q in S.load_task(p, args.slug).get("questions", [])}
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
                                       recommendation_why=args.why, questions=questions)
                     out(blocked)
-                    if blocked.get("waiting_on") == "l3":  # L3 answers from the record, or hands Burak one plain dilemma
+                    if any(q["status"] == "open" and (q["id"], q["revision"]) not in previous_questions
+                           for q in blocked.get("questions", [])):
                         from altitude import l3
-                        l3.queue_message(p, T.block_question(args.slug, args.reason), trigger="block")
+                        l3.queue_message(p, T.block_question(blocked), trigger="block", slug=args.slug)
             elif not args.fault:
                 out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": "burak"},
                             questions=questions, recommendation=args.recommendation,

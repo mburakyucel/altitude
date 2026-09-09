@@ -205,7 +205,11 @@ messages leave the inbox; the conversation keeps them, and a message appended af
 for the running worker's next checkpoint. An explicit question block supersedes earlier wake requests:
 older inbox messages remain available, but cannot resume that wait. A later message or explicit Resume
 authorizes another turn. An L2's question goes to L3 first: L3's `alt task message` requests that
-daemon resume, or `alt task escalate` turns it into a Needs you card for the operator; `--for-burak` on the block skips L3.
+daemon resume, or `alt task escalate` turns it into a Needs you card for the operator. `--for-burak`
+places operator questions there immediately and also notifies L3. A block that publishes or revises questions
+queues one notification with open members, revisions and required authority; re-parking unchanged members
+stays quiet. Notification lets L3 coordinate scope or record-backed portions without approving
+operator-required proposal, security or product decisions.
 For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
 A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;

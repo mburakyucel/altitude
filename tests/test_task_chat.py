@@ -121,7 +121,7 @@ class TestTaskConversation(ChatCase):
         p = l3.queue_path(self.project)
         return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
 
-    def test_l2_block_goes_to_l3_first_and_a_flagged_one_to_burak(self):
+    def test_new_questions_notify_l3_including_operator_blocks_but_unchanged_reparking_does_not(self):
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Keep the old API?", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
         task = S.load_task(self.project, self.slug)
@@ -140,7 +140,62 @@ class TestTaskConversation(ChatCase):
         cards = T.decisions(self.project)
         self.assertEqual([(c["kind"], c["asked_by"], c["question"]) for c in cards], [("asks", "l2", "Which colour?")])
         self.assertIsNone(cards[0]["recommendation"])
-        self.assertEqual(len(self.l3_queue()), 1, "a block flagged for Burak does not wake L3")
+        self.assertEqual(len(self.l3_queue()), 2, "operator-directed questions also reach the coordinator")
+        notification = self.l3_queue()[-1]
+        self.assertEqual(notification["slug"], self.slug)
+        self.assertIn("authority: operator", notification["text"])
+        self.assertIn(cards[0]["id"], notification["text"])
+        T.resume(self.project, self.slug)
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
+                       "--for-burak", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(len(self.l3_queue()), 2, "re-parking the same revision does not notify again")
+        T.resume(self.project, self.slug)
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which accent colour?",
+                       "--for-burak", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(len(self.l3_queue()), 3, "a revised question carries new coordinator context")
+
+    def test_mixed_operator_block_notifies_scope_context_without_approving_proposal(self):
+        task = S.load_task(self.project, self.slug)
+        task.update(paths=["tests/"], hold_merge="Operator security review")
+        S.save_task(self.project, task)
+        questions = self.tmp / "mixed-questions.json"
+        questions.write_text(json.dumps({"questions": [{"question": "May I edit tests/?"},
+            {"question": "May I implement the security proposal?", "options": [
+                {"key": "implement", "label": "Implement", "text": "Implement the proposed security change."}],
+             "recommended_key": "implement", "why": "The proposal needs operator judgment."}]}))
+        reason = "Scope and proposal decisions."
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", reason,
+                       "--questions-file", str(questions), "--for-burak", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        scope, proposal = T.question_views(self.project, self.slug)
+        [notification] = self.l3_queue()
+        self.assertEqual(notification["trigger"], "block")
+        for question in (scope, proposal):
+            self.assertIn(question["id"], notification["text"])
+            self.assertIn(question["detail"], notification["text"])
+            self.assertEqual(question["audience"], "operator")
+        self.assertIn("grants no operator authority", notification["text"])
+        self.assertEqual(len(T.decisions(self.project)), 2)
+        source = T.message(self.project, self.slug, "l3", "The recorded lease includes tests/. The security proposal still needs the operator.")
+        self.assertEqual(len(T.decisions(self.project)), 2, "notification and reply alone close nothing")
+        before = S.load_task(self.project, self.slug)
+        T.resolve_question(self.project, self.slug, scope["id"], scope["revision"], source["id"],
+                           disposition="answered", reason="Test edits are already assigned.", expected_attempt=1,
+                           l3_authority="The recorded task lease includes tests/. This settles scope only.")
+        [remaining] = T.decisions(self.project)
+        self.assertEqual((remaining["id"], remaining["revision"], remaining["audience"], remaining["resolution"]),
+                         (proposal["id"], proposal["revision"], "operator", None))
+        self.assertEqual(remaining["recommendation"], proposal["recommendation"])
+        after = S.load_task(self.project, self.slug)
+        for field in ("state", "waiting_on", "resume_after", "resume_request", "session_id", "agent_id", "hold_merge", "paths"):
+            self.assertEqual(after.get(field), before.get(field), field)
+        T.resume(self.project, self.slug)
+        out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", reason,
+                       "--for-burak", env=self.worker_env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(len(self.l3_queue()), 1, "settling scope and retaining the proposal does not repeat notification")
 
     def test_l3_answers_a_block_or_escalates_it_as_one_dilemma(self):
         self.block("Keep the old API?")

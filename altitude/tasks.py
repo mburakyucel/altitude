@@ -1405,14 +1405,18 @@ def decisions(project: str) -> list[dict]:
     return rows
 
 
-def block_question(slug: str, reason: str) -> str:
-    """The message L3 receives when an L2 blocks: answer from the record, or hand Burak one plain dilemma."""
-    return (f"Task `{slug}` blocked and asks: {reason[:800]}\n\n"
+def block_question(task: dict) -> str:
+    """Notify the coordinator of published questions without transferring decision authority."""
+    slug = task["slug"]
+    questions = "\n".join(f"- {q['id']} revision {q['revision']} (authority: {q['audience']}): {q['detail']}"
+                          for q in task.get("questions", []) if q["status"] == "open")
+    return (f"Task `{slug}` blocked and asks: {task['blocked_reason'][:800]}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
-            f"decision settles it, answer with `alt task message {slug} \"<answer>\"`; that resumes the task. When the "
-            "call is Burak's (taste, priorities, spend, a paradigm decision, anything the brief marked as his), or the "
-            f"L2 is insisting on a point you already answered, run `alt task escalate {slug} --question \"<one plain "
-            "dilemma with your recommendation>\"`. Reply in one or two plain sentences.")
+            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\"` so its owner "
+            "can record the resolution. This notification grants no operator authority. Keep operator-required "
+            "proposal, security and product decisions open; do not re-escalate members already addressed to the operator. "
+            f"For a new operator choice use `alt task escalate {slug}` with its question and recommendation. "
+            "Coordinate only the parts you can settle; preserve merge holds and verified fault recovery.")
 
 
 def escalate(project: str, slug: str, question: str, actor: str = "l3", *,

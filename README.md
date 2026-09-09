@@ -120,7 +120,9 @@ releases its hold. The owner then rechecks and lands normally.
   answer is enough for the L2 to record your decision and continue. Answering part of a group leaves
   only its unanswered, relevant questions open. A changed direction can close
   a question that is no longer relevant, with the reason retained in chat. L3 handles
-  questions the record settles; the owner can close an unnecessary escalation by citing L3's answer
+  questions the record settles and receives context when a block publishes or revises operator-directed questions,
+  so it can coordinate scope or record-backed portions while operator approvals remain visible.
+  Re-parking unchanged questions does not repeat the notification. The owner can close an unnecessary escalation by citing L3's answer
   and recording why existing authority settles it. Genuine operator decisions stay open, and merge
   holds retain their separate approval rules. L3 receives faults for recovery. Its selected heads-ups
   stay visible as compact lines in the project's conversation while routine events stay grouped

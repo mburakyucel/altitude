@@ -875,7 +875,12 @@ If a provider limit queues a fresh attempt, the existing dilemma remains answera
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
 or its recorded resolution. A queued task without a question retains its ordinary initial state.
 
-A direct L2 block publishes its question into that human thread. An L3 escalation publishes the
+A direct L2 block publishes its question into that human thread. A block that publishes or revises
+questions queues one L3 notification, including operator-directed blocks. The message names
+open members, revisions and their required authority. Comparing existing question revisions keeps
+unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
+scope portions; notification does not approve operator decisions or change their audience.
+An L3 escalation publishes the
 actual dilemma and recommendation with L3 attribution, and supplies it to the owner's next normal
 checkpoint without launching a worker just to announce it. Explicit `--recommendation`, `--label`
 and `--why` fields name a single approach; `--questions-file` publishes a small group or explicit
