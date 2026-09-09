@@ -63,8 +63,9 @@ registration retries return the same receipt; another active probe refuses repla
 to register the probe. Registration starts no worker and needs no free worker slot.
 
 At the due time, altd prefers relevant live or fresh completed CI among twenty recent executions
-of that workflow, branch, event and PR. Otherwise it reruns the selected run once. It records the
-baseline attempt and intent before submission, then reads attempt metadata to reconcile uncertain
+of that workflow, branch, event and PR. Otherwise it reruns the selected run once. Freshness uses
+the scheduled check time, so evidence from before the intended wait does not satisfy it. Altd saves
+the baseline attempt and intent before submission, then reads attempt metadata to reconcile uncertain
 writes without blind resubmission. Reruns use their original workflow; they do not adopt a new base
 workflow. Each API call has a twenty-second limit; reads run at five-minute intervals and stop at
 three failures, twenty-four rounds or two hours after the scheduled time. Missing artifacts remain

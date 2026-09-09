@@ -488,7 +488,7 @@ the latest twenty runs. Otherwise it submits one rerun of the selected project-o
 persisting its baseline attempt and submission intent. Restart and uncertain submission reconcile
 attempt metadata without repeating the write. Reads stop after three failures, twenty-four rounds
 or two hours after the due time. Fresh nonexpired, nonempty artifacts created during the observed
-execution and after registration establish an upload; step conclusions alone do not. Old-run reruns
+execution and at or after the scheduled check time establish an upload; step conclusions alone do not. Old-run reruns
 retain their original workflow. Unchanged conclusions without upload evidence finish silently.
 Changed evidence uses one `ci-recheck` row in the existing L3 queue, retained through handling.
 Its task receipt stores the turn identity before execution; explicit successful terminal chat

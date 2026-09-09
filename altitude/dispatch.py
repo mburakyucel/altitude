@@ -200,7 +200,7 @@ def run_ci_recheck(project: str, slug: str) -> None:
         target = record.get("target") or record["run"]
         run = _ci_run(project, repository, target)
         baseline = {"conclusion": run.get("conclusion")
-                    if datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(record["requested_at"]) else None,
+                    if datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(record["at"]) else None,
                     "artifact_upload": "unverified"}
         if not record.get("target"):
             query = urlencode({"branch": run.get("head_branch") or "", "event": run.get("event") or "",
@@ -211,7 +211,7 @@ def run_ci_recheck(project: str, slug: str) -> None:
                         and [pr["number"] for pr in item.get("pull_requests", [])] == [pr["number"] for pr in run.get("pull_requests", [])]
                         and (item.get("head_repository") or {}).get("full_name") == (run.get("head_repository") or {}).get("full_name")
                         and (item.get("status") != "completed"
-                             or datetime.fromisoformat(item["created_at"]) >= datetime.fromisoformat(record["requested_at"]))]
+                             or datetime.fromisoformat(item["updated_at"]) >= datetime.fromisoformat(record["at"]))]
             if relevant:
                 fresh_id = max(relevant, key=lambda item: item.get("id", 0))["id"]
                 run = _ci_run(project, repository, fresh_id)
@@ -227,13 +227,13 @@ def run_ci_recheck(project: str, slug: str) -> None:
                 current["target"] = target
                 # A relevant live run or fresh completed execution supplies evidence without a write.
                 fresh = (run["status"] != "completed"
-                         or datetime.fromisoformat(run["updated_at"]) >= datetime.fromisoformat(current["requested_at"]))
+                         or datetime.fromisoformat(run["updated_at"]) >= datetime.fromisoformat(current["at"]))
                 if not fresh:
                     observed_attempt = run["run_attempt"]
                     run = _ci_run(project, repository, current["run"])
                     current["target"] = target = current["run"]
                     if (run["status"] == "completed" and run["run_attempt"] == observed_attempt
-                            and datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(current["requested_at"])):
+                            and datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(current["at"])):
                         current["submission"] = {"baseline_attempt": run["run_attempt"], "at": S.now(), "status": "intent"}
                         S.save_task(project, task)  # required before the only external write
                         try:
@@ -256,7 +256,7 @@ def run_ci_recheck(project: str, slug: str) -> None:
         if attempt.get("run_attempt") != run["run_attempt"] or attempt.get("status") != "completed":
             raise ValueError("CI execution attempt evidence is unavailable")
         artifacts = _ci_api(project, repository, f"runs/{target}/artifacts?per_page=100")
-        start = max(datetime.fromisoformat(record["requested_at"]), datetime.fromisoformat(attempt["run_started_at"]))
+        start = max(datetime.fromisoformat(record["at"]), datetime.fromisoformat(attempt["run_started_at"]))
         finished = datetime.fromisoformat(attempt["updated_at"])
         uploaded = [item["id"] for item in artifacts.get("artifacts", [])[:100]
                     if not item.get("expired") and item.get("size_in_bytes", 0) > 0

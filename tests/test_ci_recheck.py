@@ -139,6 +139,22 @@ class TestCIRecheck(AltitudeCase):
         self.assertEqual(self.record()["evidence"]["artifact_upload"], "unverified")
         self.assertEqual(self.record()["evidence"]["conclusion"], "success")
 
+    def test_scheduled_wait_requires_evidence_from_due_time_not_registration(self):
+        self.candidates = [{**self.run, "id": 72, "conclusion": "success",
+                            "updated_at": "2026-09-09T10:01:00Z"}]
+        self.schedule(at="2026-09-09T11:00:00Z")
+        self.tick(60)
+        self.assertEqual(self.record()["target"], 71)
+        self.assertEqual(self.posts, ["runs/71/rerun"])
+
+    def test_run_started_before_due_and_finished_after_due_is_fresh(self):
+        self.candidates = [{**self.run, "id": 72, "conclusion": "success",
+                            "updated_at": "2026-09-09T11:01:00Z"}]
+        self.schedule(at="2026-09-09T11:00:00Z")
+        self.tick(65)
+        self.assertEqual(self.record()["target"], 72)
+        self.assertFalse(self.posts)
+
     def test_run_that_finished_during_discovery_is_adopted_without_rerun(self):
         self.schedule()
         original = self.api.side_effect
