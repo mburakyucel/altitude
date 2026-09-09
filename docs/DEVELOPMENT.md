@@ -115,8 +115,12 @@ base and repository, checks out the exact candidate and verifies its SHA. Reposi
 are not persisted. Tests/install run in a clean environment with disposable homes, no provider
 credentials, pinned tooling and frozen dependencies. No candidate Makefile controls CI commands.
 
-The job retains logs, timings and fictional Playwright artifacts for three days, including failure
-runs. The job has a finite timeout; browser assertions and fixture shutdown also have deadlines.
+The job attempts to retain logs, timings and fictional Playwright artifacts for three days,
+including failure runs. Only **Upload fictional test results** has `continue-on-error: true`:
+upload failures remain visible but do not fail the test job. Downloadable evidence may be
+unavailable; use the job's test output and exact candidate identity when assessing its result.
+Python, web, build, phone/desktop checks and candidate validation remain required.
+The job has a finite timeout; browser assertions and fixture shutdown also have deadlines.
 A failed, canceled, absent or skipped required phase cannot be reported as green. A deliberately
 optional native host probe is identified separately from required deterministic cases.
 
