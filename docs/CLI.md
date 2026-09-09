@@ -206,6 +206,12 @@ safe delivery. A task can complete its agreed increment while the parent issue r
 scope. Altitude's [project rules](../AGENTS.md#roles) retain proposal checkpoints and implementation
 constraints. Closure follows the cumulative evidence rules below.
 
+L3 performs supported coordination and already-authorized continuation handoffs through existing
+task operations, carrying forward remaining scope, acceptance, evidence, dependencies and holds.
+L2 routes that administration to L3; it does not require another operator approval. Existing owner
+sessions and recovery conditions remain intact for work that stays with them. Actual new scope/provider
+decisions or operator judgments still escalate under the project rules.
+
 ### Delivery-linked issue completion
 
 When cumulative authorized deliveries satisfy an identified issue's full scope and any required

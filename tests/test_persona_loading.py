@@ -137,14 +137,24 @@ class PersonaLoading(AltitudeCase):
                 persona.write_text(original)
 
     def test_l3_turn_resume_and_fresh_rotation_read_persona_at_the_supported_boundary(self):
+        # Regression: asking permission for an already-authorized administrative transfer.
+        # Capture the authoritative instructions alongside this context; no fixture can prove
+        # that a future model will choose the instructed action or perform a real handoff.
+        handoff_context = (
+            "Recorded operator direction fixture-direction authorizes moving the remaining validation "
+            "scope to the existing continuation task. Preserve its acceptance and source evidence, "
+            "the security-review merge hold and original blocked owner session. A proposed provider "
+            "change remains an unanswered operator choice; the administrative handoff is already authorized."
+        )
         for engine in config.ENGINES:
             with self.subTest(engine=engine), mock.patch.object(l3, "_select",
                     return_value={"engine": engine, "why": "fixture routing"}):
                 persona = self.personas / "l3.md"
                 original = persona.read_text()
-                self.assertTrue(l3.turn(self.project, "Inspect project direction.")["completed"])
+                self.assertTrue(l3.turn(self.project, handoff_context)["completed"])
                 initial = self.processes[-1]
                 self.assert_persona(initial, engine, "l3", original, resumed=False)
+                self.assertIn(handoff_context, initial.prompt)
 
                 updated = original + "\nFIXTURE PERSONA UPDATE: current coordinator instructions.\n"
                 persona.write_text(updated)

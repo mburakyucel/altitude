@@ -101,6 +101,8 @@ releases its hold. The owner then rechecks and lands normally.
   cite sources, superseded context and uncertainty, distinguishing proposals from verified delivery
   and operator decisions from recommendations. Owners reassess their plans and close obsolete questions
   against the original authority, keeping remaining operator choices visible.
+  L3 carries out supported coordination and already-authorized continuation handoffs, preserving
+  scope, evidence, holds and existing owner sessions without another administrative approval.
   Feedback about system or role behavior leads to a durable instruction change through the task/PR path
   unless scoped to a session or task; tentative suggestions and one-off exceptions stay scoped.
   L3 reports what is queued, merged and effective. Rules stay in their appropriate

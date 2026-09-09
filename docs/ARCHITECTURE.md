@@ -38,6 +38,10 @@ project direction/decision changes and L2 findings/delivery prompt L3 to assess 
 and send targeted updates through task messages. Each update cites sources, what changed and what it
 supersedes, impact on the owner's work and uncertainty; proposals remain distinct from verified delivery
 and operator authority from recommendations. Unchanged context does not trigger repeated nudges.
+L3 executes supported administrative coordination and already-authorized continuation handoffs
+through existing task operations, preserving remaining scope, acceptance, original evidence,
+dependencies, holds and sessions for work that stays with its owner. New scope/provider decisions
+or operator judgments still escalate; routine administration does not become an operator question.
 The [L2 persona](../personas/l2.md) requires owners to reassess plans and open question members, record
 sourced supersession through the existing resolver and continue within authorized scope. Still-relevant
 operator decisions, proposal checkpoints, merge holds and fault-recovery verification retain their rules.

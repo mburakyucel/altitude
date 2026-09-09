@@ -231,6 +231,10 @@ findings/delivery materially changes their work. The owner reassesses its plan a
 cites original authority to record obsolete members as superseded, and continues authorized work without
 asking the operator to dismiss them manually. Proposals and ongoing work are not verified delivery;
 recommendations do not supply operator authority. Remaining operator choices and proposal checkpoints stay open.
+L2 routes routine coordination within the authorized outcome to L3. L3 carries out supported
+assignment or continuation handoffs without another administrative approval, preserving remaining
+scope, acceptance, original evidence, holds and existing owner sessions. New scope/provider decisions
+still require their actual authority, and existing handoff and fault-recovery rules apply.
 For an unnecessary escalation that L3 settles within existing delegated authority, the L2 records
 `--l3-authority` with specific evidence and rationale against the exact L3 task message and question
 revision. The receipt attributes the answer to L3 and the authority assessment to its owning L2/attempt;
