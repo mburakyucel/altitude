@@ -814,7 +814,9 @@ only for an approval without question context. For a question answer used as app
 requires that question's current revision, operator audience and answered resolution from the same
 original task message, with no remaining question. UI acceptance must match its recorded option.
 The presentation precedes the question and approval. For a clear typed answer to an open question,
-the owner records its decision with `alt task resolve` first.
+the owner records its decision with `alt task resolve` first. Messages in between, such as an operator
+request for a plain explanation and the owner's reply without the URL, do not break the citation:
+L3 reads them and still cites the original presentation.
 
 Task chat automatically attaches previously resolved questions to later messages too. If the cited
 question resolved before a fresh PR presentation, a subsequent conversational merge approval can

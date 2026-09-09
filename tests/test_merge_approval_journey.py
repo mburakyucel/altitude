@@ -61,18 +61,17 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.wait_state(slug, "running")
         return response
 
-    def test_ui_escalation_reaffirmation_fault_recovery_and_normal_land(self):
-        # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
+    def prepare_held_pr(self, request, hold, content):
         git("config", f"url.{self.tmp / 'origin.git'}.insteadOf", "https://github.com/team/demo.git", cwd=self.repo)
         git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
-        initial = self.launch(self.queue("Review the story"))
+        initial = self.launch(self.queue(request))
         slug, worktree = initial["slug"], Path(initial["worktree"])
-        T.set_hold_merge(self.project, slug, "Review the story before merging")
-        (worktree / "README.md").write_text("The reviewed story.\n")
+        T.set_hold_merge(self.project, slug, hold)
+        (worktree / "README.md").write_text(content)
         gh = self.fake_gh()
         for key, value in dispatch.l2_env(self.project, slug, initial["attempt"]).items():
             self.setenv(key, value)
-        prepared = land.land("test: prepare a held story", cwd=worktree, wait=0)
+        prepared = land.land("test: prepare a held change", cwd=worktree, wait=0)
         self.assertEqual((prepared["pr"], prepared["merged"], prepared["checks"]), (101, False, "pass"))
         self.tick()
         pull = S.read_json(gh / "pr.json")
@@ -80,6 +79,26 @@ class TestMergeApprovalJourney(AltitudeCase):
                     headRefOid=prepared["head"], updatedAt=self.at)
         S.write_json(gh / "pr.json", pull)
         self.tick()
+        return initial, slug, worktree, gh, prepared, pull
+
+    def broker(self):
+        # Git's transport rewrite supports local landing; the broker observes the canonical origin.
+        git("remote", "set-url", "origin", "git@github.com:team/demo.git", cwd=self.repo)
+        broker = server.start_l3_verb_broker(self.project, self.tmp / "approval.sock")
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        return broker
+
+    def reconcile(self, broker, arguments):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(5)
+            client.connect(str(broker.socket_path))
+            client.sendall((json.dumps({"kind": "alt", "args": arguments}) + "\n").encode())
+            return json.loads(client.makefile().readline())
+
+    def test_ui_escalation_reaffirmation_fault_recovery_and_normal_land(self):
+        # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Review the story", "Review the story before merging", "The reviewed story.\n")
         presentation = T.message(self.project, slug, "l2", f"Reviewed and green: {pull['url']} at {prepared['head']}.")
         question = self.escalate(slug, "May the owner merge the reviewed story?", f"Merge {pull['url']}.", "Approve merge")
         self.assertEqual(question["asked_by"], "l3")
@@ -110,28 +129,17 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual(next(q for q in reversed(before["questions"]) if q["id"] == manual["id"])
                          ["resolution"]["disposition"], "superseded")
         engine_calls = len(self.engine.calls)
-        # Git's transport rewrite supports local landing; the broker observes the canonical origin.
-        git("remote", "set-url", "origin", "git@github.com:team/demo.git", cwd=self.repo)
-        broker = server.start_l3_verb_broker(self.project, self.tmp / "approval.sock")
-        self.addCleanup(server.stop_l3_verb_broker, broker)
+        broker = self.broker()
         args = ["task", "hold-merge", slug, "--approval", approval, "--presentation", presentation["id"],
                 "--latest-operator", reaffirmation["id"], "--question", question["id"],
                 "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
                 "--reason", "Original UI merge approval remains valid; the latest operator message reaffirms it."]
-
-        def reconcile(arguments):
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(5)
-                client.connect(str(broker.socket_path))
-                client.sendall((json.dumps({"kind": "alt", "args": arguments}) + "\n").encode())
-                return json.loads(client.makefile().readline())
-
         stale = list(args)
         stale[stale.index("--latest-operator") + 1] = approval
-        self.assertIn("latest operator", reconcile(stale).get("error", ""),
+        self.assertIn("latest operator", self.reconcile(broker, stale).get("error", ""),
                       "reconciliation must inspect later operator corrections")
         self.assertEqual(S.load_task(self.project, slug), before)
-        response = reconcile(args)
+        response = self.reconcile(broker, args)
         self.assertEqual(response.get("returncode"), 0, (response, self.logs))
         receipt = json.loads(response["stdout"])
         released = S.load_task(self.project, slug)
@@ -143,7 +151,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual(receipt["authorized_by"], T.OPERATOR_MESSAGE_ROLE)
         self.assertEqual(T.task_messages(self.project, slug), before_messages)
         self.assertEqual(len(self.engine.calls), engine_calls, "release neither resumes the faulted owner nor changes its session")
-        self.assertIn("no active merge hold", reconcile(args).get("error", ""))
+        self.assertIn("no active merge hold", self.reconcile(broker, args).get("error", ""))
         self.assertEqual([e for e in S.read_events(self.project, slug) if e["kind"] == "release-merge"],
                          [{"kind": "release-merge", **receipt}])
         self.assertEqual(S.load_task(self.project, slug), released)
@@ -167,6 +175,51 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual(landed["head"], receipt["head"])
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The reviewed story.\n")
         self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
+
+    def test_typed_answer_after_a_plain_explanation_releases_the_exact_pr(self):
+        # PR #304 sequence: between the owner's presentation and the operator's typed decision the
+        # operator asked for a plain explanation and the owner answered without the PR URL. No phrase
+        # or adjacency rule breaks that citation; L3 reads the exchange and cites the original presentation.
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Clarify the instruction", "Changes authority; operator security review is required",
+            "The clarified instruction.\n")
+        presentation = T.message(self.project, slug, "l2", f"Ready for security review: {pull['url']} at {prepared['head']}.")
+        question = self.escalate(slug, f"Will you complete the held security review and merge {pull['url']}?",
+                                 "Review the authority boundary and merge the prepared PR if satisfied.",
+                                 "Security review and merge")
+        context = {"project": self.project, "slug": slug, "question_id": question["id"], "revision": question["revision"]}
+        self.tick()
+        asked = self.request("/api/l2/message", {**context, "text": "Simply describe what this change does."})["message"]
+        self.wait_state(slug, "running")
+        self.tick()
+        T.message(self.project, slug, "l2", "It reduces unnecessary items in Needs you. It grants no approval on your behalf.")
+        self.tick()
+        approval = self.request("/api/l2/message", {**context, "text": "You can merge it"})["message"]
+        self.tick()
+        T.resolve_question(self.project, slug, question["id"], question["revision"], approval["id"], source="task",
+                           disposition="answered", expected_attempt=initial["attempt"],
+                           reason="The operator approved merging PR #101. Record the release through L3 before landing.")
+        before = S.load_task(self.project, slug)
+        self.assertTrue(before["hold_merge"], "the owner's resolution records the decision without releasing the hold")
+        broker = self.broker()
+        args = ["task", "hold-merge", slug, "--approval", approval["id"], "--presentation", presentation["id"],
+                "--latest-operator", approval["id"], "--question", question["id"],
+                "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
+                "--reason", "The typed answer authorizes this reviewed PR; the earlier message only asked for an explanation."]
+        mistaken = list(args)
+        mistaken[mistaken.index("--approval") + 1] = asked["id"]
+        self.assertIn("resolved before the PR presentation", self.reconcile(broker, mistaken).get("error", ""),
+                      "the explanation request carries the question context but is not its answer")
+        self.assertEqual(S.load_task(self.project, slug), before)
+        response = self.reconcile(broker, args)
+        self.assertEqual(response.get("returncode"), 0, (response, self.logs))
+        receipt = json.loads(response["stdout"])
+        self.assertEqual(S.load_task(self.project, slug), {**before, "hold_merge": None, "merge_approval": receipt})
+        self.assertEqual((receipt["approval"], receipt["presentation"], receipt["question"], receipt["revision"]),
+                         (approval["id"], presentation["id"], question["id"], question["revision"]))
+        self.assertEqual((receipt["option_key"], receipt["question_context_only"], receipt["authorized_by"]),
+                         (None, False, T.OPERATOR_MESSAGE_ROLE))
+        self.assertEqual((receipt["pr"], receipt["head"]), (101, prepared["head"]))
 
     def test_discussion_design_and_implementation_choices_do_not_release_a_hold(self):
         task = self.launch(self.queue("Discuss a held proposal"))
