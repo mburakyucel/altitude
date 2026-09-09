@@ -9,7 +9,7 @@ import { InlineProse, Prose, lastParagraph } from "./Prose";
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
  * folded to one centred line with a dot, the reply's last paragraph, and Show. A run of them folds to
- * one line naming the count. Expanded, a card shows what altd sent L3, the full reply, and the links.
+ * one line naming the count; selected heads-ups stay separate. Expanded cards keep full text and links.
  */
 
 /** One system turn as the conversation reads it from the chat rows. */
@@ -27,6 +27,7 @@ export interface SystemTurn {
   /** The task the turn is about, when a row names one. */
   slug: string | null;
   fyi: boolean;
+  headsUp: boolean;
 }
 
 const DANGER = new Set(["incident", "system-recovery"]);
@@ -121,6 +122,7 @@ export function fieldsOf(prompt: string): { label: string; value: string }[] | n
 
 /** The folded line's text (SPEC.md §4.1). */
 export function lineText(turn: SystemTurn, task: string | null): string {
+  if (turn.headsUp) return turn.prompt;
   if (turn.fyi) return lastParagraph(turn.prompt) || turn.prompt;
   if (turn.inProgress) return `L3 is handling ${handling(turn.trigger, task)}`;
   if (turn.reply) return lastParagraph(turn.reply) || `L3 handled ${handling(turn.trigger, task)}`;
@@ -246,7 +248,7 @@ export function SystemLine({
   );
 }
 
-/** A run of system turns between two operator messages: one line, expanding to the list. */
+/** A run of routine system turns: one line, expanding to the list. */
 export function SystemGroup({
   turns,
   project,

@@ -79,6 +79,23 @@ def main():
     S.regen_state_md(project)
 
     class Handler(server.Handler):
+        def do_POST(self):
+            if self.path == "/fixture/heads-up":
+                if self._body().get("history"):
+                    for index in range(15):
+                        turn(f"Saved request {index}.", f"Saved answer {index}.", f"heads-up-history-{index}")
+                T.fyi(project, running["slug"], "Activation pending: routine build details.")
+                turn("Reconcile saved tasks.", "The saved tasks have been checked.",
+                     f"heads-up-restart-{len(l3.chat_history(project))}", trigger="restart")
+                row = T.fyi(project, running["slug"],
+                            "Deliveries are waiting on the build.\n\nAn owner is investigating the failure.", actor="l3")
+                T.fyi(project, running["slug"], "Automatic fault evidence stays here.", actor="altd")
+                l3.chat_log(project, "system", "Historical automatic FYI with ambiguous authorship.",
+                            trigger="fyi", by="l3")
+                T.fyi(project, running["slug"], "Routine owner progress.", actor="l2")
+                return self._json(row)
+            return super().do_POST()
+
         def do_GET(self):
             if self.path == "/fixture/workers":
                 return self._json({"calls": [{key: row.get(key) for key in ("engine", "session_id", "prompt")}

@@ -732,14 +732,14 @@ def set_spend(project: str, slug: str, **spend) -> dict:
 
 # ---- Decisions and FYIs -------------------------------------------------
 
-def fyi(project: str, slug: str | None, text: str, actor: str = "l3") -> dict:
-    """An FYI is a system row in the project's chat (SPEC.md §5.2 note 3); the conversation draws it as
-    a system line. A task FYI is also an event in the task's record."""
+def fyi(project: str, slug: str | None, text: str, actor: str = "altd") -> dict:
+    """Record an FYI in project chat; explicit L3 heads-ups stay outside routine system groups.
+    A task FYI is also an event in the task's record (SPEC.md §5.2 note 3)."""
     if slug is not None:
         S.require_task_slug(slug)
     from . import l3
     text = text.strip()
-    row = l3.chat_log(project, "system", text, trigger="fyi", slug=slug, by=actor)
+    row = l3.chat_log(project, "system", text, trigger="fyi", slug=slug, by=actor, heads_up=actor == "l3")
     if slug:
         S.append_event(project, slug, "fyi", text=text, by=actor)
     return row
