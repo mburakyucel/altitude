@@ -12,6 +12,13 @@ personas in `personas/` are the global layer — how anyone works under Altitude
 carry nothing project-specific. Rules like the seams rule, the review questions, and deletion first
 belong here, never in a persona.
 
+## Engineering tenet
+
+Simplicity and elegance guide all work on Altitude's paradigm, architecture, and implementation.
+Use engineering judgment to favor long-term clarity and maintainability. When cases recur,
+reconsider and simplify the underlying design instead of accumulating symptom-specific patches,
+redundant checks, or unnecessary abstractions.
+
 ## Seams
 
 Altitude is built for one operator on one machine, and everything that encodes that operator, their
