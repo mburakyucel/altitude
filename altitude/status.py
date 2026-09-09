@@ -8,7 +8,7 @@ _TASK_FIELDS = (
     "state", "title", "attempt", "session_id", "agent_id", "source",
     "hold_merge", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
     "engine_model", "engine_reasoning_effort", "routing", "waiting_on", "resume_after", "fault", "verified",
-    "spend", "paths", "created", "dispatched", "engine", "model", "token_usage", "daemon_request", "preserved_checkout",
+    "spend", "paths", "created", "dispatched", "engine", "model", "token_usage", "daemon_request", "preserved_checkout", "ci_recheck",
     "checkout_archive", "adopted_pr",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup,files"

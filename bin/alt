@@ -20,7 +20,7 @@ L3_COMMANDS = {
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "list", "preserve-checkout")),
+                                    "done", "list", "preserve-checkout", "recheck-ci")),
     *(("incident", name) for name in ("new", "amend", "list")),
 }
 
@@ -143,11 +143,14 @@ def _brief_text(record: dict) -> str:
     engine_name = record.get("l2_engine") or record.get("engine")
     model = record.get("engine_model") or record.get("model") or "default"
     engine = f"{engine_name}/{model}" if engine_name else "unassigned"
+    ci = record.get("ci_recheck") or {}
+    next_ci = ci.get("due_at") or (ci.get("delivery") or {}).get("next_at")
     return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}", f"engine/model: {engine}",
                       f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
                       f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
                       "lease: " + (", ".join(record["lease"]) or "none"),
-                      "overlaps: " + ("; ".join(overlaps) or "none")])
+                      "overlaps: " + ("; ".join(overlaps) or "none")]
+                     + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
 
 
 def _queue_text(record: dict) -> str:
@@ -254,6 +257,9 @@ def main(argv=None) -> None:
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
     pc.add_argument("slug"); pc.add_argument("--reason", required=True)
+    ci = ts.add_parser("recheck-ci", help="L3/operator: record one bounded CI evidence probe for a fault-blocked task")
+    ci.add_argument("slug"); ci.add_argument("--run", required=True, type=int)
+    ci.add_argument("--at", required=True); ci.add_argument("--reason", required=True)
     tp = ts.add_parser("paths", help="L3/operator: replace the complete comma-separated file lease; L2 requests changes through task block")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
@@ -380,6 +386,8 @@ def main(argv=None) -> None:
         elif tc in ("reject", "resume", "stop", "preserve-checkout"):
             from altitude import dispatch
             out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR))
+        elif tc == "recheck-ci":
+            out(T.recheck_ci(p, args.slug, args.run, args.at, args.reason, actor=ACTOR))
         elif tc == "block":
             questions, args.reason = _question_input(args, args.reason)
             if args.fault and questions is not None:

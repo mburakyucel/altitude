@@ -1,7 +1,7 @@
 """Dispatch one task-owning L2 in its worktree, monitor it, and start its session again once it stopped."""
 from __future__ import annotations
 from contextlib import contextmanager, nullcontext
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import os
@@ -9,6 +9,7 @@ import subprocess
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import urlencode
 
 from . import config, engines, git_policy, route, state as S, tasks as T
 
@@ -123,6 +124,165 @@ DAEMON_TASK_OPERATIONS = {
     "reject": {"from": ("queued", "running", "blocked", "reported"), "done": ("rejected",)},
 }
 DAEMON_REQUEST_ACTORS = ("l3", "burak")
+
+
+def _ci_api(project: str, repository: str, suffix: str, *, method: str = "GET") -> dict:
+    """Bounded GitHub IO for one project-selected workflow run; no caller-supplied commands."""
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)
+    env.pop("GH_HOST", None)
+    result = subprocess.run(
+        ["gh", "api", "--hostname", "github.com", "--method", method,
+         f"repos/{repository}/actions/{suffix}"], cwd=config.project_path(project), env=env,
+        capture_output=True, text=True, timeout=20)
+    if result.returncode:
+        raise RuntimeError(f"GitHub {method} failed (exit {result.returncode}); inspect the selected run")
+    if len(result.stdout) > 2_000_000:
+        raise ValueError("CI evidence exceeds the bounded response size")
+    return json.loads(result.stdout or "{}")
+
+
+def _ci_run(project: str, repository: str, run_id: int) -> dict:
+    run = _ci_api(project, repository, f"runs/{run_id}")
+    if (run.get("id") != run_id or (run.get("repository") or {}).get("full_name", "").lower() != repository.lower()
+            or not isinstance(run.get("run_attempt"), int) or run["run_attempt"] < 1
+            or not isinstance(run.get("workflow_id"), int) or not run.get("status")):
+        raise ValueError("CI run identity or attempt is unavailable")
+    return run
+
+
+def _ci_finish(project: str, task: dict, record: dict, evidence: dict, *, observation: dict | None = None) -> None:
+    record.update(evidence=evidence, observation=observation, due_at=None, finished_at=S.now())
+    baseline = record.get("previous_observation") or record.get("baseline")
+    record["status"] = "unchanged" if observation and observation == baseline else "notifying"
+    S.save_task(project, task)
+    S.append_event(project, task["slug"], "ci-recheck-result", request_id=record["id"],
+                   status=record["status"], evidence=evidence)
+
+
+def run_ci_recheck(project: str, slug: str) -> None:
+    """One tick of the finite CI probe. A persisted submission intent is never submitted twice."""
+    from . import l3, server
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        record = task.get("ci_recheck") or {}
+        if record.get("status") not in ("pending", "probing", "notifying"):
+            return
+        if record["status"] != "notifying" and not T.ci_recheck_current(task, record):
+            record.update(status="invalidated", due_at=None, error="task identity or lifecycle changed")
+            S.save_task(project, task)
+            return
+        notifying = record["status"] == "notifying"
+        now = datetime.fromisoformat(S.now())
+        if not notifying:
+            if record["reads"] >= 24 or now >= datetime.fromisoformat(record["deadline"]):
+                _ci_finish(project, task, record, {"error": "CI probe exhausted its read/deadline bound; recovery unverified"})
+                notifying = True
+            elif now < datetime.fromisoformat(record["due_at"]):
+                return
+            else:
+                record.update(status="probing", reads=record["reads"] + 1,
+                              due_at=(now + timedelta(minutes=5)).isoformat())
+                S.save_task(project, task)  # a crash consumes this read round too
+        request_id = record["id"]
+    if notifying:
+        l3.queue_ci_recheck(project, slug)
+        return
+    try:
+        origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(project),
+                                capture_output=True, text=True, timeout=10)
+        url = server.repository_url(origin.stdout) if origin.returncode == 0 else None
+        if not url:
+            raise ValueError("CI recheck requires a GitHub project origin")
+        repository = url.removeprefix("https://github.com/")
+        if record.get("repository") and record["repository"] != repository:
+            raise ValueError("CI project repository changed")
+        target = record.get("target") or record["run"]
+        run = _ci_run(project, repository, target)
+        baseline = {"conclusion": run.get("conclusion")
+                    if datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(record["at"]) else None,
+                    "artifact_upload": "unverified"}
+        if not record.get("target"):
+            query = urlencode({"branch": run.get("head_branch") or "", "event": run.get("event") or "",
+                               "per_page": 20})
+            candidates = _ci_api(project, repository, f"workflows/{run['workflow_id']}/runs?{query}")
+            relevant = [item for item in candidates.get("workflow_runs", [])[:20]
+                        if all(item.get(key) == run.get(key) for key in ("workflow_id", "head_branch", "event"))
+                        and [pr["number"] for pr in item.get("pull_requests", [])] == [pr["number"] for pr in run.get("pull_requests", [])]
+                        and (item.get("head_repository") or {}).get("full_name") == (run.get("head_repository") or {}).get("full_name")
+                        and (item.get("status") != "completed"
+                             or datetime.fromisoformat(item["updated_at"]) >= datetime.fromisoformat(record["at"]))]
+            if relevant:
+                fresh_id = max(relevant, key=lambda item: item.get("id", 0))["id"]
+                run = _ci_run(project, repository, fresh_id)
+                target = fresh_id
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            current = task.get("ci_recheck") or {}
+            if current.get("id") != request_id or not T.ci_recheck_current(task, current):
+                return
+            current["repository"] = repository
+            if not current.get("target"):
+                current["baseline"] = baseline
+                current["target"] = target
+                # A relevant live run or fresh completed execution supplies evidence without a write.
+                fresh = (run["status"] != "completed"
+                         or datetime.fromisoformat(run["updated_at"]) >= datetime.fromisoformat(current["at"]))
+                if not fresh:
+                    observed_attempt = run["run_attempt"]
+                    run = _ci_run(project, repository, current["run"])
+                    current["target"] = target = current["run"]
+                    if (run["status"] == "completed" and run["run_attempt"] == observed_attempt
+                            and datetime.fromisoformat(run["updated_at"]) < datetime.fromisoformat(current["at"])):
+                        current["submission"] = {"baseline_attempt": run["run_attempt"], "at": S.now(), "status": "intent"}
+                        S.save_task(project, task)  # required before the only external write
+                        try:
+                            _ci_api(project, repository, f"runs/{target}/rerun", method="POST")
+                            current["submission"]["status"] = "accepted"
+                        except (OSError, subprocess.SubprocessError, ValueError, RuntimeError):
+                            current["submission"]["status"] = "uncertain"
+                        S.save_task(project, task)
+                        return
+                S.save_task(project, task)
+            submission = current.get("submission") or {}
+            if submission and run["run_attempt"] <= submission["baseline_attempt"]:
+                return  # read until bounded expiry; an uncertain write is never blindly repeated
+            if submission:
+                submission.update(status="observed", attempt=run["run_attempt"])
+                S.save_task(project, task)
+        if run["status"] != "completed":
+            return
+        attempt = _ci_api(project, repository, f"runs/{target}/attempts/{run['run_attempt']}")
+        if attempt.get("run_attempt") != run["run_attempt"] or attempt.get("status") != "completed":
+            raise ValueError("CI execution attempt evidence is unavailable")
+        artifacts = _ci_api(project, repository, f"runs/{target}/artifacts?per_page=100")
+        start = max(datetime.fromisoformat(record["at"]), datetime.fromisoformat(attempt["run_started_at"]))
+        finished = datetime.fromisoformat(attempt["updated_at"])
+        uploaded = [item["id"] for item in artifacts.get("artifacts", [])[:100]
+                    if not item.get("expired") and item.get("size_in_bytes", 0) > 0
+                    and start <= datetime.fromisoformat(item["created_at"]) <= finished]
+        observation = {"conclusion": run.get("conclusion"), "artifact_upload": "available" if uploaded else "unverified"}
+        evidence = {"url": f"{url}/actions/runs/{target}", "attempt": run["run_attempt"],
+                    **observation, "artifact_ids": uploaded,
+                    "note": "Artifacts prove this execution uploaded; tolerated step success alone proves no capacity recovery. "
+                            "Reruns retain their original workflow; owners still need their own candidate checks and holds."}
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            current = task.get("ci_recheck") or {}
+            if current.get("id") == request_id and T.ci_recheck_current(task, current):
+                _ci_finish(project, task, current, evidence, observation=observation)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            current = task.get("ci_recheck") or {}
+            if current.get("id") == request_id and T.ci_recheck_current(task, current):
+                current["error"] = str(exc)[:300]
+                current["read_failures"] = current.get("read_failures", 0) + 1
+                if current["read_failures"] >= 3:
+                    _ci_finish(project, task, current, {"error": "CI evidence reads failed three times; recovery unverified"})
+                else:
+                    S.save_task(project, task)
+    l3.queue_ci_recheck(project, slug)
 
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:

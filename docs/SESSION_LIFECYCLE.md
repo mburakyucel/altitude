@@ -237,6 +237,18 @@ resume. Operator discussion retains its ordinary wake behavior. A workerless `ma
 checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,
 retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
 
+For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason "…"`.
+The task-local record survives daemon restart and exposes the due probe or coordinator delivery in
+task status. One selected same-project rerun is permitted when relevant fresh CI is unavailable;
+submission intent precedes IO, and uncertain writes are reconciled through run attempts without
+resubmission. Reads, polling and coordinator handling are finite. The queue row and turn identity
+remain durable until successful terminal chat evidence or visible exhausted delivery. Provider
+execution without terminal evidence after a restart ends uncertain without replay;
+the engine's transient execution timeout survives daemon exit and stops its process tree.
+Changed evidence reaches only the originating L3; unchanged observations remain silent. A changed block,
+attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
+stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
+
 Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
 Sending a message does not automatically clear a merge hold. For the standalone operator reply
 `Good to merge` or `You can merge it` directly following the owner's single-PR presentation, L3 explicitly

@@ -266,6 +266,12 @@ issue closure and unrelated restarts do not establish repair. Coordinator messag
 remain readable without waking them; direct operator discussion remains available. Landing checks
 and merge holds still apply.
 
+For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
+existing fault-blocked task. Status names its next action and time. The daemon follows relevant fresh
+CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers changed
+results durably to that project's L3. Artifact capacity needs fresh uploaded artifacts; a passing run
+with a tolerated upload error does not prove recovery. The probe leaves owner resumption to L3.
+
 A project's L3 reports an upstream Altitude defect with
 [`alt issue upstream`](docs/CLI.md#upstream-altitude-defects), supplying a fictional or redacted
 reproduction. The affected project's incident evidence, tasks and coordinator conversation stay in

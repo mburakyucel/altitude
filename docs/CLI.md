@@ -45,6 +45,44 @@ same-user altd Unix socket. The socket fixes the project independently of reques
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
 repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
 
+### Durable CI recheck
+
+L3 or the operator records one probe against an existing fault-blocked task in its project:
+
+```sh
+alt task recheck-ci blocked-owner --run 12345 --at 2026-09-10T02:00:00Z --reason 'Verify artifact upload after the external accounting wait'
+alt task status blocked-owner --brief
+alt task status blocked-owner --json
+```
+
+The coordinator tool uses `{"kind":"alt","args":["task","recheck-ci","blocked-owner","--run","12345",
+"--at","2026-09-10T02:00:00Z","--reason","Verify artifact upload after the external accounting wait"]}`.
+Choose a due time within seven days and an existing CI run in this project's GitHub repository.
+The saved `ci_recheck` names its status, next action/time, evidence and delivery receipt. Identical
+registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
+to register the probe. Registration starts no worker and needs no free worker slot.
+
+At the due time, altd prefers relevant live or fresh completed CI among twenty recent executions
+of that workflow, branch, event and PR. Otherwise it reruns the selected run once. Freshness uses
+the scheduled check time, so evidence from before the intended wait does not satisfy it. Altd saves
+the baseline attempt and intent before submission, then reads attempt metadata to reconcile uncertain
+writes without blind resubmission. Reruns use their original workflow; they do not adopt a new base
+workflow. Each API call has a twenty-second limit; reads run at five-minute intervals and stop at
+three failures, twenty-four rounds or two hours after the scheduled time. Missing artifacts remain
+unverified, including on a green run with a tolerated upload error. Fresh nonexpired, nonempty
+artifacts from the observed execution establish successful upload, not another owner's candidate readiness.
+
+Unchanged results finish silently with evidence in status. Changed results or exhausted probes reach
+the originating L3 through a retained queue row, with at most two handling attempts and a one-hour
+delivery deadline; queue/history IO also has two attempts. Terminal chat evidence repairs a
+crash after handling. If provider execution began but no terminal evidence survives, delivery ends
+uncertain without replay. Its execution timeout survives daemon exit and stops the process tree
+with a five-second grace period. Failed delivery remains visible in status; it starts no new repair task.
+Ordinary task controls remain available and invalidate stale probe actions. Questions, faults and
+merge holds retain their meaning. L3 verifies actual repair before separately resuming affected owners.
+Promise follow-through only after status shows a saved next action and time; a terminal record with
+no next action is not scheduled monitoring.
+
 ### Historical evidence search
 
 `alt l3 search "index migration" --limit 10 --json` searches the selected project's human

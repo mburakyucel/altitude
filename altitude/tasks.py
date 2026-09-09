@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import config, github_intake, state as S, usage
 
@@ -30,6 +30,60 @@ class TransitionError(Exception):
 TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
+
+
+def ci_recheck_identity(task: dict) -> dict:
+    return {**{key: task.get(key) for key in (
+        "state", "block_id", "attempt", "agent_id", "session_id", "l2_engine", "fault",
+        "blocked_reason", "resume_request", "resume_after", "dispatching")},
+        "daemon_request_id": (task.get("daemon_request") or {}).get("id"),
+        "resume_claim_id": (task.get("resume_claim") or {}).get("id")}
+
+
+def ci_recheck_current(task: dict, record: dict) -> bool:
+    return (task.get("state") == "blocked" and bool(task.get("fault"))
+            and record.get("identity") == ci_recheck_identity(task))
+
+
+def recheck_ci(project: str, slug: str, run: int, at: str, reason: str, *, actor: str) -> dict:
+    """The stalled CI recovery owner (2026-09-09): one finite coordinator probe, never a resume."""
+    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not str(reason or "").strip():
+        raise TransitionError("CI recheck requires L3 or the operator and a reason")
+    try:
+        due = datetime.fromisoformat(at)
+        if due.tzinfo is None or isinstance(run, bool) or int(run) <= 0:
+            raise ValueError()
+        due = due.astimezone(timezone.utc)
+    except (ValueError, TypeError):
+        raise TransitionError("CI recheck requires a positive run id and an ISO time with timezone") from None
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        previous = task.get("ci_recheck") or {}
+        identity = ci_recheck_identity(task)
+        same = (previous.get("identity"), previous.get("run"), previous.get("at"), previous.get("reason")) == (
+            identity, int(run), due.isoformat(), reason.strip())
+        if same:
+            return previous
+        if task["state"] != "blocked" or not task.get("fault"):
+            raise TransitionError("CI recheck requires an existing fault-blocked task")
+        if (task.get("resume_after") or task.get("resume_claim") or task.get("dispatching")
+                or (task.get("daemon_request") or {}).get("status") in ("pending", "executing")):
+            raise TransitionError("CI recheck cannot target a pending task lifecycle change")
+        if previous.get("status") in ("pending", "probing", "notifying") and ci_recheck_current(task, previous):
+            raise TransitionError("this task already has a CI recheck; inspect task status")
+        now = datetime.fromisoformat(S.now())
+        if not now <= due <= now + timedelta(days=7):
+            raise TransitionError("CI recheck time must be within the next seven days")
+        record = {"id": uuid.uuid4().hex, "actor": actor, "requested_at": S.now(), "identity": identity,
+                  "run": int(run), "at": due.isoformat(), "due_at": due.isoformat(), "reason": reason.strip(),
+                  "status": "pending", "reads": 0, "deadline": (due + timedelta(hours=2)).isoformat()}
+        if ci_recheck_current(task, previous) and previous.get("observation"):
+            record["previous_observation"] = previous["observation"]
+        task["ci_recheck"] = record
+        S.save_task(project, task)
+        S.append_event(project, slug, "ci-recheck", request_id=record["id"], by=actor,
+                       reason=record["reason"], run=run, due_at=record["due_at"])
+        return record
 
 
 def _conversation_time() -> str:

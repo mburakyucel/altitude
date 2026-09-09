@@ -40,6 +40,7 @@ L3_ALLOWED_TOOLS = ",".join((
     "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)",
     "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
     "Bash(alt task preserve-checkout *)",
+    "Bash(alt task recheck-ci *)",
     "Bash(alt fyi *)", "Bash(alt decisions *)", "Bash(alt monitor *)", "Bash(alt queue *)",
     "Bash(alt repo *)", "Bash(alt pr *)", "Bash(alt l3 tools *)",
     "Bash(alt incident new *)", "Bash(alt incident amend *)", "Bash(alt incident list *)",
@@ -357,7 +358,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  schema: Path | None = None, model: str | None = None, max_turns: int | None = None,
                  settings: Path | None = None, extra_env: dict | None = None, on_text=None, on_start=None,
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
-                 add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None) -> dict:
+                 add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
+                 durable_timeout: bool = False) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
     made while a hold is in force.
@@ -395,6 +397,9 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         cmd += ["--resume", resume]
     env = clean_env()
     env.update(extra_env or {})
+    if durable_timeout:
+        cmd = _codex_service_command(_claude_unit(f"ci-{uuid.uuid4().hex}"), cmd, codex_env(env), runtime_max=timeout)
+        env = codex_env(env, retain_user_bus=True)
     # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
@@ -523,7 +528,7 @@ def _claude_unit(name: str) -> str:
     return f"altitude-claude-{uuid.uuid5(uuid.NAMESPACE_URL, name).hex}.service"
 
 
-def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str]) -> list[str]:
+def _codex_service_command(unit: str, command: list[str], child_env: dict[str, str], *, runtime_max: int | None = None) -> list[str]:
     """Run a turn in a user-manager-created transient service with its own cgroup.
 
     ``--wait --pipe`` keeps the launch synchronous while the user manager, rather than the hardened Altitude parent,
@@ -537,7 +542,9 @@ def _codex_service_command(unit: str, command: list[str], child_env: dict[str, s
     scrub = [ENV_BIN, "-i", *(f"{key}={child_env[key]}" for key in sorted(child_env))]
     return [SYSTEMD_RUN_BIN, "--user", "--wait", "--pipe", f"--unit={unit}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
-            "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no", "--", *scrub, *command]
+            "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
+            *([f"--property=RuntimeMaxSec={runtime_max}", "--property=TimeoutStopSec=5"] if runtime_max else []),
+            "--", *scrub, *command]
 
 
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
@@ -1333,7 +1340,8 @@ def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
 
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
-               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None) -> dict:
+               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
+               durable_timeout: bool = False) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
     so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree."""
@@ -1350,7 +1358,8 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env)), cwd=str(cwd),
+    proc = subprocess.Popen(_codex_service_command(unit, cmd, codex_env(extra_env),
+                            **({"runtime_max": timeout} if durable_timeout else {})), cwd=str(cwd),
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
     if on_start:
