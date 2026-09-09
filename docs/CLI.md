@@ -639,6 +639,13 @@ revision containing only the relevant unanswered parts. That remainder has no in
 provide a recommendation only when it applies to the remaining question. Follow-ups alone require
 no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
+
+When L3 sends a material direction or delivery update, reassess the plan and each open member against
+its sources. Cite the original operator message for an operator decision relayed through L3; request
+missing evidence from L3. Record obsolete members as `superseded` with the specific changed direction
+and reason, retaining unanswered relevant members. Proposed or ongoing work is not verified delivery.
+Continue within authorized scope; a new operator choice or scope expansion still needs a decision.
+
 When a provider limit queues a fresh attempt, existing question replies and quick acceptance wait
 in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
 resolution remains an operation of the running or blocked owning L2.

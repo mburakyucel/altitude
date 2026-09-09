@@ -33,13 +33,18 @@ shell commands. L3 turns persist bounded shell command text with their tool evid
 ad-hoc commands are visible and can become stable verbs. Its process is read-only on the deployment
 checkout on either engine; source changes always belong to one L2 worktree and PR.
 
-The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. L3 carries
-the relevant discussion, superseding corrections and uncertainty into briefs and steering, cleans
-obvious transcription artifacts, and cites operator authority separately from its recommendations.
+The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. Material
+project direction/decision changes and L2 findings/delivery prompt L3 to assess affected active owners
+and send targeted updates through task messages. Each update cites sources, what changed and what it
+supersedes, impact on the owner's work and uncertainty; proposals remain distinct from verified delivery
+and operator authority from recommendations. Unchanged context does not trigger repeated nudges.
+The [L2 persona](../personas/l2.md) requires owners to reassess plans and open question members, record
+sourced supersession through the existing resolver and continue within authorized scope. Still-relevant
+operator decisions, proposal checkpoints, merge holds and fault-recovery verification retain their rules.
 Clearly generalizable feedback follows the existing task/PR path to the narrowest authoritative
 instruction source; task-specific steering stays scoped. L3 distinguishes queued work, merged rules
-and their effective loading. These are coordinator instructions, with no runtime classifier or memory
-store and no expansion of project-local or upstream reporting authority.
+and their effective loading. These are role instructions, with no automatic broadcast, runtime classifier
+or memory store and no expansion of project-local or upstream reporting authority.
 
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so

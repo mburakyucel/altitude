@@ -217,6 +217,11 @@ then uses the cited-message [`resolve` operation](CLI.md#conversational-decision
 A typed group reply retains the viewed member references; the owner can cite that one message to
 resolve several independent questions. A follow-up alone never resolves the dilemma. A partial answer leaves the relevant remainder open;
 a changed direction can make the old question unnecessary and close it with a recorded reason.
+L3 proactively sends sourced context to affected active owners when project direction or another task's
+findings/delivery materially changes their work. The owner reassesses its plan and each question member,
+cites original authority to record obsolete members as superseded, and continues authorized work without
+asking the operator to dismiss them manually. Proposals and ongoing work are not verified delivery;
+recommendations do not supply operator authority. Remaining operator choices and proposal checkpoints stay open.
 After replying to a follow-up, the L2 parks with the same question and retains its recommendation
 and required decision-maker. Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.

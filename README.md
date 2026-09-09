@@ -96,8 +96,11 @@ releases its hold. The owner then rechecks and lands normally.
 - **Project continuity.** One persistent L3 conversation holds direction across tasks. Discuss
   tradeoffs, change priorities, or return after delivery; follow-up and escalations feed back
   into that conversation.
-- **Compiled handoffs and durable feedback.** L3 briefs and steers owners from the relevant discussion,
-  including corrections and uncertainty, with operator decisions distinct from its recommendations.
+- **Compiled handoffs and durable feedback.** L3 proactively informs affected active owners when
+  project direction, decisions or another task's findings or delivery change their work. Targeted updates
+  cite sources, superseded context and uncertainty, distinguishing proposals from verified delivery
+  and operator decisions from recommendations. Owners reassess their plans and close obsolete questions
+  against the original authority, keeping remaining operator choices visible.
   Clearly reusable feedback leads to an instruction change through the task/PR path; one-off steering
   stays scoped. L3 reports what is queued, merged and effective. Rules stay in their appropriate
   project or role source; see the [L3 persona](personas/l3.md).

@@ -4,7 +4,7 @@ import json
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import dispatch, server, state as S, tasks as T
+from altitude import dispatch, l3, server, state as S, tasks as T
 
 
 class QuestionGroups(AltitudeCase):
@@ -129,6 +129,52 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 4)
         with self.assertRaisesRegex(T.TransitionError, "group changed"):
             T.message(self.project, self.slug, "burak", "An old draft", group_id=group["id"], group_revision=1)
+
+    def test_sourced_project_pivot_closes_only_obsolete_member_after_l3_update(self):
+        group = self.ask({"questions": self.payload["questions"][1:]})
+        obsolete, unanswered = group["questions"]
+        T.message(self.project, self.slug, "l3",
+                  "Another owner is exploring managed cleanup. I recommend it; no delivery is verified.")
+        self.assertEqual(len(T.decisions(self.project)), 2)
+
+        turn = "operator-managed-cleanup"
+        l3.chat_log(self.project, "user", "Drop scheduled cleanup; use managed cleanup. Rollout ownership is still open.",
+                    trigger="chat", turn_id=turn)
+        relay = T.message(self.project, self.slug, "l3",
+                          f"Project decision {turn}: managed cleanup supersedes the scheduled-cleanup choice. "
+                          "Update the plan; the rollout owner still needs the operator's decision.")
+        with self.assertRaisesRegex(T.TransitionError, "original message with authority"):
+            self.resolve(obsolete, relay, disposition="superseded", reason="Managed cleanup replaces our schedule.")
+        self.assertEqual(len(T.decisions(self.project)), 2, "a relay alone does not resolve either member")
+        before = S.load_task(self.project, self.slug)
+        unanswered = self.group()["questions"][1]
+        pending = T.pending(self.project, self.slug)
+        result = self.resolve(obsolete, {"id": turn}, source="project", disposition="superseded",
+                              reason="The operator's managed-cleanup direction removes the scheduling choice.")
+
+        receipt = result["resolution"]
+        self.assertEqual((receipt["disposition"], receipt["source"], receipt["message_id"], receipt["by"]),
+                         ("superseded", "project", turn, T.OPERATOR_MESSAGE_ROLE))
+        self.assertEqual(self.group()["questions"][1], {**unanswered, "group_revision": 2})
+        self.assertEqual([q["id"] for q in T.decisions(self.project)], [unanswered["id"]])
+        self.assertNotIn("acceptance_message", S.load_task(self.project, self.slug)["questions"][0])
+        with self.assertRaisesRegex(T.TransitionError, "no longer open"):
+            T.accept_question(self.project, self.slug, obsolete["id"], obsolete["revision"])
+        with mock.patch.object(server.monitor, "sessions", return_value=[]):
+            task_view = server.task_view(self.project, self.slug)
+            project_view = server.project_view(self.project)
+            overview = server.overview()
+        self.assertEqual([q["status"] for q in task_view["question_group"]["questions"]], ["resolved", "open"])
+        self.assertEqual([q["id"] for q in project_view["decisions"]], [unanswered["id"]])
+        self.assertEqual([q["id"] for q in overview["queue"] if q["project"] == self.project], [unanswered["id"]])
+        project = next(p for p in overview["projects"] if p["name"] == self.project)
+        self.assertEqual((project["counts"]["blocked"], project["counts"]["running"]), (1, 0))
+        after = S.load_task(self.project, self.slug)
+        for field in ("state", "waiting_on", "blocked_reason", "agent_id", "session_id", "attempt", "fault",
+                      "resume_after", "resume_request", "hold_merge"):
+            self.assertEqual(after.get(field), before.get(field), field)
+        self.assertEqual(T.pending(self.project, self.slug), pending)
+        self.assertEqual(next(m for m in task_view["messages"] if m["id"] == relay["id"])["role"], "l3")
 
     def test_followup_wake_then_real_repark_preserves_all_questions_and_recommendations(self):
         before = self.ask()
