@@ -381,26 +381,41 @@ this repository's temporary local policy, the full local suite runs on a clean m
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
-Operator authority also travels through a recorded task reply. L3's project-bound
-`alt task hold-merge <slug> --approval <message-id> --pr-number <number> --head <sha> --reason <reason>`
-executes directly in altd. The daemon reads the checkout-origin PR, then validates and releases the
-hold under the project lock. The latest operator conversation message must be the standalone
-authorization `Good to merge` or `You can merge it`, ignoring case and surrounding whitespace and
-allowing one final period or exclamation mark. Questions, negations, conditions, quotations and extra
-prose are refused. It must directly follow an L2 message containing that PR's canonical URL and no
-other PR URL. Worker and coordinator text cannot supply operator authority. The current hold generation
-must precede that presentation; GitHub's PR update timestamp must also precede it. A renewed hold, later operator
-message, missing evidence, or any later PR update refuses release. GitHub must report an open,
-non-draft, same-repository PR targeting main, with the task's publication branch and the caller's
-observed head. For an adopted PR, its recorded number, URL and original branch supply that binding.
+Operator authority also travels through recorded task replies and UI decisions. L3's project-bound
+[`hold-merge --approval`](CLI.md#recorded-merge-approval) executes directly in altd. L3 cites the original
+operator approval, owner's single-PR presentation, latest operator message it reviewed and, when the
+approval has question context, that question and revision. The daemon reads the checkout-origin PR,
+then validates and releases the hold under the project lock. L3 interprets the original sources and
+every later operator correction: permission must concern this merge, with no unresolved condition,
+ambiguity or revocation. Design acceptance, implementation approval, discussion and superseded
+recommendations cannot authorize merge. This semantic judgment is explicit model responsibility;
+the daemon checks provenance and scope, not arbitrary prose meaning. Neither a resolution alone nor
+agent-authored text releases a hold.
+
+Conversational resolution and merge reconciliation share original-source authority and viewed-revision
+validation. A question answer used as merge approval requires the latest revision of that question,
+an answered operator decision citing the same task message, no remaining question, and a matching
+selected option for UI acceptance. The presentation precedes that question and approval. Task chat also
+attaches resolved questions to later messages: when a fresh PR presentation follows that resolution,
+a new conversational approval may cite the still-current revision as context only. The receipt marks
+`question_context_only` and carries no earlier option; the earlier answer or superseded recommendation
+supplies no merge authority. A later reaffirmation remains
+a separate source; it cannot turn a superseded manual-repair question into acceptance. A new operator
+message after the cited latest message refuses the request. The current hold generation and GitHub's
+PR update timestamp must precede the presentation. A renewed hold, missing evidence or any later PR
+update refuses release even when a newer message reaffirms the original decision. Explicit canonical
+PR URLs in the approval context must name only the observed PR. GitHub must report an open, non-draft,
+same-repository PR targeting main on the task's publication branch and supplied head. The last recorded
+task PR number must match when present; an adopted PR additionally binds its number, URL and original branch.
 
 The hold generation is its latest `hold-merge` event, or the creation event for an initial hold;
 hold changes and their events serialize under the same lock. Each hold change stores a fresh
 `hold_merge_id` with its state and event; a write interrupted before its matching event refuses
 approval even when the reason repeats. Approval validation reads events
 strictly, so corrupt evidence cannot hide a later hold. One atomic task write clears `hold_merge`
-and stores `merge_approval`, recording the actual coordinator actor, operator message, presentation,
-prior hold generation, PR URL/head and reason. A `release-merge` event carries the same receipt;
+and stores `merge_approval`, recording the actual coordinator actor, original operator approval,
+latest operator source reviewed, question/revision and selected option when present, presentation,
+prior hold generation, PR URL/head and the coordinator's interpretation reason. A `release-merge` event carries the same receipt;
 local evidence refusals record `merge-approval-refused`. The operation releases the observed hold;
 it does not resume the task or merge the PR. Head binding is checked at release, and the owner
 continues through the ordinary landing checks. Direct `--off` remains operator-only.

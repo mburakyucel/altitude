@@ -83,12 +83,13 @@ workflow evidence proves it inapplicable and it is not required. Supported condi
 [main-push conjunction](docs/CLI.md#adopt-an-existing-pr) and `github.event_name != 'pull_request'`,
 the latter only for a `pull_request` run. Task scope and merge holds still apply.
 
-When the operator replies **Good to merge** or **You can merge it** directly after an owner's PR
-presentation, the coordinator can apply that recorded approval through the daemon's
-[`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). The daemon checks the message,
-current hold and unchanged PR before recording the release. Case, surrounding whitespace and a final
-period or exclamation mark are accepted; questions, conditions and extra prose are refused.
-The owner then rechecks and lands normally.
+The coordinator can reconcile an operator's recorded merge decision, including a task UI choice
+and a later conversational reaffirmation, through the daemon's
+[`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). L3 cites the original messages
+and question revision and judges that they authorize this merge without unresolved conditions or
+revocation. The daemon verifies those sources, the current hold and unchanged PR before recording
+the release. Meaning remains model judgment; accepting a design or discussing a PR alone never
+releases its hold. The owner then rechecks and lands normally.
 
 ## How the work stays coherent
 
