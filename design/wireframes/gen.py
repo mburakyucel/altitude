@@ -694,7 +694,7 @@ phone_task_header = (
     f'<details class="phone-details"><summary aria-label="Task details">{I("more")}</summary><div class="details-panel"><h2>Design wireframes for the simplified product</h2>'
     '<p>attempt 1 · started 32 min ago · 18% context used</p><p>Engine and model · Observed tokens</p><a href="#">PR #176 open · main checks passed</a>'
     '<h3>Merge held</h3><p>Keep this PR open until the operator reviews the phone and desktop interaction states and separately approves merging it. This restriction remains while the worker is running or blocked.</p>'
-    '<p>Stop</p><p>Reject</p><a href="MobileChatProposal.html?scene=task-blocked-held">Explore blocked and held details</a></div></details></header>'
+    '<p>Stop</p><p>Reject</p></div></details></header>'
 )
 phone_task_convo = (
     '<div class="day">Today</div>'
@@ -827,7 +827,6 @@ state_sheet("RestartStates", "Restart banner states", [
 
 # The viewer's board list: one row per route, desktop beside phone, in the order of README.md.
 from conversation_first import generate as conversation_first_boards
-from mobile_chat import generate as mobile_chat_boards
 
 ROUTES = [
     ("Project: chat with L3, work panel beside it", "Project", "MobileProject"),
@@ -848,7 +847,6 @@ ROUTES = [
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
-ROUTES = mobile_chat_boards(OUT, board, I) + ROUTES
 for obsolete in ("Decision", "MobileDecision", "DecisionStates", "NeedsYou", "MobileNeedsYou"):
     (OUT / (obsolete + ".html")).unlink(missing_ok=True)
 sizes = {name: (w, h) for name, w, h in BOARDS}

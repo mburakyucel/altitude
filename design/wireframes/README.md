@@ -1,16 +1,11 @@
 # Altitude product design
 
-## Approved compact mobile chat
+## Compact mobile chat
 
-[Compare current and proposed phone layouts](mobile-chat/index.html), with
-[illustrative gains and interaction rules](MOBILE_CHAT.md). The operator approved the complete
-layout on 2026-09-09. The resulting implementation PR remains held for review.
-`mobile_chat.py`, called by `gen.py`, owns its board, CSS and script; the comparison page is
-hand-authored HTML and uses captures from the isolated app fixture.
-The task-status examples add long blocked/merge-held reasons, both together, operator questions,
-faults and operational pauses at phone and desktop sizes. `TaskStatusProposal.html` is the
-desktop companion. Baseline screenshots and wireframe measurements document the design comparison;
-application checks and real phone keyboard acceptance provide separate implementation evidence.
+[SPEC §8](SPEC.md#8-compact-mobile-chat) defines the compact phone behavior shown in the
+maintained project/task and composer boards. `gen.py` generates those boards from shared sources.
+Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` and `conversation.pw.ts`
+save review captures under ignored `web/ui-artifacts/`. Native keyboard acceptance uses a real phone.
 
 ## Approved conversation-first design
 

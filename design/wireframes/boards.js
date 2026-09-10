@@ -3,7 +3,6 @@
  * a <script> tag because Chrome blocks fetch() on file:// URLs and the viewer opens from disk.
  * A listed file that is missing renders as a visible warning tile, never a blank one. */
 window.WIREFRAME_BOARDS = [
-  { label: 'Compact mobile chat · approved 9 September', desktop: 'TaskStatusProposal.html', mobile: 'MobileChatProposal.html' },
   { label: 'Conversation · Needs you · questions upfront', desktop: 'ConversationFirstNeedsYou.html', mobile: 'MobileConversationFirstNeedsYou.html' },
   { label: 'Conversation · One question · immediate quick choices', desktop: 'ConversationFirstQuestion.html', mobile: 'MobileConversationFirstQuestion.html' },
   { label: 'Conversation · Choose answers · send once', desktop: 'ConversationFirstGroup.html', mobile: 'MobileConversationFirstGroup.html' },

@@ -4,7 +4,7 @@ The operator approved [conversation-first Needs you and L2 decisions](CONVERSATI
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
 
-The operator approved [compact mobile chat](MOBILE_CHAT.md) on 2026-09-09: shared compact phone
+The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
 
 This document and the boards beside it are the UI's source of truth, for both visual design and
@@ -714,12 +714,7 @@ Order matters: each slice leaves the app usable.
 Not drawn and not scheduled: settings and a Done view beyond the folded list. They are questions
 for the operator when they come up. Project removal (L3 detachment) uses the overflow menu (§3.2).
 
-## 8. Compact mobile chat approval and evidence
-
-The 2026-09-08 request asks for more mobile message height, especially while typing.
-[Review current versus proposed layouts](mobile-chat/index.html); [behavior and measurements](MOBILE_CHAT.md)
-record the reviewed design and illustrative measurements. The operator approved it on 2026-09-09
-in task message `3ad98be02f3647bea2aa32bf38cb3970`; the implementation PR remains held for review.
+## 8. Compact mobile chat
 
 The rules in §2.2/3.2/3.3/3.6/3.10/3.13/4.2 combine the phone's identity and status in a
 54px header, use one 70px composer dock with integrated 44px mic/send controls, disclose routine
@@ -734,23 +729,15 @@ queue removal, voice guidance and available Restart remain explicit. A compact u
 discloses detail. Task metadata and Stop/Reject/Resume move into task details with their existing
 confirmations. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics remain authoritative.
 
-At 390×844 the measured L3 reading area increases from 515 to 636px. With a simulated 334px
-keyboard it increases from 181 to 386px; L2 increases from 90 to 342px. These are scroll-region
-heights with equal 20px message padding, measured in fixtures and wireframes. They establish no
-native mobile keyboard behavior or validate the implementation. The accepted tradeoffs are hiding
-bottom navigation while typing and adding a disclosure tap for engine/task details and actions.
-
-The operator's 2026-09-08 follow-up explicitly includes long blocked and merge-hold reasons above
-L2 chat. The approved design shows running+held, waits-for-L3, waits-for-L3+held, operator-question+
-held, fault+held and operational-pause states. One compact status names waiting and merge state
+Task states include running+held, waits-for-L3, waits-for-L3+held, operator-question+held,
+fault+held and operational pause. One compact status names waiting and merge state
 separately; the complete reasons open in scrollable task details. The original question remains
 in chat with View question/Latest messages when applicable. Faults retain a visible cause and
 L3 notification. Open questions do not acquire a generic Resume, and merge restrictions never
 acquire a release action. Desktop keeps directly available operational actions while disclosing
 long reasons. Phone sheets fit above the keyboard; closing them preserves draft and reading
-position. `web/e2e/mobile-chat-proposal.pw.ts` walks collapsed/expanded/restored examples on phone
-and desktop, with simulated phone keyboard states. These static examples supplement the required
-application walkthroughs; real mobile keyboard behavior remains an operator acceptance check.
-
-Implementation follows the recorded decision and the phone/desktop state walkthroughs in the
-proposal, then `make check`; the resulting PR remains held for operator review and merge.
+position. Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` and
+`conversation.pw.ts` cover keyboard restoration, draft growth, scroll anchors and all six task-state
+combinations at phone and desktop sizes. Named screenshots stay outside Git under `web/ui-artifacts/`.
+Browser simulation establishes layout and application transitions; native keyboard, toolbar and
+safe-area behavior require real-phone acceptance.
