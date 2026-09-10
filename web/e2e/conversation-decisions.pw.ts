@@ -743,7 +743,7 @@ test("question loading, read failure, write failure and denied access retain rec
   } finally { release(); }
   const card = questionCard(page, q);
   await expect(card).toBeVisible();
-  await page.route("**/api/l2/message", (route) => route.fulfill({ status: 409, json: { error: "Message could not be saved." } }), { times: 1 });
+  await page.route("**/api/l2/message", (route) => route.fulfill({ status: 503, json: { error: "Message could not be saved." } }), { times: 1 });
   await field.fill("Keep the draft after this failed send.");
   await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Send", exact: true }).click();
   await expect(field).toHaveValue("Keep the draft after this failed send.");
