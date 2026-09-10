@@ -303,6 +303,34 @@ class TestOfflineJourneys(AltitudeCase):
                     self.assertEqual(T.pending(self.project, slug), [])
                 T.reject(self.project, slug, "Fixture complete")
 
+    def test_exhausted_model_falls_back_from_saved_dirty_work_without_a_reset_or_fault(self):
+        self.register(self.project, routing=config.parse_routing("claude:fable>codex"))
+        task = self.launch(self.queue("Continue saved work after allowance exhaustion"))
+        slug, worktree = task["slug"], Path(task["worktree"])
+        (worktree / "README.md").write_text("Saved uncommitted implementation\n")
+        (S.task_dir(self.project, slug) / "progress.md").write_text("Next: validate the saved implementation.")
+        T.set_hold_merge(self.project, slug, "Operator review is still required")
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited",
+            detail="You've reached your Fable limit. Switch to another model, or manage usage credits to continue.")
+        finished = dispatch.poll(self.project)
+        self.assertEqual(len(finished), 1)
+        self.assertEqual((finished[0]["limited"]["model"], finished[0]["limited"]["until"]), ("fable", None))
+        server.on_l2_finished(self.project, finished[0])
+        queued = S.load_task(self.project, slug)
+        self.assertEqual(queued["state"], "queued")
+        self.assertFalse(queued.get("resume_after") or queued.get("fault") or queued.get("engine"))
+        self.assertFalse(engines.usage_limit_path().exists())
+        dispatch.run(self.project, slug)
+        fresh = S.load_task(self.project, slug)
+        self.assertEqual((fresh["state"], fresh["attempt"], fresh["l2_engine"]), ("running", 2, "codex"))
+        self.assertNotEqual(fresh["session_id"], task["session_id"])
+        self.assertEqual((fresh["worktree"], fresh["branch"], fresh["paths"]),
+                         (task["worktree"], task["branch"], task["paths"]))
+        self.assertEqual(fresh["hold_merge"], "Operator review is still required")
+        self.assertEqual((worktree / "README.md").read_text(), "Saved uncommitted implementation\n")
+        self.assertIn("Next: validate the saved implementation.", self.engine.calls[-1]["prompt"])
+        self.assertIsNone(self.engine.calls[-1]["session_id"])
+
     def test_failed_launch_records_fault_and_explicit_retry_creates_only_one_worker(self):
         task = self.queue("Retry failed launch")
         self.engine.outcomes.append({"returncode": 0, "agent": None})

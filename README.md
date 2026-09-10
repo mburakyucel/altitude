@@ -178,6 +178,12 @@ it does not mean unavailable or imply a subscription entitlement. Explicit engin
 strict, and routing changes preserve running task attempts and their provider conversations.
 See [routing configuration and examples](docs/CLI.md#automatic-routing-preferences).
 
+An exhausted model allowance excludes only that model. A reported reset schedules a retry;
+an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a
+fresh attempt from their saved work. For owners already blocked by an exited worker, L3 can
+request an explicit [provider handoff](docs/CLI.md#explicit-provider-handoff). The same task keeps
+its worktree, edits, PRs, questions, history and merge holds; ordinary Resume retains its session.
+
 Additional engines, including **OpenCode as a candidate**, require integration and verification
 of their session, permission, authentication and usage behavior. The architecture is intended to
 accommodate different model providers and billing/access arrangements too.

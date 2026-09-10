@@ -38,6 +38,7 @@ L3_GH_READS = {
     ("run", "list"), ("run", "view"), ("run", "watch"),
 }
 L3_TASK_TARGETS = {
+    "handoff",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
     "paths", "hold-merge", "done", "status", "preserve-checkout", "recheck-ci",
 }
@@ -651,33 +652,40 @@ def _on_l2_finished(project: str, item: dict) -> None:
             return
         log(f"[{project}/{slug}] {engine}/{model} temporarily at capacity → retry {retry} after {delay}s")
         return
-    if item.get("limited"):  # park until the window reopens, or start a fresh attempt on the other engine
-        until, a = item["limited"], item.get("agent") or {}
-        engine = t.get("l2_engine") or "claude"
-        # Claude's hold file is consumed only by Claude turns. A Codex limit must not freeze Claude work.
-        news = (engines.note_usage_limit(until, f"L2 {a.get('id', '')} of {slug}")
-                if engine == "claude" else True)
+    if item.get("limited"):
+        limit = item["limited"]
+        until, engine = limit["until"], dispatch.l2_engine(t)
+        why = "usage limit: " + limit["why"]
         try:
-            block_snapshot(f"usage limit: the subscription window is exhausted, resets {until} — "
-                           "Altitude resumes this L2 itself after that", updates={"resume_after": until})
+            blocked = block_snapshot(why, updates={"resume_after": until, "usage_limit": limit})
         except T.TransitionError:
             log(f"[{project}/{slug}] usage-limit result lost a concurrent lifecycle race; ignored")
             return
-        route.note_limit(engine, until)
+        engines.record_usage_limit(engine, limit, f"L2 {t.get('agent_id', '')} of {slug}")
         pinned = t.get("routing_pinned") or config.pinned_option("l2", config.project(project), engine=t.get("engine"), model=t.get("model"))
         switch = route.pick_engine("l2", project=config.project(project)) if not pinned else {"engine": None}
         if switch.get("engine"):
             other = switch["engine"]
-            engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
-            T.requeue(project, slug, clear_worker=True,
-                      reason=f"{engine} window exhausted until {until}; fresh attempt on {other} from saved progress")
-            T.fyi(project, slug, f"{engine} usage window hit (resets {until}). {slug} continues as a fresh attempt "
-                                 f"on {other} from its progress file.", actor="altd")
+            try:
+                with S.project_lock(project):
+                    live = S.load_task(project, slug)
+                    fence = {"expected_agent_id": t.get("agent_id"), "expected_session_id": t.get("session_id"),
+                             "expected_block_id": blocked.get("block_id")}
+                    T._require_daemon_fence(live, slug, **fence)
+                    if live.get("resume_claim") or live.get("dispatching"):
+                        raise T.TransitionError("a launch/resume already owns this task")
+                    engines.remove_l2_worker(engine, t.get("agent_id"), job_root=dispatch.l2_job_root(project, slug))
+                T.requeue(project, slug, clear_worker=True, **fence,
+                          reason=f"{why}; fresh attempt on {other} from saved progress")
+            except T.TransitionError:
+                log(f"[{project}/{slug}] usage-limit recovery superseded by a lifecycle change")
+                return
+            T.fyi(project, slug, f"{why}. {slug} continues as a fresh attempt on {other} from saved progress.", actor="altd")
             log(f"[{project}/{slug}] L2 hit the usage limit → requeued for {other}")
             return
-        if news:
-            T.fyi(project, slug, f"{engine} usage window hit. This L2 resumes after {until}.", actor="altd")
-        log(f"[{project}/{slug}] L2 hit the usage limit → blocked until {until}")
+        waiting = f"This L2 resumes after {until}." if until else "No automatic resume is scheduled; L3 must arrange recovery."
+        T.fyi(project, slug, f"{why}. {waiting}", actor="altd")
+        log(f"[{project}/{slug}] {why} → blocked")
         return
     with S.project_lock(project):  # a new report: whatever L3 did with the previous one no longer counts
         t0 = S.load_task(project, slug)

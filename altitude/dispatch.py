@@ -118,6 +118,7 @@ def l2_job_root(project: str, slug: str) -> Path:
 
 
 DAEMON_TASK_OPERATIONS = {
+    "handoff": {"from": ("blocked",), "done": ("queued",)},
     "preserve-checkout": {"from": ("blocked",), "done": ()},
     "resume": {"from": ("blocked",), "done": ("running", "queued")},
     "stop": {"from": ("running",), "done": ("blocked",)},
@@ -285,7 +286,42 @@ def run_ci_recheck(project: str, slug: str) -> None:
     l3.queue_ci_recheck(project, slug)
 
 
-def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:
+def _require_handoff(project: str, task: dict, engine: str, attempt: int) -> dict:
+    # I-20260909-232345: recover an exited owner, never override a pin or a decision-only wait.
+    if (task.get("state") != "blocked" or task.get("attempt") != attempt or not attempt
+            or not task.get("agent_id") or not task.get("session_id")
+            or (task.get("fault") != "l2-died" and not task.get("usage_limit"))
+            or task.get("completion_requested") or task.get("resume_claim") or task.get("dispatching")):
+        raise T.TransitionError("handoff requires the expected launched attempt blocked by worker exit or usage limit, with no active claim")
+    if engine == l2_engine(task):
+        raise T.TransitionError("handoff requires another engine; use ordinary resume for this engine")
+    choice = route.pick_task(config.project(project), {**task, "next_engine": engine})
+    if not choice.get("engine"):
+        raise T.TransitionError(choice["why"])
+    return choice
+
+
+def handoff(project: str, slug: str, request: dict) -> dict:
+    with config.restart_lock() as ready, S.project_lock(project):
+        if not ready or config.restart_in_progress():
+            raise T.TransitionError("Altitude is restarting; retry shortly")
+        task = S.load_task(project, slug)
+        fence = {"expected_daemon_request": request["id"], "expected_agent_id": request.get("agent_id"),
+                 "expected_session_id": request.get("session_id"), "expected_block_id": request.get("block_id")}
+        T._require_daemon_fence(task, slug, **fence)
+        _require_handoff(project, task, request["engine"], request["attempt"])
+        job_root = l2_job_root(project, slug)
+        if engines.worker_live(l2_engine(task), task, job_root=job_root):
+            raise T.TransitionError("handoff refuses a live worker; observe its exit before retrying")
+        engines.remove_l2_worker(l2_engine(task), task["agent_id"], job_root=job_root)
+    return T.requeue(project, slug, engine=request["engine"], clear_worker=True, **fence,
+                     reason=request["reason"], actor=request["actor"],
+                     previous_engine=l2_engine(task), previous_agent_id=task["agent_id"],
+                     previous_session_id=task["session_id"], attempt=task["attempt"])
+
+
+def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
+                           engine: str | None = None, expected_attempt: int | None = None) -> dict:
     """Persist one L3/operator request for altd; this process never touches Git or a worker.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
@@ -302,8 +338,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
     with S.project_lock(project):
         task = S.load_task(project, slug)
         previous = task.get("daemon_request") or {}
-        same = (previous.get("operation"), previous.get("reason"), previous.get("actor")) == (
-            operation, reason, actor)
+        same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
+                previous.get("engine"), previous.get("attempt") if operation == "handoff" else None) == (
+            operation, reason, actor, engine, expected_attempt)
         if previous.get("status") in ("pending", "executing"):
             if same:
                 return {"queued": True, "idempotent": True, "request": previous}
@@ -323,11 +360,15 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             raise T.TransitionError(
                 f"{slug}: cannot {operation} from {task.get('state')}; expected {' or '.join(contract['from'])}"
             )
+        if operation == "handoff":
+            _require_handoff(project, task, engine, expected_attempt)
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
                    "actor": actor, "status": "pending", "expected_state": task.get("state"),
                    "block_id": task.get("block_id"),
                    "resume_request": task.get("resume_request"),
                    "agent_id": task.get("agent_id"), "session_id": task.get("session_id")}
+        if operation == "handoff":
+            request.update(engine=engine, attempt=expected_attempt)
         task["daemon_request"] = request
         if operation == "resume":
             task["resume_after"] = task.get("resume_after") or request["at"]
@@ -429,6 +470,13 @@ def pending_task_operations(project: str) -> list[str]:
         pending, key=lambda task: ((task.get("daemon_request") or {}).get("at") or "", task["slug"]))]
 
 
+def _handoff_requeued(task: dict, request: dict) -> bool:
+    return (request.get("operation") == "handoff" and task.get("state") == "queued"
+            and task.get("next_engine") == request.get("engine")
+            and task.get("attempt") == request.get("attempt") and not task.get("agent_id")
+            and not task.get("session_id") and task.get("block_id") == request.get("block_id"))
+
+
 def _finish_task_operation(project: str, slug: str, request_id: str | None, status: str,
                            note: str = "") -> dict:
     with S.project_lock(project):
@@ -436,6 +484,10 @@ def _finish_task_operation(project: str, slug: str, request_id: str | None, stat
         request = task.get("daemon_request") or {}
         if request.get("id") != request_id:
             return {"stale": True}
+        if request.get("operation") == "handoff" and request.get("status") == "done":
+            return {"request": request, "state": task.get("state"), "idempotent": True}
+        if _handoff_requeued(task, request):
+            status, note = "done", "handoff requeued the observed attempt"
         request.update({"status": status, "completed_at": S.now(), "note": str(note or "")[:300],
                         "result_state": task.get("state"), "result_agent_id": task.get("agent_id"),
                         "result_block_id": task.get("block_id"),
@@ -472,12 +524,16 @@ def run_task_operation(project: str, slug: str) -> dict:
             # in that narrow window, the durable target state proves this executing request already succeeded.
             if operation == "resume" and status == "executing" and state in DAEMON_TASK_OPERATIONS[operation]["done"]:
                 terminal = ("done", "resume already reached its target state")
+            elif status == "executing" and _handoff_requeued(task, request):
+                terminal = ("done", "handoff already requeued the observed attempt")
             elif operation == "preserve-checkout" and status == "executing":
                 terminal = ("refused", f"preservation interrupted; inspect archive/checkout-{request_id}, "
                             f"task events and legacy git log -g refs/stash for {request_id} before retrying")
             elif identity_changed:
                 terminal = ("refused", "worker identity changed")
-            elif operation == "resume" and request.get("block_id") != task.get("block_id"):
+            elif operation == "handoff" and request.get("attempt") != task.get("attempt"):
+                terminal = ("refused", "attempt changed after handoff request")
+            elif operation in ("resume", "handoff") and request.get("block_id") != task.get("block_id"):
                 terminal = ("refused", "block changed after resume request")
             elif state in DAEMON_TASK_OPERATIONS[operation]["done"] and operation != "stop":
                 terminal = ("done", "already in target state")
@@ -494,7 +550,9 @@ def run_task_operation(project: str, slug: str) -> dict:
         return _finish_task_operation(project, slug, request_id, *terminal)
 
     try:
-        if operation == "resume":
+        if operation == "handoff":
+            result = handoff(project, slug, request)
+        elif operation == "resume":
             result = resume(project, slug, daemon_request_id=request_id)
             if result.get("held") or result.get("already_resuming"):
                 return {"pending": True, "request": request, **result}
@@ -611,7 +669,9 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
             raise T.TransitionError(f"git worktree add failed: {(made.stderr or made.stdout).strip()[:300]}")
         return worktree
 
-    _validate_task_worktree(repo, project, slug, worktree, origin_sha, require_clean=True)
+    task = S.load_task(project, slug)
+    _validate_task_worktree(repo, project, slug, worktree, origin_sha,
+                           require_clean=not bool(task.get("attempt") and task.get("worktree") == str(worktree)))
     return worktree
 
 
@@ -760,6 +820,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         task = S.load_task(project, slug)
         if task["state"] != "queued":
             raise T.TransitionError(f"{slug} is {task['state']}, not queued")
+        T._require_daemon_fence(task, slug)
         if task.get("dispatching") and _seconds_since(task["dispatching"]) < 600:
             raise T.TransitionError(f"{slug} is already being dispatched")
         held = wip_hold(project, task)
@@ -792,7 +853,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             pin = config.pinned_option("l2", proj, engine=task.get("engine"), model=model)
             task.update(model=model, engine=pin["engine"])
             S.save_task(project, task)
-        choice = route.pick_engine("l2", forced=task.get("engine"), model=model or task.get("model"), project=proj)
+        choice = route.pick_task(proj, task)
         if not choice.get("engine"):
             raise T.TransitionError(f"engine hold: {choice['why']}")
         engine = choice["engine"]
@@ -821,8 +882,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             if not res.get("safe_to_retry"):
                 break
             tried.append(route.option_key(choice))
-            choice = route.pick_engine("l2", project=proj, forced=task.get("engine"),
-                                       model=model or task.get("model"), excluded=tried)
+            choice = route.pick_task(proj, task, excluded=tried)
             if not choice.get("engine"):
                 with S.project_lock(project):
                     current = S.load_task(project, slug)

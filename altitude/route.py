@@ -146,13 +146,29 @@ def _rejected(option: dict) -> str | None:
             active = (now < datetime.fromisoformat(data["until"]) if data.get("until") else
                       (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
             if active:
-                return data["why"] + ("" if data.get("until") else "; access rechecked after 30 minutes")
+                return data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
     return None
 
 
-def note_limit(engine: str, until: str) -> None:
-    note_rejection({"engine": engine}, {"scope": "engine", "why": f"quota window exhausted; resets {until}",
-                                       "until": until})
+def note_limit(engine: str, limit: dict) -> None:
+    note_rejection({"engine": engine, "model": limit.get("model")}, limit)
+
+
+def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
+    """Fresh dispatch and its queue explanation share the same one-attempt target and pin policy."""
+    if task.get("next_engine"):
+        try:
+            if task.get("routing_pinned") or config.pinned_option("l2", project, engine=task.get("engine"), model=task.get("model")):
+                raise ValueError("handoff refuses an explicit task or project engine/model pin")
+            tiers = [[option for option in tier if option["engine"] == task["next_engine"]]
+                     for tier in project.get("routing", config.AUTO_ROUTING)]
+            if not any(tiers):
+                raise ValueError("handoff target is not in the project's configured routing options")
+            project = {**project, "routing": [tier for tier in tiers if tier]}
+        except ValueError as exc:
+            return {"engine": None, "model": None, "why": str(exc)}
+    return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
+                       project=project, excluded=excluded)
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,

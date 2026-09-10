@@ -73,6 +73,19 @@ class TestAvailability(AltitudeCase):
 
 
 class TestFailureEvidence(AltitudeCase):
+    def test_fable_limit_result_without_stderr_is_scoped_and_has_no_reset(self):
+        stdout = stream({"type": "result", "is_error": True,
+                         "result": "You've reached your Fable limit. Switch to another model."})
+        process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(stdout), stderr=io.StringIO(""),
+                            stdin=io.StringIO())
+        self.private_ledgers()
+        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines, "usage_hold", return_value=None):
+            result = engines.claude_print("hello", cwd=self.repo, model="fable")
+        self.assertEqual((result["limited"]["scope"], result["limited"]["model"], result["limited"]["until"]),
+                         ("model", "fable", None))
+        self.assertFalse(engines.usage_limit_path().exists())
+
     def test_codex_sync_uses_structured_failure_with_empty_stderr(self):
         stdout = stream({"type": "thread.started", "thread_id": "session"},
                         {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}})

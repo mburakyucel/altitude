@@ -112,6 +112,8 @@ def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str
         return
     if (request.get("id") != expected_daemon_request or request.get("status") != "executing"):
         raise TransitionError(f"{slug}: daemon request {expected_daemon_request} is no longer executing")
+    if request.get("operation") == "handoff" and request.get("attempt") != task.get("attempt"):
+        raise TransitionError(f"{slug}: attempt changed after handoff request")
     if request.get("block_id") != task.get("block_id"):
         raise TransitionError(f"{slug}: block changed after daemon request")
 
@@ -402,7 +404,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit"):
         task.pop(key, None)
 
 
@@ -539,6 +541,7 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
         task.update({"attempt": attempt, "session_id": session_id, "agent_id": agent_id, "worktree": worktree,
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
                      "routing": routing, "dispatched": S.now()})
+        task.pop("next_engine", None)
         return _move(project, task, "running", actor, attempt=attempt, session_id=session_id)
 
 
@@ -629,10 +632,13 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
                               expected_agent_id=expected_agent_id,
                               expected_session_id=expected_session_id, expected_block_id=expected_block_id)
+        if task.get("resume_claim") or task.get("dispatching"):
+            raise TransitionError(f"{slug}: an active launch/resume claim prevents requeue")
         if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
         usage.capture(project, task)
-        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None, "routing": None})
+        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
+                     "next_engine": engine or task.get("next_engine"), "routing": None})
         _clear_block(project, task)
         return _move(project, task, "queued", actor, **ev)
 

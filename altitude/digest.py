@@ -41,8 +41,7 @@ def _waiting(project: str, task: dict, restart: dict | None) -> dict:
         elif task.get("resume_after"):
             kind, reason = "checkpoint", f"resume checkpoint {task['resume_after']}"
         else:
-            choice = route.pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
-                                       project=config.project(project))
+            choice = route.pick_task(config.project(project), task)
             if choice.get("engine"):
                 reason = "ready for dispatch"
             else:

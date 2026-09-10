@@ -16,10 +16,12 @@ from altitude import tasks as T
 class TestDispatchWorktreePolicy(AltitudeCase):
     def setUp(self):
         super().setUp()
+        self.register("demo")
         make_repo(self.repo)
         self.origin_sha = git_policy.capture_origin_sha(self.repo)
 
     def test_new_worktree_uses_captured_origin_and_valid_existing_history_is_reused(self):
+        T.new("demo", "Safe task", "Verify worktree reuse")
         worktree = dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha)
         self.assertEqual(git("rev-parse", "HEAD", cwd=worktree).strip(), self.origin_sha)
         self.assertEqual(git("branch", "--show-current", cwd=worktree).strip(), "worktree-safe-task")
@@ -30,6 +32,7 @@ class TestDispatchWorktreePolicy(AltitudeCase):
         self.assertEqual(dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha), worktree)
 
     def test_existing_branch_with_direct_commit_is_refused(self):
+        T.new("demo", "Bad task", "Verify provenance refusal")
         staging = self.repo / ".claude" / "worktrees" / "bad-task"
         git("worktree", "add", "-q", "-b", "worktree-bad-task", str(staging), self.origin_sha, cwd=self.repo)
         (staging / "bad.txt").write_text("bad\n")

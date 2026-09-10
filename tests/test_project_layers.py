@@ -36,7 +36,7 @@ PROVIDER_BASELINE = {
     "altitude/l3.py": 32,
     "altitude/monitor.py": 6,
     "altitude/quota_codex.py": 18,
-    "altitude/server.py": 13,
+    "altitude/server.py": 7,
     "altitude/tasks.py": 3,
     "altitude/transcript.py": 47,
 }
