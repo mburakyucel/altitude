@@ -46,6 +46,7 @@ test("compact chat keeps bottom and older reading anchors through keyboard, deta
   await visualViewport(page, 510, 0, 1.5);
   await expect(nav).toBeVisible(); // Pinch zoom is not a keyboard.
   await visualViewport(page, 510);
+  if (phone) await expect.poll(() => page.locator(".phone-header").evaluate((el) => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(0);
   await walk.state("02-keyboard-simulated", { visible: [field], hidden: phone ? [nav] : [] });
   heights.keyboard = await scroll.evaluate((el) => el.clientHeight);
   if (phone) {

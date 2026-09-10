@@ -732,9 +732,16 @@ test("multiline draft grows within its cap, scrolls internally, and preserves bo
   await expect(v.field).toHaveCSS("height", v.phone ? "44px" : "24px");
   await expect.poll(bottomGap).toBeLessThanOrEqual(1);
 
-  await scroll.evaluate((node) => { node.scrollTop = 0; });
+  await scroll.evaluate(async (node) => {
+    // Finish the draft resize before the separate action of reading older messages.
+    const painted = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await painted();
+    node.scrollTop = 0;
+    await painted();
+  });
+  await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBe(0);
   const firstMessage = v.convo.getByText(history[0]!.text, { exact: true });
-  await expect(firstMessage).toBeVisible();
+  await expect(firstMessage).toBeInViewport();
   const firstTop = (await firstMessage.boundingBox())!.y;
   await walk.state("03-long-draft-while-reading-older", {
     action: () => v.field.fill(longDraft), visible: [firstMessage, v.field], hidden: [],
