@@ -78,7 +78,9 @@ Native image inputs retain the selected engine, model and session. Capability is
 delivery; missing content or unsupported transport never becomes text-only success or causes an
 image-driven provider switch. Text-only live checkpoints use validated readable local locations
 and explicit native visual-read instructions. Larger task resume batches keep every image available
-through those readers. Bounded historical handoffs preserve sources and retrieval instructions.
+through those readers. Bounded project session handoffs preserve sources and retrieval instructions.
+Fresh task attempts also carry delivered image-message captions and references as historical context;
+ordinary resume retains its existing pending-message behavior.
 
 L3 gives its assigned L2 selected committed same-project images through repeatable
 `alt task new/message --image <id>`. Assignments retain original provenance and actual image access.

@@ -870,9 +870,13 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         tried = []
         while True:
             brief_md = build_brief(project, slug)
+            history = [row for row in task.get("image_messages", []) if row.get("delivered")] if task.get("attempt") else []
+            if history:
+                brief_md += "\n\nPreviously delivered image context; these are saved messages, not new requests:\n" + T.render_inbox(history)
             T.brief(project, slug, brief_md, actor="altd")
             with S.project_lock(project):
-                attached = images.resolve(project, task.get("images") or [], task=slug)
+                refs = (task.get("images") or []) + [image for row in history for image in row["images"]]
+                attached = images.resolve(project, list({ref["id"]: ref for ref in refs}.values()), task=slug)
             res = engines.start_l2(
                 engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
                 model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),

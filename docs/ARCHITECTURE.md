@@ -659,6 +659,8 @@ replace text or images. Project queue/history and task `status.json.image_messag
 the latter atomically projects the conversation and pending delivery, like question acceptance.
 The existing maintenance tick removes files unreferenced for 24 hours. Committed images follow
 conversation retention, including archive, worktree cleanup and project detach/reattach.
+Fresh L2 attempts carry delivered image-message captions and deduplicated canonical references from
+the same task. Larger sets use native visual readers; history does not become pending delivery again.
 See [image delivery and recovery](SESSION_LIFECYCLE.md#image-delivery-and-recovery).
 
 Task token accounting is passive. `usage.py` retains each recorded task owner identity before a

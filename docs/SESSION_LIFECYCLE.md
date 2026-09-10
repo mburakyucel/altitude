@@ -201,8 +201,12 @@ multimodal payloads retain the selected provider, model and session. Image capab
 before admission and again at delivery; image failure does not select a different provider. Live
 checkpoints that accept only text receive explicit native visual-read instructions and readable
 canonical locations. Resume batches over native image limits use those readers for every image,
-preserving message boundaries. Historical handoffs retain bounded source references and retrieval
+preserving message boundaries. Project session handoffs retain bounded source references and retrieval
 instructions. Deterministic fixtures prove payloads and readable bytes, not live model compatibility.
+Fresh L2 attempts, including explicit provider handoff, receive previously delivered image-message
+captions and their canonical images as historical context. Larger sets use native visual readers;
+the original conversation and delivered flags remain intact. Ordinary same-session resume carries
+only its claimed pending messages.
 
 L3 passes selected same-project committed IDs through `alt task new/message --image <id>`.
 The task assignment or L3-authored message retains original provenance; it grants neither operator
