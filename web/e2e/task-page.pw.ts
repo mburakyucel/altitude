@@ -365,6 +365,7 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
     hidden: [v.conversation.locator(".bubble", { hasText: text })],
   });
   await expect(v.composer).toHaveValue(text);
+  await expect(v.composer).toBeFocused();
   refuse = false;
   await walk.state("03-sent", {
     action: () => retry.click(),
