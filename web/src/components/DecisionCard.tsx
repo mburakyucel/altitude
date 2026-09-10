@@ -84,6 +84,7 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
         const options = optionsFor(question);
         return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
           <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
+          {chat && question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View proposal · v{question.revision}</a> : null}
           {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
           {resolved ? <div className="decision-receipt" role="status">

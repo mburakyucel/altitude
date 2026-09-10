@@ -12,6 +12,12 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   original-message citations, current question/hold evidence and the unchanged PR/head. Semantic
   interpretation belongs to L3; the daemon checks provenance and scope, records the release and
   leaves resume and normal checked landing to the owner (#294).
+
+- Pending task designs can be reviewed from their conversation before merge: a versioned browser
+  preview shows saved screenshots and proposal text, with a return to the existing question.
+  Captures are confined to the owning task, active HTML is excluded, and replacement designs require
+  a new question revision without releasing merge holds.
+
 - Protected Git hooks allow reference packing, loose-copy pruning and fetch garbage collection
   while main lags origin/main, preserving its tip and subsequent permitted fast-forward. Genuine
   unauthorized protected branch moves and deletions remain blocked (#291).

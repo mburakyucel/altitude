@@ -1,11 +1,16 @@
 """Task lifecycle — queued, running, blocked, reported, then archived. Every transition goes through here."""
 from __future__ import annotations
 import json
+import hashlib
 import os
 import re
+import stat
 import subprocess
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import quote
 
 from . import config, github_intake, state as S, usage
 
@@ -30,6 +35,176 @@ class TransitionError(Exception):
 TASK_MESSAGE_ROLES = ("burak", "l2", "l3")
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
+
+# Pending designs are selected raster captures, never executable worktree documents.
+DESIGN_IMAGE_LIMIT = 8 << 20
+DESIGN_TOTAL_LIMIT = 32 << 20
+DESIGN_TEXT_LIMIT = 64 << 10
+DESIGN_IMAGE_COUNT = 12
+
+
+@contextmanager
+def _design_directory(root: Path, parts: list[str], *, create: bool = False):
+    """Walk relative to an open root without following any symlink, including racing replacements."""
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts:
+            if not part or part in (".", "..") or "/" in part or "\\" in part:
+                raise ValueError("invalid design path")
+            if create:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=fd)
+                    os.fsync(fd)
+                except FileExistsError:
+                    pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _design_bytes(root: Path, relative: str, limit: int) -> bytes:
+    parts = relative.split("/")
+    if any(not p or p in (".", "..") or "\\" in p for p in parts):
+        raise ValueError("invalid design path")
+    with _design_directory(root, parts[:-1]) as directory:
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+                raise ValueError("design file is not a bounded regular file")
+            data = stream.read(limit + 1)
+            after = os.fstat(stream.fileno())
+    if len(data) > limit or (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+            after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ValueError("design file changed during capture")
+    return data
+
+
+def _design_hash(value: dict) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+
+def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, dict[str, bytes]]:
+    """Capture exactly the owner's named screens and explanation; no recursive directory publication."""
+    if not isinstance(selection, dict) or set(selection) != {"title", "proposal", "images"}:
+        raise TransitionError("design JSON requires title, proposal and images")
+    title, images = selection["title"], selection["images"]
+    if not isinstance(title, str) or not 1 <= len(title.strip()) <= 160:
+        raise TransitionError("design title needs 1–160 characters")
+    if not isinstance(images, list) or not 1 <= len(images) <= DESIGN_IMAGE_COUNT:
+        raise TransitionError(f"select 1–{DESIGN_IMAGE_COUNT} design screenshots")
+    root = config.project_path(project).resolve()
+    worktree = Path(task.get("worktree") or root).absolute()
+    if not worktree.is_relative_to(root) or worktree == root or worktree.name != task["slug"]:
+        raise TransitionError("design capture requires this task's registered worktree")
+    relative_worktree = worktree.relative_to(root)
+
+    def read(path, extensions, limit):
+        if (not isinstance(path, str) or not path.startswith("design/wireframes/")
+                or Path(path).suffix.lower() not in extensions):
+            raise ValueError("select supported files under design/wireframes")
+        return _design_bytes(root, f"{relative_worktree}/{path}", limit)
+
+    try:
+        text = read(selection["proposal"], (".md", ".txt"), DESIGN_TEXT_LIMIT).decode("utf-8")
+        if not text.strip():
+            raise ValueError("the proposal text is empty")
+        captured, files, total = [], {}, 0
+        for item in images:
+            if (not isinstance(item, dict) or set(item) != {"title", "path"}
+                    or not isinstance(item["title"], str) or not 1 <= len(item["title"].strip()) <= 160):
+                raise ValueError("each screenshot needs a title and path")
+            data = read(item["path"], (".png", ".jpg", ".jpeg"), DESIGN_IMAGE_LIMIT)
+            suffix = Path(item["path"]).suffix.lower()
+            if suffix == ".png":
+                valid = data.startswith(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR") and data.endswith(b"IEND\xaeB`\x82")
+            else:
+                valid = data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9")
+                suffix = ".jpg"
+            if not valid:
+                raise ValueError("screenshots must contain PNG or JPEG image data")
+            total += len(data)
+            if total > DESIGN_TOTAL_LIMIT:
+                raise ValueError("selected screenshots exceed 32 MiB")
+            digest = hashlib.sha256(data).hexdigest()
+            name = digest + suffix
+            files[name] = data
+            captured.append({"title": item["title"].strip(), "name": name, "size": len(data)})
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise TransitionError(f"design capture unavailable: {exc}") from exc
+    design = {"title": title.strip(), "text": text, "images": captured}
+    return {**design, "id": _design_hash(design)}, files
+
+
+def _save_design(project: str, slug: str, files: dict[str, bytes]) -> None:
+    relative = (S.task_dir(project, slug) / "designs").relative_to(config.ROOT)
+    with _design_directory(config.ROOT, list(relative.parts), create=True) as directory:
+        for name, data in files.items():
+            try:
+                saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if not stat.S_ISREG(saved.st_mode):
+                    raise ValueError("saved design path is not a regular file")
+                if saved.st_size <= DESIGN_IMAGE_LIMIT and _design_bytes(config.ROOT, str(relative / name), DESIGN_IMAGE_LIMIT) == data:
+                    continue
+            except FileNotFoundError:
+                pass
+            temporary = f".{uuid.uuid4().hex}.tmp"
+            try:
+                fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                # Restoring the same digest's selected bytes preserves the published proposal identity.
+                os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+                os.fsync(directory)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+        os.fsync(directory)
+
+
+def design_image(project: str, slug: str, design: dict, name: str) -> bytes:
+    image = next((item for item in design["images"] if item["name"] == name), None)
+    if image is None or not re.fullmatch(r"[a-f0-9]{64}\.(png|jpg)", name):
+        raise ValueError("design image unavailable")
+    relative = (S.task_dir(project, slug) / "designs" / name).relative_to(config.ROOT)
+    data = _design_bytes(config.ROOT, str(relative), DESIGN_IMAGE_LIMIT)
+    if len(data) != image["size"] or hashlib.sha256(data).hexdigest() != name.split(".")[0]:
+        raise ValueError("saved design image was altered")
+    return data
+
+
+def task_design(project: str, slug: str, identity: str, revision: int) -> tuple[dict, dict]:
+    """Resolve a fixed proposal through its existing question; missing evidence never selects another version."""
+    config.project(project)
+    task = S.load_task(project, slug)
+    question = _question_target(task, identity, revision)
+    design = question.get("design")
+    if not design or design["id"] != _design_hash({k: v for k, v in design.items() if k != "id"}):
+        raise ValueError("saved design unavailable")
+    return task, question
+
+
+def require_design(project: str, slug: str, question: dict) -> None:
+    """A decision cannot accept missing or changed captured evidence."""
+    if not question.get("design"):
+        return
+    try:
+        _, saved = task_design(project, slug, question["id"], question["revision"])
+        for image in saved["design"]["images"]:
+            design_image(project, slug, saved["design"], image["name"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise TransitionError("Design unavailable. Return to the question and ask the L2 to restore the saved preview.") from exc
+
+
+def design_url(project: str, slug: str, question: dict) -> str:
+    return f"/projects/{quote(project, safe='')}/tasks/{slug}/design/{question['id']}/{question['revision']}"
 
 
 def ci_recheck_identity(task: dict) -> dict:
@@ -580,7 +755,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_daemon_request: str | None = None, expected_block_id: object = _UNSET,
           recommendation: str | None = None,
           recommendation_label: str | None = None, recommendation_why: str | None = None,
-          questions: dict | None = None) -> dict:
+          questions: dict | None = None, design: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
@@ -590,6 +765,12 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
+        captured, files = None, {}
+        if design is not None:
+            if (actor != "l2" or expected_attempt is None or task.get("state") != "running"
+                    or questions is not None or (updates or {}).get("fault") or task.get("fault")):
+                raise TransitionError("design publication requires the current L2 and one ordinary question")
+            captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
         task["blocked_reason"] = reason
@@ -598,7 +779,9 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             raise TransitionError("structured questions require an L2/L3 human dilemma, not an operational block")
         if actor in ("l2", "l3") and not task.get("fault"):
             _publish_block_questions(task, reason, actor, questions, recommendation,
-                                     recommendation_label, recommendation_why)
+                                     recommendation_label, recommendation_why, design=captured)
+        if files:
+            _save_design(project, slug, files)
         return _move(project, task, "blocked", actor, reason=reason)
 
 
@@ -912,10 +1095,12 @@ def _validate_questions(payload: dict) -> list[dict]:
 def _publish_question(task: dict, text: str, actor: str, *, recommendation: str | None = None,
                       label: str | None = None, why: str | None = None, force_revision: bool = False,
                       previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
-                      recommended_key: str | None = None, bump: bool = True) -> dict:
+                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET) -> dict:
     questions = task.setdefault("questions", [])
     if previous is _UNSET:
         previous = questions[-1] if questions else None
+    if design is _UNSET:
+        design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
     groups = _store_groups(task)
     audience = previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator"
     parsed = parse_dilemma(text)
@@ -934,7 +1119,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     if (previous and previous["status"] == "open" and previous["detail"] == text
             and previous["audience"] == audience and previous["recommendation"] == recommended
             and previous["asked_by"] == actor and question_choices(previous) == options
-            and _recommended_key(previous) == recommended_key):
+            and _recommended_key(previous) == recommended_key and previous.get("design") == design):
         return previous
     continuing = previous and (previous["status"] == "open" or force_revision)
     if previous and previous["status"] == "open":
@@ -962,6 +1147,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
                 "recommendation": recommended, "asked_by": actor, "asked": at, "since": at,
                 "kind": "asks", "resolution": None, "message": message, "group_id": group["id"],
                 "options": options, "recommended_key": recommended_key}
+    if design is not None:
+        question["design"] = design
     questions.append(question)
     if bump:
         group["revision"] += 1
@@ -1007,7 +1194,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str) -> li
 
 
 def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict | None,
-                             recommendation: str | None, label: str | None, why: str | None) -> list[dict]:
+                             recommendation: str | None, label: str | None, why: str | None,
+                             *, design: dict | None = None) -> list[dict]:
     groups = _store_groups(task)
     group = groups[-1] if groups else None
     members = _group_members(task, group) if group else []
@@ -1021,7 +1209,7 @@ def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict 
     previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
     no_replacement = all(value is None for value in (recommendation, label, why))
     audience = "l3" if task.get("waiting_on") == "l3" else "operator"
-    if no_replacement and group and reason.strip() == group["reason"].strip() and pending:
+    if design is None and no_replacement and group and reason.strip() == group["reason"].strip() and pending:
         # The ordinary block verb parks the same whole group after discussing a follow-up.
         if all(q["audience"] == audience for q in pending):
             return members
@@ -1035,14 +1223,16 @@ def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict 
         raise TransitionError("several questions remain open; use --questions-file with their ids or park with the saved group reason")
     previous = previous or (pending[0] if pending else None)
     if previous and previous["detail"].strip() == reason.strip() and no_replacement:
-        if previous["audience"] == audience:
+        if previous["audience"] == audience and (design is None or previous.get("design") == design):
             return members
         _publish_question(task, reason, actor, previous=previous, group=group,
                           options=question_choices(previous), recommended_key=_recommended_key(previous),
-                          why=(previous.get("recommendation") or {}).get("why"))
+                          why=(previous.get("recommendation") or {}).get("why"),
+                          design=design if design is not None else _UNSET)
     else:
         _publish_question(task, reason, actor, previous=previous, group=group if pending else None,
-                          recommendation=recommendation, label=label, why=why)
+                          recommendation=recommendation, label=label, why=why,
+                          design=design if design is not None else _UNSET)
     current_group = _groups(task)[-1]
     current_group["reason"] = reason
     return _group_members(task, current_group)
@@ -1131,7 +1321,8 @@ def group_context(task: dict, group: dict | None = None) -> str:
 
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
-    return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered")},
+    return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
+            **({"design_url": design_url(project, task["slug"], question)} if question.get("design") else {}),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
             "project": project, "slug": task["slug"], "title": task.get("title"),
@@ -1241,6 +1432,8 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
                 return question_view(project, task, question)
             raise TransitionError("question was already resolved or superseded; refresh the conversation")
         actor = OPERATOR_MESSAGE_ROLE if source == "project" else row.get("by") or row["role"]
+        if disposition == "answered":
+            require_design(project, slug, question)
         receipt = _close_question(question, disposition, reason.strip(), actor, message_id, source)
         receipt["remaining"] = remaining
         if l3_authority:
@@ -1331,6 +1524,8 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         if (any(q["status"] != "open" or q["audience"] != "operator" for q, _ in chosen)
                 or task["state"] not in ("running", "blocked", "queued")):
             raise TransitionError("question is no longer open for acceptance; refresh the conversation")
+        for question, _ in chosen:
+            require_design(project, slug, question)
         at, message_id = _conversation_time(), uuid.uuid4().hex
         text = (f"Use this approach and continue: {chosen[0][1]['text']}" if len(chosen) == 1 else
                 "Use these answers and continue:\n" + "\n".join(f"{q['question']} — {o['text']}" for q, o in chosen))

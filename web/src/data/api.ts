@@ -128,6 +128,7 @@ export const DecisionSchema = z
     title: z.string().nullish(),
     id: z.string().nullish(),
     revision: z.number().nullish(),
+    design_url: z.string().nullish(),
     anchor_id: z.string().nullish(),
     group_id: z.string().nullish(),
     group_revision: z.number().nullish(),
@@ -523,6 +524,21 @@ export function useTask(project: string, slug: string) {
     queryFn: async () => TaskViewSchema.parse(await api(`/api/task/${project}/${slug}`)),
     refetchInterval: (query) => query.state.data?.question?.status === "open" || query.state.data?.question_group?.questions.some((q) => q.status === "open") ? 2_000 : pollInterval(),
     enabled: Boolean(project && slug),
+  });
+}
+
+const TaskDesignSchema = z.object({
+  title: z.string(), revision: z.number(), text: z.string(),
+  images: z.array(z.object({ title: z.string(), url: z.string() })),
+  question_url: z.string(), current_question_url: z.string().nullable(), superseded: z.boolean(),
+});
+
+export function useTaskDesign(project: string, slug: string, question: string, revision: string) {
+  return useQuery({
+    queryKey: ["task-design", project, slug, question, revision],
+    queryFn: async () => TaskDesignSchema.parse(await api(`/api/design/${project}/${slug}/${question}/${revision}`)),
+    refetchInterval: 2_000,
+    retry: false,
   });
 }
 
