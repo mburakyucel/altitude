@@ -71,9 +71,13 @@ make ui UI_ARGS='project-menu.pw.ts --project=desktop --headed'
 pnpm --dir web exec playwright show-report ui-artifacts/report
 ```
 
-Screenshots, traces and HTML reports live under ignored `web/ui-artifacts/`, grouped by spec and
-viewport. Test artifacts contain only fictional test data. Keep actual service captures, session
-logs, conversations and private incident evidence out of shared artifacts.
+Named walkthrough screenshots and HTML reports live under ignored `web/ui-artifacts/`, grouped
+by spec and viewport. Walkthrough screenshots remain on passing and failing tests; automatic
+screenshots and traces are retained on failure. Passing tests discard their traces. The report
+includes attached screenshots and failure traces in `report/data/`, with the trace viewer alongside
+them. Keep that whole report directory together when opening or sharing it.
+Test artifacts contain only fictional test data. Keep actual service captures, session logs,
+conversations and private incident evidence out of shared artifacts.
 
 Review-only comparisons, proposal captures, implementation galleries and routine renderings stay
 outside Git under the [project UI rule](../AGENTS.md#ui). Link the relevant evidence from the PR and
@@ -130,9 +134,13 @@ gates. No runner installation, new service, billing change or generic bypass fla
 `alt land` pins the current base and head, constructs the candidate for the selected merge method,
 installs frozen web dependencies using the shared Altitude-home pnpm store, then runs the full
 suite with `CI=true`, retaining the test runners' refusal of focused-only tests. Install the
-supported tools and matching shared Chromium first. Candidate logs, fictional
-browser artifacts and `result.json` stay in the task's `local-checks/<candidate>/` folder, including
-failed-test evidence. Results name command, exit status, base, head, candidate SHA and tree.
+supported tools and matching shared Chromium first. Candidate `install.log`, `check.log`, the
+self-contained `ui-artifacts/report/` and `result.json` stay in the task's `local-checks/<candidate>/`
+folder, including failed-test evidence. Raw `results/` and browser configuration are not copied;
+their attached screenshots and failure traces are already in the report. Installation or test
+failures before a report exists retain the available logs and result record. Open the retained
+report with `pnpm --dir web exec playwright show-report /path/to/ui-artifacts/report`.
+Results name command, exit status, base, head, candidate SHA and tree.
 The synthetic commit's metadata differs from the eventual GitHub commit; the tree and bound
 base/head identify the tested merge content. A local pass updates the PR with
 `Tests: make check passed locally (<candidate SHA>)` plus its base/head. A stale pair, failed test
@@ -165,6 +173,11 @@ later changes. Run the same full local gate before that merge. The operator then
 Actions and restores only the required checks recorded in the pre-disable rule inventory.
 Verify a fresh main run actually executes Python, web, build and both browser viewports before
 relying on hosted delivery; artifact recovery needs fresh uploaded evidence separately.
+Preserve failure-only traces and all named screenshots when restoring artifact upload: package
+the self-contained HTML report and necessary logs once, excluding duplicate raw results, with
+the previous three-day hosted retention. Verify report attachments and failure traces open from
+the downloaded artifact. These are restoration requirements, not an active hosted workflow or
+completed hosted verification; local evidence remains accessible until review is complete.
 [Release readiness](RELEASING.md) still binds validation to a final main SHA.
 
 ## Runtime evidence

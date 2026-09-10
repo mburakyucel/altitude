@@ -702,8 +702,12 @@ class TestLand(AltitudeCase):
             "assert os.environ.get('CI') == 'true'\n"
             "assert os.path.exists('src/thing.py') and os.path.exists('src/integration.py')\n"
             "assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()\n"
-            "os.makedirs('web/ui-artifacts', exist_ok=True)\n"
-            "open('web/ui-artifacts/fictional.txt', 'w').write('walked')\n"
+            "os.makedirs('web/ui-artifacts/report/data', exist_ok=True)\n"
+            "open('web/ui-artifacts/report/index.html', 'w').write('<img src=\"data/state.png\">')\n"
+            "open('web/ui-artifacts/report/data/state.png', 'wb').write(b'fictional screenshot')\n"
+            "os.makedirs('web/ui-artifacts/results', exist_ok=True)\n"
+            "open('web/ui-artifacts/results/state.png', 'wb').write(b'fictional screenshot')\n"
+            "os.makedirs('web/ui-artifacts/browser-config', exist_ok=True)\n"
             "print('Ran 12 tests in 0.4s\\n\\nOK')\n"))
         result = land.land("fix: local project policy", cwd=self.repo, wait=0, merge=True, test_cmd="false")
         tests = result["local_tests"]
@@ -717,7 +721,10 @@ class TestLand(AltitudeCase):
         evidence = Path(tests["evidence"])
         self.assertEqual(json.loads((evidence / "result.json").read_text()), tests)
         self.assertIn("Ran 12 tests", (evidence / "check.log").read_text())
-        self.assertEqual((evidence / "ui-artifacts/fictional.txt").read_text(), "walked")
+        report = evidence / "ui-artifacts/report"
+        self.assertEqual((report / "index.html").read_text(), '<img src="data/state.png">')
+        self.assertEqual((report / "data/state.png").read_bytes(), b"fictional screenshot")
+        self.assertEqual([p.name for p in (evidence / "ui-artifacts").iterdir()], ["report"])
         self.assertIn(f"Tests: make check passed locally ({tests['candidate']})", self.pr_body)
         self.assertIn(f"base {tests['base']}, head {tests['head']}", self.pr_body)
         self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
@@ -739,7 +746,42 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["checks"], "local-fail")
         evidence = Path(result["local_tests"]["evidence"])
         self.assertIn("FAILED", (evidence / "check.log").read_text())
+        self.assertFalse((evidence / "ui-artifacts").exists())
         self.assertFalse(json.loads((evidence / "result.json").read_text())["passed"])
+        self.assertNotIn("Tests:", self.pr_body)
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_project_local_browser_failure_retains_report_attachments_without_raw_duplicates(self):
+        self.local_policy()
+        self.fake_runner("make", script=(
+            "from pathlib import Path\n"
+            "report = Path('web/ui-artifacts/report')\n"
+            "(report / 'data').mkdir(parents=True)\n"
+            "(report / 'trace').mkdir()\n"
+            "(report / 'trace/index.html').write_text('trace viewer')\n"
+            "(report / 'index.html').write_text('<img src=\"data/failure.png\"><a href=\"data/trace.zip\">trace</a>')\n"
+            "for name, data in [('failure.png', b'failure screenshot'), ('trace.zip', b'failure trace')]:\n"
+            "    (report / 'data' / name).write_bytes(data)\n"
+            "    raw = Path('web/ui-artifacts/results')\n"
+            "    raw.mkdir(exist_ok=True)\n"
+            "    (raw / name).write_bytes(data)\n"
+            "print('Ran 12 tests in 0.4s\\n\\nFAILED (failures=1)')\n"
+            "sys.exit(1)\n"))
+        self.leased_change()
+        result = land.land("fix: retain failed browser evidence", cwd=self.repo, wait=0, merge=True)
+        self.assertFalse(result["merged"])
+        self.assertEqual(result["checks"], "local-fail")
+        evidence = Path(result["local_tests"]["evidence"])
+        report = evidence / "ui-artifacts/report"
+        self.assertIn('src="data/failure.png"', (report / "index.html").read_text())
+        self.assertIn('href="data/trace.zip"', (report / "index.html").read_text())
+        self.assertEqual((report / "data/failure.png").read_bytes(), b"failure screenshot")
+        self.assertEqual((report / "data/trace.zip").read_bytes(), b"failure trace")
+        self.assertEqual((report / "trace/index.html").read_text(), "trace viewer")
+        self.assertEqual([p.name for p in (evidence / "ui-artifacts").iterdir()], ["report"])
+        self.assertIn("FAILED", (evidence / "check.log").read_text())
+        self.assertFalse(json.loads((evidence / "result.json").read_text())["passed"])
+        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
         self.assertNotIn("Tests:", self.pr_body)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 

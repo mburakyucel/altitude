@@ -379,8 +379,9 @@ are in [development and checks](docs/DEVELOPMENT.md#browser-walkthroughs).
 
 Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop browser flows
 against isolated fictional state, with external engines replaced by deterministic fixtures.
-CI attempts to upload fictional reports and screenshots; upload failures remain visible and do
-not fail the test gate. Downloadable artifacts may be unavailable even when all tests pass.
+Hosted CI is suspended. Local landing retains a self-contained HTML report with named walkthrough
+screenshots and failure traces, plus check logs; raw attachments are not copied again.
+See [local delivery evidence](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
 curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
 These repeated checks make no model calls. Live-provider validation is deferred; the

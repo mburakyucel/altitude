@@ -979,9 +979,9 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
                 (evidence_dir / "install.log").write_text((install.stdout or "") + "\n" + (install.stderr or ""))
                 _need(install, "candidate dependency installation")
                 tests = _local_suite(path, test_cmd, log=evidence_dir / "check.log")
-                artifacts = path / "web" / "ui-artifacts"
+                artifacts = path / "web" / "ui-artifacts" / "report"
                 if artifacts.exists():
-                    shutil.copytree(artifacts, evidence_dir / "ui-artifacts", dirs_exist_ok=True)
+                    shutil.copytree(artifacts, evidence_dir / "ui-artifacts" / "report", dirs_exist_ok=True)
             else:
                 tests = _local_suite(path, test_cmd)
     except LandError as exc:

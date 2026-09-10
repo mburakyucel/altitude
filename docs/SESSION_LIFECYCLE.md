@@ -81,7 +81,9 @@ they do not prove that a live provider loads or follows the rules.
 Repository validation uses deterministic fixtures at the external engine boundary: the
 [core journey tests](DEVELOPMENT.md#coverage-and-limits) retain real task state, routing,
 message/resume logic, API/storage and Git operations. Live-provider cases, including the real
-tiny task, are deferred by the operator's 2026-09-08 decision. Passing fixtures does not establish
+tiny task, are deferred by the operator's 2026-09-08 decision. Local review evidence keeps named
+phone/desktop screenshots and failure traces with the self-contained HTML report and check log;
+see [artifact review](DEVELOPMENT.md#ci-and-candidate-identity). Passing fixtures does not establish
 live CLI/authentication compatibility or host confinement. [Release checkpoints](RELEASING.md)
 identify validated source versions without changing the automatic activation lifecycle.
 
@@ -419,8 +421,9 @@ through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
 This repository's temporary local policy runs `make check` on the current merge candidate through
-`alt land`, including PR preparation without merging. Logs, browser artifacts and candidate-bound
-results stay in the task's `local-checks/` folder. Only passing current evidence supplies the PR test
+`alt land`, including PR preparation without merging. Logs, the self-contained browser report and
+candidate-bound results stay in the task's `local-checks/` folder, without duplicate raw attachments.
+Only passing current evidence supplies the PR test
 line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
