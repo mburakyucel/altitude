@@ -119,6 +119,21 @@ class TestRecordedMergeApproval(AltitudeCase):
                     self.request(args, actor="burak", stdin="The operator approved this.")
                 self.assertTrue(S.load_task(self.project, self.slug)["hold_merge"])
 
+    def test_delegated_l3_resolution_cannot_supply_operator_merge_approval(self):
+        self.at = "2026-09-07T20:06:00+00:00"
+        task = T.escalate(self.project, self.slug, "May the owner edit the tests already in its lease?")
+        self.question = task["questions"][-1]
+        self.at = "2026-09-07T20:07:00+00:00"
+        answer = T.message(self.project, self.slug, "l3", "Those tests are already authorized in the lease.")
+        resolved = T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"],
+                                      answer["id"], disposition="answered", reason="Existing lease permits the tests",
+                                      expected_attempt=1, l3_authority="The recorded task lease includes tests/.")
+        self.assertEqual(resolved["resolution"]["by"], "l3")
+        self.assertEqual(resolved["audience"], "operator")
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Review the story")
+        self.latest, self.approval = self.approval, answer
+        self.refused("original operator approval")
+
     def test_adopted_pr_uses_original_branch_but_still_binds_number_and_url(self):
         task = S.load_task(self.project, self.slug)
         task["adopted_pr"] = {"number": 235, "url": self.pull["url"], "branch": "existing/proposal"}
