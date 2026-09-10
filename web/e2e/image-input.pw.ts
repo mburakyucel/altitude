@@ -97,7 +97,12 @@ for (const scope of ["project", "task"] as const) {
     await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip, page.getByText("Sending images…", { exact: true })] });
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
     await walk.state("06-view-image", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
-    await walk.state("07-zoom-image", { action: () => page.getByRole("button", { name: "Zoom image", exact: true }).click(), visible: [page.getByRole("button", { name: "Fit image", exact: true })], hidden: [page.getByRole("button", { name: "Zoom image", exact: true })] });
+    const fullImage = page.getByRole("dialog").getByRole("img");
+    const fittedWidth = await fullImage.evaluate((node) => node.getBoundingClientRect().width);
+    await walk.state("07-zoom-image", { action: async () => {
+      await page.getByRole("button", { name: "Zoom image", exact: true }).click();
+      await expect.poll(() => fullImage.evaluate((node) => node.getBoundingClientRect().width)).toBeGreaterThan(fittedWidth);
+    }, visible: [page.getByRole("button", { name: "Fit image", exact: true })], hidden: [page.getByRole("button", { name: "Zoom image", exact: true })] });
     await page.keyboard.press("Escape");
     await expect(v.preview).toBeFocused();
     await walk.state("08-close-image", { visible: [v.preview], hidden: [page.getByRole("dialog")] });

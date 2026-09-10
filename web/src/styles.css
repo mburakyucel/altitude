@@ -2099,7 +2099,7 @@
 .image-viewer-header button { min-height: 44px; flex: none; }
 .image-viewer-canvas { flex: 1; min-height: 0; overflow: auto; background: var(--hairline); }
 .image-viewer-canvas img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.image-viewer-canvas[data-zoomed] img { width: auto; height: auto; min-width: 100%; max-width: none; }
+.image-viewer-canvas[data-zoomed] img { width: auto; height: auto; min-width: 200%; max-width: none; }
 @media (max-width: 639px) {
   .image-viewer { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   .image-viewer-header { padding: max(8px, env(safe-area-inset-top)) 8px 8px; gap: 2px; }
