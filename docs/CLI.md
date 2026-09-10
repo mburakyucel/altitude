@@ -600,6 +600,41 @@ When a provider limit queues a fresh attempt, existing question replies and quic
 in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
 resolution remains an operation of the running or blocked owning L2.
 
+### Continue after a PR merges
+
+An active task can deliver more than one PR. Its owner continues authorized work in the same
+conversation, isolated worktree and local branch, then uses the usual command:
+
+```sh
+alt land --message "fix: finish the remaining work" --pr-body-file /tmp/next-pr.md
+alt land --message "fix: finish the remaining work" --merge
+```
+
+Landing verifies the earlier merge on fetched main, commits leased edits, and puts only follow-up
+commits onto current main before opening a fresh PR. This handles squash history and a deleted
+remote branch. Previously published changes are not duplicated. An unchanged retry reports
+`checks: merged` as historical delivery, never a new check pass, and creates nothing. If main
+already contains the follow-up, no extra PR is needed and the current receipt is reconciled.
+
+Every PR requires its own current checks and appropriate review. A recorded approval releasing
+one PR's hold restores that hold for the next PR; a later explicit task-wide release remains
+effective. Other unanswered questions, scope and ownership remain intact. Existing external PR
+adoption remains supported, and further ordinary work after an adopted merge uses the task branch
+while preserving its adoption receipt in history.
+
+If updating onto main conflicts or fails, landing aborts the rebase and keeps the committed work
+on the task branch. The refusal names the exact rebase command for the owner to resolve in that
+same worktree. Follow-up merge commits require manual reconciliation first because replaying them
+could drop merge-resolution edits. Unseen remote changes also require incorporation before
+continuation. Failures after reconciliation or push can be retried with `alt land`.
+
+Task `prs` and delivery events preserve earlier PR/head/merge evidence. The current `delivery`
+receipt is recorded before waiting for checks; an unpublished delivery cannot complete the task.
+The final `report.json` includes every delivery in `landed.prs` and current validation evidence.
+Reports predating the current delivery, omitting earlier PRs or leaving unpublished work are
+refused. Finish through the verified report path when all agreed work is done; a merge alone
+does not require a new task or complete the current one.
+
 ### Adopt an existing PR
 
 The task owner or operator can explicitly adopt an assigned, open, same-repository PR targeting

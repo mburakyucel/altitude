@@ -1049,11 +1049,11 @@ class TestLand(AltitudeCase):
         self.assertEqual(res["staged"], [])
         self.assertEqual(self.remote_heads(), ["main"])
 
-    def test_new_changes_after_merge_are_refused(self):
+    def test_merged_followup_requires_verified_merge_evidence(self):
         self.leased_change()
         land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.leased_change("src/late.py")
-        with self.assertRaisesRegex(land.LandError, "already merged"):
+        with self.assertRaisesRegex(land.LandError, "previous PR identity, final head or merge is unavailable"):
             land.land("fix: late", cwd=self.repo, wait=0)
         self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
 

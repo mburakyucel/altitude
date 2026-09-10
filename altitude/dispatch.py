@@ -1253,6 +1253,8 @@ def poll(project: str) -> list[dict]:
         if not started:
             started = next((e["at"] for e in reversed(S.read_events(project, t["slug"]))
                             if e.get("kind") == "state" and e.get("to") == "running"), t.get("dispatched"))
+        # #308 continuation: a previous delivery's report cannot explain the current worker's exit.
+        started = max(started or "", (t.get("delivery") or {}).get("at", ""))
         try:
             has_report = report.stat().st_mtime >= (datetime.fromisoformat(started).timestamp() if started else 0)
         except FileNotFoundError:

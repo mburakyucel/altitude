@@ -52,6 +52,12 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
+One active task can deliver several PRs. When authorized work remains after a merge, the same owner
+continues in its existing conversation and worktree and runs `alt land` again. It puts only the
+follow-up changes onto current main and opens another PR, with its own checks and review holds.
+Running it without new work creates nothing. Earlier deliveries remain recorded, and the final
+report covers all of them. See [continuation after merge](docs/CLI.md#continue-after-a-pr-merges).
+
 Large or complex issues can move through small, reviewable increments that keep supported user journeys
 working. L3 records the breakdown and delivery evidence in the issue; each task completes its agreed
 increment, and follow-up work can come later within the operator's authorization. The parent stays open

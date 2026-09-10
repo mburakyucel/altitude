@@ -258,8 +258,12 @@ class TestAdoption(AltitudeCase):
         self.assertTrue(again["merged"])
         self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), pushes_before)
         self.leased_change("src/late.py")
-        with self.assertRaisesRegex(land.LandError, "already merged"):
-            land.land("late edit", cwd=self.repo, wait=0)
+        next_delivery = land.land("late edit", cwd=self.repo, wait=0)
+        self.assertEqual(next_delivery["pr"], 102)
+        current = S.load_task("demo", "fix-x")
+        self.assertIsNone(current.get("adopted_pr"))
+        self.assertEqual(current["adoption_history"][-1]["head"], self.original)
+        self.assertEqual(current["prs"], [101, 102])
 
     def test_only_explicit_observed_head_adopts(self):
         for kwargs, error in [({}, "without exact"), ({"expected_head": self.original}, "require --adopt-pr"),

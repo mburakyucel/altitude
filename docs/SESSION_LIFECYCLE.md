@@ -370,6 +370,23 @@ If the owner is already blocked before adoption, the operator records adoption t
 landing command in their own shell before the coordinator requests resume. Resume never supplies
 an adoption exception by itself, and adoption leaves the blocked state and provider session intact.
 
+### Continuing an active task after merge
+
+Merging a PR leaves the task and its owner conversation available for further authorized work.
+The next ordinary `alt land` keeps the isolated worktree and local branch, verifies the earlier
+merge on main, and replays only follow-up work onto current main before opening another PR.
+The task retains every delivery; no-work retries open nothing, including work already on main.
+Each PR needs its own candidate checks, review and applicable hold release. Prior PR-specific
+approval does not release the next PR's hold. See [continuation commands and recovery](CLI.md#continue-after-a-pr-merges).
+
+The attempt, engine, launch model, provider conversation and durable messages do not change because
+of a merge. Resume still uses the existing claim and provenance gates. A new resume claim discards
+previous completion verification before launching the owner; a new delivery also invalidates it.
+The current `delivery` timestamp joins worker launch/resume time when deciding report freshness.
+Final reports cover every recorded PR and the current published work; historical success cannot
+complete unpublished follow-up. A raced verification is refused if the delivery changed before
+report handoff. Existing restart adoption and merge activation observe the continuing task normally.
+
 ## Engine containment
 
 A Codex L2 runs in Codex's own workspace-write sandbox: the task worktree, its Git directories (the common

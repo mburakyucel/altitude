@@ -164,7 +164,14 @@ if cmd == ("pr", "view"):
     else:
         fail("no pull requests found for branch " + args[2])
 elif cmd == ("pr", "create"):
-    body = {"number": 101, "url": "https://example.invalid/pr/101", "state": "OPEN",
+    previous = json.loads(read("pr.json", "null"))
+    history = json.loads(read("prs.json", "{}"))
+    if previous:
+        history[str(previous["number"])] = previous
+        open(os.path.join(d, "prs.json"), "w").write(json.dumps(history))
+    number = max([100, *(int(n) for n in history)]) + 1
+    body = {"number": number, "url": "https://example.invalid/pr/" + str(number), "state": "OPEN",
+            "isCrossRepository": False, "isDraft": False,
             "baseRefName": args[args.index("--base") + 1], "headRefName": args[args.index("--head") + 1]}
     open(os.path.join(d, "pr.json"), "w").write(json.dumps(body))
     print(body["url"])
@@ -207,15 +214,15 @@ elif cmd == ("api", "graphql"):
         open(os.path.join(d, "last_check_evidence.json"), "w").write(json.dumps(repository))
         print(json.dumps({"data": {"repository": repository}}))
 elif cmd == ("pr", "merge"):
-    body = json.loads(read("pr.json", "{}") or "{}")
+    body = pull_request(args[2])
     if read("merge_git.txt") is not None:
         # A composed journey opts in: the hosted merge also advances the real local bare remote.
         head = "refs/remotes/origin/" + body["headRefName"]
-        if "--merge" in args:
-            base = "refs/remotes/origin/" + body["baseRefName"]
-            tree = subprocess.check_output(["git", "merge-tree", "--write-tree", base, head], text=True).strip()
-            head = subprocess.check_output(["git", "commit-tree", tree, "-p", base, "-p", head,
-                                            "-m", "fixture hosted merge"], text=True).strip()
+        base = "refs/remotes/origin/" + body["baseRefName"]
+        tree = subprocess.check_output(["git", "merge-tree", "--write-tree", base, head], text=True).strip()
+        parents = ["-p", base] + (["-p", head] if "--merge" in args else [])
+        head = subprocess.check_output(["git", "commit-tree", tree, *parents,
+                                       "-m", "fixture hosted merge"], text=True).strip()
         merged = subprocess.run(["git", "push", "origin", head + ":main"], capture_output=True, text=True)
         if merged.returncode:
             fail(merged.stderr)

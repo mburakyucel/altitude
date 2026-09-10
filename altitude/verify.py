@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from . import config, engines, state as S
@@ -54,14 +55,33 @@ def _verify(project: str, slug: str) -> dict:
     if open_findings and not rep.get("blocked"):
         out["problems"].append("open finding on an unblocked report")
     landed = rep.get("landed") or {}
+    delivery = task.get("delivery") or {}
+    if delivery:
+        out["delivery"] = delivery
+        reported = {pr.get("number") for pr in landed.get("prs") or []}
+        for number in task.get("prs") or []:
+            if number not in reported:
+                out["problems"].append(f"recorded PR #{number} missing from report")
+        if not delivery.get("number") or not delivery.get("head"):
+            out["problems"].append("current delivery has unpublished work; run alt land before completing")
+        if (d / "report.json").stat().st_mtime < datetime.fromisoformat(delivery["at"]).timestamp():
+            out["problems"].append("report predates the current delivery; refresh report.json")
     for pr in landed.get("prs") or []:
         n = pr.get("number")
-        info = gh(["pr", "view", str(n), "--json", "number,state,mergedAt,mergeCommit,headRefName"], repo) if n else None
+        info = gh(["pr", "view", str(n), "--json", "number,state,mergedAt,mergeCommit,headRefName,headRefOid"], repo) if n else None
         if info is None:
             out["problems"].append(f"PR #{n}: cannot read from GitHub")
             continue
         out["prs"].append(n)
         merged = info.get("state") == "MERGED"
+        if delivery:
+            if n == delivery.get("number"):
+                if info.get("headRefOid") != delivery.get("head"):
+                    out["problems"].append(f"PR #{n}: GitHub head differs from the current delivery; run alt land again")
+                out["problems"].extend(_worktree_problems(
+                    task, delivery, (info.get("mergeCommit") or {}).get("oid") if merged else None))
+            if merged and pr.get("merge_sha") != (info.get("mergeCommit") or {}).get("oid"):
+                out["problems"].append(f"PR #{n}: reported merge SHA differs from GitHub")
         if pr.get("merged") and not merged:
             out["problems"].append(f"PR #{n} reported merged but GitHub says {info.get('state')}")
         if not merged and not rep.get("blocked") and pr.get("merged") is not False:
@@ -92,6 +112,35 @@ def _verify(project: str, slug: str) -> dict:
     out["report"] = {"blocked": rep.get("blocked"), "decisions": rep.get("decisions"), "fyi": rep.get("fyi"),
                      "follow_ups": rep.get("follow_ups"), "deviations": rep.get("deviations")}
     return _spend(out, project, task, d, sp)
+
+
+def _worktree_problems(task: dict, delivery: dict, merge_sha: str | None) -> list[str]:
+    worktree = task.get("worktree")
+    if not worktree or not Path(worktree).is_dir():
+        return ["task worktree unavailable; cannot verify current delivery"]
+
+    def git(args):
+        try:
+            return subprocess.run(["git", *args], cwd=worktree, capture_output=True, text=True,
+                                  timeout=60, env=engines.clean_env())
+        except (subprocess.SubprocessError, OSError) as e:
+            raise VerifierFault(f"cannot inspect task worktree: {e}") from e
+
+    problems = []
+    for args, expected, problem in (
+        (["rev-parse", "HEAD"], delivery["head"], "task HEAD differs from the current delivery; run alt land again"),
+        (["status", "--porcelain", "--untracked-files=all"], "", "task worktree has uncommitted work"),
+    ):
+        result = git(args)
+        if result.returncode:
+            raise VerifierFault(f"cannot inspect task worktree: {result.stderr.strip()[-300:]}")
+        if result.stdout.strip() != expected:
+            if (args[0] == "rev-parse" and merge_sha
+                    and git(["merge-base", "--is-ancestor", merge_sha, "HEAD"]).returncode == 0
+                    and git(["merge-base", "--is-ancestor", "HEAD", "origin/main"]).returncode == 0):
+                continue  # A clean branch reconciled to main has no unpublished delivery.
+            problems.append(problem)
+    return problems
 
 
 def _spend(out: dict, project: str, task: dict, d: Path, sp: dict | None = None) -> dict:
