@@ -1168,6 +1168,33 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
     return question
 
 
+def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str) -> dict:
+    """Original authority and viewed revision shared by decisions and merge reconciliation."""
+    if source == "task":
+        row = next((r for r in task_messages(project, slug) if r["id"] == message_id), None)
+        authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
+                              or (question["audience"] == "l3" and row["role"] == "l3" and row.get("by") == "l3"))
+    elif source == "project":
+        from . import l3
+        row = next((r for r in l3.chat_history(project, None)
+                    if r.get("turn_id") == message_id and r.get("role") == "user"), None)
+        authorized = row and row.get("trigger", "chat") in (None, "", "chat")
+    else:
+        raise TransitionError("resolution source must be task or project")
+    if not authorized:
+        raise TransitionError("resolution must cite an original message with authority for this question")
+    if source == "task":
+        refs = row.get("question_refs")
+        if refs is not None:
+            if {"id": question["id"], "revision": question["revision"]} not in refs:
+                raise TransitionError("source message discusses a different question revision")
+        elif row.get("question_id") and (row["question_id"], row.get("question_revision")) != (question["id"], question["revision"]):
+            raise TransitionError("source message discusses a different question revision")
+    if (row["at"][:19] < question["asked"][:19] if source == "project" else row["at"] < question["asked"]):
+        raise TransitionError("source message predates this question revision")
+    return row
+
+
 def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str, *,
                      disposition: str, reason: str, expected_attempt: int, source: str = "task",
                      remaining: str | None = None, recommendation: str | None = None,
@@ -1185,29 +1212,7 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
             raise TransitionError("only the active task owner may resolve its question")
         _require_daemon_fence(task, slug)
         question = _question_target(task, identity, revision)
-        if source == "task":
-            rows = task_messages(project, slug)
-            row = next((r for r in rows if r["id"] == message_id), None)
-            authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
-                                  or (question["audience"] == "l3" and row["role"] == "l3" and row.get("by") == "l3"))
-        elif source == "project":
-            from . import l3
-            row = next((r for r in l3.chat_history(project, None)
-                        if r.get("turn_id") == message_id and r.get("role") == "user"), None)
-            authorized = row and row.get("role") == "user" and row.get("trigger", "chat") in (None, "", "chat")
-        else:
-            raise TransitionError("resolution source must be task or project")
-        if not authorized:
-            raise TransitionError("resolution must cite an original message with authority for this question")
-        if source == "task":
-            refs = row.get("question_refs")
-            if refs is not None:
-                if {"id": identity, "revision": revision} not in refs:
-                    raise TransitionError("source message discusses a different question revision")
-            elif row.get("question_id") and (row["question_id"], row.get("question_revision")) != (identity, revision):
-                raise TransitionError("source message discusses a different question revision")
-        if (row["at"][:19] < question["asked"][:19] if source == "project" else row["at"] < question["asked"]):
-            raise TransitionError("source message predates this question revision")
+        row = _decision_source(project, slug, question, message_id, source)
         receipt = question.get("resolution") or {}
         if question["status"] != "open":
             if (receipt.get("message_id"), receipt.get("source"), receipt.get("disposition"), receipt.get("text"),
@@ -1432,11 +1437,12 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
-                         reason: str, actor: str) -> dict:
-    """Apply recorded operator authority; altd supplies the origin-bound GitHub observation.
+                         reason: str, actor: str, presentation: str, latest_operator: str,
+                         question: str | None = None, revision: int | None = None) -> dict:
+    """L3 judges merge permission; altd proves original authority, context and exact scope.
 
-    I-20260907-205556: no caller prose grants approval. The explicit operator reply must follow the
-    current hold and an unambiguous PR presentation, with no later operator message or PR update.
+    I-20260909-074919: UI decisions and contextual reaffirmations use the common decision contract.
+    No prose classifier: L3 must reject ambiguity, revocation and implementation-only permission.
     """
     if actor != "l3" or not reason.strip():
         raise TransitionError("recorded approval requires the coordinator daemon and a reason")
@@ -1446,19 +1452,40 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
             if not task.get("hold_merge") or task["state"] not in ("running", "blocked", "reported"):
                 raise ValueError("task has no active merge hold")
             rows = task_messages(project, slug)
-            operator = next((r for r in reversed(rows) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
-            # Issue #274: accept explicit permission without interpreting arbitrary prose.
-            if (operator.get("id") != approval or operator.get("by") != OPERATOR_MESSAGE_ROLE
-                    or not re.fullmatch(r"(?:good to merge|you can merge it)[.!]?",
-                                        operator.get("text", "").strip().lower())):
-                raise ValueError("approval must name the latest operator message, a standalone "
-                                 "'Good to merge' or 'You can merge it' authorization")
-            previous = rows[:rows.index(operator)]
-            presentation = previous[-1] if previous else {}
+            operator = next((r for r in rows if r["id"] == approval), {})
+            latest = next((r for r in reversed(rows) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
+            if (operator.get("role") != OPERATOR_MESSAGE_ROLE or operator.get("by") != OPERATOR_MESSAGE_ROLE
+                    or latest.get("id") != latest_operator or latest.get("by") != OPERATOR_MESSAGE_ROLE):
+                raise ValueError("cite the original operator approval and latest operator message reviewed")
+            presented = next((r for r in rows if r["id"] == presentation), {})
             urls = re.findall(r"https://github\.com/[\w.-]+/[\w.-]+/pull/[1-9][0-9]*\b",
-                              presentation.get("text", ""))
-            if presentation.get("role") != "l2" or set(urls) != {pull["url"]}:
-                raise ValueError("approval must directly follow the owner's presentation of this PR alone")
+                              presented.get("text", ""))
+            if presented.get("role") != "l2" or presented.get("by") != "l2" or set(urls) != {pull["url"]}:
+                raise ValueError("cite the owner's presentation of this PR alone")
+            decision, resolution = None, {}
+            if question is not None:
+                decision = _question_target(task, question, revision)
+                saved = decision.get("resolution") or {}
+                resolution = saved if saved.get("message_id") == approval else {}
+                if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
+                        or decision["status"] != "resolved"
+                        or resolution and (decision["audience"] != "operator"
+                            or resolution.get("disposition") != "answered" or resolution.get("remaining")
+                            or (resolution.get("source"), resolution.get("by")) != ("task", OPERATOR_MESSAGE_ROLE))):
+                    raise ValueError("approval needs the current answered operator question revision")
+                _decision_source(project, slug, decision, approval, "task")
+                if resolution and decision.get("acceptance_message") and not any(
+                        o["key"] == resolution.get("option_key") and o["text"] == resolution.get("text")
+                        for o in question_choices(decision)):
+                    raise ValueError("approval choice does not match its recorded option")
+            elif revision is not None or operator.get("question_refs") or operator.get("question_id"):
+                raise ValueError("cite the approval's question and revision")
+            context = [operator["text"], latest["text"]]
+            if resolution:
+                context += [decision["detail"], resolution["text"]]
+            if set(re.findall(r"https://github\.com/[\w.-]+/[\w.-]+/pull/[1-9][0-9]*\b",
+                              "\n".join(context))) - {pull["url"]}:
+                raise ValueError("approval context names a different PR")
             events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
                       if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
             generation = next((i for i in range(len(events) - 1, -1, -1)
@@ -1473,26 +1500,38 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 if parsed.tzinfo is None:
                     raise ValueError("approval evidence needs timezone-aware timestamps")
                 return parsed
-            if not (timestamp(hold["at"]) < timestamp(presentation["at"]) < timestamp(operator["at"])
-                    and timestamp(pull["updatedAt"]) < timestamp(presentation["at"])):
+            if decision and not resolution and not timestamp(saved["at"]) < timestamp(presented["at"]):
+                raise ValueError("inherited question context must be resolved before the PR presentation")
+            if not (timestamp(hold["at"]) < timestamp(presented["at"]) < timestamp(operator["at"])
+                    and timestamp(pull["updatedAt"]) < timestamp(presented["at"])
+                    and timestamp(operator["at"]) <= timestamp(latest["at"])
+                    and (not resolution or timestamp(presented["at"]) <= timestamp(decision["asked"])
+                         < timestamp(operator["at"]))):
                 raise ValueError("approval is stale: hold or PR changed since its presentation")
             adopted = task.get("adopted_pr") or {}
             if adopted and (pull.get("number") != adopted["number"] or pull.get("url") != adopted["url"]):
                 raise ValueError("approval PR must match the adopted PR")
+            if task.get("prs") and pull.get("number") != task["prs"][-1]:
+                raise ValueError("approval PR must match the task's active PR")
             if (pull.get("state") != "OPEN" or pull.get("isDraft") is not False
                     or pull.get("isCrossRepository") is not False or pull.get("baseRefName") != "main"
                     or pull.get("headRefName") != (adopted.get("branch") or task.get("branch"))
                     or pull.get("headRefOid") != head):
                 raise ValueError("approval PR must be open, ready, and match the task branch and observed head")
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, TransitionError) as exc:
             S.append_event(project, slug, "merge-approval-refused", actor=actor, approval=approval,
-                           reason=reason, error=str(exc))
+                           presentation=presentation, latest_operator=latest_operator, question=question,
+                           revision=revision, reason=reason, error=str(exc))
             raise TransitionError(f"recorded merge approval refused: {exc}") from exc
         receipt = {"actor": actor, "authorized_by": operator["role"], "reason": reason,
                    "approval": approval, "approved_at": operator["at"],
+                   "latest_operator": latest_operator, "latest_operator_at": latest["at"],
+                   "question": question, "revision": revision,
+                   "question_context_only": decision is not None and not resolution,
+                   "option_key": resolution.get("option_key"),
                    "hold": task["hold_merge"], "hold_event": generation, "hold_at": hold["at"],
                    "hold_id": task.get("hold_merge_id"),
-                   "presentation": presentation["id"], "pr": pull["number"], "url": pull["url"],
+                   "presentation": presentation, "pr": pull["number"], "url": pull["url"],
                    "head": head, "pr_updated_at": pull["updatedAt"], "at": S.now()}
         task.update(hold_merge=None, merge_approval=receipt)
         S.save_task(project, task)

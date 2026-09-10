@@ -369,18 +369,27 @@ def merge_approval_parser() -> argparse.ArgumentParser:
     parser = Parser(allow_abbrev=False, add_help=False)
     parser.add_argument("slug")
     parser.add_argument("--approval", required=True)
+    parser.add_argument("--presentation", required=True)
+    parser.add_argument("--latest-operator", required=True)
+    parser.add_argument("--question")
+    parser.add_argument("--revision", type=int)
     parser.add_argument("--pr-number", dest="pr", required=True, type=int)
     parser.add_argument("--head", required=True)
     parser.add_argument("--reason", required=True)
     return parser
 
 
-def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: int, head: str, reason: str) -> dict:
+def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: int, head: str, reason: str,
+                                 presentation: str, latest_operator: str,
+                                 question: str | None = None, revision: int | None = None) -> dict:
     """I-20260907-205556: bind durable operator approval to the checkout-origin PR before releasing a hold."""
     S.require_task_slug(slug)
-    if (pr < 1 or not re.fullmatch(r"[0-9a-f]{32}", approval)
+    if (pr < 1 or any(not re.fullmatch(r"[0-9a-f]{32}", identity)
+                      for identity in (approval, presentation, latest_operator))
+            or (question is None) != (revision is None)
+            or question is not None and (not re.fullmatch(r"[0-9a-f]{32}", question) or revision < 1)
             or not re.fullmatch(r"[0-9a-f]{40}", head) or not reason.strip()):
-        raise ValueError("approval requires a message id, positive PR number, full head SHA, and reason")
+        raise ValueError("approval requires source message ids, paired question/revision, positive PR number, full head SHA, and reason")
     from . import github_intake
     owner, repository = github_intake.project_repo(project)
     url = f"https://github.com/{owner}/{repository}/pull/{pr}"
@@ -393,7 +402,9 @@ def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: in
     if not isinstance(pull, dict) or pull.get("number") != pr or pull.get("url") != url:
         raise ValueError("approval PR could not be read from the project origin")
     try:
-        return T.apply_merge_approval(project, slug, approval, pull, head=head, reason=reason, actor="l3")
+        return T.apply_merge_approval(project, slug, approval, pull, head=head, reason=reason, actor="l3",
+                                      presentation=presentation, latest_operator=latest_operator,
+                                      question=question, revision=revision)
     except T.TransitionError as exc:
         raise ValueError(str(exc)) from exc
 

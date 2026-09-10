@@ -254,15 +254,22 @@ attempt or lifecycle request invalidates the probe. Fault, questions, hold and p
 stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
 
 Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
-Sending a message does not automatically clear a merge hold. For the standalone operator reply
-`Good to merge` or `You can merge it` directly following the owner's single-PR presentation, L3 explicitly
-invokes [`hold-merge --approval`](CLI.md#recorded-merge-approval) through its daemon connection. Altd validates
-the whole reply, ignoring case and surrounding whitespace and allowing one final period or exclamation
-mark; questions, conditions, negations, quotations and extra prose cannot authorize release. It checks
-the durable message, current hold generation and unchanged PR, then records a release receipt without
-changing worker or block state. A later operator message, renewed hold, changed PR or missing evidence
-preserves the hold. L3 checks the release receipt before resuming a blocked owner; the owner rechecks
-and uses `alt land --merge`. A repeated application with no active hold is refused without another release.
+Sending a message or resolving a question does not automatically clear a merge hold. L3 reconciles an
+actual operator merge decision through [`hold-merge --approval`](CLI.md#recorded-merge-approval), citing
+the original approval, owner's single-PR presentation, question/revision when present and latest operator
+message reviewed. L3 judges merge permission and later corrections from those originals; arbitrary prose
+interpretation is not a daemon classifier. Design acceptance, implementation permission, ordinary
+discussion, unresolved conditions and revocations cannot authorize release. Altd checks original source
+authority, the answered question's current revision and selected option, current hold generation and
+unchanged PR. A new conversational merge approval can inherit a question resolved before its fresh
+PR presentation; the receipt marks that current revision as context only, without accepting its old
+option. A later reaffirmation can refer to a different superseded recovery question without
+accepting its recommendation or refreshing stale approval. The receipt records both sources and the
+coordinator's interpretation without changing worker or block state. An unseen later operator message,
+renewed hold, changed PR or missing evidence preserves the hold. L3 checks the release receipt before
+resuming a blocked owner; the owner rechecks and uses `alt land --merge`. A repeated application with
+no active hold is refused without another release. Failed reconciliation is machinery recovery for L3;
+the operator does not repeat an already recorded decision or perform manual hold repair.
 
 Voice capture does not add a lifecycle state. **Stop** transcribes the bounded recording into
 the editable draft; the send arrow transcribes, appends and sends at once. Both sending paths use
