@@ -292,6 +292,7 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
         task.update({"resume_claim": claim, "dispatching": claim["at"]})
+        task.pop("verified", None)  # A resumed owner must report its current work before completion.
         _save_claim_task(project, task)
         path.unlink(missing_ok=True)
         return claim
@@ -556,6 +557,8 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
                                if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
             if not last_block or last_block.get("frm") != expected_block_from:
                 raise TransitionError(f"{slug}: latest block did not come from {expected_block_from}")
+        if task.get("delivery") != verified.get("delivery"):
+            raise TransitionError(f"{slug}: delivery changed during report verification; verify current work again")
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
         _clear_block(project, task)
@@ -636,6 +639,8 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
 
 def _require_no_code_change(task: dict) -> None:
     """A proposal/research task may close directly; code delivery must use the verified report path."""
+    if task.get("prs") or task.get("delivery"):
+        raise TransitionError("task has code delivery evidence; use the verified report path")
     worktree = task.get("worktree")
     if not worktree:
         raise TransitionError("L2 direct completion requires its task worktree")
@@ -670,6 +675,11 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
             return task
         if task.get("state") == "running":
             raise TransitionError(f"{slug}: cannot complete a running worker; wait for its report or stop/reject it")
+        delivery = task.get("delivery")
+        verified = task.get("verified") or {}
+        if delivery and (not delivery.get("number") or verified.get("delivery") != delivery
+                         or verified.get("verdict") != "ok"):
+            raise TransitionError(f"{slug}: current delivery requires a verified report before completion")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor)
         if digest:

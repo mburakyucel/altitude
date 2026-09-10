@@ -18,7 +18,7 @@ Burak
                                                      ├─ may implement directly
                                                      └─ may delegate to its engine's own subagents
 
-L2 worktree/branch ─► checks/review ─► PR ─► merge ─► archive task
+L2 worktree/branch ─► checks/review ─► PR ─► merge ─► more authorized work or final report/archive
 system fault ─► blocked task + private incident ─► one queued L3 message
 L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escalates (a Needs you card for the operator)
 ```
@@ -277,6 +277,31 @@ name those paths and ask owners to rebase onto main before landing and keep shar
 their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
 not resolve conflicts automatically.
+
+A merge completes a delivery, while an active task can continue authorized work in the same
+worktree, local branch and provider conversation. On the next `alt land`, the merged PR's final
+head separates follow-up commits from already delivered history. Landing verifies the merge is
+on fetched main and rebases only that follow-up, so squash commits are not replayed. An already
+reconciled retry uses its common main ancestor. Leased uncommitted changes are committed before
+reconciliation; conflicts and raised rebase errors abort back to the task branch with that work
+retained. Follow-up merge commits require owner reconciliation before landing, preserving edits
+made in merge resolutions. Work already present on main produces a truthful merged retry.
+
+The task's `delivery` records the current PR number/head, base SHA, publication branch and precise
+timestamp; a publication in progress has no number/head. `prs` retains every delivery number, and
+`delivery` events retain publication receipts and the preceding PR/head/merge evidence. PR creation
+is recorded before check polling. Each new PR runs the existing candidate checks and review/hold
+gate; a PR-specific hold release restores its hold for the next PR, while a later explicit
+task-wide release stays effective. Adopted PR receipts remain in history when ordinary task work
+continues after their merge. No-work retries preserve the current receipt and publish nothing.
+
+Starting another delivery or claiming a resume invalidates previous completion verification.
+Report freshness includes the current delivery timestamp. Verification requires all recorded PRs,
+the current published head on GitHub and in the clean worktree, and matching reported merge SHAs;
+a clean worktree reconciled onto main after its merge also has no unpublished work. Pending work,
+older reports and a raced delivery cannot complete the task. Recorded deliveries use the report
+path even when the local branch has no remaining diff. Merges continue activating independently
+of owner completion through the existing deployment observation.
 
 Only L3 or the operator assigns a lease with `alt task paths`; it replaces the complete `paths`
 list and records a `paths` event with the actor and previous scope. A missing-scope L2, including
