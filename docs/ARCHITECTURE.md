@@ -877,6 +877,55 @@ tasks and the overview queue filtered to the project: the queue's decisions as c
 Needs you, every other active task as a row under Active, and the tasks done or rejected in the last
 seven days folded under Done this week; a task that changes section fades in where it now belongs.
 
+### From model judgment to a task question or preview
+
+The L2 persona and repository instructions teach the owner when to ask a question, how to publish
+visual evidence, and which commands are available. The model judges whether a decision is needed,
+chooses the question/options and selects proposal files. It invokes `alt task block` through its
+engine's execution tool, with ordinary command arguments and, for a preview, `--design-file` pointing
+to an explicit JSON selection. There is no automatic interpretation of arbitrary model prose as
+a question or an approval. The engine's own tool-call display is separate from the task dilemma
+that Altitude renders in its web conversation.
+
+`bin/alt` checks the role and owner environment; `tasks.block` verifies the current attempt under
+the project lock. It captures selected preview files, publishes the question/revision in
+`status.json`, and blocks the task through the existing transition. Question messages are projected
+from those durable records into the same human conversation as `conversation.jsonl` replies.
+The app reads `/api/task` for that conversation, `/api/overview` for unresolved operator questions
+in Needs you, and the fixed preview API for the selected proposal. The CLI's design publication
+response includes `design_url`; the task question exposes the same link. The detailed capture and
+serving contract follows below, and [CLI examples](CLI.md#task-design-previews) show actual inputs.
+
+```mermaid
+sequenceDiagram
+    participant Owner as L2 model
+    participant CLI as Engine execution tool / alt CLI
+    participant State as Task records and captured files
+    participant App as Altitude API and browser
+    participant Daemon as altd
+    Owner->>CLI: block with question and optional design selection
+    CLI->>State: Validate owner/attempt; save capture and question revision
+    App->>State: Read conversation, question and fixed preview
+    App->>State: Explicit decision OR typed message with viewed revision
+    State->>Daemon: Durable inbox / resume request
+    Daemon->>Owner: Deliver at checkpoint or resume the same session
+    Owner->>CLI: Discuss, or resolve a clear answer citing its source message
+```
+
+Transport depends on the role. An L2 uses the `alt` CLI in its task environment through its engine's
+execution tool. A Codex L3 uses the `altitude` coordinator stdio MCP tool: structured requests carry
+`kind`, argument arrays and stdin, and its adapter forwards them to the project-bound altd socket.
+A Claude L3's runtime command shims use that same broker. The broker fixes project authority and
+checks allowed coordinator verbs. MCP transports coordinator requests; it does not own dilemma,
+preview or decision state, and that L3 transport restriction does not apply to the L2 CLI path.
+
+An explicit quick choice sends the question/revision (and group revision when applicable) to
+`POST /api/decide`, which validates and saves the decision. Typed discussion uses
+`POST /api/l2/message` and stays a message until the same owner judges it as a clear answer and
+records `alt task resolve` against the original source message. Both use the durable inbox and
+daemon wake mechanism described in [session lifecycle](SESSION_LIFECYCLE.md#messages-resume-and-stop).
+Opening a preview performs reads only; neither viewing, a follow-up nor a resume accepts a proposal.
+
 A dilemma (spec §3.8–3.10) lives in the owning task conversation. The task record's `questions`
 contains versioned question text, zero to three explicit options and a recommendation key,
 source/audience, stable ID and message anchor, and an open or resolved status. A question group
@@ -982,6 +1031,38 @@ tree is mirrored under the prefix because a board's stylesheet imports the build
 levels up. `/api/project` reports that URL only when the boards exist, and the project header's
 overflow menu turns it into Design boards, opening in a new tab. Any project with boards gets one; the
 route knows nothing about this repository's own.
+
+Pending task designs use captured screenshots and text, bound to the existing question revision.
+The current L2 supplies an explicit selection through `alt task block --design-file`; ignored and
+untracked files are supported without staging or committing them. The task and
+attempt checks apply, and the CLI also binds the project. `tasks.py` reads only that task's registered
+worktree under the project's `design/wireframes/` subtree, walking directory descriptors without
+following symlinks. Publication accepts one UTF-8 `.md`/`.txt` proposal up to 64 KiB and one to twelve
+PNG/JPEG screenshots, up to 8 MiB each and 32 MiB together. Raster signatures must match the selected
+type. Directories, special files, traversal, symlinks and unsupported types refuse publication.
+No directory is recursively published, and no submitted HTML, SVG, script or stylesheet is served.
+
+The existing question stores the captured text, titles and a hashed manifest; content-named image
+files live in its task folder's `designs/` directory and follow task archival. The task worktree can
+change or disappear without changing that evidence. Repeating an identical publication retains its
+question revision; changing any selected content or label advances it, preserving the prior question
+and design. A normal block without design inputs retains the attached capture. There is no separate
+review conversation, approval state or artifact registry.
+
+`question_view` exposes `design_url` for the conversation's compact **View proposal · vN** link.
+`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
+screenshots, full-size image links, explanation and **Back to question**. The page reads
+`GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
+`/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
+require a registered project, resolve the owning task and exact question revision, and verify the
+saved content hashes. Raster responses use explicit image types, `nosniff`, a restrictive CSP and
+no-store caching. Source paths and arbitrary task files are never URL inputs. Missing, altered,
+unsupported or inaccessible evidence returns **Design unavailable**, with no fallback to another
+version. Loading, Retry and Back remain in the ordinary preview page. Earlier captures identify
+their revision and link back to its historical question; current question metadata is polled without
+replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
+of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
+and neither design acceptance nor publication releases a merge hold.
 
 The Monitor page reads `/api/monitor` and is display only: no hold, incident, route or follow-up
 work is derived from it. `/api/monitor` answers with `seats`: one row per configured engine, in the

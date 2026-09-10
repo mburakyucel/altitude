@@ -1093,6 +1093,10 @@ class Handler(BaseHTTPRequestHandler):
         are readable, only the listed extensions, and nothing is cached, so an edit that lands is the
         edit the browser draws. A project without boards, a directory, and an escape attempt are all
         the same plain 404."""
+        if len(parts) > 2 and parts[2] == "tasks":
+            if len(parts) != 7:
+                return self._plain("Design unavailable", 404)
+            return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
         project = unquote(parts[1]) if len(parts) > 1 else ""
         entry = design_viewer_url(project)
         if entry is None:
@@ -1113,6 +1117,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _task_design(self, parts: list[str], *, asset: str | None = None) -> None:
+        """The question owns the fixed review; only its captured raster bytes cross this route."""
+        try:
+            project, slug, identity, revision_text = [unquote(part) for part in parts]
+            revision = int(revision_text)
+            task, question = T.task_design(project, slug, identity, revision)
+            design = question["design"]
+            if asset is not None:
+                data = T.design_image(project, slug, design, asset)
+            else:
+                T.require_design(project, slug, question)
+                latest = next(q for q in reversed(task["questions"]) if q["id"] == identity)
+                base = f"/projects/{quote(project, safe='')}/tasks/{slug}"
+                question_url = f"{base}?question={identity}&revision={revision}"
+                superseded = latest["revision"] != revision
+                prefix = f"/design/{quote(project, safe='')}/tasks/{slug}/{identity}/{revision}"
+                return self._json({"title": design["title"], "revision": revision, "text": design["text"],
+                    "images": [{"title": img["title"], "url": f"{prefix}/{img['name']}"} for img in design["images"]],
+                    "question_url": question_url, "superseded": superseded,
+                    "current_question_url": f"{base}?question={identity}&revision={latest['revision']}" if superseded else None})
+        except (T.TransitionError, OSError, ValueError, KeyError, TypeError):
+            if asset is not None:
+                return self._plain("Design unavailable", 404)
+            return self._json({"error": "Design unavailable"}, 404)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png" if asset.endswith(".png") else "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(data)
 
@@ -1220,6 +1258,8 @@ class Handler(BaseHTTPRequestHandler):
             if not parts or parts[0] != "api":
                 return self._static(u.path)
             api = parts[1] if len(parts) > 1 else ""
+            if api == "design":
+                return self._task_design(parts[2:])
             if api == "overview":
                 return self._json(overview())
             if api == "project" and len(parts) > 2:

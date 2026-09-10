@@ -432,6 +432,15 @@
 .shell[data-phone] .page {
   padding: 16px 16px 32px;
 }
+.design-page { max-width: 64rem; gap: 28px; }
+.design-heading, .design-unavailable, .design-text { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.design-heading h1, .design-unavailable h1 { font-size: 22px; font-weight: 600; line-height: 1.3; }
+.design-text h2 { font-size: 16px; font-weight: 600; }
+.design-text { max-width: 44rem; }
+.design-screenshot { display: flex; flex-direction: column; gap: 12px; margin: 0; min-width: 0; }
+.design-screenshot figcaption { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
+.design-screenshot figcaption a { flex-shrink: 0; }
+.design-screenshot img { display: block; width: 100%; max-height: 72vh; object-fit: contain; border: 1px solid var(--hairline); border-radius: 8px; }
 .page-body {
   display: flex;
   min-width: 0;

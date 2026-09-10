@@ -408,6 +408,29 @@ stays bound to its original task. A new reply does not pull the reader away from
 Pending-question reads poll every two seconds. Stale navigation refreshes before acceptance, and
 every write names its exact question revision. Archived tasks retain history without a composer.
 
+#### 3.9.1 Pending design preview
+
+A question with saved design content has one **View proposal · vN** link within its owning task
+conversation. It opens `/projects/:name/tasks/:slug/design/:questionId/:revision` in a browser tab.
+The page shows the proposal title and version, named screenshots with **Full size** links, captured
+proposal text and **Back to question**. Screenshot links open the fixed image in a browser tab for
+native zoom. There is no added conversation, approval control or permanent task banner.
+
+Each version contains explicitly selected PNG/JPEG screenshots and text. HTML simulations are shown
+as captured states; active HTML is never embedded. Changing the working files does not change the
+saved version. A replacement advances the existing question revision, and the prior preview is
+labelled **Earlier version** with **Open current question**. **Back to question** still targets the
+exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
+question unanswered. The existing decision controls record approval; merge holds remain unchanged.
+
+Phone and desktop states are walked in `web/e2e/task-design.pw.ts`: no design means no link;
+**Loading proposal…** gives way to content; missing, changed, denied or failed reads show **Design
+unavailable**, **Retry** and **Back to question**, with saved content hidden. An image starts at
+**Loading screenshot…**; a failed image hides its preview and full-size control and shows
+**Screenshot unavailable** with **Retry screenshot**. Recovery removes the error/loading text.
+Earlier versions retain their original text and screenshots. Existing conversation listening and
+decision states are reused; the viewer has no microphone, composer or empty publishing form.
+
 ### 3.10 Task page
 
 The task header includes **Observed tokens** in phone task details and directly on desktop,

@@ -20,5 +20,6 @@ export async function fixtureTask(request: APIRequestContext, name: string) {
   // Archive summaries omit session identity; the live view needs the actual task record.
   const detail = await request.get(`/api/task/${encodeURIComponent(name)}/${encodeURIComponent(task.slug)}`);
   expect(detail.ok(), "Selected task must still be readable").toBe(true);
-  return await detail.json() as { slug: string; title?: string; session_id?: string };
+  return await detail.json() as { slug: string; title?: string; session_id?: string;
+    question?: { id: string; revision: number; design_url?: string } | null };
 }

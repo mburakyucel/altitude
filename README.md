@@ -262,6 +262,17 @@ browser history entries. Browser Back and the task's Back control return to the 
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
 opens the live session, including after reload.
 
+An L2 design question can include **View proposal · vN**. It opens saved screenshots and the
+proposal text in a browser tab over the normal app connection, on phone or desktop, before the
+design is merged. **Back to question** returns to the same discussion and decision controls.
+Each version keeps its captured content; a replacement advances the question revision and earlier
+links remain identifiable. Interactive wireframes are represented by screenshots of their states;
+submitted HTML does not execute. Viewing or discussing a proposal leaves its question open, and
+accepting a design leaves any merge hold intact. See [publishing a task design](docs/CLI.md#task-design-previews).
+The [model-to-UI flow](docs/ARCHITECTURE.md#from-model-judgment-to-a-task-question-or-preview)
+explains how owners invoke the CLI, how coordinator transports differ, and where questions,
+previews and decisions persist.
+
 Project conversations keep their own history and waiting messages. Switching projects clears the
 unsent draft and local reply state; a turn already sent finishes in its original project. Returning
 to that project shows its saved history and any active turn. Retry sends to the displayed project.

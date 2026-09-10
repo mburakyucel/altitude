@@ -28,12 +28,17 @@ function paths(node: ts.Node, parent = ""): string[] {
 }
 const routePaths = [...new Set(paths(source))];
 
-for (const route of [...routePaths, "/projects/:name?tab=work"]) {
+for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe(() => {
+  const design = route.includes("/design/");
+  test.use({ serviceScript: design ? "task-design-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
+    if (design) expect(task?.question?.design_url, "The fixture supplies a real saved proposal").toBeTruthy();
     const url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
+      .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
+      .replace(":revision", String(task?.question?.revision ?? ""))
       .replace("*", "__ui_unknown_route__");
     const errors: string[] = [];
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
@@ -56,7 +61,18 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) {
     expect(response?.ok()).toBe(true);
     const main = page.getByRole("main");
     await expect(main).toBeVisible();
-    if (task && route.includes("/decisions/")) {
+    if (task && design) {
+      await expect(main.getByRole("heading", { name: "Conversation layout", exact: true })).toBeVisible();
+      await expect(main.getByText(`Proposal · v${task.question!.revision}`, { exact: true })).toBeVisible();
+      await expect(main.getByRole("img", { name: "Phone conversation", exact: true })).toBeVisible();
+      await expect(main.getByRole("img", { name: "Desktop conversation", exact: true })).toBeVisible();
+      await expect(main.getByRole("region", { name: "Proposal text", exact: true }))
+        .toContainText("Keep the conversation easy to read.");
+      await expect(main.getByRole("link", { name: "← Back to question", exact: true }))
+        .toHaveAttribute("href", `/projects/${project.name}/tasks/${task.slug}?question=${task.question!.id}&revision=${task.question!.revision}`);
+      await expect(main.getByText("Loading proposal…", { exact: true })).toHaveCount(0);
+      await expect(main.getByText("Loading screenshot…", { exact: true })).toHaveCount(0);
+    } else if (task && route.includes("/decisions/")) {
       // Legacy decision links resolve to the owning human conversation, including archived tasks.
       await expect(page).toHaveURL(new RegExp(`/projects/${project.name}/tasks/${task.slug}(\\?|$)`));
       await expect(main.getByRole("region", { name: "Task conversation", exact: true })).toBeVisible();
@@ -131,4 +147,4 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) {
     });
     expect(errors, "A rendered route has no console errors, uncaught exceptions, or failed API reads").toEqual([]);
   });
-}
+});

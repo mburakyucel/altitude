@@ -623,6 +623,18 @@ conversation with their source attribution. The model chooses a plain question, 
 quick action, or two to three explicit options with one recommendation. A fault is operational and
 uses `--fault`, without inventing a recommended choice.
 
+The model chooses the question, then invokes the CLI through its engine's execution tool. A minimal
+ordinary dilemma is:
+
+```sh
+alt task block "$ALTITUDE_TASK" --reason 'Should the old index remain available for fourteen days?'
+```
+
+This writes a durable plain question for L3 triage; escalation or the operator-audience flag in the
+synopsis brings it to Needs you. It is Altitude's task UI, separate from the engine's own tool-call
+display. [Architecture and transport flow](ARCHITECTURE.md#from-model-judgment-to-a-task-question-or-preview)
+explains the owner CLI and coordinator MCP/broker paths.
+
 For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
 `escalate`. Use `--questions-file -` with JSON on stdin when calling through the L3 broker; the
 broker never reads a server file supplied by the caller. The single `--reason` / `--question`
@@ -755,6 +767,73 @@ The final `report.json` includes every delivery in `landed.prs` and current vali
 Reports predating the current delivery, omitting earlier PRs or leaving unpublished work are
 refused. Finish through the verified report path when all agreed work is done; a merge alone
 does not require a new task or complete the current one.
+
+### Task design previews
+
+Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
+explanation with its ordinary question. The resulting **View proposal · vN** link in the task
+conversation opens a browser tab over Altitude's normal connection. Phone and desktop readers can
+inspect the screenshots at full size and use **Back to question** for feedback or the existing quick
+answer. A local filesystem link is not a review entry.
+
+Create a selection JSON file, for example `design/wireframes/review.json`:
+
+```json
+{
+  "title": "Compact chat proposal",
+  "proposal": "design/wireframes/PROPOSAL.md",
+  "images": [
+    {"title": "Phone reading", "path": "design/wireframes/captures/phone-reading.png"},
+    {"title": "Phone typing", "path": "design/wireframes/captures/phone-typing.png"}
+  ]
+}
+```
+
+Then publish it with the question:
+
+```sh
+alt task block "$ALTITUDE_TASK" --reason 'Approve the compact chat proposal?' \
+  --recommendation 'Use the layout and behavior shown in the saved proposal.' \
+  --label 'Use this design' --why 'Keeps more of the conversation visible.' \
+  --design-file design/wireframes/review.json
+```
+
+`--design-file` requires the current L2's own project, task and attempt. It accompanies one ordinary
+question, not `--questions-file` or `--fault`. Select paths relative to the recorded task worktree,
+under `design/wireframes/`: one nonempty UTF-8 `.md`/`.txt` file up to 64 KiB and one to twelve
+PNG/JPEG screenshots up to 8 MiB each, 32 MiB total. Titles have 1–160 characters, and the selection
+JSON is at most 64 KiB. Only named files are copied. Symlinks, traversal, special files and unsupported
+types are refused. Use the existing browser harness to capture interactive wireframe states;
+submitted HTML, SVG, JavaScript and CSS are not preview inputs.
+
+Inputs may be ignored or untracked: capture does not stage or commit them. Keep review screenshots
+in ignored `design/wireframes/captures/` or `design/wireframes/shots/`; the explicit selection can
+publish them before any repository commit. Follow the [capture guidance](../AGENTS.md#ui).
+
+The response includes `design_url`, for example
+`/projects/example/tasks/chat-layout/design/<question-id>/1`. This is a path on the current Altitude
+connection, not a filesystem path or an external upload. Use the returned reference; the same
+**View proposal · v1** entry is rendered beside the question in its conversation. Publication follows
+the ordinary L3-first audience rules unless explicitly directed to the operator.
+
+The question contains the captured text and titles, and the task retains the selected image bytes.
+Source edits and worktree cleanup leave the saved version intact. Repeating identical inputs keeps
+the revision; publishing changed screenshots, text or labels advances the same pending question.
+For an existing design question, use its same reason and add `--design-file`; its choices stay intact
+when replacement recommendation flags are omitted. An ordinary block with no design file parks the
+existing question and retains its saved preview.
+
+Old links remain bound to the old capture and identify a newer question when one exists. Missing or
+altered saved content shows **Design unavailable**, with Retry and Back to question; it never serves
+different content at that version. First acceptance refuses unavailable evidence. Feedback remains a
+normal message, and explicit acceptance uses the existing question/revision checks. Neither viewing,
+publication nor design acceptance releases a merge hold. A held implementation PR becomes available
+only after merge and normal activation; its owner reports that availability before another owner
+is asked to publish working proposal links in its existing session.
+
+To restore a missing or damaged regular capture, the same owner republishes the original selection.
+Verified source bytes restore the same content hash without changing the question revision; an actual
+content change creates a replacement revision. Symlinked saved paths still refuse publication.
 
 ### Adopt an existing PR
 

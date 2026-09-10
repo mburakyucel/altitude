@@ -257,6 +257,20 @@ After replying to a follow-up, the L2 parks with the same question and retains i
 and required decision-maker. Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
 Neither operational resume nor closing an obsolete question approves its abandoned recommendation.
+
+A design question can carry a saved screenshot-and-text proposal. The current owner publishes its
+explicit worktree selection with `alt task block --design-file` in the ordinary question operation;
+publication neither launches a worker nor releases a merge hold. Selected content, including
+ignored or untracked captures, is copied without Git changes before
+the question is persisted. Its fixed image files stay with the task through archival, and the
+captured text and manifest stay in the question. The conversation's **View proposal · vN** opens a
+browser preview and **Back to question** returns to the exact question/revision. Viewing creates no
+message or decision. A replacement capture advances the question revision even when the question
+text is unchanged, so stale controls and earlier conversational answers cannot accept it. First
+acceptance checks saved content integrity; unavailable or altered evidence leaves the decision open.
+Interactive wireframes are shown as captured states, and submitted HTML never executes. See
+[selection bounds and owner commands](CLI.md#task-design-previews).
+
 The provider conversation, attempt, engine and model remain under the ordinary continuity rules.
 When those rules queue a fresh attempt after a provider limit, an existing dilemma still accepts
 replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;
