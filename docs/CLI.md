@@ -600,6 +600,30 @@ When a provider limit queues a fresh attempt, existing question replies and quic
 in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
 resolution remains an operation of the running or blocked owning L2.
 
+### This repository's temporary local gate
+
+The operator's 2026-09-09 Pacific policy selects verified local checks for this repository through
+the trusted configuration seam. Use the existing commands:
+
+```sh
+alt land --message "fix: describe the change" --pr-body-file /tmp/pr.md
+alt land --message "fix: describe the change" --merge
+```
+
+Each invocation tests its actual current merge candidate with `make check`; `--test-cmd` cannot
+replace that command here. Frozen web dependencies are installed in the candidate first; supported
+tooling and the matching shared Chromium remain prerequisites. `checks` is `local-pass` or
+`local-fail`, and `local_tests` binds the result to base/head, candidate SHA, tree and retained
+evidence directory. Successful current validation updates the PR body with one passing-test line.
+The synthetic commit can differ from GitHub's final commit metadata; compare its tree and bound
+parents to verify delivery. A new base or head needs a new run.
+
+Hosted failures on existing PRs do not supply this gate's verdict. Required hosted branch checks
+still refuse local delivery until the operator removes them. Reviews and live task merge holds
+remain mandatory. Opening a held PR runs validation without merging; later landing revalidates.
+Other repositories keep their hosted/no-CI behavior and local command choice. See
+[bootstrap, owner recovery and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
+
 ### Continue after a PR merges
 
 An active task can deliver more than one PR. Its owner continues authorized work in the same

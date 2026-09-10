@@ -8,7 +8,7 @@ use the operator's service or runtime records.
 ## Local checks
 
 Use Python 3.12+, Node 22.22.2+ (22.x) or 24.15+ (24.x), and the pnpm version pinned in
-`web/package.json`. CI uses Node 22.22.2. From the repository root:
+`web/package.json`. From the repository root:
 
 ```sh
 pnpm --dir web install --frozen-lockfile
@@ -72,12 +72,12 @@ pnpm --dir web exec playwright show-report ui-artifacts/report
 ```
 
 Screenshots, traces and HTML reports live under ignored `web/ui-artifacts/`, grouped by spec and
-viewport. CI artifacts contain only fictional test data. Keep actual service captures, session
+viewport. Test artifacts contain only fictional test data. Keep actual service captures, session
 logs, conversations and private incident evidence out of shared artifacts.
 
 Review-only comparisons, proposal captures, implementation galleries and routine renderings stay
 outside Git under the [project UI rule](../AGENTS.md#ui). Link the relevant evidence from the PR and
-keep it accessible until review finishes. Use the local HTML report above or available CI artifacts;
+keep it accessible until review finishes. Use the local HTML report above or retained task artifacts;
 if an upload is unavailable, provide the ignored evidence through an accessible review location.
 Passing tests do not replace a pending visual review or release a merge hold. The task design preview
 is an option only after its delivery and ignored/untracked input handling are verified.
@@ -121,28 +121,51 @@ explicit host-capability check with no model request; it is outside default test
 
 ## CI and candidate identity
 
-`.github/workflows/remote-tests.yml` runs the full gate on same-repository PRs and main pushes.
-It retains the check name **Remote tests / Python** for existing consumers, but its fixed commands
-also run web tests, build and browsers. The base-owned PR workflow validates the event's head,
-base and repository, checks out the exact candidate and verifies its SHA. Repository credentials
-are not persisted. Tests/install run in a clean environment with disposable homes, no provider
-credentials, pinned tooling and frozen dependencies. No candidate Makefile controls CI commands.
+The operator's 2026-09-09 Pacific decision suspends hosted CI for this repository while billing
+and artifact capacity are unavailable. The workflow is removed; Git history retains its source.
+The repository-specific `LOCAL_CHECK_REPOSITORY` in the trusted `config.py` selects mandatory
+local `make check` through the existing landing candidate mechanism. Other projects retain their
+gates. No runner installation, new service, billing change or generic bypass flag is involved.
 
-The job attempts to retain logs, timings and fictional Playwright artifacts for three days,
-including failure runs. Only **Upload fictional test results** has `continue-on-error: true`:
-upload failures remain visible but do not fail the test job. Downloadable evidence may be
-unavailable; use the job's test output and exact candidate identity when assessing its result.
-Python, web, build, phone/desktop checks and candidate validation remain required.
-The job has a finite timeout; browser assertions and fixture shutdown also have deadlines.
-A failed, canceled, absent or skipped required phase cannot be reported as green. A deliberately
-optional native host probe is identified separately from required deterministic cases.
+`alt land` pins the current base and head, constructs the candidate for the selected merge method,
+installs frozen web dependencies using the shared Altitude-home pnpm store, then runs the full
+suite with `CI=true`, retaining the test runners' refusal of focused-only tests. Install the
+supported tools and matching shared Chromium first. Candidate logs, fictional
+browser artifacts and `result.json` stay in the task's `local-checks/<candidate>/` folder, including
+failed-test evidence. Results name command, exit status, base, head, candidate SHA and tree.
+The synthetic commit's metadata differs from the eventual GitHub commit; the tree and bound
+base/head identify the tested merge content. A local pass updates the PR with
+`Tests: make check passed locally (<candidate SHA>)` plus its base/head. A stale pair, failed test
+or failed prerequisite cannot authorize a merge. Python, web, build and both browser viewports
+remain required. No unrun or failed phase is green; live-provider validation stays deferred.
 
-A workflow-changing PR runs the workflow already on its base. Its first rollout therefore needs
-full local candidate validation and workflow review, followed by verification that the expanded
-main-push job actually ran. Record these facts separately; an old Python-only result is not
-remote browser evidence. On later PRs the expanded base workflow runs all phases. Before landing,
-reconcile moving main and validate the exact merge candidate; CI's PR head is not a synthetic
-merge tree. [Release readiness](RELEASING.md) binds evidence to a final main SHA.
+Historical hosted failures on open PRs are retained but do not gate this explicitly selected
+local policy. Branch protection and active rules are still inspected: required hosted checks
+must be removed by the operator before local delivery. Outstanding reviews and task/UX merge
+holds remain enforced. Local logs do not claim GitHub billing or artifact capacity recovered.
+
+The first transition PR needs a one-time operator bootstrap: the pre-transition trusted landing
+code inspects workflows on both base and head and has no local-policy override. Prepare and
+review the PR through `alt land`, run full local checks on its exact current merge candidate,
+and publish that evidence through `alt land --pr-body-file`. The operator disables repository
+Actions in Settings → Actions → General, removes any required hosted checks shown in the current
+rule inventory, then merges that exact reviewed PR through GitHub. Recheck base/head immediately
+before merging; changed tips require fresh tests. Do not run the candidate's modified landing code
+against live state. Verify the merged tree, main ancestry and normal automatic activation.
+
+L3 retains resume authority. Existing owners rebase onto the activated main, retain their sessions
+and PRs, and run their own full candidate checks. CI-only blockers can then proceed; real local
+test/provider blockers and pending UX acceptance remain unresolved. L3 reconciles obsolete hosted
+workflow prerequisite and artifact-recovery dependencies, including PR #315, without silently
+discarding agreed work or closing its issues. Finite CI probes do not authorize owner recovery.
+
+To restore CI, obtain an operator decision and deliver a reviewed PR reverting this policy
+transition, reconciling the historical workflow with the prerequisite work in PR #315 and any
+later changes. Run the same full local gate before that merge. The operator then re-enables
+Actions and restores only the required checks recorded in the pre-disable rule inventory.
+Verify a fresh main run actually executes Python, web, build and both browser viewports before
+relying on hosted delivery; artifact recovery needs fresh uploaded evidence separately.
+[Release readiness](RELEASING.md) still binds validation to a final main SHA.
 
 ## Runtime evidence
 

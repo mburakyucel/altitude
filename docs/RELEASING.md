@@ -29,6 +29,10 @@ The web package's private build metadata is not a separate product version.
 
 ## Candidate and release gates
 
+This repository's temporary hosted-CI suspension uses the full local `make check` gate with
+candidate SHA/tree evidence. The [local delivery policy](DEVELOPMENT.md#ci-and-candidate-identity)
+preserves review and publication decisions; it does not establish hosted billing/artifact recovery.
+
 1. Select an exact commit already on `origin/main`. Record its SHA, proposed version, previous
    release/known-good SHA and the PRs included since that point. Later main commits are outside
    this candidate's evidence and notes. Use an isolated checkout for candidate testing.

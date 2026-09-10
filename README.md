@@ -52,6 +52,12 @@ The owners deliver separate, checked PRs. A merge hold leaves a PR for your revi
 owner can merge after the applicable checks and review. L3 can inspect the reports and handle
 follow-up, so the next discussion can address rollout readiness with the work in view.
 
+This repository temporarily uses verified local `make check` runs for PR delivery under the
+operator's 2026-09-09 Pacific decision. Landing tests the current merge candidate, retains its
+evidence and adds the passing candidate SHA to the PR. Hosted CI is suspended; review and merge
+holds still apply. Other projects keep their own gates. See
+[local validation and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
+
 One active task can deliver several PRs. When authorized work remains after a merge, the same owner
 continues in its existing conversation and worktree and runs `alt land` again. It puts only the
 follow-up changes onto current main and opens another PR, with its own checks and review holds.

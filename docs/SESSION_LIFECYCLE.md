@@ -332,10 +332,15 @@ check.
 Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs
 updating runs `git rebase origin/main` in the worktree; a conflict they cannot resolve goes to L3
 through an ordinary `alt task block`, without `--fault`.
-The CI gate requires Python, web, build and phone/desktop browser checks. Review captures stay
+The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
-Artifact upload is attempted separately and its failure is visible without failing that job; downloadable evidence
-may be unavailable. This does not change landing checks or merge holds.
+This repository's temporary local policy runs `make check` on the current merge candidate through
+`alt land`, including PR preparation without merging. Logs, browser artifacts and candidate-bound
+results stay in the task's `local-checks/` folder. Only passing current evidence supplies the PR test
+line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
+required reviews and merge holds still block. Other projects retain their configured gate.
+L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
+activation does not establish billing/artifact recovery or release an operator hold.
 Fetch housekeeping may pack protected refs while local main is behind its fetched remote. The
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
