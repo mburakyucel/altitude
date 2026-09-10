@@ -168,12 +168,12 @@ def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
         except ValueError as exc:
             return {"engine": None, "model": None, "why": str(exc)}
     return pick_engine("l2", forced=task.get("engine"), model=task.get("model"),
-                       project=project, excluded=excluded)
+                       project=project, excluded=excluded, effort=task.get("effort"))
 
 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
-                current_model: str | None = None, excluded: tuple = ()) -> dict:
+                current_model: str | None = None, excluded: tuple = (), effort: str | None = None) -> dict:
     """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
 
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
@@ -191,6 +191,11 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
             option = {"engine": configured["engine"],
                       "model": configured.get("model") or config.default_model(role, configured["engine"]), "role": role}
             engine = option["engine"]
+            try:
+                config.task_effort(engine, effort)
+            except ValueError as exc:
+                skipped.append(f"{option_label(option)} unavailable: {exc}")
+                continue
             installed = engines.installation(engine)
             unavailable = ("already tried in this dispatch/turn" if option_key(option) in excluded else
                            installed["why"] if installed["available"] is False else

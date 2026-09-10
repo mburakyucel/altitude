@@ -190,6 +190,13 @@ it does not mean unavailable or imply a subscription entitlement. Explicit engin
 strict, and routing changes preserve running task attempts and their provider conversations.
 See [routing configuration and examples](docs/CLI.md#automatic-routing-preferences).
 
+Choose task reasoning depth at creation with `alt task new --effort high|xhigh …`.
+New tasks on a supporting engine default to **High**; choose **Extra High** for selected difficult
+work. The launch choice overrides native effort configuration and persists across messages and
+resumes. Existing sessions retain their launch behavior. Task status distinguishes requested,
+launched and observed effort; [effort selection](docs/CLI.md#task-reasoning-effort) explains support
+and failure handling.
+
 An exhausted model allowance excludes only that model. A reported reset schedules a retry;
 an unknown reset stays unknown. Unpinned owners can continue on an eligible alternative as a
 fresh attempt from their saved work. For owners already blocked by an exited worker, L3 can

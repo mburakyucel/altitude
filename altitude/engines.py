@@ -1175,8 +1175,9 @@ def codex_bg(name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str |
 
 def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: Path, resume: str | None = None,
                   persona: Path | None = None, model: str | None = None, extra_env: dict | None = None,
-                  settings: Path | None = None, start_timeout: float = 15.0) -> dict:
+                  settings: Path | None = None, start_timeout: float = 15.0, effort: str | None = None) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
+    config.task_effort(engine, effort)
     prompt = repository_rule_prompt(cwd) + prompt
     if engine == "claude":
         # I-20260907-171446: retire daemon jobs bound to this name before launch or resume.
@@ -1203,6 +1204,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
                "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
         if model:
             cmd += ["-m", model]
+        if effort is not None:
+            cmd += ["-c", f'model_reasoning_effort="{effort}"']
         for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
             cmd += ["-c", setting]
         cmd += [resume, "-"] if resume else ["-"]
@@ -1214,7 +1217,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               "started_at": datetime.now(timezone.utc).isoformat(),
               "codex_home": str(_codex_home(codex_env(extra_env))),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
-              "launch_model": model}
+              "launch_model": model, "launch_effort": effort}
     S.write_json(paths["record"], record)
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
@@ -1280,15 +1283,15 @@ def codex_stop(worker_id: str, *, job_root: Path) -> str:
 
 
 def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
-             model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
+             model: str | None, settings: Path, extra_env: dict, job_root: Path, effort: str | None = None) -> dict:
     return _start_worker(engine, name, prompt, cwd=cwd, persona=persona, model=model, settings=settings,
-                         extra_env=extra_env, job_root=job_root)
+                         extra_env=extra_env, job_root=job_root, effort=effort)
 
 
 def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path, persona: Path,
-              model: str | None, settings: Path, extra_env: dict, job_root: Path) -> dict:
+              model: str | None, settings: Path, extra_env: dict, job_root: Path, effort: str | None = None) -> dict:
     return _start_worker(engine, name, prompt, cwd=cwd, resume=session_id, persona=persona, model=model,
-                         settings=settings, extra_env=extra_env, job_root=job_root)
+                         settings=settings, extra_env=extra_env, job_root=job_root, effort=effort)
 
 
 def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:

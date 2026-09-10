@@ -27,8 +27,20 @@ identities on purpose:
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
 | `routing_pinned` | whether this attempt launched with an explicit task, turn or project pin | fresh dispatch; preserves strictness during quota/rejection recovery |
 | `launch_model` | model override passed at launch, or null for the CLI default | fresh dispatch |
+| `effort` | explicit task creation choice, or null for the engine's task default | task creation |
+| `launch_effort` | resolved effort override passed to the worker, or null for native configuration | fresh dispatch; reused on resume |
 | `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
+
+New tasks default to High on supporting engines; `--effort high|xhigh` chooses explicitly and
+overrides native effort configuration. Explicit choices restrict Auto to supporting engines;
+unsupported pins refuse. Engines without task effort support keep native behavior when the option
+is omitted. The provider validates the selected model's compatibility at launch; an unsupported
+effort response fails the task's launch or resumed turn without a silent downgrade or engine switch.
+Messages and resumes keep the saved launch effort, attempt and owner conversation even if routing
+or native configuration changes. Tasks created before this field exists retain native behavior,
+including on resume; observations never become requested settings. A resumed turn's effort
+observation starts unknown until its worker reports one. See [CLI precedence and evidence](CLI.md#task-reasoning-effort).
 
 For first-run configuration, Auto preferences and explicit pins, see [setup](SETUP.md). The
 [engine integration boundary](ARCHITECTURE.md#engine-integration-boundary) separates the supported
