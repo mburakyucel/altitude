@@ -138,6 +138,24 @@ class TestDecisions(AltitudeCase):
         self.assertNotIn("fyis", server.overview())
         self.assertNotIn("Recent FYIs", digest.text())
 
+    def test_only_explicit_l3_fyis_record_heads_up_selection_without_changing_task_state(self):
+        task = T.new(self.project, "Recovery owner", "Do it.", actor="burak")
+        automatic = T.fyi(self.project, task["slug"], "Activation pending.")
+        self.assertEqual(automatic["by"], "altd")
+        self.assertFalse(automatic["heads_up"])
+        for actor in ("altd", "l2", "burak", "l3"):
+            with self.subTest(actor=actor):
+                row = T.fyi(self.project, task["slug"], "  An owner is investigating the build.  ", actor=actor)
+                self.assertEqual(row["heads_up"], actor == "l3")
+                self.assertEqual(row["by"], actor)
+                self.assertEqual(row["text"], "An owner is investigating the build.")
+                self.assertEqual(l3.chat_history(self.project)[-1], row)
+        project_row = T.fyi(self.project, None, "Deliveries are waiting on the build.", actor="l3")
+        self.assertTrue(project_row["heads_up"])
+        self.assertIsNone(project_row["slug"])
+        self.assertEqual(S.load_task(self.project, task["slug"]), task)
+        self.assertEqual(T.decisions(self.project), [])
+
     def test_the_overview_counts_blocks_waiting_on_l3_and_names_each_queue_hold(self):
         self.quiet_engines()
         self.blocked("On L3", "Need the lease.", waiting_on="l3")

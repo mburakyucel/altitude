@@ -406,6 +406,8 @@ export const ChatMessageSchema = z
     role: z.string(),
     text: z.string(),
     trigger: z.string().nullish(),
+    /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
+    heads_up: z.boolean().nullish(),
     engine: z.string().nullish(),
     /** The id of the L3 turn the row belongs to; rows written before the id existed lack it. */
     turn_id: z.string().nullish(),

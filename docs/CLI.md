@@ -157,6 +157,15 @@ Adjacent context does not guarantee every later correction is present; check rel
 sources before acting on temporary conditions or an apparent decision. Current instructions, task
 records and operator steering remain authoritative.
 
+## Project heads-ups
+
+`alt fyi [slug] "text"` appends an FYI to the selected project's conversation, optionally linked
+to a task. It records the caller's actor; an explicit L3 call marks the row as a selected heads-up
+that stays visible outside routine system groups. Show opens its full text and task link; Hide
+restores the compact line. Other FYIs and historical rows without selection remain eligible for
+grouping. This command changes no task state and creates no operator decision.
+The [L3 persona](../personas/l3.md) defines when and how the coordinator uses this mechanism.
+
 ## GitHub issues
 
 ```text

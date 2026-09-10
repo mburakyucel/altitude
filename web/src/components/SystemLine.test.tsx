@@ -13,10 +13,16 @@ const turn = (over: Partial<SystemTurn>): SystemTurn => ({
   inProgress: false,
   slug: null,
   fyi: false,
+  headsUp: false,
   ...over,
 });
 
 describe("system line text (SPEC.md §3.4, §4.1)", () => {
+  it("keeps both sentences of a selected heads-up even across paragraphs", () => {
+    const prompt = "The build is blocked.\n\nAn owner is investigating.";
+    expect(lineText(turn({ trigger: "fyi", fyi: true, headsUp: true, prompt }), null)).toBe(prompt);
+  });
+
   it("reads the reply's last paragraph, skipping code blocks", () => {
     expect(lastParagraph("First.\n\nSecond line\ncontinues.\n\n```\ncode\n```\n")).toBe("Second line continues.");
     expect(lineText(turn({ reply: "Checked it.\n\nClosed as done." }), "Fix the timer")).toBe("Closed as done.");

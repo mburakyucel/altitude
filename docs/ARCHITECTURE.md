@@ -752,10 +752,15 @@ at `/projects/<name>/tasks/<slug>/report`, and to the digest when the task has o
 landed-report prompt as a header of `Label: value` lines (Task, Verdict, Problems, Post-mortem
 signals, PRs, Spend) followed by the instruction to read the full report with `alt task report`, so
 the card shows the header as label/value rows and an older prompt as preformatted text. Consecutive
-system turns between two operator messages fold to one line, "L3 handled N system events between
+routine system turns between two operator messages fold to one line, "L3 handled N system events between
 your messages", that expands to the list with each turn's own Show; a turn in progress reads "L3 is
 handling <what>" with no Show, a failed one "L3 could not handle <what>" with its error behind Show.
 A failed chat turn reads "L3 could not answer this turn." with Retry, which resends the same text.
+Explicit L3 FYIs with `heads_up: true` stay outside those groups in chronological order, splitting
+the routine runs before and after them. Their full concise text is visible in the existing compact
+system line; Show opens the FYI card and task links, and Hide restores the line. Automatic FYIs and
+historical rows without explicit selection remain eligible for grouping. Conversation loading,
+cached-error display and following the latest messages use the same existing behavior.
 
 `GET /api/project/<name>` includes `repository`, the GitHub HTTPS web URL derived from the deployment checkout's SSH or HTTPS `origin`, or `null` without a GitHub origin; the task PR chip links to `<repository>/pull/<n>` in a new tab when present and stays text otherwise.
 
@@ -883,8 +888,13 @@ without moving a reader away from the question. Technical activity and reference
 **Activity & evidence** and the existing live session view. A saved decision URL redirects into this
 conversation; no separate form, recipient selector or mirrored follow-up thread exists.
 
-An FYI (`tasks.fyi`) is a chat row `{role: "system", trigger: "fyi", slug, text}` in the project's
-conversation; there is no project inbox file and no `fyis` in the digest or overview.
+An FYI (`tasks.fyi`, exposed by `alt fyi [slug] "text"`) is a chat row
+`{role: "system", trigger: "fyi", slug, text, by, heads_up}` in the project's conversation.
+Internal calls default to `by: "altd"`; the CLI supplies its actual actor and `tasks.fyi` records
+`heads_up: true` only for an explicit L3 actor. This selection field distinguishes deliberate
+heads-ups from historical automatic calls that inherited `by: "l3"`; history is neither migrated
+nor classified by text. The [L3 persona](../personas/l3.md) owns selection guidance.
+There is no project inbox file and no `fyis` in the digest or overview.
 
 `POST /api/transcribe` is a bounded adapter to the existing local speech service. It accepts the
 browser's declared audio media type (AAC/mp4 on Safari; opus/webm and the other listed containers),

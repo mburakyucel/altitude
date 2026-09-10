@@ -17,7 +17,7 @@ import type { SystemTurn } from "../components/SystemLine";
 
 /*
  * The project conversation (SPEC.md §3.3, §3.4, §4.1, §4.2): one column, newest last, operator bubbles
- * right, L3 prose left, every non-chat turn a system line, runs of them one line. GET /api/chat is the
+ * right, L3 prose left, non-chat turns as compact lines with routine runs grouped. GET /api/chat is the
  * authority for what ran, what runs, and what waits; the page keeps only the turn it is streaming.
  */
 
@@ -77,6 +77,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
     slug: row ? subjectOf(row, project) : null,
     fyi: turn.fyi,
+    headsUp: turn.fyi && turn.trigger === "fyi" && turn.user?.heads_up === true,
   };
 }
 
@@ -85,7 +86,7 @@ type Item =
   | { kind: "system"; turn: SystemTurn }
   | { kind: "group"; turns: SystemTurn[]; at: string | null };
 
-/** Chat turns stay single; consecutive completed system turns fold into one group (SPEC.md §4.1). */
+/** Chat, selected L3 heads-ups and active turns split runs of routine system events (SPEC.md §4.1). */
 export function itemsOf(turns: Turn[], project: string, activeId: string | null): Item[] {
   const items: Item[] = [];
   let run: SystemTurn[] = [];
@@ -103,7 +104,7 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
       continue;
     }
     const system = systemTurn(turn, project, activeId);
-    if (system.inProgress) {
+    if (system.inProgress || system.headsUp) {
       flush();
       items.push({ kind: "system", turn: system });
     } else run.push(system);
@@ -297,7 +298,7 @@ export default function Conversation({
     rows.push(
       <SystemLine
         key={view.active.id}
-        turn={{ id: view.active.id, trigger: view.active.trigger, at: view.active.started_at, prompt: "", reply: null, error: null, inProgress: true, slug: null, fyi: false }}
+        turn={{ id: view.active.id, trigger: view.active.trigger, at: view.active.started_at, prompt: "", reply: null, error: null, inProgress: true, slug: null, fyi: false, headsUp: false }}
         project={name}
         titles={titles}
       />,

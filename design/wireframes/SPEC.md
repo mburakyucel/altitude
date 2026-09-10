@@ -253,6 +253,24 @@ States: folded; expanded; in progress ("L3 is handling a landed report for <task
 grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Show reveals the
 prompt and the error).
 
+A selected L3 heads-up uses this same compact line, wrapping its full one- or two-sentence text
+on phone and desktop. It stays outside routine groups (§4.1). No separate badge, dismiss control,
+timer or notification surface appears.
+
+| Heads-up state or action | What appears and disappears |
+| --- | --- |
+| Empty history | Conversation empty text; no heads-up or background group. |
+| Initial loading | Conversation skeleton; no placeholder FYI. |
+| Selected FYI arrives | Its full concise text and Show appear between the surrounding routine groups. A reader at the bottom follows; a reader above keeps their scroll position. |
+| Show on heads-up | The line becomes its FYI card with full text, Hide and Open task when linked; routine groups stay folded. |
+| Hide on heads-up | The card and its task link leave; the compact heads-up returns. |
+| Show/Hide on routine group | Routine evidence appears/disappears; the selected heads-up remains outside it. |
+| Conversation read fails | Error and Retry appear; any cached heads-up remains. A successful Retry removes the error. |
+| Listening or microphone denied | Composer states in §3.6; the heads-up remains unchanged and requests no permission. |
+
+`web/e2e/heads-up.pw.ts` walks the heads-up states, task navigation and scroll preservation at both
+viewports; `conversation.pw.ts` covers the unchanged listening/denied composer states.
+
 The report view has a back link to the task and a "Report" title. It reads the task's report and
 shows plain sections when present: Landed (PRs, main checks and deploy), Review, Blocked, Decisions,
 FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and the digest are prose;
@@ -577,9 +595,12 @@ Every chat row whose `trigger` is not `chat` renders as a system line, never as 
 text is the last paragraph of the turn's assistant row; while no assistant row exists the line reads
 "L3 is handling <what>", where <what> comes from the trigger ("a landed report for <task>", "a
 block on <task>", "a fault on <task>", "the restart"). An active turn stays outside the group so
-its current handling line remains visible. Consecutive completed system turns with no `chat` row
-between them collapse to one line: "L3 handled N system events between your messages", expanding
-to the list. An FYI is a system line too (`trigger == "fyi"`, `role == "system"`, no reply). A
+its current handling line remains visible. A selected L3 FYI (`trigger == "fyi"`, `role == "system"`,
+`heads_up == true`) also stays visible as its full concise text, splitting the routine runs around it.
+Consecutive completed routine system turns with no chat, active turn or selected heads-up between
+them collapse to one line: "L3 handled N system events between your messages", expanding to the list.
+Other FYIs are ordinary system lines (`trigger == "fyi"`, `role == "system"`, no reply), eligible
+for grouping, including automatic fault details and historical rows without explicit selection. A
 clean report closes without an L3 turn and produces no line; the task simply moves to Done this
 week. This is a rendering rule over data the chat log already stores; slice 2 adds the two trims in
 §5.2 so the expanded view reads well.
@@ -655,9 +676,10 @@ the working rules (the design decision of 2026-09-05).
 2. **The line is the reply's last paragraph.** L3's reply to a system turn ends with the one or
    two plain sentences the persona already asks for; the fold shows that last paragraph. No new
    field.
-3. **FYIs are chat rows.** `tasks.fyi` appends a chat row `{role: "system", trigger: "fyi", slug,
-   text}` instead of a line in the project's `inbox.jsonl`; `digest.fyis` and the `fyis` field of
-   `/api/overview` are deleted with the Inbox.
+3. **FYIs are chat rows.** `tasks.fyi` appends `{role: "system", trigger: "fyi", slug, text, by,
+   heads_up}`. Internal calls default to the daemon actor; explicit L3 calls through `alt fyi`
+   record selection as `heads_up: true`. Ambiguous historical authorship does not imply selection.
+   There is no project inbox file or `fyis` field in the digest or overview.
 4. **Turns name the tasks they created.** The assistant chat row of a turn that created a task
    carries `tasks: [slug]`, written by the server when the turn's task creation lands.
 5. **Dilemmas have durable identity.** Task `questions` contains ID/revision, message anchor,

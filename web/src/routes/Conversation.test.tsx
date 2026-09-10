@@ -292,6 +292,57 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
 });
 
 describe("Conversation", () => {
+  it.each([390, 1440])("keeps a selected heads-up between routine groups at %ipx with chat, active turns and evidence intact", async (width) => {
+    setViewport(width);
+    const quiet = [
+      { role: "system", trigger: "fyi", text: "Automatic fault details", by: "altd", heads_up: false },
+      { role: "system", trigger: "fyi", text: "Historical ambiguous author", by: "l3" },
+      { role: "system", trigger: "fyi", text: "Unattributed historical FYI" },
+      { role: "system", trigger: "fyi", text: "Owner progress", by: "l2", heads_up: false },
+    ];
+    mockFetch({ chat: {
+      ...chatView,
+      history: [
+        ...history.slice(0, 6),
+        { role: "system", trigger: "fyi", text: "The build is blocked.\n\nAn owner is investigating.", by: "l3", heads_up: true, slug: "persist-paths" },
+        ...quiet,
+        ...history.slice(6),
+        { role: "user", trigger: "restart", text: "Inspect the restart", turn_id: "active" },
+      ],
+      active: { id: "active", started_at: ago(1), trigger: "restart" }, busy: true,
+    } });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const headsUp = () => within(region).getByText(/The build is blocked\.\s+An owner is investigating\./);
+    expect(headsUp()).toBeVisible();
+    expect(headsUp().closest(".sys-group")).toBeNull();
+    expect(within(region).getByText("What is left this week?")).toHaveClass("bubble");
+    expect(within(region).getByText("Created one task for it.")).toBeVisible();
+    expect(within(region).getByRole("link", { name: /Fix the timer/ })).toBeVisible();
+    const active = within(region).getByText("L3 is handling the restart").parentElement!;
+    expect(within(active).queryByRole("button", { name: "Show" })).toBeNull();
+    for (const row of quiet) expect(within(region).queryByText(row.text)).toBeNull();
+    const before = within(region).getByText("L3 handled 2 system events between your messages");
+    const after = within(region).getByText("L3 handled 4 system events between your messages");
+    expect(before.compareDocumentPosition(headsUp()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(headsUp().compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(after.parentElement!).getByRole("button", { name: "Show" }));
+    const group = within(region).getByRole("group", { name: "4 system events" });
+    for (const row of quiet) expect(within(group).getByText(row.text)).toBeVisible();
+    expect(headsUp()).toBeVisible();
+    await user.click(within(group).getByRole("button", { name: "Hide" }));
+    expect(within(region).queryByRole("group")).toBeNull();
+    await user.click(within(headsUp().closest(".sys-line")!).getByRole("button", { name: "Show" }));
+    const card = within(region).getByRole("article", { name: "FYI · Persist paths" });
+    expect(within(card).getByText("The build is blocked.")).toBeVisible();
+    expect(within(card).getByText("An owner is investigating.")).toBeVisible();
+    expect(within(card).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/persist-paths");
+    expect(within(card).queryByText("What altd sent L3")).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "Hide" }));
+    expect(headsUp()).toBeVisible();
+    expect(within(region).queryByRole("article")).toBeNull();
+  });
+
   it("renders bubbles, prose, day dividers, and the task a turn created", async () => {
     mockFetch();
     renderApp({ route: "/projects/altitude" });

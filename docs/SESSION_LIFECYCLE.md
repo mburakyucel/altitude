@@ -225,7 +225,11 @@ The provider conversation, attempt, engine and model remain under the ordinary c
 When those rules queue a fresh attempt after a provider limit, an existing dilemma still accepts
 replies and explicit acceptance into the normal inbox. The fresh brief carries its current context;
 dispatch and delivery use the existing paths, and the UI says the message waits for the L2 to start.
-An FYI from an L2 or L3 (`alt task fyi`) is a system row in the project's chat, not a task-state change.
+An FYI (`alt fyi [slug] "text"`) is a system row in the project's chat, not a task-state change.
+The writer records explicit L3 selection as `heads_up: true`; these concise lines stay visible
+between routine system groups. Internal calls default to the daemon actor, and automatic, L2 and
+ambiguous historical FYIs remain eligible for grouping. Selection guidance lives in the
+[L3 persona](../personas/l3.md), with the instruction loading limits described above.
 On start, altd queues one message per project listing its active tasks, unresolved faults, and a bounded
 upstream-report summary with confirmed links and missing/failed/uncertain gaps. L3
 uses that inventory without repeating unchanged blocker nudges. The originating L3 checks public

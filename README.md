@@ -115,8 +115,9 @@ The owner then rechecks and lands normally.
   answer is enough for the L2 to record your decision and continue. Answering part of a group leaves
   only its unanswered, relevant questions open. A changed direction can close
   a question that is no longer relevant, with the reason retained in chat. L3 handles
-  questions the record settles and receives faults for recovery, and its FYIs are system rows in
-  the project's conversation. Monitor shows engine routing, usage windows and observed sessions,
+  questions the record settles and receives faults for recovery. Its selected heads-ups stay visible
+  as compact lines in the project's conversation while routine events stay grouped behind Show.
+  Monitor shows engine routing, usage windows and observed sessions,
   including missing or stale readings. Each usage window appears independently: an absent window
   is explicit, zero remains a reading, and available figures stay visible when stale.
 - **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
