@@ -128,6 +128,13 @@ base and repository, checks out the exact candidate and verifies its SHA. Reposi
 are not persisted. Tests/install run in a clean environment with disposable homes, no provider
 credentials, pinned tooling and frozen dependencies. No candidate Makefile controls CI commands.
 
+Before deterministic checks, the Ubuntu runner installs `ffmpeg` and `liblcms2-2` with
+`apt-get install --yes --no-install-recommends`. Image checks use the real `ffmpeg` decoder and
+Little CMS shared library for color conversion; these are required CI prerequisites even though
+runtime image conversion is an optional local capability. The base-owned workflow installs them,
+so a feature PR cannot supply its own missing CI packages. Browser OS dependencies are installed
+separately by `playwright install --with-deps chromium`.
+
 The job attempts to retain logs, timings and fictional Playwright artifacts for three days,
 including failure runs. Only **Upload fictional test results** has `continue-on-error: true`:
 upload failures remain visible but do not fail the test job. Downloadable evidence may be

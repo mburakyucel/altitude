@@ -77,6 +77,13 @@ jobs:
           test "$(/usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false \
             -C candidate rev-parse HEAD)" = "$EXPECTED_SHA"
 
+      - name: Install image test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg liblcms2-2
+
       - name: Set up supported Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
