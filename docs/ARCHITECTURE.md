@@ -33,13 +33,23 @@ shell commands. L3 turns persist bounded shell command text with their tool evid
 ad-hoc commands are visible and can become stable verbs. Its process is read-only on the deployment
 checkout on either engine; source changes always belong to one L2 worktree and PR.
 
-The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. L3 carries
-the relevant discussion, superseding corrections and uncertainty into briefs and steering, cleans
-obvious transcription artifacts, and cites operator authority separately from its recommendations.
-Clearly generalizable feedback follows the existing task/PR path to the narrowest authoritative
-instruction source; task-specific steering stays scoped. L3 distinguishes queued work, merged rules
-and their effective loading. These are coordinator instructions, with no runtime classifier or memory
-store and no expansion of project-local or upstream reporting authority.
+The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. Material
+project direction/decision changes and L2 findings/delivery prompt L3 to assess affected active owners
+and send targeted updates through task messages. Each update cites sources, what changed and what it
+supersedes, impact on the owner's work and uncertainty; proposals remain distinct from verified delivery
+and operator authority from recommendations. Unchanged context does not trigger repeated nudges.
+L3 executes supported administrative coordination and already-authorized continuation handoffs
+through existing task operations, preserving remaining scope, acceptance, original evidence,
+dependencies, holds and sessions for work that stays with its owner. New scope/provider decisions
+or operator judgments still escalate; routine administration does not become an operator question.
+The [L2 persona](../personas/l2.md) requires owners to reassess plans and open question members, record
+sourced supersession through the existing resolver and continue within authorized scope. Still-relevant
+operator decisions, proposal checkpoints, merge holds and fault-recovery verification retain their rules.
+Operator feedback about system or role behavior follows the existing task/PR path to the narrowest
+authoritative instruction source for future sessions unless scoped to a session or task; tentative
+suggestions and one-off exceptions stay scoped. L3 distinguishes queued work, merged rules
+and their effective loading. These are role instructions, with no automatic broadcast, runtime classifier
+or memory store and no expansion of project-local or upstream reporting authority.
 
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
@@ -869,7 +879,12 @@ If a provider limit queues a fresh attempt, the existing dilemma remains answera
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
 or its recorded resolution. A queued task without a question retains its ordinary initial state.
 
-A direct L2 block publishes its question into that human thread. An L3 escalation publishes the
+A direct L2 block publishes its question into that human thread. A block that publishes or revises
+questions queues one L3 notification, including operator-directed blocks. The message names
+open members, revisions and their required authority. Comparing existing question revisions keeps
+unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
+scope portions; notification does not approve operator decisions or change their audience.
+An L3 escalation publishes the
 actual dilemma and recommendation with L3 attribution, and supplies it to the owner's next normal
 checkpoint without launching a worker just to announce it. Explicit `--recommendation`, `--label`
 and `--why` fields name a single approach; `--questions-file` publishes a small group or explicit
@@ -897,10 +912,17 @@ receipt and defer to the timer. A restart race after stream headers returns the 
 The same L2 answers follow-ups, clarifies uncertainty, or uses [`alt task resolve`](CLI.md#conversational-decisions)
 to record an actual decision against its original message. Task/attempt ownership and source-message
 authority are checked at the existing command boundary; L3 prose cannot stand in for operator approval.
+The owning L2 can explicitly record `--l3-authority` with specific evidence and rationale when an L3
+answer settles an unnecessary escalation within existing delegated authority. The command requires an
+authentic L3 task message naming the exact question revision; the owner judges whether authority applies.
+The existing receipt keeps L3 attribution, source message, authority basis and recording owner/attempt,
+and retries cannot replace that basis. The question's audience remains unchanged. Genuine operator
+decisions still require original operator authority; ordinary messages and recommendations close nothing.
 A partial answer retains only the relevant remaining question in a new revision, without inheriting
 an unapproved recommendation. A change of direction can close the obsolete dilemma with its reason.
 The resolution preserves the source, author, time and chosen scope, without accepting an abandoned
-recommendation. Report handoff, rejection and completion close obsolete controls without accepting
+recommendation. A remainder retains the question's audience without changing independent worker,
+capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
 The shared question component appears on Needs you and at its conversation anchor. Single choices

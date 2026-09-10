@@ -5,9 +5,9 @@ import { walkthrough } from "./walkthrough";
 test.use({ serviceScript: "conversation-decisions-service.py" });
 test.setTimeout(90_000);
 
-type Question = { id: string; revision: number; anchor_id: string; status: string; question: string; options: { key: string; label: string; text: string }[]; recommended_key: string | null; recommendation: { text: string; label: string } | null; resolution: { disposition: string; message_id: string; text: string; option_key?: string } | null };
+type Question = { id: string; revision: number; anchor_id: string; status: string; question: string; audience: string; options: { key: string; label: string; text: string }[]; recommended_key: string | null; recommendation: { text: string; label: string } | null; resolution: { disposition: string; message_id: string; text: string; by: string; l3_authority?: string; recorded_by?: string; recorded_attempt?: number; option_key?: string } | null };
 type Group = { id: string; revision: number; anchor_id: string; questions: Question[] };
-type Task = { state: string; session_id: string; agent_id: string; question: Question | null; questions: Question[]; question_group: Group; messages: { id: string; text: string; role: string; question_refs?: { id: string; revision: number }[] }[] };
+type Task = { state: string; session_id: string; agent_id: string; hold_merge: string | null; question: Question | null; questions: Question[]; question_group: Group; messages: { id: string; text: string; role: string; question_refs?: { id: string; revision: number }[] }[] };
 const taskPath = (slug: string) => `/projects/atlas/tasks/${slug}`;
 async function readTask(request: APIRequestContext, slug: string): Promise<Task> {
   const response = await request.get(`/api/task/atlas/${slug}`);
@@ -48,6 +48,72 @@ async function recorded(card: Locator, disposition = "answered") {
 }
 
 // No route overlays: browser → real Handler/storage/wake → deterministic owner response.
+test("owner records delegated L3 authority while operator decisions and independent blocked work remain", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const created = await request.post("/fixture/delegated-questions");
+  expect(created.ok()).toBe(true);
+  const { slug } = await created.json() as { slug: string };
+  const initial = await readTask(request, slug);
+  const [lease, policy] = initial.question_group.questions as [Question, Question];
+  const listCard = page.getByRole("article", { name: "Lease and policy", exact: true });
+  const initialOverview = await (await request.get("/api/overview")).json();
+  expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(2);
+  await walk.open("/");
+  await walk.state("01-unnecessary-escalation-and-operator-choice", {
+    visible: [listCard.getByText(lease.question, { exact: true }), listCard.getByText(policy.question, { exact: true })], hidden: [],
+  });
+  expect((await request.post("/fixture/l3-followup", { data: { slug } })).ok()).toBe(true);
+  await page.reload();
+  await walk.state("02-l3-recommendation-leaves-both-open", {
+    visible: [listCard.getByText(lease.question, { exact: true }), listCard.getByText(policy.question, { exact: true })], hidden: [],
+  });
+  expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(2);
+  const settledResponse = await request.post("/fixture/l3-settle", { data: { slug } });
+  expect(settledResponse.ok()).toBe(true);
+  const settled = await settledResponse.json() as { message_id: string };
+  // Keep the same page mounted: normal polling must remove the settled member without navigation.
+  await expect(listCard.getByText(lease.question, { exact: true })).toBeHidden({ timeout: 25_000 });
+  await walk.state("02b-mounted-needs-you-clears-settled-member", {
+    visible: [listCard.getByText(policy.question, { exact: true })],
+    hidden: [listCard.getByText(lease.question, { exact: true })],
+  });
+  const current = await readTask(request, slug);
+  const resolved = current.questions.find((row) => row.id === lease.id && row.revision === lease.revision)!;
+  expect(resolved.audience).toBe("operator");
+  expect(resolved.resolution).toMatchObject({ by: "l3", recorded_by: "l2", recorded_attempt: 1, message_id: settled.message_id });
+  expect(resolved.resolution?.l3_authority).toContain("Recorded task lease includes tests/");
+  expect(current.messages.find((row) => row.id === settled.message_id)?.role).toBe("l3");
+  expect(current.question_group.questions.find((row) => row.id === policy.id)).toMatchObject({ status: "open", audience: "operator", revision: policy.revision });
+  expect(current.state).toBe(initial.state);
+  expect(current.state).toBe("blocked");
+  expect(current.session_id).toBe(initial.session_id);
+  expect(current.hold_merge).toBe("Operator security review");
+  await walk.open(atQuestion(slug, lease));
+  const card = questionCard(page, lease);
+  await recorded(card);
+  await walk.state("03-task-receipt-retains-l3-attribution", {
+    visible: [card.getByText(/^l3 ·/), questionCard(page, policy).getByText(policy.question, { exact: true })],
+    hidden: [card.getByRole("button")],
+  });
+  await walk.open("/");
+  await walk.state("04-needs-you-retains-only-operator-choice", {
+    visible: [listCard.getByText(policy.question, { exact: true })],
+    hidden: [listCard.getByText(lease.question, { exact: true })],
+  });
+  expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
+  const project = await (await request.get("/api/project/atlas")).json();
+  expect(project.decisions.filter((row: { slug: string }) => row.slug === slug).map((row: { id: string }) => row.id)).toEqual([policy.id]);
+  const finalOverview = await (await request.get("/api/overview")).json();
+  expect(finalOverview.projects[0].counts).toEqual(initialOverview.projects[0].counts);
+  await walk.open(info.project.name === "phone" ? "/projects/atlas?tab=work" : "/projects/atlas");
+  const work = page.getByRole("region", { name: "Work", exact: true });
+  const projectCard = work.getByRole("article", { name: "Lease and policy", exact: true });
+  await walk.state("05-project-retains-operator-choice-and-blocked-task", {
+    visible: [projectCard.getByText(policy.question, { exact: true })],
+    hidden: [projectCard.getByText(lease.question, { exact: true })],
+  });
+});
+
 test("Needs you anchors the L3 dilemma; follow-ups and ambiguity stay open, a simple answer resolves in the same L2", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "index-rollout";

@@ -243,6 +243,7 @@ def main(argv=None) -> None:
     resolution.add_argument("--source", choices=("task", "project"), default="task")
     resolution.add_argument("--disposition", choices=("answered", "superseded"), required=True)
     resolution.add_argument("--reason", required=True); resolution.add_argument("--remaining")
+    resolution.add_argument("--l3-authority", help="evidence and rationale that L3's answer settles an unnecessary escalation")
     resolution.add_argument("--recommendation"); resolution.add_argument("--label"); resolution.add_argument("--why")
     ts.add_parser("show", help="compatibility alias for task status --json").add_argument("slug")
     for name in ("events", "messages"):
@@ -407,14 +408,17 @@ def main(argv=None) -> None:
                         sys.exit(f"alt task block: attempt {attempt} is no longer current")
                 else:
                     waiting = "burak" if args.for_burak else "l3"
+                    previous_questions = {(q["id"], q["revision"])
+                                          for q in S.load_task(p, args.slug).get("questions", [])}
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
                                       recommendation_why=args.why, questions=questions)
                     out(blocked)
-                    if blocked.get("waiting_on") == "l3":  # L3 answers from the record, or hands Burak one plain dilemma
+                    if any(q["status"] == "open" and (q["id"], q["revision"]) not in previous_questions
+                           for q in blocked.get("questions", [])):
                         from altitude import l3
-                        l3.queue_message(p, T.block_question(args.slug, args.reason), trigger="block")
+                        l3.queue_message(p, T.block_question(blocked), trigger="block", slug=args.slug)
             elif not args.fault:
                 out(T.block(p, args.slug, args.reason, actor=ACTOR, updates={"waiting_on": "burak"},
                             questions=questions, recommendation=args.recommendation,
@@ -437,7 +441,8 @@ def main(argv=None) -> None:
             out(T.resolve_question(p, args.slug, args.question, args.revision, args.message,
                                    expected_attempt=int(attempt), source=args.source, disposition=args.disposition,
                                    reason=args.reason, remaining=args.remaining, recommendation=args.recommendation,
-                                   recommendation_label=args.label, recommendation_why=args.why))
+                                   recommendation_label=args.label, recommendation_why=args.why,
+                                   l3_authority=args.l3_authority))
         elif tc == "message":
             message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
             out(message)

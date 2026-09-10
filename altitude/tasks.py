@@ -913,7 +913,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     if previous is _UNSET:
         previous = questions[-1] if questions else None
     groups = _store_groups(task)
-    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
+    audience = previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator"
     parsed = parse_dilemma(text)
     structured = options is not None
     selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
@@ -1082,7 +1082,9 @@ def question_context(question: dict) -> str:
         return (f"Task question {question['id']} revision {question['revision']} is resolved "
                 f"({resolution['disposition']}, recorded from {resolution.get('source') or 'task lifecycle'} "
                 f"by {resolution['by']}): {resolution['text']}\n"
-                f"Question: {question['detail']}\n"
+                + (f"L3 authority assessed by {resolution['recorded_by']} (attempt {resolution['recorded_attempt']}): "
+                   f"{resolution['l3_authority']}\n" if resolution.get("l3_authority") else "")
+                + f"Question: {question['detail']}\n"
                 "This closes that question only. Superseded questions do not accept their old recommendation. "
                 "Existing task scope and merge holds remain unchanged.")
     recommendation = question.get("recommendation")
@@ -1103,6 +1105,9 @@ def question_context(question: dict) -> str:
             "--remaining '<only still-relevant unanswered parts>'; use --disposition superseded when a "
             "changed direction makes the old question irrelevant, without accepting its recommendation. "
             "For an operator decision relayed through L3 cite its original project message with --source project. "
+            "For an unnecessary escalation settled within L3's delegated authority, cite the L3 task message "
+            "and add --l3-authority '<specific brief/rule/recorded-decision evidence and rationale>'. "
+            "The owner checks that authority applies; recommendations and discussion are not settled answers. "
             "L3-authored text alone cannot settle a question requiring operator judgment. Merge holds remain unchanged.")
 
 
@@ -1168,12 +1173,14 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
     return question
 
 
-def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str) -> dict:
+def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str, *,
+                     l3_authority: str | None = None) -> dict:
     """Original authority and viewed revision shared by decisions and merge reconciliation."""
     if source == "task":
         row = next((r for r in task_messages(project, slug) if r["id"] == message_id), None)
         authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
-                              or (question["audience"] == "l3" and row["role"] == "l3" and row.get("by") == "l3"))
+                              or ((question["audience"] == "l3" or l3_authority)
+                                  and row["role"] == "l3" and row.get("by") == "l3"))
     elif source == "project":
         from . import l3
         row = next((r for r in l3.chat_history(project, None)
@@ -1181,10 +1188,14 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
         authorized = row and row.get("trigger", "chat") in (None, "", "chat")
     else:
         raise TransitionError("resolution source must be task or project")
+    if l3_authority and not (source == "task" and row and row["role"] == "l3" and row.get("by") == "l3"):
+        raise TransitionError("L3 authority must cite an original L3 task message")
     if not authorized:
         raise TransitionError("resolution must cite an original message with authority for this question")
     if source == "task":
         refs = row.get("question_refs")
+        if l3_authority and {"id": question["id"], "revision": question["revision"]} not in (refs or []):
+            raise TransitionError("L3 authority source must name this exact question revision")
         if refs is not None:
             if {"id": question["id"], "revision": question["revision"]} not in refs:
                 raise TransitionError("source message discusses a different question revision")
@@ -1198,12 +1209,17 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
 def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str, *,
                      disposition: str, reason: str, expected_attempt: int, source: str = "task",
                      remaining: str | None = None, recommendation: str | None = None,
-                     recommendation_label: str | None = None, recommendation_why: str | None = None) -> dict:
+                     recommendation_label: str | None = None, recommendation_why: str | None = None,
+                     l3_authority: str | None = None) -> dict:
     """The owning L2 records semantic judgment with durable, original authority; no prose classifier."""
     if disposition not in ("answered", "superseded") or not reason.strip():
         raise TransitionError("resolution needs answered/superseded and a concrete reason")
     if remaining is not None and not remaining.strip():
         raise TransitionError("remaining question must name the still-relevant unanswered parts")
+    if l3_authority is not None:
+        if not isinstance(l3_authority, str) or not l3_authority.strip():
+            raise TransitionError("L3 authority needs specific evidence and a rationale")
+        l3_authority = l3_authority.strip()
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("attempt") != expected_attempt:
@@ -1212,21 +1228,23 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
             raise TransitionError("only the active task owner may resolve its question")
         _require_daemon_fence(task, slug)
         question = _question_target(task, identity, revision)
-        row = _decision_source(project, slug, question, message_id, source)
+        row = _decision_source(project, slug, question, message_id, source, l3_authority=l3_authority)
         receipt = question.get("resolution") or {}
         if question["status"] != "open":
             if (receipt.get("message_id"), receipt.get("source"), receipt.get("disposition"), receipt.get("text"),
-                    receipt.get("remaining")) == (message_id, source, disposition, reason.strip(), remaining):
+                    receipt.get("remaining"), receipt.get("l3_authority")) == (
+                    message_id, source, disposition, reason.strip(), remaining, l3_authority):
                 return question_view(project, task, question)
             raise TransitionError("question was already resolved or superseded; refresh the conversation")
         actor = OPERATOR_MESSAGE_ROLE if source == "project" else row.get("by") or row["role"]
         receipt = _close_question(question, disposition, reason.strip(), actor, message_id, source)
         receipt["remaining"] = remaining
+        if l3_authority:
+            receipt.update(l3_authority=l3_authority, recorded_by="l2", recorded_attempt=expected_attempt)
         _store_groups(task)
         group = _group_for(task, question)
         group["revision"] += 1
         if remaining:
-            task["waiting_on"] = "l3" if question["audience"] == "l3" else OPERATOR_MESSAGE_ROLE
             _publish_question(task, remaining.strip(), "l2", recommendation=recommendation,
                               label=recommendation_label, why=recommendation_why, force_revision=True,
                               previous=question, group=group, bump=False)
@@ -1387,14 +1405,18 @@ def decisions(project: str) -> list[dict]:
     return rows
 
 
-def block_question(slug: str, reason: str) -> str:
-    """The message L3 receives when an L2 blocks: answer from the record, or hand Burak one plain dilemma."""
-    return (f"Task `{slug}` blocked and asks: {reason[:800]}\n\n"
+def block_question(task: dict) -> str:
+    """Notify the coordinator of published questions without transferring decision authority."""
+    slug = task["slug"]
+    questions = "\n".join(f"- {q['id']} revision {q['revision']} (authority: {q['audience']}): {q['detail']}"
+                          for q in task.get("questions", []) if q["status"] == "open")
+    return (f"Task `{slug}` blocked and asks: {task['blocked_reason'][:800]}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
-            f"decision settles it, answer with `alt task message {slug} \"<answer>\"`; that resumes the task. When the "
-            "call is Burak's (taste, priorities, spend, a paradigm decision, anything the brief marked as his), or the "
-            f"L2 is insisting on a point you already answered, run `alt task escalate {slug} --question \"<one plain "
-            "dilemma with your recommendation>\"`. Reply in one or two plain sentences.")
+            f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\"` so its owner "
+            "can record the resolution. This notification grants no operator authority. Keep operator-required "
+            "proposal, security and product decisions open; do not re-escalate members already addressed to the operator. "
+            f"For a new operator choice use `alt task escalate {slug}` with its question and recommendation. "
+            "Coordinate only the parts you can settle; preserve merge holds and verified fault recovery.")
 
 
 def escalate(project: str, slug: str, question: str, actor: str = "l3", *,

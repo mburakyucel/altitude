@@ -95,8 +95,8 @@ def main():
     with config.add_project("atlas", path=repo):
         pass
 
-    def task(title, question, *, questions=None):
-        row = T.new("atlas", title, "Fictional index migration for deterministic browser verification.")
+    def task(title, question, *, questions=None, paths=None):
+        row = T.new("atlas", title, "Fictional index migration for deterministic browser verification.", paths=paths)
         slug = row["slug"]
         worktree = add_worktree(repo, slug)
         T.dispatch("atlas", slug, attempt=1, session_id=f"fixture-{slug}", agent_id=f"fixture-{slug}",
@@ -125,6 +125,27 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/delegated-questions":
+                slug = task("Lease and policy", "Two independent implementation questions.", paths=["tests/"],
+                            questions={"questions": [{"question": "May I edit the tests?"},
+                                                     {"question": "May we change the security policy?"}]})
+                T.set_hold_merge("atlas", slug, "Operator security review")
+                return self._json({"slug": slug})
+            if self.path in ("/fixture/l3-followup", "/fixture/l3-settle"):
+                slug = self._body()["slug"]
+                settle = self.path.endswith("settle")
+                message = T.message("atlas", slug, "l3", "The recorded lease includes tests/; test edits are authorized."
+                                    if settle else "I recommend checking the lease before asking for more scope.",
+                                    wake_blocked=False)
+                if settle:
+                    row = S.load_task("atlas", slug)
+                    member = T.question_group_view("atlas", row)["questions"][0]
+                    assert row["paths"] == ["tests/"]
+                    T.resolve_question("atlas", slug, member["id"], member["revision"], message["id"],
+                                       disposition="answered", reason="The existing lease authorizes test edits.",
+                                       expected_attempt=row["attempt"],
+                                       l3_authority="Recorded task lease includes tests/. L3 clarifies existing scope; no operator policy decision is settled.")
+                return self._json({"message_id": message["id"]})
             if self.path == "/fixture/group":
                 slug = task("Rollout decisions", "Three choices for the rollout.",
                             questions={"questions": [RETENTION, REGION, OWNER]})
