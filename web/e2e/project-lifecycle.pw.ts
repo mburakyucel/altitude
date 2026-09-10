@@ -74,8 +74,15 @@ test.describe("last project", () => {
     const overview = await (await request.get(`${service}/api/overview`)).json();
     expect(overview.projects[0].managed).toBe(false);
     await page.route("**/api/project/add", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Registration unavailable. Try again." }) }), { times: 1 });
+    // A refused registration reads at once: the overview stays unanswered until the error is on screen.
+    let releaseOverview!: () => void;
+    const overviewHeld = new Promise<void>((resolve) => { releaseOverview = resolve; });
+    const holdOverview = async (route: import("@playwright/test").Route) => { await overviewHeld; await route.continue(); };
+    await page.route("**/api/overview", holdOverview);
     await row.getByRole("button", { name: "Start L3", exact: true }).click();
     await walk.state("02-attach-error", { visible: [firstRun.getByRole("alert").filter({ hasText: "Registration unavailable" }), row.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+    await page.unroute("**/api/overview", holdOverview);
+    releaseOverview();
     let release!: () => void;
     const wait = new Promise<void>((resolve) => { release = resolve; });
     await page.route("**/api/project/add", async (route) => { await wait; await route.continue(); }, { times: 1 });

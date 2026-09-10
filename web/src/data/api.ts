@@ -678,7 +678,9 @@ export function useProjectAdd() {
   const queryClient = useQueryClient();
   return useMutation<{ restored?: boolean }, Error, ProjectAddInput>({
     mutationFn: (input) => post<{ restored?: boolean }>("/api/project/add", input),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["overview"] }),
+    // A restored project opens its page only once the overview lists it as managed, so success waits
+    // for the refetch; a refused registration reads at once and waits for nothing.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["overview"] }),
   });
 }
 

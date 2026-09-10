@@ -255,6 +255,15 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .task-tabs .on{color:var(--accent-text);border-bottom:2px solid var(--accent);padding-bottom:4px}
 .task-phone .live{border:0}.task-phone .lh{padding:0 16px;height:48px}.task-phone .lh h2{font-size:14px}
 .task-phone .lbody{padding:0 16px 16px}.task-phone .tool .n{white-space:nowrap}
+.activity{flex:none;width:100%;max-width:720px;margin:0 auto 8px;font-size:13px;line-height:1.45}
+.activity .activity-words{margin:6px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.activity details[open] .activity-words{display:block}.activity summary{cursor:pointer;color:var(--text-muted);list-style:none}
+.activity summary::-webkit-details-marker{display:none}.activity .activity-words{color:var(--text-secondary)}
+.activity .collapse,.activity details[open] .expand{display:none}.activity details[open] .collapse{display:inline}
+.activity-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.activity-row .btn{min-height:44px}
+.receipt{align-self:flex-end;font-size:12px;color:var(--text-muted);margin-top:-14px}
+.worker-control{padding:8px 16px;border-top:1px solid var(--hairline);margin-top:auto;flex:none}
+.m .activity .esc{display:none}
 """
 
 # ---------- icons ----------
@@ -433,6 +442,14 @@ def desktop_project(with_panel=True):
 board("Project", 1440, 900, desktop_project(True))
 
 # Desktop 3: task page — L2 conversation beside the live session
+def task_activity(live_href="Task.html"):
+    return (
+        '<section class="activity" aria-label="L2 activity"><div class="activity-row"><b>Latest from L2</b><span class="muted">12 sec ago</span></div>'
+        '<details><summary><span class="activity-words">The composer stays above the keyboard. I’m checking the inner scroll containers next.</span><span class="expand">Expand</span><span class="collapse">Collapse</span></summary></details>'
+        '<div class="activity-row"><span class="muted">Tool output observed · 8 sec ago</span><button class="btn">Stop<span class="esc"> · Esc</span></button></div>'
+        f'<a href="{live_href}">View live session</a></section>'
+    )
+
 live = (
     '<aside class="live">'
     f'<div class="lh"><h2><span class="pulse"></span>Live session</h2><div style="display:flex;gap:4px"><span class="btn ghost" style="height:32px">Pause</span><span class="btn ghost" style="height:32px" title="credential-shaped keys and values are redacted; model reasoning is never shown">Raw events</span></div></div>'
@@ -449,7 +466,7 @@ live = (
     '<div class="prose">Understood. Every board ships at both sizes in this PR; the mobile boards respect the iPhone safe areas.</div>'
     f'<div class="tool"><b>$</b>python3 design/wireframes/gen.py<span class="n">running…</span></div>'
     '<div class="sep" style="color:var(--success-text)"><span class="ln"></span>Following live · new steps appear at the bottom<span class="ln"></span></div>'
-    '</div></aside>'
+    '</div><div class="worker-control"><button class="btn">Stop</button></div></aside>'
 )
 task_inner = (
     '<div style="display:grid;grid-template-columns:260px minmax(0,1fr) 480px;height:100%">'
@@ -457,7 +474,7 @@ task_inner = (
     '<main class="pane">'
     '<header style="padding:16px 28px 14px;display:flex;flex-direction:column;gap:6px;flex:none">'
     f'<div style="display:flex;align-items:center;justify-content:space-between"><div class="crumb">{I("chev-l","i sm")}altitude</div>'
-    f'<div class="acts"><span class="btn ghost">Stop</span><span class="btn ghost">Reject</span><span class="ib on">{I("panel")}</span></div></div>'
+    f'<div class="acts"><span class="btn ghost">Reject</span><span class="ib on">{I("panel")}</span></div></div>'
     '<h1 style="display:flex;align-items:center;gap:10px;margin:0;font-size:18px;font-weight:600;line-height:1.3"><span class="dot"></span>Design wireframes for the simplified product</h1>'
     '<div class="sub" style="font-size:13px;color:var(--text-muted)">attempt 1 · started 32 min ago · 18% of its context used</div>'
     '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:2px"><span class="chip">Running</span><span class="chip">Fable on Claude</span><a href="#" class="chip">PR #176 open · main checks passed</a><details><summary class="chip held" style="cursor:pointer">Merge held · Details</summary><p>Keep this PR open until the operator reviews the phone and desktop interaction states and separately approves merging it.</p></details></div>'
@@ -466,11 +483,12 @@ task_inner = (
     '<div class="day">Today</div>'
     '<div class="l3"><p>I read #166 and both of your comments. Plan: one shared stylesheet on the build’s tokens, sixteen boards, numbered callouts on each. I’ll render with headless Chrome to check clipping at both sizes.</p></div>'
     '<div class="me">Not only desktop first. Both mobile and desktop need to land.</div>'
+    '<div class="receipt">Delivered to session</div>'
     '<div class="l3"><span class="muted">L3</span><p>The brief calls for both sizes. Keep the PR held for review.</p></div>'
     '<div class="l3"><p>Understood: every board ships at both sizes in this PR. The mobile boards respect the iPhone safe areas and keep the composer at 16px.</p></div>'
     '<div class="l3"><p>PR #176 is open and green. It is held for your review as the brief says; the README lists the three assumptions I made where the record was silent.</p>'
     '</div></div><div style="height:22px"></div>'
-    + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") +
+    + task_activity() + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") +
     '</div></main>' + live + '</div>'
 )
 board("Task", 1440, 900, task_inner)
@@ -676,19 +694,19 @@ phone_task_header = (
     f'<details class="phone-details"><summary aria-label="Task details">{I("more")}</summary><div class="details-panel"><h2>Design wireframes for the simplified product</h2>'
     '<p>attempt 1 · started 32 min ago · 18% context used</p><p>Engine and model · Observed tokens</p><a href="#">PR #176 open · main checks passed</a>'
     '<h3>Merge held</h3><p>Keep this PR open until the operator reviews the phone and desktop interaction states and separately approves merging it. This restriction remains while the worker is running or blocked.</p>'
-    '<p>Stop</p><p>Reject</p></div></details></header>'
+    '<p>Reject</p></div></details></header>'
 )
 phone_task_convo = (
     '<div class="day">Today</div>'
     '<div class="l3"><p>The boards are ready for review at both sizes.</p></div>'
     '<div class="me">Check the phone header and the keyboard too.</div>'
+    '<div class="receipt">Queued · waiting for a checkpoint</div>'
     '<div class="l3"><span class="muted">L3</span><p>The brief keeps the shell fixed while the content scrolls.</p></div>'
-    '<div class="l3"><p>The composer stays above the keyboard. I’m checking the inner scroll containers next.</p></div>'
 )
 for name, is_live in [("MobileTask", False), ("MobileTaskLive", True)]:
     tabs = f'<div class="task-tabs"><span class="{"" if is_live else "on"}">Conversation</span><span class="{"on" if is_live else ""}">Live session</span></div>'
     content = live if is_live else '<div class="mbody"><div class="mcol">' + phone_task_convo + '</div></div>'
-    field = '<div></div>' if is_live else '<div class="mcomp">' + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") + '</div>'
+    field = '<div></div>' if is_live else '<div class="mcomp">' + task_activity("MobileTaskLive.html") + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") + '</div>'
     board(name, 390, 844, '<div class="m task-phone">' + phone_task_header + tabs + content + field + tabbar("work") + '</div>')
 
 # The same live panel overlays the main pane from 1024 through 1279px.
@@ -703,7 +721,13 @@ def state_sheet(name, title, examples, height):
     board(name, 1200, height, f'<div style="padding:28px 40px"><h1 style="font-size:20px;margin:0">{title}</h1></div><div class="sheetgrid">{content}</div>')
 
 state_sheet("TaskStates", "Task page states", [
-    ("Stop confirmation", "in phone details; directly in desktop header", '<p>Stop this task? Its worker ends; the branch stays.</p><span class="btn">Cancel</span> <span class="btn primary">Stop</span>'),
+    ("Running", "one-click Stop beside the composer and in Live session", task_activity()),
+    ("Stopping", "draft editable; Send and Continue unavailable", '<button class="btn" disabled>Stopping…</button><p class="muted">Waiting for the worker to end.</p><div class="field">Keep these edits; check the phone first.</div>'),
+    ("Stopped", "Continue keeps the unsent draft; correction resumes the same session", '<button class="btn">Continue session</button>' + composer("Message the L2", engine=False, draft="Check the phone first.") + '<p class="muted">Send a correction to continue this session.</p>'),
+    ("Stop unconfirmed", "read status without retrying Stop", '<p class="danger">Stop unconfirmed · The worker may still be running</p><button class="btn">Check status</button><p>Draft kept; Send and Continue unavailable.</p>'),
+    ("Quiet / unavailable", "old prose never becomes fresh activity", '<b>Last update · 4 min ago</b><p>No new activity for 4 min</p><p>Activity unavailable · Last known update</p><button class="btn">Retry activity</button>'),
+    ("Delivery evidence", "receipt alternatives beneath the original bubble", '<div class="me">Check the phone first.</div><p class="muted">Queued · waiting for a checkpoint</p><p class="muted">Delivered to session</p><p class="muted">Delivery unconfirmed</p>'),
+    ("Resumed", "old direction clears until fresh public output", '<p>Waiting to resume</p><p>Running · No public update yet.</p><p>Existing edits and saved session retained.</p>'),
     ("Reject confirmation", "optional reason accompanies the archive", '<p>Reject this task? Its worker ends and the task is archived.</p><div class="field">Reason (optional)</div><div class="opts"><span class="btn">Cancel</span><span class="btn primary">Reject</span></div>'),
     ("Waiting on L3 + merge held", "complete reasons on request", '<p>L2 · Waits for L3 · Merge held</p><details><summary>Task details</summary><h3>Waits for L3</h3><p>Which recorded decision applies? The original question stays in the conversation.</p><h3>Merge held</h3><p>Keep the PR open until the operator reviews both phone and desktop states and separately approves the merge.</p></details>'),
     ("Held until resume", "Queued replaces the blocked label", '<span class="chip">Queued</span><p>Waits for resume · the window reopens at 10:30</p><div class="hint">Delivered when Altitude resumes the L2.</div>'),
@@ -715,7 +739,7 @@ state_sheet("TaskStates", "Task page states", [
     ("Empty conversations", "active and finished", '<p class="muted">No messages yet.</p><p class="muted">No messages on this task.</p><span class="chip">Done</span> <a class="chip ok" href="#">PR #178 merged · main checks passed</a><p class="muted">attempt 1 · done 2h ago</p>'),
     ("Resume by message", "blocked task composer", composer("Message the L2", engine=False, hint="Sending resumes the L2 with your message.")),
     ("Message refused", "bubble removed; editable draft returned", composer("Message the L2", engine=False, draft="Check the phone header too.", hint='<span class="danger">Not sent. Retry.</span>')),
-], 1480)
+], 2260)
 
 state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
     ("Project actions", "one flow on phone and desktop", '<p>Reset L3 conversation</p><p>Remove project</p>'),

@@ -1524,7 +1524,7 @@
 .task-activity-observation { display: flex; align-items: center; gap: 6px; }
 .task-dock-controls { min-height: 42px; font-size: 12px; margin-bottom: 3px; }
 .task-steering { flex-wrap: wrap; justify-content: flex-end; font-size: 12px; }
-.task-stop { min-height: 40px; border: 1px solid var(--border); gap: 8px; }
+.task-stop { border: 1px solid var(--border); gap: 8px; }
 .task-stop kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
 .live-steering { padding: 0 14px 8px; }
 .message-delivery { max-width: 90%; text-align: right; }

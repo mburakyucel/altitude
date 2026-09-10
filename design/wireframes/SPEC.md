@@ -476,7 +476,7 @@ decision states are reused; the viewer has no microphone, composer or empty publ
 ### 3.10 Task page
 
 The [L2 activity and steering agreement](l2-progress/PROPOSAL.md), with its
-[interactive board](l2-progress/board.html), is approved for #302 on 2026-09-09.
+[maintained task states](TaskStates.html), is approved for #302 on 2026-09-09.
 Its directly accessible Stop supersedes hiding Stop in the mobile header disclosure.
 
 The task header includes **Observed tokens** in phone task details and directly on desktop,
@@ -635,7 +635,8 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 Shown on any project route when no project is managed: a centred card, "Altitude found N folders
 under <root>", one row per folder with **Start L3**, and a path field for a folder elsewhere.
 States: scanning; none found (the path field alone); starting ("L3 is starting…", then the project
-page opens on its first reply); failed (one sentence and Retry).
+page opens on its first reply); failed (one sentence and Retry, shown the moment registration is
+refused rather than after the next folder rescan).
 For a removed project with retained history, `POST /api/project/add` reports `restored: true`.
 First run waits for the registration response, then opens the saved conversation; historical
 replies or errors do not determine the new start's outcome. Its saved queue resumes normally.

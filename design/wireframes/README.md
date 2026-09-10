@@ -8,7 +8,7 @@ Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` an
 save review captures under ignored `web/ui-artifacts/`. Native keyboard acceptance uses a real phone.
 ## L2 activity and steering
 
-[Review the interactive activity and steering board](l2-progress/board.html) and its
+[Review task interaction states](TaskStates.html) and the
 [interaction and engine feasibility notes](l2-progress/PROPOSAL.md). The operator approved the
 preview and steering for #302 on 2026-09-09; the delivered application remains held for review.
 Stop stays directly accessible beside the composer and in Live session on phone and desktop;
@@ -57,8 +57,8 @@ Phone headers, composers and tab bars stay docked while content scrolls inside t
 | Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with state dots, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
 | Project work | `MobileWork.html` | The work panel as the phone's Work tab: all current tasks, including questions awaiting an answer, as status rows opening chat; folded recent Done history. |
 | Needs you and L2 decisions | `ConversationFirst*.html`, `MobileConversationFirst*.html` | Six examples: questions upfront, immediate single choices, grouped picks, follow-up, partial/irrelevant closure, and resumed work. Shared recovery/input appendix. |
-| Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, labelled L3 prose, attempt/age/context metadata and PR/check chips. Phone details hold metadata and existing operational actions; concise status stays in the header above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
-| Task overlay and states | `TaskOverlay.html`, `TaskStates.html` | The live panel overlays the main pane below 1280px. Inline Stop/Reject confirmations, L3 block, held resume, connecting, streaming, paused, unavailable, finished/empty conversation, and message failure. |
+| Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, replacing public activity preview and delivery receipts, with direct Stop beside the composer and in Live session. Phone details hold metadata and Reject; concise status stays above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
+| Task overlay and states | `TaskOverlay.html`, `TaskStates.html` | The live panel overlays the main pane below 1280px. Running, stopping, stopped/correction/Continue, unconfirmed Stop, quiet/unavailable activity, delivery receipts, resume, Reject confirmation, blocked, finished and existing transcript/message states. |
 | Report | `Report.html`, `MobileReport.html` | Full report and digest as plain sections, with a back link to the task. |
 | Monitor | `Monitor.html`, `MobileMonitor.html`, `MonitorStates.html` | Configured engine seats, reserve lines, reading ages, stale chips, routing and Sessions (N). Loading, error, no reading, one engine, and empty states. The route boards also show the restart banner above the header/content. |
 | Restart banner states | `RestartStates.html` | Pending at the quiet point, waiting with a named reason, under way with the button gone, and absent after the new process answers. |

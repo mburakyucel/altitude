@@ -351,7 +351,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send} selection={selection} onEscapeOwnership={onEscapeOwnership}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={steering.state === "stopped" ? "Send a correction to continue this session." : ["stopping", "stop_unconfirmed"].includes(steering.state) ? "Keep editing while Stop is confirmed." : task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
+        hint={["stopped", "stopping", "stop_unconfirmed"].includes(steering.state) ? "" : task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} />
+        {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
+          : ["stopping", "stop_unconfirmed"].includes(steering.state) ? <p className="text-meta text-muted">Keep editing while Stop is confirmed.</p> : null}
+      </div> : null}
     </section>
   );
 }
