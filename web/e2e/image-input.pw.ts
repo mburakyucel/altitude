@@ -79,6 +79,15 @@ for (const scope of ["project", "task"] as const) {
       visible: [v.strip, v.remove], hidden: [],
     });
     await expect(v.strip).toHaveCSS("height", "64px");
+    const strip = await v.strip.boundingBox();
+    const field = await v.field.boundingBox();
+    expect(strip!.y + strip!.height).toBeLessThanOrEqual(field!.y);
+    for (const remove of await v.strip.getByRole("button").all()) {
+      const box = await remove.boundingBox();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.x).toBeGreaterThanOrEqual(strip!.x);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(strip!.x + strip!.width);
+    }
     await walk.state("02b-count-limit-keeps-four", { action: () => v.picker.setInputFiles({ ...file, name: "fifth.png" }), visible: [v.strip, page.getByText(/Up to 4 images per message\./)], hidden: [page.getByRole("button", { name: "Remove image fifth.png", exact: true })] });
     for (const name of ["timer.png", "timer-2.png", "timer-3.png", "timer-4.png"]) await page.getByRole("button", { name: `Remove image ${name}`, exact: true }).click();
     await walk.state("03-last-removal", { visible: [v.field, v.add], hidden: [v.strip] });
@@ -181,8 +190,10 @@ for (const scope of ["project", "task"] as const) {
     await v.picker.setInputFiles(await screenshotFile(page)); await v.field.fill(caption);
     const start = page.getByRole("button", { name: "Start voice input", exact: true });
     const stop = page.getByRole("button", { name: "Stop voice input", exact: true });
-    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.strip], hidden: [v.add] });
-    await v.field.fill(`${caption} Keep this edit.`);
+    const phone = info.project.name === "phone";
+    if (phone) await v.field.fill(`${caption} Keep this edit.`);
+    await walk.state("01-listening-with-image", { action: () => start.click(), visible: [stop, v.strip, ...(!phone ? [v.field] : [])], hidden: [v.add, ...(phone ? [v.field] : [])] });
+    if (!phone) await v.field.fill(`${caption} Keep this edit.`);
     await walk.state("02-voice-cancel-keeps-image", { action: () => page.getByRole("button", { name: "Cancel voice input", exact: true }).click(), visible: [v.strip, v.add, start], hidden: [stop] });
     await expect(v.field).toHaveValue(`${caption} Keep this edit.`);
     let release: () => void = () => undefined;

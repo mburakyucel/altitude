@@ -4,11 +4,12 @@ The operator approved this interaction and bounded storage/delivery policy on 20
 The implementation PR remains held for operator review and merge. The shared
 [composer specification](SPEC.md#36-composer) lists the interaction states; the maintained
 application walkthrough is `web/e2e/image-input.pw.ts`. Review captures and the approved proposal
-prototype stay outside Git. The separately pending mobile-chat layout decisions remain separate.
+prototype stay outside Git. The shared compact mobile layout follows [SPEC §8](SPEC.md#8-compact-mobile-chat).
 
 ## Interaction
 
-One Add images control shares the existing composer toolbar. Native selection and desktop image-file
+One Add images control shares the existing composer controls, alongside text, mic and Send on phone.
+Native selection and desktop image-file
 paste add screenshots/photos to one short preview strip; ordinary text paste is unchanged. Each
 preview has a named 44px Remove target. Four previews fit at phone width, and removing the last
 one removes the entire strip. Empty composers have no attachment row or permanent limits banner.
@@ -94,4 +95,4 @@ physical device picker/clipboard behavior.
 This delivers the operator image-input increment, including project chat, of
 [altitude issue #230](https://github.com/mburakyucel/altitude/issues/230). Agent-produced evidence,
 general downloadable deliverables and a results/report area remain outside scope and keep the
-issue open. Reconcile shared components by rebase without adopting pending layout decisions.
+issue open. Shared components retain the approved compact mobile layout.

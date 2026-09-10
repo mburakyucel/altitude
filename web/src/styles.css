@@ -1976,6 +1976,7 @@
 .shell[data-phone] .composer-box {
   min-height: 54px;
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 4px;
   padding: 4px;
@@ -2028,6 +2029,10 @@
   gap: 8px;
   height: 64px;
   margin: 0 0 8px;
+}
+.shell[data-phone] .image-draft {
+  flex: 0 0 100%;
+  margin-bottom: 0;
 }
 .image-draft-item {
   position: relative;
