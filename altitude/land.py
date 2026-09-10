@@ -2,7 +2,7 @@
 
 Stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
 push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
-reuse the PR, wait for checks, merge only on green — or, where the repository configures no CI at all, on a
+reuse the PR, wait for checks, merge only on green — or, under the project's local-check policy, on a
 full local suite that passed on the base-plus-head merge candidate — and only when asked. No
 model call anywhere — the commit message arrives as an argument. Idempotent: nothing to commit is a skip, an
 up-to-date push is a no-op, an open PR is reused.
@@ -682,6 +682,10 @@ def _checks_evidence(root: Path, pair: dict) -> str:
                                 for item in rule["parameters"]["requiredStatusChecks"])
             elif rule["type"] in {"WORKFLOWS", "REQUIRED_WORKFLOW_STATUS_CHECKS"}:
                 raise LandError("required workflow evidence cannot be established from status checks")
+        if pair.get("local_checks"):
+            if required:
+                raise LandError("local-check policy requires the operator to remove hosted required checks first")
+            return "local-required"
         head = pr["commits"]["nodes"][0]["commit"]
         if head["oid"] != pair["head_sha"]:
             raise LandError("checks are associated with a different PR head")
@@ -794,6 +798,10 @@ def _has_ci(root: Path, pair: dict) -> bool:
 def _checks_value(root: Path, number: int, pair: dict) -> str:
     """Read checks only while GitHub and origin still name the pinned PR pair."""
     _assert_pair_current(root, pair)
+    if pair.get("local_checks"):
+        value = _checks_evidence(root, pair)
+        _assert_pair_current(root, pair)
+        return value
     state = _checks_state(root, number)
     evidence = _checks_evidence(root, pair)
     if state != "none" and evidence == "none":
@@ -826,20 +834,25 @@ def _test_counts(output: str) -> tuple[int | None, int | None, int | None]:
     return None, None, None
 
 
-def _local_suite(cwd: Path, test_cmd: str) -> dict:
+def _local_suite(cwd: Path, test_cmd: str, *, log: Path | None = None) -> dict:
     """Run and count the full local suite in the synthetic merge candidate."""
     argv = shlex.split(test_cmd)
     if not argv:
         raise LandError("the local test command is empty")
-    _note(f"no CI configured — the merge candidate's local suite is the gate: {test_cmd}")
+    _note(f"the merge candidate's local suite is the gate: {test_cmd}")
     result = {"command": test_cmd, "passed": False, "returncode": None, "tests": None, "skipped": None,
               "expected_failures": None, "error": None}
     try:
-        run = _run(argv, cwd, timeout=LOCAL_TEST_TIMEOUT)
+        # Hosted checks forbade focused-only tests; the mandatory local gate retains that setting.
+        run = _run(["env", "CI=true", *argv] if log else argv, cwd, timeout=LOCAL_TEST_TIMEOUT)
     except LandError as exc:
         _note(f"the local suite did not run to completion — not merging: {exc}")
         result["error"] = str(exc)
+        if log:
+            log.write_text(str(exc) + "\n")
         return result
+    if log:
+        log.write_text((run.stdout or "") + "\n" + (run.stderr or ""))
     tests, skipped, expected = _test_counts((run.stdout or "") + "\n" + (run.stderr or ""))
     result.update(returncode=run.returncode, tests=tests, skipped=skipped, expected_failures=expected,
                   passed=run.returncode == 0 and tests is not None and tests > 0)
@@ -940,29 +953,56 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
 
 
 def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
-                          preserve_history: bool = False) -> tuple[bool, dict | None, dict]:
+                          preserve_history: bool = False, merge: bool = True,
+                          evidence_dir: Path | None = None) -> tuple[bool, dict | None, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
     base_sha, head_sha = pair["base_sha"], pair["head_sha"]
+    identity = {"base": base_sha, "head": head_sha}
+
+    def finish(merged, main_run, tests):
+        if evidence_dir:
+            S.write_json(evidence_dir / "result.json", tests)
+        return merged, main_run, tests
+
     try:
         _assert_pair_current(root, pair)
         with _candidate(root, base_sha, head_sha, preserve_history=preserve_history) as path:
-            tests = _local_suite(path, test_cmd)
+            if evidence_dir:
+                candidate = _need(_git(path, "rev-parse", "HEAD"), "candidate SHA")
+                tree = _need(_git(path, "rev-parse", "HEAD^{tree}"), "candidate tree")
+                evidence_dir = evidence_dir / candidate
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                identity.update(candidate=candidate, tree=tree, evidence=str(evidence_dir))
+                # Fresh candidate worktrees have no web dependencies. Install the locked inputs.
+                install = _run(["pnpm", "--dir", "web", "install", "--frozen-lockfile",
+                                "--store-dir", str(config.ROOT / "pnpm-store")], path, timeout=LOCAL_TEST_TIMEOUT)
+                (evidence_dir / "install.log").write_text((install.stdout or "") + "\n" + (install.stderr or ""))
+                _need(install, "candidate dependency installation")
+                tests = _local_suite(path, test_cmd, log=evidence_dir / "check.log")
+                artifacts = path / "web" / "ui-artifacts"
+                if artifacts.exists():
+                    shutil.copytree(artifacts, evidence_dir / "ui-artifacts", dirs_exist_ok=True)
+            else:
+                tests = _local_suite(path, test_cmd)
     except LandError as exc:
         _note(f"not merging: {exc}")
-        return False, None, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
+        return finish(False, None, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
                              "skipped": None, "expected_failures": None, "error": str(exc),
-                             "base": base_sha, "head": head_sha}
-    tests.update(base=base_sha, head=head_sha)
+                             **identity})
+    tests.update(identity)
+    if evidence_dir:
+        S.write_json(evidence_dir / "result.json", tests)
     if not tests["passed"]:
         _note(f"not merging: the local suite ({test_cmd}) is not green on the merge candidate")
-        return False, None, tests
+        return finish(False, None, tests)
     try:
         _assert_pair_current(root, pair)
     except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
-        return False, None, tests
-    after_checks = _checks_state(root, pair["number"])
+        return finish(False, None, tests)
+    after_checks = (_checks_evidence(root, pair) if pair.get("local_checks")
+                    else _checks_state(root, pair["number"]))
     if after_checks == "none":
         after_checks = _checks_evidence(root, pair)
     try:
@@ -970,16 +1010,29 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
     except LandError:
         tests["error"] = "the base or the head moved while final checks were being read"
         _note(f"not merging: {tests['error']}")
-        return False, None, tests
-    if after_checks != "none":
+        return finish(False, None, tests)
+    if after_checks != ("local-required" if pair.get("local_checks") else "none"):
         tests["error"] = f"PR checks changed from none to {after_checks} while the local suite ran"
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
-        return False, None, tests
+        return finish(False, None, tests)
+    if evidence_dir:
+        body = json.loads(_need(_run(["gh", "pr", "view", str(pair["number"]), "--json", "body"], root),
+                                "PR test summary"))["body"] or ""
+        body = re.sub(r"^Tests: make check passed locally \([0-9a-f]{40}\).*\n?", "", body, flags=re.M)
+        summary = (f"Tests: make check passed locally ({tests['candidate']}); "
+                   f"base {base_sha}, head {head_sha}.\n")
+        body_path = evidence_dir / "pr-body.md"
+        body_path.write_text(body.rstrip() + "\n" + summary)
+        _need(_run(["gh", "pr", "edit", str(pair["number"]), "--body-file", str(body_path)], root),
+              "publish local test summary")
+        _assert_pair_current(root, pair)
+    if not merge:
+        return finish(False, None, tests)
     if before_merge:
         before_merge()
     merged, main_run = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
                               preserve_history=preserve_history)
-    return merged, main_run, tests
+    return finish(merged, None if pair.get("local_checks") else main_run, tests)
 
 
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
@@ -1151,6 +1204,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
     hold_merge = task.get("hold_merge")
     pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
+    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
+    repository = github_intake._REMOTE.fullmatch(origin)
+    pair["local_checks"] = bool(repository and
+                                f"{repository['owner']}/{repository['repo']}".lower() == config.LOCAL_CHECK_REPOSITORY)
+    if pair["local_checks"]:
+        test_cmd = "make check"
     checks = _checks_value(root, number, pair)
     deadline = time.monotonic() + max(wait, 0)
     while checks == "pending" and time.monotonic() < deadline:
@@ -1178,7 +1237,12 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         if current.get("hold_merge"):
             raise LandError(f"task carries a merge hold: {current['hold_merge']}")
         _require_closing_issues(root, number, closes_issues)
-    if merge and not merged:
+    if checks == "local-required":
+        merged, main_run, local_tests = _merge_on_local_suite(
+            root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption), merge=merge,
+            evidence_dir=S.task_dir(project, slug) / "local-checks")
+        checks = "local-pass" if local_tests["passed"] and not local_tests["error"] else "local-fail"
+    elif merge and not merged:
         if checks == "none-configured":
             merged, main_run, local_tests = _merge_on_local_suite(
                 root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption))

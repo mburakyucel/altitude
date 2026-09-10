@@ -84,6 +84,13 @@ development/admin exposure grants no new privilege model, generic flag framework
 
 ## Checks
 
+The operator's 2026-09-09 Pacific decision temporarily suspends hosted CI for this repository.
+`alt land` runs `make check` on the exact current merge candidate and records its base, head,
+candidate SHA, tree and local evidence. A passing run adds one truthful test line to the PR;
+failed tests or changed tips block merge. Historical hosted failures do not gate this project's
+delivery. Existing review and UX/operator holds still apply. Other projects keep their existing
+gates. See [local delivery and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
+
 Every PR runs `make check`: the full Python and web suites, typecheck/build and isolated
 headless browser flows. Tests keep application logic, state transitions and API/storage integration
 real, replacing external engine calls at the engine seam with deterministic fixtures. They must
@@ -139,7 +146,8 @@ with fictional records and deterministic engine fixtures.
 Use `walkthrough.ts` to open the route, drive each action, assert visible text/roles that appear
 and disappear, and save a named screenshot for each state; `project-menu.pw.ts` is the example.
 The PR body lists the states walked at each viewport and the spec or screenshot folder that proves
-each state. Artifacts are under `web/ui-artifacts/` and retained briefly in CI; see development docs for setup.
+each state. Artifacts are under `web/ui-artifacts/`; local landing retains candidate evidence in the
+task folder. See development docs for setup.
 The harness uses the locked bundled Chromium under the Altitude home's shared `browsers/` directory,
 with Chromium's sandbox disabled inside the worker sandbox. Incident I-20260907-041446: this
 host's installed Chrome AppArmor profile denies network sockets there. Install the matching

@@ -24,6 +24,9 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
 REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, schemas/, templates/, web/
 # Product issue target, set only in altd's environment. Unset uses this installation's origin.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
+# Operator decision 2026-09-09 Pacific: this project's hosted CI is suspended.
+# Remove this exception when restoring its workflow; other projects retain their gates.
+LOCAL_CHECK_REPOSITORY = "mburakyucel/altitude"
 PERSONAS = REPO / "personas"
 SCHEMAS = REPO / "schemas"
 TEMPLATES = REPO / "templates"
@@ -42,7 +45,7 @@ TLS_DIR = Path(os.environ.get("ALTITUDE_TLS_DIR", str(_POCKETBOOK_TLS if (_POCKE
 TLS = os.environ.get("ALTITUDE_TLS", "1") != "0"
 
 # Context lines per engine: Claude quality degrades past
-# ~25–30% of the window in Burak's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
+# ~25–30% of the window in the operator's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
 # 1,000,000-token window (probed 2026-08-30: result JSON `modelUsage[..].contextWindow`), so the umbrella for all Claude
 # sessions is **300k**: auto-compact there (explicit `autoCompactWindow` on every launch — never a percent override on
 # top of the user's setting, which had them compacting at ~90k) and rotate the L3 there. Codex compacts at its own limit.

@@ -272,6 +272,14 @@ branches cannot be updated outside the guarded landing path. The trusted landing
 staging lease and repository, fetches the base, commits, pushes, opens the PR, pins the current
 base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
+The temporary local-check repository in `config.py` selects this project's operator-authorized
+exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
+web dependencies, even when opening a PR without merging. Historical hosted results do not supply
+its verdict. Active required hosted checks must be removed by the operator before this route can
+run; identity, scope, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
+retains logs, browser artifacts and a result binding command, base, head, candidate and tree. A
+successful current run writes a concise PR test line through the ordinary landing boundary.
+See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
 The lease limits which changes can be staged. Parallel tasks may edit shared paths; their briefs
 name those paths and ask owners to rebase onto main before landing and keep shared-doc edits to
 their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
@@ -360,8 +368,9 @@ skipped checks. A nonrequired skipped job is exempt only when its immutable exec
 PR event prove the supported main-push-only condition false, or prove
 `github.event_name != 'pull_request'` false for a `pull_request` run. The inequality does not
 exempt `pull_request_target` jobs; ambiguous conditions, source or association refuse.
-At least one applicable check must actually pass. Without CI,
-the full local suite runs on a clean two-parent merge candidate. Adopted PRs use a
+At least one applicable check must actually pass under the hosted gate. Without CI, or under
+this repository's temporary local policy, the full local suite runs on a clean merge candidate:
+one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
 Operator authority also travels through a recorded task reply. L3's project-bound
@@ -662,15 +671,15 @@ The same browser specs run at 390×844 with mobile user agent and touch and at 1
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
 appearing and disappearing, and saves named screenshots. Screenshots, traces and reports stay
-under ignored `web/ui-artifacts/` and are retained briefly as fictional CI artifacts when upload
-succeeds. Captures needed for review remain accessible outside Git.
+under ignored `web/ui-artifacts/`; local landing retains them with its candidate evidence in the
+task folder. Captures needed for review remain accessible outside Git.
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
-Artifact upload alone uses step-level `continue-on-error`; its failure remains visible without
-failing the required test job. Every test, build and candidate-identity step remains required. Bundled
+Hosted CI and its artifact upload are suspended for this repository. Every local test, build and
+candidate-identity step remains required. Bundled
 Chromium runs headlessly with a temporary profile and its browser sandbox disabled inside the
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
-timings and CI identity; [operations](OPERATIONS.md) covers service activation and mobile access.
+timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. They add no runtime lifecycle state and
