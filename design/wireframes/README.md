@@ -3,9 +3,9 @@
 ## Approved conversation-first design
 
 [Review the Needs you / L2 conversation design](CONVERSATION_FIRST.md), with
-[phone and desktop boards](conversation-first/index.html) and committed screenshots for PR review.
-The operator settled the single/grouped-question UX on 2026-09-08. Its six-example captured review is the primary
-decision review; shared input and recovery examples are folded into an optional appendix.
+[phone and desktop boards](index.html). The operator settled the single/grouped-question UX on
+2026-09-08. The boards show its distinct decision states; shared input and recovery examples live
+in one appendix per viewport.
 `conversation_first.py`, called by `gen.py`, generates these boards and styles. The conversation-first
 boards define decision behavior; the other boards below retain the broader shell and session layout studies.
 Current decision interactions are the conversation-first boards and SPEC §3.8–3.10.
@@ -17,6 +17,9 @@ accepted departures are folded into both. Nothing here depends on a hosted tool:
 from disk, from `serve.sh`, or from the Altitude UI's Design link.
 
 Every design iteration follows the [standing design tenet and review expectations](SPEC.md#11-standing-design-tenet).
+Keep this tree focused on current approved design. Fold accepted changes into the spec and useful
+boards; remove obsolete studies and links. Review captures, comparisons and per-PR galleries stay
+outside Git under the [project UI rule](../../AGENTS.md#ui).
 
 Burak approved this direction on 2026-09-05. It replaces the 2026-09-03 set (#166), which polished
 the console-shaped app (Inbox, Projects, Chat, Monitor as four routes). The redesign starts from the
@@ -69,6 +72,9 @@ design/wireframes/shots.sh
 
 Renders every board in both themes into `design/wireframes/shots/` (gitignored) with the Chrome on
 this machine (`CHROME=` overrides). Each board's size is read from the board itself.
+The reusable `web/e2e/conversation-first-wireframes.pw.ts` and application walkthroughs write named
+phone/desktop captures to ignored `web/ui-artifacts/`. Keep evidence needed for review accessible and
+link it from the PR; see [development](../../docs/DEVELOPMENT.md#browser-walkthroughs).
 
 ## Change
 

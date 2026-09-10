@@ -9,14 +9,13 @@ import { fixtures, now } from './fixtures.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const require = createRequire(resolve(root, 'web/package.json'));
 const { chromium, devices, expect } = require('@playwright/test');
-const images = resolve(root, 'docs/images');
-const evidence = process.env.README_EVIDENCE_DIR || '/tmp/altitude-readme-evidence';
+const images = resolve(root, 'web/ui-artifacts/readme/images');
+const evidence = process.env.README_EVIDENCE_DIR || resolve(root, 'web/ui-artifacts/readme');
 await mkdir(images, { recursive: true });
 await mkdir(evidence, { recursive: true });
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
-  const relative = path.startsWith('/assets/') ? `web/dist${path}` :
-    path.startsWith('/docs/images/') ? path.slice(1) : 'web/dist/index.html';
+  const relative = path.startsWith('/assets/') ? `web/dist${path}` : 'web/dist/index.html';
   try {
     const body = await readFile(resolve(root, relative));
     const type = { '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.html': 'text/html' }[extname(relative)];
@@ -39,7 +38,7 @@ try {
     });
     const page = await context.newPage();
     await page.clock.setFixedTime(new Date(now));
-    let data = fixtures();
+    const data = fixtures();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
@@ -52,7 +51,6 @@ try {
       else if (path === '/api/chat/atlas') body = data.chat;
       else if (path.startsWith('/api/task/atlas/')) body = data.tasks.find(t => t.slug === path.split('/').at(-1));
       else if (path === '/api/transcript/atlas/client-compatibility') body = data.transcript;
-      else if (path === '/api/transcript/atlas/resumable-backfill') body = data.backfillTranscript;
       else if (path === '/api/l2/message' && request.method() === 'POST') {
         const sent = request.postDataJSON();
         const task = data.tasks.find(t => t.slug === sent.slug);
@@ -83,7 +81,7 @@ try {
       await expect(page.getByRole('region', { name: 'Work', exact: true })).toContainText('Preserve client compatibility');
       await capture('work');
     }
-    await page.getByRole('link', { name: 'Preserve client compatibility', exact: true }).click();
+    await page.getByRole('link', { name: /^Preserve client compatibility ·/ }).click();
     await expect(page.getByRole('region', { name: 'Task conversation' })).toContainText('bind each token');
     if (!phone) await expect(page.getByRole('region', { name: 'Live session', exact: true })).toContainText('compatibility boundary');
     await capture('task');
@@ -97,18 +95,9 @@ try {
       await expect(page.getByRole('region', { name: 'Live session', exact: true })).toContainText('compatibility boundary');
       await capture('session');
     }
-    data = fixtures(true);
-    await page.goto(origin);
-    await expect(page.getByRole('heading', { name: 'Needs you', exact: true })).toBeVisible();
-    await expect(page.getByRole('article', { name: 'Build resumable index backfill' })).toContainText('Seven or thirty days');
-    await capture('decisions');
-    await page.getByRole('article', { name: 'Build resumable index backfill' }).getByRole('link', { name: 'More context' }).click();
-    await expect(page.getByRole('region', { name: 'Task conversation' })).toContainText('Use the recorded rule');
-    if (!phone) await expect(page.getByRole('region', { name: 'Live session', exact: true })).toContainText('old-index retention period');
-    await capture('decision-context', false);
     if (errors.length) throw new Error(errors.join('\n'));
     await context.close();
-    console.log(`${name}: project → work → task → direct message → session → decisions → context; no console errors or viewport overflow`);
+    console.log(`${name}: project → work → task → direct message → session; no console errors or viewport overflow`);
   }
 } finally {
   await browser.close();

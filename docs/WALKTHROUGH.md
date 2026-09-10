@@ -64,23 +64,16 @@ Later the owner needs a retention policy: keep the old index for seven or thirty
 recommend seven days for the pilot, but the storage cost and rollback window need your judgment.
 It escalates that question. The other task owners can continue while this one waits.
 
-**Needs you** gathers operator questions across projects, including Harbor's pilot-access call:
+**Needs you** gathers unanswered operator questions across projects. Open a question to read its
+context and discuss it in the owning L2 conversation. Explicit quick choices answer a single
+question immediately; a group lets you pick answers and send them together. You can also type,
+“Keep the old index for seven days; include that limit in the rollout notes.” The owner records
+that decision against your message. A follow-up keeps the question open, and a saved answer does
+not by itself mean work has resumed or a merge hold has been released.
 
-<picture>
-  <source media="(max-width: 600px)" srcset="images/decisions-phone.png">
-  <img src="images/decisions-desktop.png" alt="Needs you groups Atlas's index-retention decision and Harbor's pilot-access decision, with Resume, Reject and More context controls." width="1440">
-</picture>
-
-[Full-size desktop](images/decisions-desktop.png) · [Phone decisions](images/decisions-phone.png)
-
-Use **More context** to open the task and answer in its conversation, for example: “Keep the old
-index for seven days; include that limit in the rollout notes.” Messaging a blocked L2 requests
-its resume with that answer. **Resume** continues from the existing context; **Reject** ends the
-task. They are lifecycle actions, not buttons for choosing a retention period.
-
-These captures use the implemented task/context route. The approved design's richer decision
-page and custom choice/follow-up controls belong to its work-and-decisions slice; they are not
-shown as shipped behavior here.
+The [current decision boards](../design/wireframes/CONVERSATION_FIRST.md) illustrate these states;
+[phone/desktop walkthroughs](DEVELOPMENT.md#browser-walkthroughs) retain implementation evidence
+outside Git.
 
 ## Bring delivery back to the project
 

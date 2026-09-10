@@ -9,3 +9,5 @@ web/*.tsbuildinfo
 web/dist/
 web/.dist-*/
 design/wireframes/shots/
+design/wireframes/**/captures/
+design/wireframes/**/implementation/

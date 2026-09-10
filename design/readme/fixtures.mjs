@@ -8,7 +8,7 @@ const task = (slug, title, engine, minutes) => ({
   live: { state: 'running', context_percent: 24, edits: 6, agent: { status: 'working' } },
   files: {}, events: [], messages: [], report_json: null,
 });
-export function fixtures(deciding = false) {
+export function fixtures() {
   const compatibility = task('client-compatibility', 'Preserve client compatibility', 'codex', 34);
   compatibility.messages = [
     message('c1', 'l2', 'I am covering the v1 response contract and the index-switch boundary. Existing clients will keep the same request and response shape.', 22),
@@ -21,24 +21,6 @@ export function fixtures(deciding = false) {
     message('b2', 'l3', 'Use the recorded rule: upsert by document ID and source revision. A replay must not replace a newer revision. Resume with that contract.', 19),
   ];
   const performance = task('performance-baseline', 'Measure search latency baseline', 'codex', 30);
-  const question = 'Seven or thirty days of rollback?';
-  const reason = `${question} I recommend seven days for the pilot.`;
-  const decision = {
-    // Match tasks.decisions(): prefixed first sentence, with the full block reason as detail.
-    project: 'atlas', slug: backfill.slug, kind: 'blocked', title: backfill.title,
-    question: `L3 asks: ${question}`, detail: reason,
-    asked: ago(4), options: ['Resume', 'Reject'],
-  };
-  if (deciding) {
-    Object.assign(backfill, { state: 'blocked', waiting_on: 'burak', escalated: true, blocked_reason: reason, updated: ago(4), live: null });
-    backfill.messages.push(message('b3', 'l3', decision.detail, 4));
-  }
-  const harborDecision = {
-    project: 'harbor', slug: 'pilot-access', kind: 'blocked', title: 'Prepare the pilot release',
-    question: 'L3 asks: Five teams or the full pilot group?',
-    detail: 'Five teams or the full pilot group? I recommend five teams first.',
-    asked: ago(9), options: ['Resume', 'Reject'],
-  };
   const tasks = [compatibility, backfill, performance];
   const history = [
     { role: 'user', text: 'Move Atlas to a versioned search index. Keep the v1 API stable and p95 below 200 ms. Agree the rollout constraints before starting.', trigger: 'chat', turn_id: 't1', at: ago(65) },
@@ -49,25 +31,20 @@ export function fixtures(deciding = false) {
   return {
     overview: {
       projects: [
-        { name: 'atlas', managed: true, counts: { running: deciding ? 2 : 3, blocked: deciding ? 1 : 0 }, l3: { session_id: 'fixture-l3' } },
-        { name: 'harbor', managed: true, counts: { blocked: deciding ? 1 : 0 }, l3: { session_id: 'fixture-harbor-l3' } },
+        { name: 'atlas', managed: true, counts: { running: 3, blocked: 0 }, l3: { session_id: 'fixture-l3' } },
+        { name: 'harbor', managed: true, counts: { blocked: 0 }, l3: { session_id: 'fixture-harbor-l3' } },
       ],
-      queue: deciding ? [decision, harborDecision] : [],
-      wip: { per_project: { atlas: deciding ? 2 : 3 }, machine: deciding ? 2 : 3, waiting: [] },
+      queue: [],
+      wip: { per_project: { atlas: 3 }, machine: 3, waiting: [] },
       quota: { known: false }, operator: 'Alex', now,
       engines: [
         { engine: 'codex', label: 'Codex', week: 36, known: true, at: ago(1) },
         { engine: 'claude', label: 'Claude', week: 42, known: true, at: ago(1) },
       ],
     },
-    project: { name: 'atlas', tasks, archive: [], decisions: deciding ? [decision] : [], l3: { session_id: 'fixture-l3', turns: 14 }, busy: false },
+    project: { name: 'atlas', tasks, archive: [], decisions: [], l3: { session_id: 'fixture-l3', turns: 14 }, busy: false },
     chat: { history, busy: false, active: null, queued: [], engine: null },
     tasks,
-    backfillTranscript: {
-      project: 'atlas', slug: backfill.slug, engine: 'claude', session_id: backfill.session_id,
-      cursor: 1, redaction: 'Fictional fixture data; no provider logs are read.',
-      events: [{ seq: 0, source: 'claude', kind: 'message', type: 'assistant', role: 'assistant', at: ago(5), text: 'The replay checks preserve the newer source revision. I need the old-index retention period before finishing the cleanup policy.' }],
-    },
     transcript: {
       project: 'atlas', slug: compatibility.slug, engine: 'codex', session_id: compatibility.session_id,
       cursor: 5, redaction: 'Fictional fixture data; no provider logs are read.',

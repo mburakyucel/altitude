@@ -581,6 +581,10 @@ expanded card.
 The boards and this document describe the same visual design and rules. Accepted departures are
 folded into the matching section and board. An unresolved change to an explicit rule is a question
 for the operator, asked as one plain dilemma; the answer is recorded in both before implementation.
+Keep the maintained set simple and current, replacing obsolete studies rather than accumulating
+per-PR boards or galleries. Review captures and routine renderings stay outside Git; the
+[project UI rule](../../AGENTS.md#ui) and [walkthrough guidance](../../docs/DEVELOPMENT.md#browser-walkthroughs)
+retain phone/desktop state verification and accessible review evidence.
 
 ## 5. Data binding and backend notes
 
