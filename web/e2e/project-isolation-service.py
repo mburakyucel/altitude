@@ -1,4 +1,5 @@
 """Disposable real chat/queue/history service; controlled providers never launch a worker."""
+import socket
 import threading
 
 from service_support import configure, serve
@@ -8,6 +9,7 @@ from altitude import config, engines, l3, server, state as S
 def main():
     configure()
     gates = {name: threading.Event() for name in ("alpha", "beta")}
+    disconnect = threading.Event()
     calls = []
     guard = threading.Lock()
 
@@ -19,7 +21,7 @@ def main():
             calls.append({"project": project, "text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
-        delayed = text in ("Alpha running request", "Beta running request", "Alpha accepted failure")
+        delayed = text in ("Alpha running request", "Beta running request", "Alpha accepted failure", "Alpha disconnected request")
         if delayed and attempt == 1:
             if options.get("on_text") and text != "Alpha accepted failure":
                 options["on_text"](f"{project.title()} partial reply.")
@@ -45,6 +47,16 @@ def main():
         S.regen_state_md(name)
 
     class Handler(server.Handler):
+        def _stream_send(self, obj):
+            super()._stream_send(obj)
+            if obj.get("turn") and l3.chat_history("alpha", 1)[0]["text"] == "Alpha disconnected request":
+                # Flush the real durable turn receipt before interrupting its chunked response.
+                if not disconnect.wait(45):
+                    raise TimeoutError("The browser did not release the transport interruption")
+                self.connection.shutdown(socket.SHUT_RDWR)
+                self.close_connection = True
+                raise BrokenPipeError("Controlled interruption after acceptance")
+
         def do_GET(self):
             if self.path == "/fixture/calls":
                 with guard:
@@ -52,6 +64,9 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/disconnect":
+                disconnect.set()
+                return self._json({"ok": True})
             if self.path.startswith("/fixture/release/"):
                 project = self.path.rsplit("/", 1)[-1]
                 if project not in gates:
@@ -60,7 +75,7 @@ def main():
                 return self._json({"ok": True})
             return super().do_POST()
 
-    serve(Handler, release=lambda: [gate.set() for gate in gates.values()])
+    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), disconnect]])
 
 
 if __name__ == "__main__":

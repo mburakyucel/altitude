@@ -831,8 +831,7 @@ export async function streamChat(
       body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
     });
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
-    if (!res.body) throw new ApiError(res.status, "no response body");
-    handlers.onAccepted?.();
+    if (!res.body) throw new Error("no response body");
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -850,26 +849,36 @@ export async function streamChat(
         const turn = ActiveTurnSchema.safeParse(parsed.turn);
         if (turn.success) {
           done = { ...done, turn: turn.data };
+          handlers.onAccepted?.();
           handlers.onTurn?.(turn.data);
         }
       }
       if (typeof parsed.t === "string") handlers.onText(parsed.t);
       if (parsed.done) done = { ...done, ...parsed.done };
       if (parsed.queued) done = { ...done, queued: QueuedMessageSchema.parse(parsed.queued) };
+      if (!done.turn && (done.turn_id || done.queued)) handlers.onAccepted?.();
     };
 
-    for (;;) {
-      const { value, done: eof } = await reader.read();
-      if (eof) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline = buffer.indexOf("\n");
-      while (newline >= 0) {
-        handleLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
+    try {
+      for (;;) {
+        const { value, done: eof } = await reader.read();
+        if (eof) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          handleLine(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf("\n");
+        }
       }
+      handleLine(buffer);
+    } catch (error) {
+      if (!done.turn && !done.turn_id && !done.queued) throw error;
     }
-    handleLine(buffer);
+    if (!done.turn && !done.turn_id && !done.queued) {
+      if (done.error) throw new ApiError(409, done.error);
+      throw new Error("No delivery receipt");
+    }
     return done;
   } finally {
     setChatStreaming(false);

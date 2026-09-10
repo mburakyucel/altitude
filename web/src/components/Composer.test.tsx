@@ -1,10 +1,11 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
+import { ApiError } from "../data/api";
 import { FakeMediaRecorder, installVoiceBrowser } from "./voiceTest";
 
 /*
@@ -90,7 +91,7 @@ describe("Composer", () => {
   it("refused: the draft returns, the hint reads Not sent. Retry, and Retry sends the same text", async () => {
     let refuse = true;
     const onSubmit = vi.fn(async () => {
-      if (refuse) throw new Error("409");
+      if (refuse) throw new ApiError(409, "Refused");
     });
     const { user, field } = mount({ onSubmit, hint: "L3 answers or creates one task." });
     await user.type(field, "ship it");
@@ -107,6 +108,58 @@ describe("Composer", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(field).toHaveValue("");
     expect(screen.getByText("L3 answers or creates one task.")).toBeInTheDocument();
+  });
+
+  it.each([409, 500, null])("preserves unsent and newly typed drafts on failure %s", async (status) => {
+    let reject!: (error: Error) => void;
+    const onSubmit = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; })).mockResolvedValue(undefined);
+    const { user, field } = mount({ onSubmit });
+    await user.type(field, "Original draft");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "New draft");
+    await act(async () => { reject(status ? new ApiError(status, "Request failed") : new TypeError("Network failed")); });
+    expect(field).toHaveValue("Original draft\nNew draft");
+    if (status === 409) {
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(onSubmit).toHaveBeenLastCalledWith("Original draft\nNew draft");
+      expect(field).toHaveValue("");
+    } else {
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("recovers concurrent refused sends without losing either unsent draft", async () => {
+    const failures: Array<(error: Error) => void> = [];
+    const onSubmit = vi.fn(() => new Promise<void>((_resolve, reject) => failures.push(reject)));
+    const { user, field } = mount({ onSubmit });
+    for (const text of ["First draft", "Second draft"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await act(async () => { failures.forEach((reject) => reject(new ApiError(409, "Refused"))); });
+    expect(field).toHaveValue("Second draft\nFirst draft");
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("Not sent. Retry");
+  });
+
+  it.each([true, false])("keeps mixed failed sends unconfirmed when refusal finishes first: %s", async (refusalFirst) => {
+    const failures: Array<(error: Error) => void> = [];
+    const onSubmit = vi.fn(() => new Promise<void>((_resolve, reject) => failures.push(reject)));
+    const { user, field } = mount({ onSubmit });
+    for (const text of ["Refused draft", "Unconfirmed draft"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await user.type(field, "New draft");
+    for (const index of refusalFirst ? [0, 1] : [1, 0]) {
+      await act(async () => failures[index]!(index === 0 ? new ApiError(409, "Refused") : new TypeError("Network failed")));
+    }
+    expect(field).toHaveValue(refusalFirst ? "Unconfirmed draft\nRefused draft\nNew draft" : "Refused draft\nUnconfirmed draft\nNew draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it.each(["Escape", "Cancel"])("Listening: Cancel, Stop, Send; %s goes back with nothing added", async (action) => {

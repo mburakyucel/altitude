@@ -270,6 +270,15 @@ the same chat or L2-message endpoint as typed text, so a busy L3 durably queues 
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.
 
+Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
+L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
+refresh; newly typed text remains. Failed immediate wakes leave accepted messages and their due
+requests with the existing timer. A restart race retains the queued receipt in the response.
+Explicit refusal restores recoverable text with Retry. When transport or a server failure leaves
+delivery unconfirmed, the composer preserves both submitted and newly typed text, asks the operator
+to check the conversation, and offers no send Retry, including when another overlapping send is refused.
+It never infers acceptance by matching text.
+
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
 `daemon_request`; the CLI process performs no Git or worker operation. One `daemon-request` event names
@@ -553,8 +562,9 @@ for this state. It snapshots the waiting queue and active record under one lifec
 a queued row and publishing its turn cannot expose an idle state between them. The initiating tab keeps its streamed response and suppresses a duplicate indicator, while a newly
 mounted or reconnected conversation reconstructs the typing indicator (a chat turn) or the "L3 is
 handling <what>" line (a server-triggered turn) from the active record. The stream's first line
-names the turn, and assistant or error history rows carry the same turn id, so live local output
-remains until terminal history replaces it and suppresses any raced active snapshot. A
+names the turn, and history rows carry the same turn id. After the stream ends, saved history
+replaces local output; an active record restores the typing indicator, while a saved assistant or
+error row suppresses any raced active snapshot. A
 `finally` removes the record on every normal, provider-error, or exception path. If altd
 fails, the in-process turn ends and its process-local record disappears with it, so the replacement
 process cannot advertise stale work.

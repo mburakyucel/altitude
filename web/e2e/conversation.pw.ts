@@ -326,7 +326,7 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
   const posts: string[] = [];
   await page.route((url) => url.pathname === "/api/chat", async (route: Route) => {
     posts.push((route.request().postDataJSON() as { text: string }).text);
-    if (mode === "refuse") return route.fulfill({ status: 500, json: { error: "no L3 for this project" } });
+    if (mode === "refuse") return route.fulfill({ status: 409, json: { error: "no L3 for this project" } });
     await streamGate;
     stored.push(
       { at: now(), role: "user", text, trigger: "chat", turn_id: "ui-c1" },
@@ -383,7 +383,7 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
   const retried: string[] = [];
   await page.route((url) => url.pathname === "/api/chat", (route) => {
     retried.push((route.request().postDataJSON() as { text: string }).text);
-    return route.fulfill({ status: 500, json: { error: "still no L3" } });
+    return route.fulfill({ status: 409, json: { error: "still no L3" } });
   });
   await overlayChat(page, project.name, (live) => ({
     ...live,
@@ -404,6 +404,39 @@ test("send: the bubble at 60%, the streamed reply, one conversation after the po
   });
   await failed.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.poll(() => retried).toEqual([text]);
+});
+
+test("an interrupted request without a receipt preserves both drafts without an unsent Retry", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const text = "A request whose delivery cannot be confirmed";
+  const next = "The next unsent draft";
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let posts = 0;
+  await page.route((url) => url.pathname === "/api/chat", async (route) => {
+    posts++;
+    await gate;
+    await route.abort("connectionfailed");
+  });
+  await walk.open(project.path);
+  await v.field.fill(text);
+  await v.send.click();
+  const pending = v.convo.locator(".msg-row[data-pending]");
+  const uncertain = v.main.getByRole("alert").filter({ hasText: "Could not confirm delivery. Check the conversation before sending again." });
+  try {
+    await v.field.fill(next);
+    await walk.state("01-unconfirmed-request-next-draft", { visible: [pending, v.bubble(text), v.field], hidden: [uncertain] });
+  } finally { release(); }
+  await walk.state("02-delivery-unknown-both-drafts-recoverable", {
+    visible: [uncertain, v.field],
+    hidden: [pending, v.bubble(text), v.main.getByRole("alert").filter({ hasText: "Not sent." }), uncertain.getByRole("button", { name: "Retry", exact: true })],
+  });
+  await expect(v.field).toHaveValue(`${text}\n${next}`);
+  expect(posts).toBe(1);
+  const history = (await (await request.get(`/api/chat/${project.name}`)).json()).history;
+  expect(history.some((row: { text: string }) => row.text === text)).toBe(false);
 });
 
 test("busy: the arrow queues, the queued row with Remove, the typing indicator, and Remove taking the row back", async ({ page, request }, info) => {

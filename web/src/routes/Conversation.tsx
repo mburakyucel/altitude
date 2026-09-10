@@ -119,6 +119,7 @@ function itemAt(item: Item): string | null {
 
 /** The turn the page is streaming: its bubble first, then the reply as it arrives (SPEC.md §4.2). */
 interface Local {
+  request: symbol;
   text: string;
   reply: string;
   accepted: boolean;
@@ -215,28 +216,31 @@ export default function Conversation({
   const send = useCallback(
     async (text: string) => {
       following.current = true;
-      setLocal({ text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedAt: null });
+      const request = Symbol();
+      const update = (fn: (cur: Local) => Local | null) => setLocal((cur) => cur?.request === request ? fn(cur) : cur);
+      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedAt: null });
       let result;
       try {
         result = await streamChat(name, text, {
-          onAccepted: () => setLocal((cur) => (cur ? { ...cur, accepted: true } : cur)),
-          onTurn: (turn) => setLocal((cur) => (cur ? { ...cur, turnId: turn.id } : cur)),
-          onText: (chunk) => setLocal((cur) => (cur ? { ...cur, reply: cur.reply + chunk } : cur)),
+          onAccepted: () => update((cur) => ({ ...cur, accepted: true })),
+          onTurn: (turn) => update((cur) => ({ ...cur, turnId: turn.id })),
+          onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
       } catch (error) {
-        // Refused: the bubble leaves and the composer brings the draft back with "Not sent. Retry."
-        setLocal(null);
+        // No receipt: refresh history and let the composer distinguish refusal from uncertainty.
+        update(() => null);
+        void queryClient.invalidateQueries({ queryKey: ["chat", name] });
         throw error;
       }
       if (result.queued) {
         const queued = result.queued;
-        setLocal(null);
+        update(() => null);
         queryClient.setQueryData<ChatView>(["chat", name], (cached) =>
           cached ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
         );
       } else {
-        setLocal((cur) =>
-          cur ? { ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null, finishedAt: Date.now() } : cur,
+        update((cur) =>
+          ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null, finishedAt: Date.now() }),
         );
       }
       void queryClient.invalidateQueries({ queryKey: ["chat", name] });

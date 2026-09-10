@@ -518,7 +518,11 @@ def request_l3_drain(project: str) -> bool:
         current = _bg.get(key)
         if current and current.is_alive():
             return False
-    return spawn(key, drain_l3_queue, project)
+    try:
+        return spawn(key, drain_l3_queue, project)
+    except Exception as exc:  # #298: a failed wake cannot refuse a durable queued message; the timer retries.
+        log(f"[{project}] L3 queue wake deferred: {exc}")
+        return False
 
 
 def drain_l3_queue(project: str) -> None:
@@ -1317,8 +1321,11 @@ class Handler(BaseHTTPRequestHandler):
                                         group_id=o.get("group_id"), group_revision=o.get("group_revision"))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
-                if S.load_task(project, slug).get("state") == "blocked":
-                    request_task_resume(project, slug)
+                try:
+                    if S.load_task(project, slug).get("state") == "blocked":
+                        request_task_resume(project, slug)
+                except Exception as exc:  # #298: acceptance is durable; the timer retries its saved resume request.
+                    log(f"[{project}/{slug}] message wake deferred: {exc}")
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
@@ -1386,7 +1393,7 @@ class Handler(BaseHTTPRequestHandler):
                                      **({"slug": slug} if slug else {}))
                 if gone:
                     return
-                self._stream_send({"done": {k: res.get(k) for k in (
+                self._stream_send({"queued": res["queued"]} if res.get("queued") else {"done": {k: res.get(k) for k in (
                     "session_id", "context_percent", "turns", "cost", "error", "engine", "turn_id")}})
                 self._stream_close()
                 return

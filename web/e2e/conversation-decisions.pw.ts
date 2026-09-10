@@ -509,9 +509,9 @@ test("question loading, read failure, write failure and denied access retain rec
   await field.fill("Keep the draft after this failed send.");
   await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Send", exact: true }).click();
   await expect(field).toHaveValue("Keep the draft after this failed send.");
-  await walk.state("02-send-failed-draft-retained", {
-    visible: [field, page.getByRole("alert").filter({ hasText: "Not sent." })],
-    hidden: [page.getByRole("region", { name: "Task conversation", exact: true }).locator(".bubble").filter({ hasText: "Keep the draft after this failed send." })],
+  await walk.state("02-delivery-unconfirmed-draft-retained", {
+    visible: [field, page.getByRole("alert").filter({ hasText: "Could not confirm delivery." })],
+    hidden: [page.getByRole("button", { name: "Retry", exact: true }), page.getByRole("region", { name: "Task conversation", exact: true }).locator(".bubble").filter({ hasText: "Keep the draft after this failed send." })],
   });
   expect((await readTask(request, slug)).messages.some((row) => row.text === "Keep the draft after this failed send.")).toBe(false);
   await page.route("**/api/decide", (route) => route.fulfill({ status: 403, json: { error: "Write access denied." } }), { times: 1 });

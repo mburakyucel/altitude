@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { transcribeVoice } from "../data/api";
+import { ApiError, transcribeVoice } from "../data/api";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -23,8 +23,8 @@ type Phase = "idle" | "starting" | "listening" | "transcribing";
 export interface ComposerProps {
   value: string;
   onChange: (value: string) => void;
-  /** Send the draft. A rejection means the server refused it: the draft returns and the hint reads
-   * "Not sent. Retry." with a Retry that sends the same text again. */
+  /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
+   * transport/server failure restores it with a reminder to check the conversation first. */
   onSubmit: (text: string) => void | Promise<void>;
   placeholder: string;
   ariaLabel: string;
@@ -205,7 +205,7 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
-  const [refused, setRefused] = useState<string | null>(null);
+  const [sendFailure, setSendFailure] = useState<"refused" | "unconfirmed" | null>(null);
   const unavailable = voiceUnavailable();
   const canvas = useWaveform(stream, phase === "listening");
 
@@ -274,17 +274,21 @@ export default function Composer({
     async (text: string) => {
       const ready = text.trim();
       if (!ready || disabled) return;
-      setRefused(null);
+      setSendFailure(null);
       setVoiceFailure("");
+      draft.current = "";
       onChange("");
       try {
         await onSubmit(ready);
         focusField();
-      } catch {
+      } catch (error) {
         if (!mounted.current) return;
-        onChange(ready);
-        setRefused(ready);
-        focusField(ready.length);
+        const recovered = [text, draft.current].filter(Boolean).join("\n");
+        draft.current = recovered;
+        onChange(recovered);
+        setSendFailure((current) => current === "unconfirmed" || !(error instanceof ApiError && error.status < 500)
+          ? "unconfirmed" : "refused");
+        focusField(recovered.length);
       }
     },
     [disabled, focusField, onChange, onSubmit],
@@ -361,7 +365,7 @@ export default function Composer({
   const start = useCallback(async () => {
     if (unavailable || denied || disabled || phase !== "idle") return;
     setVoiceFailure("");
-    setRefused(null);
+    setSendFailure((current) => current === "unconfirmed" ? current : null);
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
@@ -479,17 +483,21 @@ export default function Composer({
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
-  if (refused != null) {
+  if (sendFailure === "refused") {
     hintTone = "danger";
     hintRole = "alert";
     hintText = (
       <>
         Not sent.{" "}
-        <button type="button" className="link" onClick={() => void submit(refused)}>
+        <button type="button" className="link" onClick={() => void submit(draft.current)}>
           Retry
         </button>
       </>
     );
+  } else if (sendFailure === "unconfirmed") {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = "Could not confirm delivery. Check the conversation before sending again.";
   } else if (transcribing) {
     hintRole = "status";
     hintText = "Transcribing…";
@@ -529,7 +537,7 @@ export default function Composer({
           autoFocus={autoFocus}
           onChange={(event) => {
             onChange(event.target.value);
-            if (refused != null) setRefused(null);
+            if (sendFailure === "refused") setSendFailure(null);
           }}
           onKeyDown={onFieldKeyDown}
         />
