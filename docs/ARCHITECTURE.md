@@ -589,7 +589,10 @@ Web docs, design boards, the unused npm lockfile, and other non-build files do n
 trigger activation. Hooks, personas, and templates are read per use and deploy with the pull itself.
 
 The web app's restart banner sits above the header on every route while activation is pending: it
-says in words whether the backend, the web app, or both changed, how many files landed and when, and
+uses a compact phone summary with Details and the same available Restart action. Changed area,
+file count, age and quiet-point wait reasons expand on request; activation and request failures
+remain explicit. On desktop it says in words whether the backend, the web app, or both changed,
+how many files landed and when, and
 that Altitude restarts at the next quiet moment; it names any dispatch, L3 turn or report verification
 in flight. Both engines launch L2 workers in independent transient user units outside altd's cgroup;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
@@ -684,8 +687,12 @@ page, and with no managed project every project route shows First run, which lis
 the configured roots and starts L3 for one through `POST /api/project/add`, staying up until L3's
 first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
 panel is 340px, inline at 1280px and wider and an overlay from the header's panel button below that;
-narrower is the phone: a 54px header and an 84px tab bar (Chat, Work, Needs you, Monitor), where
-the header names the selected project and opens the switcher sheet, and a task conversation
+narrower is the phone: one 54px identity/activity header and an 84px tab bar (Chat, Work, Needs you,
+Monitor). The shell follows visual viewport height and offset, hiding bottom navigation during
+detected software keyboard use and restoring it on dismissal, including when focus remains in the
+field. Editable focus alone, toolbar motion and pinch zoom do not hide navigation; without sufficient
+viewport evidence it remains reachable. Browser-managed safe areas remain intact, with any bottom
+inset owned once by the visible dock. The project header opens the switcher sheet, and a task conversation
 pushes over its tab with a back control. Those widths are named once, in `web/src/shell/breakpoints.ts`. The
 selected project is browser state under `localStorage`, set by the rail, the switcher, a project
 route, or a Needs you card; the theme (light by default, dark on request) persists the same way. The
@@ -695,7 +702,8 @@ scan roots First run names and the operator's configured name. `POST /api/l3/sta
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
-under the reply. The composer's engine pill pins the project's L3 to one configured engine, named as
+under the reply. Engine selection is in phone project details and the desktop composer's pill;
+a non-Auto pin stays named in the phone header. It pins the project's L3 to one configured engine, named as
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
@@ -748,7 +756,8 @@ and summaries as full URLs or `owner/repo#number`. The renderer keeps bare refer
 not infer an upstream repository from ambiguous historical text.
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
-keeps its arrow, the hint reads "L3 is mid-turn · runs next", and the message shows as a muted queued row with Remove until
+keeps its arrow, the header names the active work, and the message shows as a muted queued row with
+its run order and Remove until
 its turn starts, when the row becomes the turn's bubble and typing indicator. The API snapshots the queue and active record under the same
 lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
@@ -768,7 +777,14 @@ prefix, separated from dictated text by one space when it does not already end i
 send control is an arrow in an accent circle in every state, with no visible text and an accessible
 name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60%, busy queueing, listening
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
-phone and desktop widths in `web/e2e/conversation.pw.ts`. Decision and reason fields remain
+phone and desktop widths in `web/e2e/conversation.pw.ts`. On phone text, mic and send share one row
+with 44px controls in a 70px single-line dock. Drafts grow from 44px to the lesser of 120px and
+25% of the usable visual viewport (at least 44px), then scroll internally. Routine phone hints
+consume no row; relevant voice, permission and send errors remain visible. Desktop retains its
+shortcut and delivery hints. Keyboard, draft and streaming changes keep bottom-follow when already
+following and preserve the visible message and offset while reading older history. Sending resumes
+following. Browser emulation verifies layout and application transitions; native mobile keyboard
+behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
 
 The L2 task's phone tabs replace the current router history entry and retain its location state;
@@ -905,11 +921,13 @@ The task page is the operator's conversation with the L2 beside the worker's liv
 actions with an inline confirm in place of any browser dialog, the title with its state dot, a muted
 line (attempt, when the task started or finished, context used), and chips: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
-concluded, and the merge-hold reason. The conversation uses the project conversation's bubble, prose,
+concluded, and concise Merge held status. Complete block and merge reasons open in task details,
+wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the question component at its recorded message anchor, and the composer
-while the task is running, blocked, or queued with an existing question; a block waiting on L3 and a
-fault each read as one line under the chips, the fault in red with "L3 has been told". The live
+while the task is running, blocked, or queued with an existing question. Waiting on L3 stays a
+concise status with its complete reason in details; a fault retains a visible cause in red with
+"L3 has been told". The live
 session panel is closed when entering a question. When opened, it is 480px inline at 1280px and
 wider and an overlay from the header's panel button below that; it reads the worker's own session log (Claude's session JSONL, or every turn of the
 Codex thread) together with Altitude's task events as one transcript: tinted prompt blocks, the
@@ -917,9 +935,14 @@ worker's prose, each tool call as one compact row with its output folded under i
 as thin separators with subtle timestamps, hidden reasoning never shown, and Raw events behind a
 toggle for the complete redacted records, the task's other operational events among them. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
-missing session file says so. On a phone the header carries Back and the title, a state line holds
-the chips and the actions, and two tabs, Conversation and Live session, switch the content (`/live`
-selects the second) with the composer pinned above the tab bar. A done or rejected task is
+missing session file says so. On a phone one header carries Back, title, L2 state and independent
+Merge held status. Its title and details button open metadata, tokens, full reasons and existing
+Stop/Reject/Resume controls with their confirmations. Desktop keeps direct header actions. Two tabs,
+Conversation and Live session, switch the content (`/live` selects the second); they stay visible
+when software keyboard use hides bottom navigation. The composer sits above that navigation or
+the keyboard. Details closes back to its opener without changing the draft or reading position.
+Open questions retain their chat anchor and View question action, with no generic Resume; viewing
+details never resolves a question or releases a merge hold. A done or rejected task is
 read-only with the composer gone.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled

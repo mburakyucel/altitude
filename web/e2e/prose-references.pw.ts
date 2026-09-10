@@ -90,7 +90,8 @@ test("missing, pending and failed repository metadata keep prose readable withou
   await page.route((url) => url.pathname === "/api/project/alpha", (route) => route.fulfill({ status: 503, json: { error: "Controlled metadata failure" } }));
   await page.reload();
   await savedReferences(prose, false);
-  const error = page.locator(".project-header").getByText("Controlled metadata failure", { exact: true });
+  const error = info.project.name === "phone" ? page.getByRole("alert").filter({ hasText: "Controlled metadata failure" })
+    : page.locator(".project-header").getByText("Controlled metadata failure", { exact: true });
   await expect(error).toBeVisible({ timeout: 15_000 });
   await walk.state("04-failed-metadata-overlay", { visible: [prose, error], hidden: [prose.getByRole("link", { name: "PR #250", exact: true })] });
 });

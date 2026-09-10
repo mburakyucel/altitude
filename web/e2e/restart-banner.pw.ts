@@ -30,10 +30,13 @@ test("restart banner offers Restart at the narrow quiet point while workers run,
   const walk = walkthrough(page, info);
   await page.route("**/api/restart", (route) => route.fulfill({ json: { ok: true, unit: "altitude-restart-walkthrough" } }));
   const banner = page.getByRole("status", { name: "Restart pending" });
+  const phone = info.project.name === "phone";
+  const details = page.getByRole("dialog", { name: "Update details" });
+  const detailRoot = phone ? details : banner;
   const restart = banner.getByRole("button", { name: "Restart", exact: true });
-  const what = banner.getByText("Merged changes to the web app are waiting to activate.");
-  const rule = banner.getByText(/^Altitude restarts at the next quiet moment\./);
-  const waiting = banner.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/);
+  const what = detailRoot.getByText("Merged changes to the web app are waiting to activate.");
+  const rule = detailRoot.getByText(/^Altitude restarts at the next quiet moment\./);
+  const waiting = detailRoot.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/);
   const restarting = banner.getByText("Altitude is restarting…", { exact: true });
   const heading = page.getByRole("heading", { name: "Needs you", exact: true });
 
@@ -43,7 +46,11 @@ test("restart banner offers Restart at the narrow quiet point while workers run,
 
   await restartIs(page, { ...pending, waiting_for: [] });
   await walk.open("/");
-  await walk.state("02-pending-quiet-overlay", { visible: [banner, what, rule, restart], hidden: [restarting, waiting] });
+  await walk.state("02-pending-quiet-overlay", { visible: [banner, restart, ...(phone ? [banner.getByText("Update ready")] : [what, rule])], hidden: [restarting, waiting] });
+  if (phone) {
+    await walk.state("02-update-details", { action: () => banner.getByRole("button", { name: "Details", exact: true }).click(), visible: [details, what, rule], hidden: [] });
+    await details.getByRole("button", { name: "Close details" }).click();
+  }
   // Above the header: before the phone header in the document, first in the main pane on the desktop.
   expect(await page.evaluate(() => {
     const status = document.querySelector('[role="status"][aria-label="Restart pending"]')!;
@@ -58,7 +65,11 @@ test("restart banner offers Restart at the narrow quiet point while workers run,
 
   await restartIs(page, { ...pending, waiting_for: ["altitude/walkthrough-task", "altitude L3"] });
   await walk.open("/");
-  await walk.state("03-pending-busy-overlay", { visible: [banner, what, rule, waiting], hidden: [restart, restarting] });
+  await walk.state("03-pending-busy-overlay", { visible: [banner, ...(phone ? [banner.getByText("Update ready")] : [what, rule, waiting])], hidden: [restart, restarting] });
+  if (phone) {
+    await walk.state("03-waiting-details", { action: () => banner.getByRole("button", { name: "Details", exact: true }).click(), visible: [details, what, rule, waiting], hidden: [restart] });
+    await details.getByRole("button", { name: "Close details" }).click();
+  }
 
   await restartIs(page, { ...pending, waiting_for: [] });
   await walk.open("/");
@@ -75,4 +86,21 @@ test("restart banner offers Restart at the narrow quiet point while workers run,
   await restartIs(page, null);
   await walk.open("/");
   await walk.state("06-answered", { visible: [heading], hidden: [banner, restart, restarting] });
+});
+
+test("failed activation after an accepted restart stays actionable", async ({ page }, info) => {
+  let failed = false;
+  await page.route("**/api/overview*", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), restart: { ...pending, waiting_for: [], failed: failed ? "Activation did not complete" : null,
+      requested_at: failed ? new Date().toISOString() : null } } });
+  });
+  await page.route("**/api/restart", (route) => { failed = true; return route.fulfill({ json: { ok: true } }); });
+  const walk = walkthrough(page, info);
+  await walk.open("/");
+  const banner = page.getByRole("status", { name: "Restart pending" });
+  const retry = banner.getByRole("button", { name: "Restart", exact: true });
+  await walk.state("01-activation-failed-after-acceptance", { action: () => retry.click(),
+    visible: [retry, banner.getByText(info.project.name === "phone" ? "Activation failed. L3 has the fault." : "Automatic activation did not complete; L3 has the fault.")],
+    hidden: [banner.getByText("Altitude is restarting…", { exact: true })] });
 });

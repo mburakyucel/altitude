@@ -75,6 +75,12 @@ function views(page: Page, info: TestInfo) {
     reject: main.getByRole("button", { name: "Reject", exact: true }),
     stopConfirm: main.getByRole("group", { name: "Stop this task?", exact: true }),
     rejectConfirm: main.getByRole("group", { name: "Reject this task?", exact: true }),
+    async showDetails() {
+      if (phone) await page.getByRole("button", { name: "Task details", exact: true }).click();
+    },
+    async closeDetails() {
+      if (phone) await page.getByRole("button", { name: "Close task details", exact: true }).click();
+    },
     async showLive() {
       if (phone) await main.getByRole("link", { name: "Live session", exact: true }).click();
       else if ((await main.getByRole("button", { name: "Live session", exact: true }).getAttribute("aria-pressed")) !== "true") {
@@ -99,8 +105,8 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
 
   await walk.open(taskPath(project.name, task.slug));
   await walk.state("01-running-conversation", {
-    visible: [v.heading(title), v.main.getByText("Running", { exact: true }).first(), v.conversation, v.composer, v.stop, v.reject],
-    hidden: [v.stopConfirm, v.rejectConfirm, v.main.getByLabel("Loading", { exact: true })],
+    visible: [v.heading(title), v.main.getByText("Running", { exact: true }).first(), v.conversation, v.composer, ...(v.phone ? [] : [v.stop, v.reject])],
+    hidden: [v.stopConfirm, v.rejectConfirm, v.main.getByLabel("Loading", { exact: true }), ...(v.phone ? [v.stop, v.reject] : [])],
   });
   await walk.state("02-live-session-streaming", {
     action: () => v.showLive(),
@@ -115,7 +121,7 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
     await walk.state("06-panel-open", { action: () => toggle.click(), visible: [v.live, transcript], hidden: [] });
   }
   await walk.state("07-stop-confirm", {
-    action: () => v.stop.click(),
+    action: async () => { await v.showDetails(); await v.stop.click(); },
     visible: [v.stopConfirm, v.stopConfirm.getByText("Stop this task? Its worker ends; the branch stays.")],
     hidden: [v.rejectConfirm],
   });
@@ -159,7 +165,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   await walk.open(taskPath(project.name, queued.slug));
   await walk.state("01-queued", {
     action: () => v.showLive(),
-    visible: [v.heading(title), v.main.getByText("Queued", { exact: true }).first(), v.live, v.live.getByText("Waits for dispatch"), v.reject],
+    visible: [v.heading(title), v.main.getByText("Queued", { exact: true }).first(), v.live, v.live.getByText("Waits for dispatch"), ...(v.phone ? [] : [v.reject])],
     hidden: [v.composer, v.stop, v.live.getByRole("button", { name: "Raw events", exact: true })],
   });
 
@@ -180,7 +186,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
   await walk.state("03-held-composer", {
     action: () => v.showConversation(),
-    visible: [v.composer, v.main.getByText("Delivered when Altitude resumes the L2.")],
+    visible: [v.composer, ...(v.phone ? [] : [v.main.getByText("Delivered when Altitude resumes the L2.")])],
     hidden: [],
   });
 });
@@ -215,7 +221,7 @@ test("a blocked task: the anchored question, waiting for L3, a fault", async ({ 
   await expect(card).toBeInViewport();
   await expect(page.locator(`.conversation-question:has([data-question-id="${decision.id}"])`)).toBeFocused();
   await walk.state("01-blocked-on-the-operator", {
-    visible: [v.main.getByText("Blocked", { exact: true }).first(), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, v.reject],
+    visible: [v.main.getByText("Needs your answer", { exact: true }).first(), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
     hidden: [line, v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
@@ -227,7 +233,7 @@ test("a blocked task: the anchored question, waiting for L3, a fault", async ({ 
   await walk.open(`${taskPath(project.name, base.slug)}?question=${waiting.id}&revision=1`);
   const l3Question = v.conversation.locator(`[data-question-id="${waiting.id}"]`);
   await walk.state("02-blocked-waiting-for-l3", {
-    visible: [line.getByText("Waits for L3's answer · which suite covers the timer"), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
+    visible: [v.main.getByText("Waits for L3", { exact: true }).first(), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
     hidden: [card, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
@@ -267,7 +273,7 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
 
   await walk.open(taskPath(project.name, done!.slug));
   await walk.state("01-done", {
-    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), ...(pr ? [v.main.locator(".task-chips, .task-state-line").getByText(`PR #${pr} merged`, { exact: false })] : [])],
+    visible: [v.heading(doneTitle), v.main.getByText("Done", { exact: true }).first(), ...(!v.phone && pr ? [v.main.locator(".task-chips").getByText(`PR #${pr} merged`, { exact: false })] : [])],
     hidden: [v.composer, v.stop, v.reject],
   });
   await walk.state("02-done-session-ended", {
@@ -295,7 +301,8 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
   await walk.open(taskPath(project.name, done!.slug));
   const prLink = v.main.getByRole("link", { name: `PR #${number} open · main checks failed` });
   await walk.state("03-pr-open-checks-failed-and-held", {
-    visible: [prLink, v.main.getByText("Merge held · review before merge")],
+    action: () => v.showDetails(),
+    visible: [prLink, v.main.getByText("Merge held", { exact: true }).first()],
     hidden: [],
   });
   await expect(prLink).toHaveAttribute("href", `${repository}/pull/${number}`);
@@ -304,6 +311,7 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
   projectRepository = null;
   await walk.open(taskPath(project.name, done!.slug));
   await walk.state("03b-pr-without-repository", {
+    action: () => v.showDetails(),
     visible: [v.main.getByText(`PR #${number} open · main checks failed`, { exact: false })],
     hidden: [prLink],
   });

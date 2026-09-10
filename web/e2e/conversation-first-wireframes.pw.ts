@@ -143,8 +143,13 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
   for (const [state, text] of states) {
     await walk.open(origin + prefix + "ConversationFirstStates.html?state=" + state + "&reset");
     const marker = page.getByText(text, { exact: true }).first();
-    await marker.scrollIntoViewIfNeeded();
-    await walk.state(state, { visible: [marker], hidden: [page.getByRole("combobox")] });
+    if (prefix && ["sending", "simple-input", "dictated"].includes(state)) {
+      await walk.state(state, { visible: [page.getByRole("textbox")], hidden: [marker, page.getByRole("combobox")] });
+      if (state === "sending") await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+    } else {
+      await marker.scrollIntoViewIfNeeded();
+      await walk.state(state, { visible: [marker], hidden: [page.getByRole("combobox")] });
+    }
     if (["accepted-waiting", "archived", "no-recommendation", "revised"].includes(state)) {
       await expect(page.getByRole("button", { name: "Use 7 days & resume", exact: true })).toBeHidden();
     }

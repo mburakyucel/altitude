@@ -11,6 +11,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 - Landing accepts a nonrequired skipped deployment with immutable condition
   `github.event_name != 'pull_request'` for an associated `pull_request` run. Required checks,
   exact candidate/source validation and at least one applicable passing check remain mandatory (#288).
+- Mobile L3 and L2 chat use one compact header and composer, with bottom navigation hidden during
+  detected software keyboard use and restored on dismissal. Task details hold metadata, full
+  blocked/merge-hold reasons and existing actions; concise status, actionable failures and pending
+  questions remain accessible. Drafts and reading position survive keyboard and details transitions.
 - Full Python, web, build and phone/desktop browser checks run with disposable fictional state
   and deterministic external-engine fixtures. Core task delivery, messaging/resume and failure
   paths have programmatic integration evidence; routine checks make no model calls.

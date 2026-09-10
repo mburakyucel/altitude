@@ -41,12 +41,14 @@ test("L2 messaging resumes its saved session, queues later input, stops and arch
   await walk.state("03-running-input-queued", {
     visible: [conversation.getByText("Include the failure reason in the result.", { exact: true })], hidden: [],
   });
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
   await expect.poll(async () => (await task()).daemon_request?.status).toBe("done");
   expect((await task()).state).toBe("blocked");
   expect((await workers()).workers[resumed.agent_id].state).toBe("stopped");
   await page.reload();
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await walk.state("04-stopped", { visible: [field, reject], hidden: [] });
   await reject.click();
   const confirm = page.getByRole("group", { name: "Reject this task?", exact: true });
@@ -106,12 +108,14 @@ test("an operational stop resumes the saved L2 without inventing a decision; a f
   const workers = async () => (await (await request.get("/fixture/workers")).json());
   const initial = await task();
   await walk.open(`/projects/atlas/tasks/${slug}`);
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
   await expect.poll(async () => (await task()).daemon_request?.status).toBe("done");
   expect((await task()).state).toBe("blocked");
   expect((await task()).question).toBeNull();
   await page.reload();
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   const resume = page.getByRole("button", { name: "Resume", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   await walk.state("01-stopped-with-operational-resume", {
@@ -151,6 +155,7 @@ test("an operational stop resumes the saved L2 without inventing a decision; a f
   const overview = await (await request.get("/api/overview")).json();
   expect(overview.queue.some((row: { slug: string }) => row.slug === slug)).toBe(false);
   await page.reload();
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await walk.state("04-saved-session-resumed", {
     visible: [page.getByRole("button", { name: "Stop", exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
     hidden: [resume, conversation.locator("[data-question-id]"), conversation.getByText("Decision recorded", { exact: true })],

@@ -573,6 +573,16 @@ to the preceding page after normal in-app entry. Without an in-app predecessor, 
 the task entry with its owning project's L3 conversation; browser Back follows the browser's own
 history. Viewing, switching views, and leaving the page do not change the worker's lifecycle.
 
+Phone Conversation and Live session tabs remain visible while typing hides the global bottom
+navigation. Keyboard dismissal restores that navigation without clearing the draft or selection;
+local view changes retain the draft, while leaving the task follows the existing discard rule.
+The compact header names L2 activity and Merge held independently. Full block/hold reasons,
+metadata and existing Stop/Reject/Resume confirmations open in task details; desktop keeps direct
+operational actions. Faults retain a visible cause and the L3 notification. An open question stays
+at its conversation anchor with View question/Latest messages and no generic Resume. Disclosure,
+keyboard transitions and ordinary replies do not change decision or merge authority. Resizing
+preserves bottom-follow or the older message being read, and sending resumes following.
+
 The task page's conversation is the operator's exchange with the L2. Its live session panel (the second
 tab on a phone) reads like a Claude Code window: the engine's local session records and Altitude's task events project into one timeline
 in time order, and the page renders it as a conversation. Prompts (the brief, a resume, a task message the

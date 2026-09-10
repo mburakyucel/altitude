@@ -4,6 +4,9 @@ The operator approved [conversation-first Needs you and L2 decisions](CONVERSATI
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
 
+The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
+headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
+
 This document and the boards beside it are the UI's source of truth, for both visual design and
 rules. They stay aligned when the build departs from them; an unresolved rule change is a question
 for the operator (§4.6). It is written for the L3 and L2 that implement it: every component lists its states,
@@ -77,12 +80,19 @@ task: today one blocked task carries one open question, and the route follows th
   unsupported and has no rules of its own. Chat and Work are the selected project's; Needs you and Monitor
   are global. The header shows the project name with a chevron on project tabs and "Altitude" on
   global tabs, so scope is always readable. The project name opens the switcher sheet (§3.11).
-- A task conversation opened from a phone tab pushes over that tab with a back control
-  and keeps the tab bar.
+- A task conversation opened from a phone tab pushes over that tab with a back control.
+  Its Conversation/Live session tabs remain visible. The bottom tab bar hides only while software
+  keyboard use is detected and returns when it closes, even when the input remains focused.
 - No viewport ever scrolls horizontally; transcripts and tables scroll inside their own container.
 - The shell fills the visual viewport and never scrolls or bounces. Headers, the tab bar and composer
   stay docked; content and transcripts own native scrolling and bounce inside their containers. The
-  shell follows changes to the visual viewport, including the phone keyboard.
+  shell follows visual viewport height and offset. Editable focus plus substantial viewport
+  contraction identifies keyboard use; focus alone, browser toolbar motion and pinch zoom do not.
+  Hardware keyboards retain navigation. When viewport evidence is unavailable, navigation remains.
+  Hidden navigation leaves focus and screen-reader traversal; a nonzero Needs you count remains
+  reachable from the header. Draft, selection and reading position survive keyboard dismissal.
+- Browser-managed safe areas remain intact. When navigation hides, the composer owns any applicable
+  bottom inset once, without the navigation's reserved home-indicator gap above the keyboard.
 - Breakpoint constants live in one place in the web code and are the only place widths are named.
 
 ### 2.3 Scope rule
@@ -124,13 +134,20 @@ hard-codes one, and one configured engine means one row.
 
 ### 3.2 Project header
 
-Anatomy: project name (18px, 600); status line; actions: work-panel toggle (tinted when the panel is
+Desktop anatomy: project name (18px, 600); status line; actions: work-panel toggle (tinted when the panel is
 open, hidden at ≥ 1280 where the panel is inline), overflow menu.
 
 Status line, composed left to right and separated by "·": "L3 answered N min ago on <engine>"
 (from the last assistant chat row's `at` and `engine`); "N tasks in flight" (running + queued);
 "N waits for your review" (decisions in this project; omitted at zero). While a turn runs the first
 part reads "L3 is answering" (or "L3 is handling <what>" for a system turn, §4.1).
+
+The phone combines project identity and a short **L3 Ready / Answering / Handling** status in its
+single 54px shell header. The project name opens the switcher. Details holds the last-answer age,
+engine/model, task counts, Auto/engine selector and existing project actions; a non-Auto pin stays
+named in the compact status. There is no second status row. Details uses a labelled sheet with
+contained focus, Escape/outside dismissal where allowed, and focus returned to its opener. The
+sheet scrolls inside the currently usable viewport above any keyboard; full names remain readable.
 
 Overflow menu: **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
 (confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
@@ -165,6 +182,9 @@ System turns render as system lines (§3.4). Hovering a row shows its time in th
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
 row while the operator is at the bottom; scrolling up leaves the reading position in place.
+Keyboard transitions, draft growth and streaming preserve bottom-follow or, when reading older
+messages, the same visible message and offset. Sending resumes following. Opening details keeps
+the reading position; View question deliberately returns to the existing question anchor.
 
 Shared prose links apply to L3/L2 conversations, live session prose, folded/expanded system replies,
 decision questions, recommendations and follow-ups, and report notes, digest and prose fields.
@@ -263,9 +283,13 @@ The same card is the row in the work panel and the card under an L3 reply that c
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
 "Message the L2"); a left pill (engine pin on L3 chat: Auto or an engine name; none on the task
-conversation); microphone button; send control. The send control is the arrow in an accent circle
+conversation, and in project details on phone); microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
-12px muted. Phone fields are 16px so iOS does not zoom.
+12px muted on desktop. Phone fields and messages are 16px; text, mic and send share one row with
+44px control targets and a 70px single-line dock. No routine hint or engine toolbar adds a row on
+phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
+announced. A draft starts at 44px and grows to the lesser of 120px and 25% of the usable visual
+viewport, with a 44px minimum, then scrolls internally. Mic and send remain at the field's bottom.
 
 Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
 a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a recording.
@@ -275,7 +299,7 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 | Idle | placeholder, mic, arrow disabled | typing enables the arrow |
 | Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
 | Sending | the bubble shows at 60% until the server accepts it | accepted: full opacity; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
-| Busy (L3 mid-turn) | the same arrow, enabled with a draft; hint reads "L3 is mid-turn · runs next" | the arrow appends to `queued[]`; a queued row appears under the conversation in muted text with **Remove** (`POST /api/chat/remove`) |
+| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
 | Listening | Cancel, Stop, and the same arrow, live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; the arrow or Enter: transcribe and send at once |
 | Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and arrow disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
@@ -361,8 +385,8 @@ every write names its exact question revision. Archived tasks retain history wit
 
 ### 3.10 Task page
 
-The existing task header includes a compact **Observed tokens** disclosure on phone and desktop,
-also present in the report view. The folded row shows the cumulative observed total (unknown when
+The task header includes **Observed tokens** in phone task details and directly on desktop,
+also present in the report view. The folded token row shows the cumulative observed total (unknown when
 unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
 session rows, or say **Provider total · helpers unsplit**, with inclusive input/output and available
 cache-read, cache-write and reasoning subsets. Cache/reasoning fields are parts of input/output,
@@ -385,16 +409,17 @@ collector errors retain prior numbers with unavailable/partial coverage; finaliz
 counts and its timestamp. Expand reveals rows and limitations; collapse removes them. Task read
 failure keeps the existing error and Retry behavior. The disclosure is read-only, so listening and
 permission prompts do not apply; unreadable local logs use the unavailable state. Expanded details
-scroll within the header on phone. `web/e2e/task-usage.pw.ts` walks these states at both viewports.
+scroll within task details on phone. `web/e2e/task-usage.pw.ts` walks these states at both viewports.
 
 Desktop anatomy: header rows (crumb and actions; title with state dot; a muted line; state chips:
-state, engine and model, PR with checks state, hold reason); left the operator's conversation with
+state, engine and model, PR with checks state, Merge held when applicable); left the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
 the header button). The muted line reads "attempt 1 · started 32 min ago · 18% of its context used"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
 and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository
-URL is known, otherwise it is a plain chip. A hold reads "Merge held · <reason>".
+URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
+or question state. Its complete reason opens in task details and wraps without truncation.
 
 Actions **Stop** and **Reject** are quiet text buttons with inline confirmation; no browser dialogs.
 Stop asks "Stop this task? Its worker ends; the branch stays." with Stop and Cancel. Reject asks
@@ -407,9 +432,20 @@ including on the phone. Resuming an operational pause records no decision.
 
 Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
-too. Phone anatomy: header with back and the title; a dot-separated state line and Stop/Reject at its
-end, confirmation below it; a two-tab row **Conversation | Live session** (the `live` route selects
-the second); content; the composer pinned above the tab bar on the Conversation tab.
+too. Phone anatomy: one 54px header with Back, title, concise L2 state and independent **Merge held**
+status; a two-tab row **Conversation | Live session** (the `live` route selects the second); content;
+the shared compact composer on Conversation. The title and details button open a scrollable sheet
+with full title, attempt/context/tokens, PR/checks, complete block/hold reasons, and existing
+Stop/Reject/Resume actions and confirmations. Desktop retains its direct operational actions and
+live-panel control while disclosing long reasons. Closing details restores the opener, draft,
+selection and reading position. A failure remains visible, not only inside details.
+
+Compact task states include **L2 · Running**, **L2 · Waits for L3**, **L2 · Needs your answer**,
+**L2 · Blocked by a fault**, and **L2 · Paused**; **Merge held** can accompany any of these. Details
+separates each full reason. Waiting on L3 adds no operator badge. An operator question remains at
+its chat anchor with View question/Latest messages when applicable, and no generic Resume while
+the question is open. A fault retains a visible short cause and **L3 has been told**. Operational
+pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. Phone tab
 switches replace its current history entry, keep the originating shell tab, and update the URL;
@@ -445,8 +481,8 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
-operator (the question inline at its recorded message anchor); blocked on L3 ("Waits for L3's
-answer · <reason>" under the chips); blocked by a fault (a red line with the one-sentence reason
+operator (the question inline at its recorded message anchor); blocked on L3 ("Waits for L3"
+with the full reason in details); blocked by a fault (a red line with the first sentence, at most 100 characters,
 and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
 the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
 Empty conversations read "No messages yet." on an active task and "No messages on this task." on
@@ -484,6 +520,11 @@ is under way. Pressing it or receiving a recorded restart request removes the bu
 the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not
 complete; L3 has the fault." The banner leaves when the new process answers without a pending
 restart. Data: `GET /api/overview` `restart`; the button requests `POST /api/restart`.
+
+On phone this is a compact summary with **Details** and the same available **Restart** action.
+Changed area, file count, age and quiet-point wait reasons expand on request. A failed activation
+or request remains explicit. The details can wrap and scroll; no failure or permitted restart
+action is concealed by the compact presentation. Desktop retains the fuller summary.
 
 ### 3.14 Monitor
 
@@ -546,8 +587,9 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 ### 4.2 One conversation, in order
 
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
-keeps its accent circle with the arrow and shows "L3 is mid-turn · runs next" under the field; the
-queued rows sit under the conversation until they run. A running turn shows
+keeps its accent circle with the arrow. Phone names the active work in the header and the run order
+on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
+inside the message area until they run, with Remove available while permitted. A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.
@@ -671,3 +713,31 @@ Order matters: each slice leaves the app usable.
 
 Not drawn and not scheduled: settings and a Done view beyond the folded list. They are questions
 for the operator when they come up. Project removal (L3 detachment) uses the overflow menu (§3.2).
+
+## 8. Compact mobile chat
+
+The rules in §2.2/3.2/3.3/3.6/3.10/3.13/4.2 combine the phone's identity and status in a
+54px header, use one 70px composer dock with integrated 44px mic/send controls, disclose routine
+metadata and engine selection, and remove routine hints on phone. Hide the 84px bottom navigation
+only during detected software-keyboard use; restore it on dismissal, retaining draft and selection.
+Task Conversation/Live session tabs remain visible. A long draft grows to 120px or 25% of the
+usable visual viewport (minimum 44px), then scrolls internally. Bottom-follow and older-message
+anchoring survive changes in available height. Browser-managed safe areas remain intact.
+
+Activity and nonzero decision counts remain reachable; actionable failures, question controls,
+queue removal, voice guidance and available Restart remain explicit. A compact update summary
+discloses detail. Task metadata and Stop/Reject/Resume move into task details with their existing
+confirmations. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics remain authoritative.
+
+Task states include running+held, waits-for-L3, waits-for-L3+held, operator-question+held,
+fault+held and operational pause. One compact status names waiting and merge state
+separately; the complete reasons open in scrollable task details. The original question remains
+in chat with View question/Latest messages when applicable. Faults retain a visible cause and
+L3 notification. Open questions do not acquire a generic Resume, and merge restrictions never
+acquire a release action. Desktop keeps directly available operational actions while disclosing
+long reasons. Phone sheets fit above the keyboard; closing them preserves draft and reading
+position. Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` and
+`conversation.pw.ts` cover keyboard restoration, draft growth, scroll anchors and all six task-state
+combinations at phone and desktop sizes. Named screenshots stay outside Git under `web/ui-artifacts/`.
+Browser simulation establishes layout and application transitions; native keyboard, toolbar and
+safe-area behavior require real-phone acceptance.

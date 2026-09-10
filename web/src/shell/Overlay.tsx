@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 
 /**
@@ -16,18 +16,44 @@ export function Overlay({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const node = panel.current!;
+    node.focus({ preventScroll: true });
+    const containFocus = (event: FocusEvent) => {
+      if (!node.contains(event.target as Node)) node.focus({ preventScroll: true });
+    };
+    const focusables = () => [...node.querySelectorAll<HTMLElement>('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex="0"]')].filter((el) => el.getClientRects().length > 0);
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") close.current();
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      const first = items[0] ?? node;
+      const last = items.at(-1) ?? node;
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === node)) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === node)) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    document.addEventListener("focusin", containFocus);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", containFocus);
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, []);
 
   return (
     <div className="overlay" data-side={side}>
-      <button type="button" className="scrim" aria-label="Close" onClick={onClose} />
-      <div role="dialog" aria-modal="true" aria-label={label} className="overlay-panel">
+      <button type="button" className="scrim" aria-label="Close" tabIndex={-1} onClick={onClose} />
+      <div ref={panel} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} className="overlay-panel">
         {children}
       </div>
     </div>

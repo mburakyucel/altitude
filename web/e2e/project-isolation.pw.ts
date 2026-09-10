@@ -211,7 +211,7 @@ test("listening, late transcription and denied microphone state reset on selecti
   await page.waitForTimeout(500); // MediaRecorder needs a non-empty audio chunk.
   await stop.click();
   await uploaded.promise;
-  await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), wave], hidden: [stop] });
+  await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
   await switchProject(page, info, "beta");
   await v.field("beta").fill("Beta typed during transcription");
   transcript.release();
