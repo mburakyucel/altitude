@@ -658,6 +658,34 @@ describe("Task on the phone", () => {
     }
   });
 
+  it.each([true, false])("keeps mixed send failures unconfirmed across views, refusal first: %s", async (refusalFirst) => {
+    setViewport(390);
+    const finishes: Array<(response: Response) => void> = [];
+    stub(running, { message: () => new Promise<Response>((resolve) => finishes.push(resolve)) });
+    const { user } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    for (const text of ["Refused draft", "Unconfirmed draft"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await user.type(field, "New draft");
+    await user.click(screen.getByRole("button", { name: "View live session" }));
+    for (const index of refusalFirst ? [0, 1] : [1, 0]) {
+      await act(async () => finishes[index]!(jsonResponse({ error: "Send failed" }, index === 0 ? 409 : 500)));
+    }
+    await user.click(screen.getByRole("link", { name: "Conversation" }));
+    const restored = screen.getByLabelText("Message the L2");
+    expect(restored).toHaveValue(refusalFirst ? "Unconfirmed draft\nRefused draft\nNew draft" : "Refused draft\nUnconfirmed draft\nNew draft");
+    await user.type(restored, " edited");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => finishes[2]!(jsonResponse({ ok: true, message: { id: "confirmed", at: ago(0), role: running.messages[0]!.role, text: "Confirmed correction" } })));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(restored).toHaveValue("");
+    expect(finishes).toHaveLength(3);
+  });
+
   it("does not restore an earlier task's failed send into the destination task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;
