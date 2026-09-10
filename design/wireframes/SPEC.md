@@ -3,6 +3,7 @@
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
+The operator approved [image input](IMAGE_INPUT.md) on 2026-09-10 for project and task conversations.
 
 The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
@@ -283,7 +284,7 @@ The same card is the row in the work panel and the card under an L3 reply that c
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
 "Message the L2"); a left pill (engine pin on L3 chat: Auto or an engine name; none on the task
-conversation, and in project details on phone); microphone button; send control. The send control is the arrow in an accent circle
+conversation, and in project details on phone); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted on desktop. Phone fields and messages are 16px; text, mic and send share one row with
 44px control targets and a 70px single-line dock. No routine hint or engine toolbar adds a row on
@@ -309,6 +310,29 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
 The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
+
+Image input uses the same toolbar and adds no permanent row when empty. A conditional strip holds
+up to four short previews with individually named 44px Remove targets. Native selection and desktop
+image-file paste preserve ordinary text paste; image-only sends work. PNG/JPEG/static WebP limits
+are four images, 10 MiB each, 20 MiB total, 25 megapixels and 8192 pixels per side. Selection remains
+local until Send; leaving the conversation releases it and late results cannot fill another draft.
+
+| Image state | Visible behavior and transition |
+| --- | --- |
+| Empty / cancel picker | Add images shares the existing controls; no strip or status row. Cancel changes nothing. |
+| Selected / remove | Preview strip appears; last Remove removes it and keeps text. Invalid format, unreadable preview or size/count rejection names recovery inline and preserves other selections. |
+| Sending | Pending bubble holds text and previews. Composer controls freeze for this submission; acceptance clears selection and releases the composer before the agent finishes. |
+| Confirmed refusal | Pending bubble leaves; the full editable draft/selection returns with the server's reason. Removing or replacing images allows another send. No partial message is accepted. |
+| Uncertain response | Pending bubble remains with Could not confirm send and Retry; controls stay frozen. Retry uses the original identity and content. Navigation remains available. |
+| Queued / delivery failure | Images retain their caption. Remove applies only to waiting project rows. Failed project-turn Retry uses saved images; task recovery keeps existing authority. |
+| Sent / viewer | Thumbnails belong to the saved message. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus. Archived tasks retain viewing without a composer. |
+| Loading / missing / denied | Image-sized placeholder names loading or the error; Retry repeats only the private read, never the send. Text remains readable. |
+| Capability unavailable | Add images explains why input is unavailable. Known converter refusal restores selections; removing them allows text. |
+| Voice / scope changes | Listening/transcribing retain previews. Cancel preserves current text edits; empty/failed transcription sends nothing. Successful voice Send clears text and images together. Navigation discards only unsent selection. |
+
+The approved [image interaction contract](IMAGE_INPUT.md) explains retention and private
+agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
+engine fixtures at 390×844 and 1440×900; named screenshots live in `web/ui-artifacts/results/image-input*`.
 
 ### 3.7 Work panel
 

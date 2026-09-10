@@ -98,6 +98,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Task delivery | `tests/test_offline_journeys.py`, `test_lifecycle.py`, `test_direct_l2_completion.py`: dispatch/worktree, report and archive; no-code completion refuses unlanded code or active workers. | Worker execution and GitHub responses are scripted; actual provider/GitHub permissions are unproven. |
 | Repository rules | `test_repository_instructions.py`: fresh/resumed L2 and L3 turns on both engines, scratch cwd, shared import target, AGENTS-only and legacy CLAUDE-only projects, rule-source migration and boundary excerpts. | Fixtures establish emitted paths and file resolution, not live provider native loading or adherence. |
 | Messaging/resume | `test_task_chat.py`, `test_chat_queue.py`, `test_resume_hold.py`: durable inbox, same session, late messages, concurrent wakes and recovery claims. Browser task lifecycle checks API persistence and terminal states. | No real provider turn or process recovery is launched. |
+| Operator image input | `test_images.py`, `test_image_chat.py`, `test_image_delivery.py`: real raster conversion/storage/HTTP, admission retry, caption ordering, checkpoint/resume restoration, handoff and archive/isolation. `image-input.pw.ts` walks selection/removal, voice/paste, loading, refusals, uncertain retry, sent viewer and missing/denied content on phone/desktop. | Native payloads and readable canonical bytes use engine fixtures; physical phone picker, clipboard permissions and live account/model image compatibility are unverified. |
 | CI recovery | `test_ci_recheck.py`, `test_ci_recheck_delivery.py`: due probes, single rerun intent, uncertain writes, fresh artifacts, finite reads/delivery, queue/turn crashes, stale lifecycle and preserved controls on both engine seams. | GitHub responses and engine calls are fixtures; real quota recovery needs fresh uploaded artifact evidence. |
 | Routing/failures | `test_route.py`, `test_direct_dispatch.py`, `test_temporary_capacity.py`, composed journeys: pins, availability, fallback, backoff and failure without duplicate completion. | Deterministic availability/quota input does not prove real authentication, entitlement or current provider compatibility. |
 | Landing | `test_land.py`, `test_git_policy_integration.py`: real Git/bare origins, leases/holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. |
@@ -118,6 +119,14 @@ policy uses comprehensive deterministic module/integration tests and core browse
 not claim those fixtures prove live provider compatibility. Record any additional uncovered
 behavior in the task report. The native sandbox probe in `test_l3_privilege.py` is an existing
 explicit host-capability check with no model request; it is outside default test applicability.
+
+Image integration fixtures require the detected local `ffmpeg` converter. RGB ICC tests use the
+detected system `liblcms2` library for bounded color conversion; production reports unavailable
+profile conversion explicitly when it is absent. Inputs are limited to ordinary static raster
+images. HDR declarations, non-RGB ICC profiles, profiles over 4 MiB and non-sRGB gamma/chromaticity
+without an ICC profile require an exported sRGB copy. Decoder wall/CPU/memory/output bounds,
+orientation, alpha/color parity and intermediate cleanup have real conversion fixtures. The service
+and Python harnesses replace image capability checks and native execution at the engine seam.
 
 ## CI and candidate identity
 

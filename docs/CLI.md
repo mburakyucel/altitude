@@ -543,8 +543,8 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ## Task lifecycle
 
 ```text
-alt task new --title <title> [--paths a.py,b/] [--hold-merge <reason>] -
-alt task message <slug> <text>
+alt task new --title <title> [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
+alt task message <slug> <text> [--image <id>]
 alt task reply <text>
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
@@ -566,6 +566,24 @@ A message to a blocked task uses its durable inbox and `resume_after` handoff in
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
 the explicit reason-bearing resume. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
+
+### Image handoffs
+
+Attach operator screenshots/photos in project or task chat. To give an assigned L2 the visual
+context discussed with L3, repeat `--image <committed-image-id>` on `alt task new` or
+`alt task message`. IDs appear beside the image's original message in agent context and in JSON
+conversation reads. Selection is limited to four images and 20 MiB total per assignment/message.
+The daemon accepts only existing committed images from the current project; there is no path upload,
+arbitrary download or cross-project relay. For example:
+
+```sh
+alt task message fix-layout 'Match the spacing shown in this screenshot.' --image <image-id>
+```
+
+The task receives the actual managed image content through its engine adapter and retains the
+source operator-message reference. An L3 relay remains L3 steering: it does not grant a lease,
+resolve an operator question or release a merge hold. Existing resume/recovery authority applies.
+Archive and worktree cleanup retain the image with the conversation.
 
 ### Conversational decisions
 

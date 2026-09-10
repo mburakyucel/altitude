@@ -7,7 +7,7 @@ import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import config, github_intake, state as S, usage
+from . import config, github_intake, images as image_store, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -153,17 +153,25 @@ def _rows(path: Path, what: str) -> list[dict]:
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
             expected_attempt: int | None = None, wake_blocked: bool = True,
             question_id: str | None = None, revision: int | None = None,
-            group_id: str | None = None, group_revision: int | None = None) -> dict:
+            group_id: str | None = None, group_revision: int | None = None,
+            uploads: list[dict] | None = None, image_ids: list[str] | None = None,
+            request_id: str | None = None, request_digest: str | None = None) -> dict:
     """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
-    if not text:
+    if not text and not (uploads or image_ids):
         raise TransitionError("task message is empty")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if request_id:
+            previous = next((row for row in task.get("image_messages", []) if row["id"] == request_id), None)
+            if previous:
+                if previous.get("request_digest") != request_digest:
+                    raise TransitionError("This submission identity already belongs to another message.")
+                return {key: value for key, value in previous.items() if key != "delivered"}
         allowed = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
         if role != "l2" and task.get("questions"):
             allowed += ("queued",)  # a known dilemma remains discussable while its next attempt waits
@@ -173,7 +181,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             raise TransitionError(f"{slug}: attempt {expected_attempt} is no longer current")
         if _ensure_question(project, task):
             S.save_task(project, task)
-        row = {"id": uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
+        row = {"id": request_id or uuid.uuid4().hex, "at": _conversation_time(), "role": role, "text": text, "by": by or role}
         # #277: a coordinator's waiting update is discussion, not evidence that the fault is repaired.
         wake_blocked = wake_blocked and not (role == "l3" and task.get("fault"))
         if not wake_blocked:
@@ -202,9 +210,20 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             if groups and group["id"] != groups[-1]["id"]:
                 row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
         d = S.task_dir(project, slug)
-        _append_jsonl(d / "conversation.jsonl", row)
+        if uploads or image_ids:
+            if role not in (OPERATOR_MESSAGE_ROLE, "l3") or uploads and image_ids:
+                raise TransitionError("Images must be operator input or an explicit coordinator handoff.")
+            refs = (image_store.store(project, uploads, message_id=row["id"], task=slug) if uploads
+                    else image_store.lookup(project, image_ids))
+            row.update(images=refs, request_digest=request_digest)
+            # One atomic record owns image-message admission, its receipt and pending delivery,
+            # just as question acceptance does. A lost response cannot split conversation/inbox.
+            task.setdefault("image_messages", []).append({**row, "delivered": False})
+        else:
+            _append_jsonl(d / "conversation.jsonl", row)
         if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
-            _append_jsonl(d / "inbox.jsonl", row)
+            if not row.get("images"):
+                _append_jsonl(d / "inbox.jsonl", row)
             # I-20260904-062512: the durable inbox is also altd's handoff. The coordinator must not run the
             # provenance gate itself because its deployment-checkout Git metadata is deliberately read-only.
             if task.get("state") == "blocked" and wake_blocked:
@@ -215,6 +234,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
                 S.append_event(project, slug, "resume-requested", by=row["by"], reason="task message",
                                message_id=row["id"])
                 S.regen_state_md(project)
+        if row.get("images"):
+            S.save_task(project, task)
         S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
         return row
 
@@ -230,6 +251,8 @@ def enqueue(project: str, slug: str, text: str, *, by: str = "altitude") -> dict
 def task_messages(project: str, slug: str, limit: int | None = None) -> list[dict]:
     """The durable task conversation."""
     rows = _rows(S.task_dir(project, slug) / "conversation.jsonl", "task conversation")
+    rows.extend({key: value for key, value in row.items() if key != "delivered"}
+                for row in S.load_task(project, slug).get("image_messages", []))
     # Question anchors and quick-accept messages are saved atomically with their question record.
     # Project them into the ordinary human thread without a second multi-file commit protocol.
     for question in S.load_task(project, slug).get("questions", []):
@@ -256,6 +279,10 @@ def _pending_rows(task: dict, path: Path) -> list[dict]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return rows  # historical receipts do not create new delivery work after the owner hands off
     seen = {row["id"] for row in rows}
+    for message in task.get("image_messages", []):
+        if not message.get("delivered") and message["id"] not in seen:
+            rows.append({key: value for key, value in message.items() if key != "delivered"})
+            seen.add(message["id"])
     for question in task.get("questions", []):
         message = question.get("acceptance_message")
         if message and not question.get("acceptance_delivered") and message["id"] not in seen:
@@ -265,6 +292,9 @@ def _pending_rows(task: dict, path: Path) -> list[dict]:
 
 
 def _mark_acceptance_delivered(task: dict, ids: set[str]) -> None:
+    for message in task.get("image_messages", []):
+        if message["id"] in ids:
+            message["delivered"] = True
     for question in task.get("questions", []):
         if (question.get("acceptance_message") or {}).get("id") in ids:
             question["acceptance_delivered"] = True
@@ -377,11 +407,13 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         return True
 
 
-def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dict]:
+def take_inbox(project: str, slug: str, ids: set[str] | None = None, *, running_only: bool = False) -> list[dict]:
     """Remove delivered messages from the inbox (all of them, or only `ids`) and return them."""
     path = S.task_dir(project, slug) / "inbox.jsonl"
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if running_only and task.get("state") != "running":
+            return []
         rows = _pending_rows(task, path)
         taken = [row for row in rows if ids is None or row["id"] in ids]
         left = [row for row in rows if row not in taken]
@@ -398,6 +430,8 @@ def render_inbox(rows: list[dict]) -> str:
     """The messages as the worker reads them."""
     return "\n\n".join((row.get("question_context", "") + "\n\n" if row.get("question_context") else "")
                        + f"Message from {str(row.get('by') or 'burak').capitalize()} ({row.get('at') or ''}; message id {row['id']}):\n{row['text']}"
+                       + ("\nImages: " + ", ".join(f"{image['id']} ({image['name']})" for image in row["images"])
+                          if row.get("images") else "")
                        for row in rows)
 
 
@@ -463,7 +497,8 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
-        paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None) -> dict:
+        paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
+        image_ids: list[str] | None = None) -> dict:
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     try:
@@ -481,6 +516,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         request = request.rstrip() + "\n\n" + issue
     with S.project_lock(project):
         config.project(project)
+        refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
         while S.task_dir(project, slug).exists():
@@ -497,6 +533,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "engine_model": None, "routing": None,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
+        if refs:
+            task["images"] = refs
         S.save_task(project, task)
         S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True)
         S.regen_state_md(project)

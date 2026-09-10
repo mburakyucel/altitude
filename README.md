@@ -228,6 +228,21 @@ Bottom navigation hides during detected software keyboard use and returns on dis
 selection and older-message reading position survive the change; task Conversation/Live session
 tabs remain available. Desktop keeps its rail, metadata, direct task actions and shortcut hints.
 
+Attach screenshots or photos in either project or task chat with **Add images**, or paste an image
+on desktop. Preview and remove selections, add typed or dictated text, and send them together;
+image-only messages work too. Sent thumbnails open a full image viewer on phone and desktop.
+PNG, JPEG and static WebP are supported: up to four images, 10 MiB each, 20 MiB total, 25 megapixels
+and 8192 pixels per side. Other formats and unsupported color encodings need an exported sRGB copy.
+
+Images remain private within the existing Altitude access boundary and are sent to the selected
+agent's provider with the message. Managed copies remove metadata, preserve orientation and convert
+supported color profiles to sRGB. They survive reload, task archive and worktree cleanup; accepted
+images follow conversation retention, while unreferenced uploads expire after 24 hours. Selection
+alone creates no server copy. A failed or uncertain send offers a safe retry, and unavailable image
+input or missing content is explicit. L3 can give its assigned L2 the relevant image through the
+[existing task commands](docs/CLI.md#image-handoffs). This covers operator input; agent-produced
+results and downloadable deliverables remain outside this increment of issue #230.
+
 PR and issue references in L3 and L2 prose, decisions, and reports are clickable, including saved
 messages. `PR #250` and `pull request #250` open the project's pull request; `issue #247` and
 `#247` use GitHub's issue route, which also resolves pull requests. `owner/repo#247` names its own

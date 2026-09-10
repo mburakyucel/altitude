@@ -7,6 +7,12 @@ maintained project/task and composer boards. `gen.py` generates those boards fro
 Application walkthroughs in `web/e2e/mobile-chat.pw.ts`, `task-details.pw.ts` and `conversation.pw.ts`
 save review captures under ignored `web/ui-artifacts/`. Native keyboard acceptance uses a real phone.
 
+## Approved image-input interaction
+
+[Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.
+The shared composer spec and `web/e2e/image-input.pw.ts` maintain its states and phone/desktop
+walkthrough. Review captures stay outside Git. The compact mobile layout is defined above.
+
 ## Approved conversation-first design
 
 [Review the Needs you / L2 conversation design](CONVERSATION_FIRST.md), with

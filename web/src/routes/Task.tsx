@@ -3,13 +3,16 @@ import type { ReactNode } from "react";
 import { Link, NavLink, useLocation, useMatch, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
-import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
+import { ApiError, imageSendRefused, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
+import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseRepository } from "../components/Prose";
 import { agoText, when } from "../data/observed";
 import { questionPath } from "../data/decisions";
 import { Bubble, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
+import type { ImageSubmission } from "../components/ImageDraft";
+import { MessageImages, PendingImages } from "../components/MessageImages";
+import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
@@ -166,9 +169,11 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
+interface PendingMessage { text: string; images?: ImagePreview[] }
+
 function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
-  draft: string; setDraft: (value: string) => void; pending: string | null; setPending: (value: string | null) => void;
+  draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: (value: PendingMessage | null) => void;
 }) {
   const queryClient = useQueryClient();
   const location = useLocation();
@@ -189,6 +194,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
   const [denied, setDenied] = useState(false);
   const [accessRefresh, setAccessRefresh] = useState(0);
+  const submission = useRef<L2MessageInput | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; setPending(null); };
+  }, [setPending]);
   const messages = task.messages ?? [];
   const anchorKey = `${location.key}:${questionId ?? ""}:${revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
@@ -226,7 +237,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [updateQuestionVisibility]);
-  const send = async (text: string) => {
+  const send = async (text: string, images?: ImageSubmission) => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
     const currentBounds = currentNode?.getBoundingClientRect();
@@ -236,21 +247,28 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const context = following.current || viewingCurrent ? current ?? target : target ?? current;
     following.current = true;
     setLatest(false);
-    setPending(text);
+    const preview = { text, images: images?.previews };
+    setPending(preview);
     try {
-      const row = await sendL2Message({ project, slug: task.slug, text,
+      const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text,
+        ...(images ? { request_id: images.request_id, images: images.images } : {}),
         ...(group && group.questions.length > 1 && context && inGroup(context)
           ? { group_id: group.id, group_revision: group.revision }
-          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
+          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) };
+      if (images) submission.current = input;
+      const row = await sendL2Message(input);
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
         cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
       );
       void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      submission.current = null;
+      if (mounted.current) setPending(null);
     } catch (error) {
       if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+      if (mounted.current && (!images || imageSendRefused(error))) { submission.current = null; setPending(null); }
       throw error;
-    } finally { setPending(null); }
+    }
   };
   const rows: ReactNode[] = [];
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
@@ -294,8 +312,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question) {
-      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} /> :
-        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />);
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}><MessageImages project={project} images={message.images} /></Bubble> :
+        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined}><MessageImages project={project} images={message.images} /></Reply>);
     }
   });
   return (
@@ -317,7 +335,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
-          {pending ? <Bubble text={pending} at={new Date().toISOString()} pending /> : null}
+          {pending ? <Bubble text={pending.text} at={new Date().toISOString()} pending><PendingImages images={pending.images} /></Bubble> : null}
           {task.question?.status === "resolved" && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
@@ -330,6 +348,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
       {facts.canMessage ? <div className="convo-dock"><Composer value={draft} onChange={setDraft} onSubmit={send}
+        imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         hint={task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
     </section>
@@ -482,7 +501,7 @@ function TaskPage({
   const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
   const decision = task.question?.status === "open" ? task.question : undefined;
   const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingMessage | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
   const actions = useTaskActions(project, task.slug);
   const resumeError = facts.canResume && actions.error && !actions.confirm

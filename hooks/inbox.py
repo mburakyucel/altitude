@@ -10,16 +10,24 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from altitude import config, state as S, tasks as T  # noqa: E402
+from altitude import config, dispatch, engines, images, state as S, tasks as T  # noqa: E402
 
 inp = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 project, slug = os.environ.get("ALTITUDE_PROJECT"), os.environ.get("ALTITUDE_TASK")
-if not project or not slug or not (S.task_dir(project, slug) / "inbox.jsonl").exists():
+if not project or not slug:
     sys.exit(0)
 try:
-    if S.load_task(project, slug).get("state") != "running":
-        sys.exit(0)
-    text = T.render_inbox(T.take_inbox(project, slug))
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "running":
+            sys.exit(0)
+        rows = T.pending(project, slug)
+        attached = images.resolve(project, [image for row in rows for image in row.get("images") or []], task=slug)
+    resolved = {image["id"]: image for image in attached}
+    prepared = {row["id"]: T.render_inbox([row]) + engines.image_read_instructions(
+        dispatch.l2_engine(task), [resolved[image["id"]] for image in row.get("images") or []]) for row in rows}
+    taken = T.take_inbox(project, slug, ids=set(prepared), running_only=True)
+    text = "\n\n".join(prepared[row["id"]] for row in taken)
 except Exception as exc:  # noqa: BLE001 — leave a line the server raises as a system fault
     config.MONITOR_DIR.mkdir(parents=True, exist_ok=True)
     with open(config.MONITOR_DIR / "hook-faults.log", "a") as f:

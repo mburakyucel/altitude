@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
-import { transcribeVoice } from "../data/api";
+import { imageSendRefused, transcribeVoice } from "../data/api";
+import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
+import type { ImageScope, ImageSubmission } from "./ImageDraft";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -25,7 +27,8 @@ export interface ComposerProps {
   onChange: (value: string) => void;
   /** Send the draft. A rejection means the server refused it: the draft returns and the hint reads
    * "Not sent. Retry." with a Retry that sends the same text again. */
-  onSubmit: (text: string) => void | Promise<void>;
+  onSubmit: (text: string, images?: ImageSubmission) => void | Promise<void>;
+  imageScope?: ImageScope;
   placeholder: string;
   ariaLabel: string;
   /** L3 is mid-turn: the arrow queues; desktop also explains that the message runs next. */
@@ -185,9 +188,17 @@ export default function Composer({
   pill,
   disabled = false,
   autoFocus = false,
+  imageScope,
 }: ComposerProps) {
   const hintId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const images = useImageDraft(imageScope);
+  const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
+  const admitting = useRef(false);
+  const retryImage = useRef<{ text: string; submission: ImageSubmission } | null>(null);
+  const latestSubmission = useRef(0);
+  const [refusalReason, setRefusalReason] = useState("");
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
@@ -271,23 +282,46 @@ export default function Composer({
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
   const submit = useCallback(
-    async (text: string) => {
+    async (text: string, retry?: ImageSubmission) => {
       const ready = text.trim();
-      if (!ready || disabled) return;
+      const withImages = Boolean(retry || images.selected.length);
+      if ((!ready && !withImages) || disabled || images.checking || (admitting.current && !retry)) return;
+      if (withImages && !retry && !images.capability?.available) {
+        images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
+        return;
+      }
+      const submissionNumber = ++latestSubmission.current;
       setRefused(null);
+      setRefusalReason("");
       setVoiceFailure("");
+      images.setError("");
+      let submission = retry;
+      if (withImages) { admitting.current = true; setAdmission("sending"); }
       onChange("");
       try {
-        await onSubmit(ready);
+        if (withImages) {
+          submission ??= await images.submission();
+          if (!mounted.current) return;
+          retryImage.current = { text: ready, submission };
+          await onSubmit(ready, submission);
+        } else await onSubmit(ready);
+        if (!mounted.current || latestSubmission.current !== submissionNumber) return;
+        if (withImages) { images.clear(); retryImage.current = null; admitting.current = false; setAdmission(""); }
+        else images.setError("");
         focusField();
-      } catch {
-        if (!mounted.current) return;
+      } catch (cause) {
+        if (!mounted.current || latestSubmission.current !== submissionNumber) return;
+        if (submission && !imageSendRefused(cause)) { setAdmission("uncertain"); return; }
+        admitting.current = false;
+        setAdmission("");
+        retryImage.current = null;
         onChange(ready);
         setRefused(ready);
+        if (withImages && cause instanceof Error) setRefusalReason(cause.message);
         focusField(ready.length);
       }
     },
-    [disabled, focusField, onChange, onSubmit],
+    [disabled, focusField, images, onChange, onSubmit],
   );
   // A recording can outlive the render that supplied its submit callback or disabled state.
   const currentSubmit = useRef(submit);
@@ -359,7 +393,7 @@ export default function Composer({
   }, [finish, stream]);
 
   const start = useCallback(async () => {
-    if (unavailable || denied || disabled || phase !== "idle") return;
+    if (unavailable || denied || disabled || admitting.current || phase !== "idle") return;
     setVoiceFailure("");
     setRefused(null);
     setElapsed(0);
@@ -471,25 +505,36 @@ export default function Composer({
   const listening = phase === "listening" || phase === "starting";
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
-  const canSend = !disabled && (phase === "listening" || (phase === "idle" && value.trim().length > 0));
+  const canSend = !disabled && !admission && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
   const micShown = !unavailable;
-  const micDisabled = denied || disabled || transcribing;
+  const micDisabled = denied || disabled || transcribing || Boolean(admission);
 
   let hintText: ReactNode = hint ?? null;
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
-  if (refused != null) {
+  if (admission === "uncertain") {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = <>Could not confirm send. <button type="button" className="link" onClick={() => { const retry = retryImage.current; if (retry) void submit(retry.text, retry.submission); }}>Retry</button></>;
+  } else if (admission === "sending") {
+    hintRole = "status";
+    hintText = "Sending images…";
+  } else if (refused != null && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
     hintText = (
       <>
-        Not sent.{" "}
+        Not sent. {refusalReason}{" "}
         <button type="button" className="link" onClick={() => void submit(refused)}>
           Retry
         </button>
       </>
     );
+  } else if (images.error || (images.selected.length && !images.capability?.available)) {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = images.error || `Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`;
   } else if (transcribing) {
     hintRole = "status";
     hintText = "Transcribing…";
@@ -515,8 +560,19 @@ export default function Composer({
   }
 
   return (
-    <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}>
+    <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+        if (!imageScope || !files.length) return;
+        event.preventDefault();
+        if (!disabled && !admission && phase === "idle") void images.add(files);
+      }}>
       <div className="composer-box">
+        {images.selected.length && !admission ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
+          <div className="image-draft-item" key={image.key}>
+            <img src={image.url} alt={image.name} />
+            <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled} onClick={() => images.remove(image.key)}><CloseIcon /></button>
+          </div>)}</div> : null}
         <textarea
           ref={field}
           className="composer-field"
@@ -525,7 +581,7 @@ export default function Composer({
           placeholder={listening ? "" : placeholder}
           value={value}
           rows={1}
-          disabled={disabled}
+          disabled={disabled || Boolean(admission)}
           autoFocus={autoFocus}
           onChange={(event) => {
             onChange(event.target.value);
@@ -534,7 +590,17 @@ export default function Composer({
           onKeyDown={onFieldKeyDown}
         />
         <div className="composer-row">
-          {pill ? <div className="composer-pill">{pill}</div> : null}
+          {pill ? <fieldset className="composer-pill" disabled={disabled || Boolean(admission)}>{pill}</fieldset> : null}
+          {imageScope && !listening && !transcribing ? <>
+            <input ref={picker} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden aria-label="Choose images" onChange={(event) => {
+              if (!disabled && !admission) void images.add(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }} />
+            <button type="button" className="composer-icon composer-add-image" aria-label="Add images" title={IMAGE_HELP} disabled={disabled || Boolean(admission) || images.checking} onClick={() => {
+              if (!images.capability?.available) images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
+              else picker.current?.click();
+            }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4" /><circle cx="15" cy="8" r="1.5" /></svg></button>
+          </> : null}
           {listening || transcribing ? (
             <div className="composer-voice" data-frozen={transcribing || undefined}>
               {listening ? (

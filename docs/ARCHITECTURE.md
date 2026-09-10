@@ -636,6 +636,31 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
+and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
+into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the
+local color library and runs in the same bounded child process. Unsupported color encodings fail
+with an exported-sRGB recovery instruction. The shared limits are four images, 10 MiB each,
+20 MiB total, 25 megapixels, 8192 pixels per side and a 28 MiB JSON request envelope.
+
+Canonical files and metadata live under the owning project's private runtime `images/`, outside
+worktrees and static assets. Opaque IDs resolve only through that project's committed conversation,
+queue or active/archived task references. Filenames are labels; requests cannot name filesystem
+paths. `GET /api/images/<project>` reports capability and limits, optionally for `?task=<slug>`;
+`GET /api/images/<project>/<id>` serves validated bytes with `no-store`, `nosniff` and same-origin
+resource policy. This retains the existing private HTTP/network and OS-user boundary, without new
+authentication, public hosting or storage infrastructure. Selected content reaches the chosen
+provider as ordinary agent input. Original uploads and conversion intermediates are removed.
+
+Image POSTs use the existing chat/message endpoints with `images: [{name, data}]` (base64) and a
+UUID `request_id`. Saved-ID retries use `image_ids` instead of new uploads. The project lock fences
+file publication and durable admission; a repeated identity returns its recorded receipt and cannot
+replace text or images. Project queue/history and task `status.json.image_messages` own receipts;
+the latter atomically projects the conversation and pending delivery, like question acceptance.
+The existing maintenance tick removes files unreferenced for 24 hours. Committed images follow
+conversation retention, including archive, worktree cleanup and project detach/reattach.
+See [image delivery and recovery](SESSION_LIFECYCLE.md#image-delivery-and-recovery).
+
 Task token accounting is passive. `usage.py` retains each recorded task owner identity before a
 resume or recovery replaces it, and asks `engines.py` for normalized local observations. The daemon
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
@@ -782,13 +807,13 @@ its turn starts, when the row becomes the turn's bubble and typing indicator. Th
 lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
 file in the project directory, so a reload, another device and a restart all see the same pending
-messages. Each turn drains it at its own boundary rather than at the next tick: consecutive chat
-messages fold into one turn in arrival order, each on its own line, while server-triggered messages
+messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
+messages fold into one turn in arrival order, each on its own line, while image-bearing and server-triggered messages
 keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.
-The page owns its draft and its submit function, and a submit that throws is a refused send: the
+The page owns its draft and its submit function, and a refused text submit returns the draft: the
 bubble leaves, the draft returns, and the hint reads "Not sent. Retry." The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the
@@ -806,6 +831,12 @@ following and preserve the visible message and offset while reading older histor
 following. Browser emulation verifies layout and application transitions; native mobile keyboard
 behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
+The same composer adds a single image control and a conditional preview strip.
+Image admission freezes that submission's controls until acceptance or confirmed refusal; an uncertain
+response retains a pending bubble and retries with the same identity. Acceptance clears selection
+and releases the composer before the agent finishes. Private thumbnails and a modal viewer belong
+to the original saved message. Image interaction states and boundaries are specified in
+`design/wireframes/IMAGE_INPUT.md` and walked at both viewports by `web/e2e/image-input.pw.ts`.
 
 The L2 task's phone tabs replace the current router history entry and retain its location state;
 the desktop live panel toggle stays local. `/live` remains addressable and selects the live view
