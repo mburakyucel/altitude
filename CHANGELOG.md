@@ -5,6 +5,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Model allowance exhaustion is recognized without inventing a reset time. Coordinators can use
+  `alt task handoff` to continue an exited, fault-blocked owner as a fresh attempt on another
+  configured engine, preserving saved work, task history, PRs, questions and merge holds (#310).
 - Protected Git hooks allow reference packing, loose-copy pruning and fetch garbage collection
   while main lags origin/main, preserving its tip and subsequent permitted fast-forward. Genuine
   unauthorized protected branch moves and deletions remain blocked (#291).
