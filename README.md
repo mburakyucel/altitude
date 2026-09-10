@@ -320,6 +320,8 @@ Every PR runs `make check`: Python, web tests, typecheck/build and phone/desktop
 against isolated fictional state, with external engines replaced by deterministic fixtures.
 CI attempts to upload fictional reports and screenshots; upload failures remain visible and do
 not fail the test gate. Downloadable artifacts may be unavailable even when all tests pass.
+Review captures stay in ignored artifacts and may be linked from PRs; maintained design boards and
+curated documentation illustrations describe the current product. See the [UI rules](AGENTS.md#ui).
 These repeated checks make no model calls. Live-provider validation is deferred; the
 [coverage matrix](docs/DEVELOPMENT.md#coverage-and-limits) records what the tests establish.
 Daily preview readiness checkpoints and as-needed releases select a validated source version and curated notes;

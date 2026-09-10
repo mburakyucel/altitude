@@ -2,10 +2,9 @@
 
 Burak settled this UX on 2026-09-08: support one question and a small group of independent
 questions in the owning L2 chat. The model chooses a plain question, one recommended quick action,
-or two to three quick options with one recommendation. The implementation PR remains held for
-Burak's review of the resulting experience and merge.
+or two to three quick options with one recommendation.
 
-[Interactive review](conversation-first/index.html) · [Six captured examples](conversation-first/README.md) ·
+[Current boards](index.html) ·
 [Current specification](SPEC.md#38-decision-card)
 
 ## The experience
@@ -34,7 +33,7 @@ scope leaves only the relevant remainder open. A new direction closes questions 
 unnecessary with a short reason, without accepting their abandoned recommendations. Completion,
 rejection and report handoff remove obsolete controls; the existing merge hold remains separate.
 
-## Six review examples
+## Decision examples
 
 | Example | Desktop | Phone |
 | --- | --- | --- |
@@ -46,8 +45,10 @@ rejection and report handoff remove obsolete controls; the existing merge hold r
 | Answers recorded and work resumed | [Open](ConversationFirstAccepted.html) | [Open](MobileConversationFirstAccepted.html) |
 
 All content is fictional. The prototype demonstrates typed answers and follow-ups with deterministic
-examples; the production L2 uses its ordinary judgment. The shared appendix covers input and
-recovery without multiplying the primary review screens or committed screenshots.
+examples; the production L2 uses its ordinary judgment. Try “Could we roll back after day seven?”,
+“Keep 14 days; use snapshots so region no longer matters.”, then “Release team”. A single question
+also accepts “14 days”. The shared appendix covers input and recovery. Its captures and the real
+application walkthroughs stay in ignored `web/ui-artifacts/`; see [development](../../docs/DEVELOPMENT.md#browser-walkthroughs).
 
 ## Navigation and states
 
@@ -70,6 +71,43 @@ recovery without multiplying the primary review screens or committed screenshots
 | Resolved elsewhere or historical link | Readable receipt and reason, no obsolete action; link to a current revision if present. |
 | Superseded versions | Fold under **Earlier question** so the current group stays prominent. An old-version link opens its exact history automatically. |
 | Missing question or archived task | Explicit missing-question notice with ordinary conversation, or archived read-only history with no composer. |
+
+<details>
+<summary>Open the shared input and recovery states</summary>
+
+These links select states in the same maintained desktop and phone boards.
+
+| State | Desktop | Phone |
+| --- | --- | --- |
+| Loading Needs you | [Open](ConversationFirstStates.html?state=list-loading&reset) | [Open](MobileConversationFirstStates.html?state=list-loading&reset) |
+| Needs you read failed | [Open](ConversationFirstStates.html?state=list-error&reset) | [Open](MobileConversationFirstStates.html?state=list-error&reset) |
+| Cached Needs you, offline | [Open](ConversationFirstStates.html?state=list-offline&reset) | [Open](MobileConversationFirstStates.html?state=list-offline&reset) |
+| Needs you during discussion | [Open](ConversationFirstStates.html?state=discussion&reset) | [Open](MobileConversationFirstStates.html?state=discussion&reset) |
+| Loading the question | [Open](ConversationFirstStates.html?state=loading&reset) | [Open](MobileConversationFirstStates.html?state=loading&reset) |
+| Read failed, retry | [Open](ConversationFirstStates.html?state=read-error&reset) | [Open](MobileConversationFirstStates.html?state=read-error&reset) |
+| Offline with cached discussion | [Open](ConversationFirstStates.html?state=cached-error&reset) | [Open](MobileConversationFirstStates.html?state=cached-error&reset) |
+| Recording quick acceptance | [Open](ConversationFirstStates.html?state=accepting&reset) | [Open](MobileConversationFirstStates.html?state=accepting&reset) |
+| Acceptance failed | [Open](ConversationFirstStates.html?state=accept-error&reset) | [Open](MobileConversationFirstStates.html?state=accept-error&reset) |
+| Acceptance denied | [Open](ConversationFirstStates.html?state=denied&reset) | [Open](MobileConversationFirstStates.html?state=denied&reset) |
+| Sending a message | [Open](ConversationFirstStates.html?state=sending&reset) | [Open](MobileConversationFirstStates.html?state=sending&reset) |
+| Message failed, draft retained | [Open](ConversationFirstStates.html?state=send-error&reset) | [Open](MobileConversationFirstStates.html?state=send-error&reset) |
+| Message queued, L2 unavailable | [Open](ConversationFirstStates.html?state=waiting&reset) | [Open](MobileConversationFirstStates.html?state=waiting&reset) |
+| L2 could not answer | [Open](ConversationFirstStates.html?state=reply-error&reset) | [Open](MobileConversationFirstStates.html?state=reply-error&reset) |
+| Decision recorded, waiting to resume | [Open](ConversationFirstStates.html?state=accepted-waiting&reset) | [Open](MobileConversationFirstStates.html?state=accepted-waiting&reset) |
+| Question without a recommendation | [Open](ConversationFirstStates.html?state=no-recommendation&reset) | [Open](MobileConversationFirstStates.html?state=no-recommendation&reset) |
+| A simple typed answer | [Open](ConversationFirstStates.html?state=simple-input&reset) | [Open](MobileConversationFirstStates.html?state=simple-input&reset) |
+| A reply arrives below the question | [Open](ConversationFirstStates.html?state=new-reply&reset) | [Open](MobileConversationFirstStates.html?state=new-reply&reset) |
+| A newer question replaced this one | [Open](ConversationFirstStates.html?state=revised&reset) | [Open](MobileConversationFirstStates.html?state=revised&reset) |
+| Question unavailable | [Open](ConversationFirstStates.html?state=missing&reset) | [Open](MobileConversationFirstStates.html?state=missing&reset) |
+| Task archived, read only | [Open](ConversationFirstStates.html?state=archived&reset) | [Open](MobileConversationFirstStates.html?state=archived&reset) |
+| Listening | [Open](ConversationFirstStates.html?state=listening&reset) | [Open](MobileConversationFirstStates.html?state=listening&reset) |
+| Transcribing | [Open](ConversationFirstStates.html?state=transcribing&reset) | [Open](MobileConversationFirstStates.html?state=transcribing&reset) |
+| Dictation in editable draft | [Open](ConversationFirstStates.html?state=dictated&reset) | [Open](MobileConversationFirstStates.html?state=dictated&reset) |
+| Microphone denied | [Open](ConversationFirstStates.html?state=mic-denied&reset) | [Open](MobileConversationFirstStates.html?state=mic-denied&reset) |
+| Transcription failed | [Open](ConversationFirstStates.html?state=voice-error&reset) | [Open](MobileConversationFirstStates.html?state=voice-error&reset) |
+| Voice unavailable | [Open](ConversationFirstStates.html?state=voice-unavailable&reset) | [Open](MobileConversationFirstStates.html?state=voice-unavailable&reset) |
+
+</details>
 
 ## Supporting machinery and removal
 

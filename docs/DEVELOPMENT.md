@@ -75,6 +75,18 @@ Screenshots, traces and HTML reports live under ignored `web/ui-artifacts/`, gro
 viewport. CI artifacts contain only fictional test data. Keep actual service captures, session
 logs, conversations and private incident evidence out of shared artifacts.
 
+Review-only comparisons, proposal captures, implementation galleries and routine renderings stay
+outside Git under the [project UI rule](../AGENTS.md#ui). Link the relevant evidence from the PR and
+keep it accessible until review finishes. Use the local HTML report above or available CI artifacts;
+if an upload is unavailable, provide the ignored evidence through an accessible review location.
+Passing tests do not replace a pending visual review or release a merge hold. The task design preview
+is an option only after its delivery and ignored/untracked input handling are verified.
+
+Wireframe renders stay in ignored `design/wireframes/shots/`. The
+[documentation renderer](../design/readme/README.md) also writes to ignored artifacts; only selected
+illustrations that explain current behavior belong in `docs/images/`. Maintain the spec and useful
+boards in place, removing obsolete review scaffolding and its generators/references together.
+
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number

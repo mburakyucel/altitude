@@ -2,7 +2,7 @@
 import copy
 import json
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
@@ -254,12 +254,14 @@ class TestCIRecheck(AltitudeCase):
 
     def test_same_project_broker_registers_without_external_io(self):
         self.setenv("ALTITUDE_ACTOR", "l3")
+        # The real broker subprocess does not inherit this fixture's S.now patch.
+        due = datetime.now(timezone.utc) + timedelta(hours=1)
         result = server.l3_verb_request(self.project, {"kind": "alt", "args": ["task", "recheck-ci", self.slug,
-            "--run", "71", "--at", "2026-09-10T02:00:00Z", "--reason", "Verify upload"]})
+            "--run", "71", "--at", due.isoformat().replace("+00:00", "Z"), "--reason", "Verify upload"]})
         self.assertEqual(result["returncode"], 0, result["stderr"])
         record = json.loads(result["stdout"])
         self.assertEqual(record["actor"], "l3")
-        self.assertEqual(record["due_at"], "2026-09-10T02:00:00+00:00")
+        self.assertEqual(record["due_at"], due.isoformat())
         self.api.assert_not_called()
 
     def test_stale_attempt_block_and_lifecycle_requests_prevent_effects(self):
@@ -286,9 +288,10 @@ class TestCIRecheck(AltitudeCase):
 
     def test_command_authority_and_input_bounds(self):
         self.setenv("ALTITUDE_PROJECT", self.project)
+        due = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         for actor, code in (("l2", 1), ("l3", 0)):
             self.setenv("ALTITUDE_ACTOR", actor)
-            result = self.alt("task", "recheck-ci", self.slug, "--run", "71", "--at", "2026-09-10T10:00:00Z",
+            result = self.alt("task", "recheck-ci", self.slug, "--run", "71", "--at", due,
                               "--reason", "Verify upload")
             self.assertEqual(result.returncode, code, result.stderr)
         for run, at in ((0, self.now), (71, "2026-09-09T10:00:00"), (71, "2030-01-01T00:00:00Z")):

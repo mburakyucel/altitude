@@ -48,7 +48,7 @@ document.querySelector('form')?.addEventListener('submit',e=>{e.preventDefault()
  else if(text==='Keep 14 days; use snapshots so region no longer matters.'){answers={...answers,retention:'14 days',region:'Closed: snapshots replace the regional backup'};save();write('draft','');location.href=dest('Partial')}
  else if(text==='Release team'||text==='Keep 14 days, use West, and send the report to the release team.'){answers={retention:answers.retention||'14 days',region:answers.region||'West',owner:'Release team'};save();write('answer',text);write('draft','');location.href=dest('Accepted')}
  else if(['14 days','Keep it for 14 days, then delete it. Go ahead.'].includes(text)){write('answer',text);write('draft','');if(scene==='Question'||scene==='States'){write('single','14');location.href=dest('Accepted')}else{answers.retention='14 days';save();location.href=dest('Partial')}}
- else document.querySelector('.cf-hint').textContent='Prototype: try the example messages from the review page.'});
+ else document.querySelector('.cf-hint').textContent='Prototype: try the example messages in CONVERSATION_FIRST.md.'});
 document.querySelectorAll('[data-back]').forEach(a=>a.onclick=e=>{if(document.referrer&&new URL(document.referrer).origin===location.origin&&history.length>1){e.preventDefault();history.back()}});
 </script>
 </div>

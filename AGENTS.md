@@ -121,6 +121,15 @@ visually attractive, easy to use, and intuitive. The design itself makes clear w
 where to go. Apply the concise [design review expectations](design/wireframes/SPEC.md#11-standing-design-tenet)
 alongside the interaction-state walkthrough below.
 
+Keep wireframes lean: maintain the current approved design in the spec and useful boards, folding
+accepted changes into them instead of accumulating per-PR galleries. Review-only before/after
+comparisons, proposal captures, implementation screenshot galleries, and routine test renderings stay
+outside version control and out of the committed PR diff. Use ignored review/CI artifacts (see
+[development](docs/DEVELOPMENT.md#browser-walkthroughs)), or the task design preview once delivered and
+verified with ignored/untracked inputs. Keep evidence accessible until its review is complete and
+link it from the PR; a missing upload does not waive review or an existing merge hold. Curated
+documentation illustrations may stay when they explain current behavior and have a maintained source.
+
 From the wireframe-implementation phase on, a PR that implements or changes a UI component ships
 with that component's interaction states specified — empty, loading, listening, error, denied, and
 what appears and disappears after each action — and walked through on phone and desktop before the
