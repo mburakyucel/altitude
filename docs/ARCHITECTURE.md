@@ -801,7 +801,8 @@ stream cannot alter a later queue request. A failed refresh is a read error, who
 Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
 receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
-after the submitted text on a new line. No text matching or automatic resend infers delivery.
+after the submitted text on a new line. Combined failed drafts remain unconfirmed if any send lacks a
+receipt. No text matching or automatic resend infers delivery.
 The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the

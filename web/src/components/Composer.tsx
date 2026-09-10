@@ -205,7 +205,7 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
-  const [refused, setRefused] = useState<string | null>(null);
+  const [sendFailure, setSendFailure] = useState<"refused" | "unconfirmed" | null>(null);
   const unavailable = voiceUnavailable();
   const canvas = useWaveform(stream, phase === "listening");
 
@@ -274,7 +274,7 @@ export default function Composer({
     async (text: string) => {
       const ready = text.trim();
       if (!ready || disabled) return;
-      setRefused(null);
+      setSendFailure(null);
       setVoiceFailure("");
       draft.current = "";
       onChange("");
@@ -286,8 +286,8 @@ export default function Composer({
         const recovered = [text, draft.current].filter(Boolean).join("\n");
         draft.current = recovered;
         onChange(recovered);
-        if (error instanceof ApiError && error.status < 500) setRefused(recovered);
-        else setVoiceFailure("Could not confirm delivery. Check the conversation before sending again.");
+        setSendFailure((current) => current === "unconfirmed" || !(error instanceof ApiError && error.status < 500)
+          ? "unconfirmed" : "refused");
         focusField(recovered.length);
       }
     },
@@ -365,7 +365,7 @@ export default function Composer({
   const start = useCallback(async () => {
     if (unavailable || denied || disabled || phase !== "idle") return;
     setVoiceFailure("");
-    setRefused(null);
+    setSendFailure((current) => current === "unconfirmed" ? current : null);
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
@@ -483,17 +483,21 @@ export default function Composer({
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
-  if (refused != null) {
+  if (sendFailure === "refused") {
     hintTone = "danger";
     hintRole = "alert";
     hintText = (
       <>
         Not sent.{" "}
-        <button type="button" className="link" onClick={() => void submit(refused)}>
+        <button type="button" className="link" onClick={() => void submit(draft.current)}>
           Retry
         </button>
       </>
     );
+  } else if (sendFailure === "unconfirmed") {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = "Could not confirm delivery. Check the conversation before sending again.";
   } else if (transcribing) {
     hintRole = "status";
     hintText = "Transcribing…";
@@ -533,7 +537,7 @@ export default function Composer({
           autoFocus={autoFocus}
           onChange={(event) => {
             onChange(event.target.value);
-            if (refused != null) setRefused(null);
+            if (sendFailure === "refused") setSendFailure(null);
           }}
           onKeyDown={onFieldKeyDown}
         />

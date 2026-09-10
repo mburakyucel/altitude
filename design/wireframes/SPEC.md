@@ -330,7 +330,8 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
 The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
 An explicit refusal also preserves any newly typed draft after the refused text on a new line;
-Retry submits that recoverable draft. A later callback from an earlier send cannot change a newer
+Retry submits that recoverable draft. Combined failed drafts stay unconfirmed if any send lacks a receipt,
+so Retry cannot duplicate or discard uncertain text. A later callback from an earlier send cannot change a newer
 pending message. `web/e2e/project-isolation.pw.ts`, `task-lifecycle.pw.ts` and `conversation.pw.ts`
 walk accepted/interrupted, failed refresh, reconnect, queued, refused and unconfirmed states at both viewports.
 

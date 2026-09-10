@@ -276,7 +276,8 @@ refresh; newly typed text remains. Failed immediate wakes leave accepted message
 requests with the existing timer. A restart race retains the queued receipt in the response.
 Explicit refusal restores recoverable text with Retry. When transport or a server failure leaves
 delivery unconfirmed, the composer preserves both submitted and newly typed text, asks the operator
-to check the conversation, and offers no send Retry. It never infers acceptance by matching text.
+to check the conversation, and offers no send Retry, including when another overlapping send is refused.
+It never infers acceptance by matching text.
 
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local

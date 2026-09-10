@@ -144,6 +144,24 @@ describe("Composer", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Not sent. Retry");
   });
 
+  it.each([true, false])("keeps mixed failed sends unconfirmed when refusal finishes first: %s", async (refusalFirst) => {
+    const failures: Array<(error: Error) => void> = [];
+    const onSubmit = vi.fn(() => new Promise<void>((_resolve, reject) => failures.push(reject)));
+    const { user, field } = mount({ onSubmit });
+    for (const text of ["Refused draft", "Unconfirmed draft"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await user.type(field, "New draft");
+    for (const index of refusalFirst ? [0, 1] : [1, 0]) {
+      await act(async () => failures[index]!(index === 0 ? new ApiError(409, "Refused") : new TypeError("Network failed")));
+    }
+    expect(field).toHaveValue(refusalFirst ? "Unconfirmed draft\nRefused draft\nNew draft" : "Refused draft\nUnconfirmed draft\nNew draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["Escape", "Cancel"])("Listening: Cancel, Stop, Send; %s goes back with nothing added", async (action) => {
     const { getUserMedia, track } = installVoiceBrowser();
     stubTranscribe("never used");

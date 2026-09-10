@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect, type Route } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
@@ -126,6 +126,43 @@ test("accepted L2 input stays sent through a failed refresh and preserves the ne
   await expect(bubble).toHaveCount(1);
   await expect(field).toHaveValue("");
   expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+});
+
+for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost receipt preserve all drafts without Retry; refusal first: ${refusalFirst}`, async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const slug = "prepare-index-migration";
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const routes: Route[] = [];
+  await page.route("**/api/l2/message", (route) => { routes.push(route); });
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  for (const text of ["Refused instruction", "Stored instruction"]) {
+    await field.fill(text);
+    await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  }
+  await expect.poll(() => routes.length).toBe(2);
+  await field.fill("Next draft");
+  // Only the second request reaches the real handler; its saved receipt is lost in transport.
+  const response = await routes[1]!.fetch();
+  expect(response.ok()).toBe(true);
+  const { message } = await response.json();
+  let recovered = "Next draft";
+  for (const index of refusalFirst ? [0, 1] : [1, 0]) {
+    if (index === 0) await routes[0]!.fulfill({ status: 409, json: { error: "Refused before storage" } });
+    else await routes[1]!.abort("connectionfailed");
+    recovered = `${index === 0 ? "Refused instruction" : "Stored instruction"}\n${recovered}`;
+    await expect(field).toHaveValue(recovered);
+  }
+  await walk.state("mixed-delivery-uncertain-drafts-preserved", {
+    visible: [conversation.getByRole("alert").filter({ hasText: "Could not confirm delivery." }), field],
+    hidden: [conversation.getByRole("button", { name: "Retry", exact: true })],
+  });
+  const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
+  expect(task.messages.filter((row: { id: string }) => row.id === message.id)).toHaveLength(1);
+  expect(task.messages.some((row: { text: string }) => row.text === "Refused instruction")).toBe(false);
+  const workers = await (await request.get("/fixture/workers")).json();
+  expect(workers.pending[slug].filter((row: { id: string }) => row.id === message.id)).toHaveLength(1);
+  expect(routes).toHaveLength(2);
 });
 
 test("quick acceptance persists the recommendation, resumes the same L2 and clears Needs you", async ({ page, request }, info) => {
