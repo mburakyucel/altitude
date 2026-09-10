@@ -637,6 +637,7 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         if task.get("agent_id") and not clear_worker:
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
         usage.capture(project, task)
+        task.pop("verified", None)  # A fresh attempt must establish its own current verification.
         task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
                      "next_engine": engine or task.get("next_engine"), "routing": None})
         _clear_block(project, task)

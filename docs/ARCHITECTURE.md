@@ -68,7 +68,8 @@ limit. It fences the observed attempt, worker/session and block, refuses live wo
 and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
 engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
 availability are checked again before execution and launch. `route.pick_task` supplies the same
-target-aware availability and pin explanation to dispatch and the queue. Ordinary resume remains unchanged.
+target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
+verification while retaining prior reports and delivery history. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 

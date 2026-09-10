@@ -68,7 +68,8 @@ Successful handoff queues the same task for ordinary dispatch, constrained to th
 configured options for one fresh attempt. Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
-PRs, lease, progress, messages, provider history, questions and merge holds remain. A queued receipt
+PRs, lease, progress, messages, provider history, questions and merge holds remain. Prior reports remain
+history; the fresh attempt establishes its own current verification. A queued receipt
 establishes only admission; recovery requires observing a new running attempt. Ordinary `task resume`
 keeps its provider session and launch model. Handoff supplies no approval for pending decisions or holds.
 

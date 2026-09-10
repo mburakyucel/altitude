@@ -56,6 +56,11 @@ class TestProviderHandoff(AltitudeCase):
         progress.write_text("Done: saved implementation. Next: finish required checks and preserve the review hold.\n")
         (worktree / "README.md").write_text("Existing uncommitted implementation.\n")
         task.update(prs=[42], adopted_pr={"number": 42, "head": git("rev-parse", "HEAD", cwd=worktree).strip()})
+        task["delivery"] = {"number": 42, "at": S.now(), "branch": task["branch"]}
+        task["verified"] = {"verdict": "ok", "attempt": task["attempt"], "delivery": task["delivery"]}
+        report = progress.with_name("report.json")
+        report.write_text('{"landed": {"prs": [{"number": 42, "merged": true}]}}\n')
+        prior_report = report.read_text()
         S.save_task(self.project, task)
         message = T.message(self.project, slug, "l3", "Continue the existing work; the unanswered choice stays open.")
         before = S.load_task(self.project, slug)
@@ -71,6 +76,8 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(S.load_task(self.project, slug)["state"], "blocked")
         queued = self.execute(task)
         self.assertEqual((queued["state"], queued["attempt"], queued["next_engine"]), ("queued", 1, "codex"))
+        self.assertNotIn("verified", queued, "earlier success is not current-attempt verification")
+        self.assertEqual(report.read_text(), prior_report, "the earlier report remains history")
         self.assertEqual(len(self.engine.calls), 1, "handoff uses the ordinary fresh-dispatch queue")
         self.assertFalse(queued.get("resume_after"))
         dispatch.run(self.project, slug)
@@ -80,7 +87,7 @@ class TestProviderHandoff(AltitudeCase):
         self.assertNotEqual(current["agent_id"], before["agent_id"])
         self.assertNotIn("next_engine", current)
         self.assertFalse(current.get("engine") or current.get("model") or current.get("routing_pinned"))
-        for key in ("slug", "title", "request", "worktree", "branch", "paths", "prs", "adopted_pr", "questions", "hold_merge"):
+        for key in ("slug", "title", "request", "worktree", "branch", "paths", "prs", "adopted_pr", "delivery", "questions", "hold_merge"):
             self.assertEqual(current.get(key), before.get(key), key)
         self.assertEqual(T.task_messages(self.project, slug), conversation)
         self.assertEqual(S.read_events(self.project, slug)[:len(events)], events)

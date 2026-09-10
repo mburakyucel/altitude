@@ -329,7 +329,8 @@ For an already exited owner blocked by worker death or a recognized usage limit,
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
 and reason. The daemon fences worker/session and block identity, refuses live workers, in-flight claims,
 finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
-the old worker records and requeues the same task with a one-attempt `next_engine`. Dispatch checks pins
+the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
+current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
 and configured target options again, preserves committed and uncommitted work in the existing worktree,
 validates provenance, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, lease, saved messages, unanswered questions, decisions and merge holds
