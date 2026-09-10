@@ -558,7 +558,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 ## Task lifecycle
 
 ```text
-alt task new --title <title> [--paths a.py,b/] [--hold-merge <reason>] -
+alt task new --title <title> [--effort high|xhigh] [--paths a.py,b/] [--hold-merge <reason>] -
 alt task message <slug> <text>
 alt task reply <text>
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-burak | --fault]
@@ -578,6 +578,33 @@ including operator-directed blocks. The operator flag places those decisions in 
 hide their context from L3. The notification names open members, revisions and required authority so
 L3 can settle record-backed or scope portions while operator approvals remain open. Re-parking
 unchanged members queues nothing new. Faults keep their existing separate incident/notification path.
+
+### Task reasoning effort
+
+`alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
+requests Extra High; `--effort high` requests High. Omitting the option defaults new tasks to High
+on supporting engines. The engine seam defines support; other engines retain native effort when
+the option is omitted. An explicit choice filters Auto to supporting engines and refuses a pin to
+an unsupported engine. If no configured supporting option is available, the queue
+explanation names the unavailable options. Effort does not create an engine/model pin.
+
+Precedence is explicit task effort, then the engine's task default, then native configuration only
+when no launch override exists. The launcher supplies the resolved value as a native command-line
+configuration override on the initial turn and every resume. The model stays provider-selected
+unless separately pinned. Model-specific effort compatibility is validated by the provider; an
+unsupported response remains a task-local launch/turn failure with its diagnostic, without silently
+lowering effort or switching engines. Existing tasks without an effort field keep native behavior;
+there is no migration and no effort editing control for existing sessions or L3 turns.
+
+`alt task status <slug>` exposes `effort` (explicit request, null if omitted), `launch_effort`
+(the actual launch override, null for native configuration), and `engine_reasoning_effort`
+(the provider observation, null until reported for the turn). Worker records retain launch effort
+as evidence. An observation may differ from the selection and never replaces it. Message/resume
+preserves the attempt, owner conversation and saved override through provider configuration and
+routing changes. Deterministic fixtures verify arguments, state and failure behavior; live-provider
+compatibility remains deferred under the repository testing policy.
+
+### Lifecycle requests
 
 For L3 and shell callers, `resume`, `stop`, and `reject` append one task-local daemon request and one
 `daemon-request` event containing the task, operation, actor, reason, and request id. Altd performs the

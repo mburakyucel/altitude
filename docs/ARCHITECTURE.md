@@ -133,6 +133,18 @@ header chips, and the Monitor API expose the observation; old records remain rea
 `GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
+Task creation records nullable `effort` (`high` or `xhigh` when explicit). `config.task_effort`
+owns support and the High default for the supporting engine; `route.pick_task` filters Auto options
+for explicit choices while keeping engine/model pins strict. Fresh dispatch resolves `launch_effort`
+and persists it alongside `launch_model` before calling the shared worker launcher. The native CLI
+receives that override on launch and every resume; the worker record retains the same launch evidence.
+Tasks without the creation field retain native configuration, and resume never resolves a new default
+or copies an observation into the launch choice. `alt task status` exposes `effort`, `launch_effort`
+and `engine_reasoning_effort` separately. Resume clears the previous turn's observed effort until
+the current worker reports it. Model compatibility stays with the native provider: unsupported
+effort errors follow the existing task-local failure path, without downgrading effort or rerouting
+that error. No model capability catalog, session migration or L3 effort control exists.
+
 Both roles read two layers of rules. The personas in `personas/` are the global layer: how anyone
 works under Altitude on any project, carrying nothing project-specific. The repository's own
 instructions file is the project layer, owned by that repository's operator and read first.

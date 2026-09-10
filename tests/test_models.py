@@ -55,7 +55,7 @@ class TestSessionModel(AltitudeCase):
     def test_worker_caches_observation_and_poll_persists_task_and_live_snapshot(self):
         task = T.new(self.project, "Observed model", "request")
         task.update(state="running", attempt=1, l2_engine="codex", agent_id="worker-1", session_id="thread-1",
-                    engine_model=None)
+                    engine_model=None, effort="xhigh", launch_effort="xhigh")
         S.save_task(self.project, task)
         paths = engines._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker-1")
         S.write_json(paths["record"], {"started_at": self.started, "codex_home": str(self.home)})
@@ -68,6 +68,7 @@ class TestSessionModel(AltitudeCase):
         saved = S.load_task(self.project, task["slug"])
         self.assertEqual(saved["engine_model"], "actual-model")
         self.assertEqual(saved["engine_reasoning_effort"], "high")
+        self.assertEqual((saved["effort"], saved["launch_effort"]), ("xhigh", "xhigh"))
         self.assertIn("launch_model", saved, "tasks predating observation preserve their original launch choice")
         self.assertIsNone(saved["launch_model"], "recording a CLI default must not turn it into an override")
         self.assertEqual(row["engine_model"], "actual-model", "observation survives rollout removal")

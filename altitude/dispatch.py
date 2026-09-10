@@ -858,9 +858,10 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             raise T.TransitionError(f"engine hold: {choice['why']}")
         engine = choice["engine"]
         selected_model = choice.get("model")
+        selected_effort = config.task_effort(engine, task.get("effort")) if "effort" in task else None
         task.update({"dispatching": S.now(), "worker_started_at": datetime.now(timezone.utc).isoformat(),
                      "l2_engine": engine, "engine_model": selected_model,
-                     "launch_model": selected_model, "engine_reasoning_effort": None,
+                     "launch_model": selected_model, "launch_effort": selected_effort, "engine_reasoning_effort": None,
                      "routing": choice["why"], "routing_pinned": choice.get("pinned", False)})
         S.save_task(project, task)
     attempt = task.get("attempt", 0) + 1
@@ -873,7 +874,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
             T.brief(project, slug, brief_md, actor="altd")
             res = engines.start_l2(
                 engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
-                model=selected_model, settings=settings, extra_env=l2_env(project, slug, attempt),
+                model=selected_model, effort=selected_effort, settings=settings, extra_env=l2_env(project, slug, attempt),
                 job_root=l2_job_root(project, slug))
             rejection = res.get("rejection")
             if not rejection:
@@ -890,10 +891,11 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
                     S.save_task(project, current)
                 raise T.TransitionError(f"engine hold: {choice['why']}")
             engine, selected_model = choice["engine"], choice["model"]
+            selected_effort = config.task_effort(engine, task.get("effort")) if "effort" in task else None
             with S.project_lock(project):
                 current = S.load_task(project, slug)
                 current.update(l2_engine=engine, launch_model=selected_model, engine_model=selected_model,
-                               routing=choice["why"])
+                               launch_effort=selected_effort, routing=choice["why"])
                 S.save_task(project, current)
     except T.TransitionError:
         raise
@@ -1052,10 +1054,12 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         with S.project_lock(project):
             current = S.load_task(project, slug)
             current["worker_started_at"] = datetime.now(timezone.utc).isoformat()
+            current["engine_reasoning_effort"] = None
             T._save_claim_task(project, current)
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
             persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
+            effort=task.get("launch_effort"),
             settings=S.task_dir(project, slug) / "settings.json",
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root)
         worker = res.get("agent") or {}

@@ -463,11 +463,15 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 
 
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
-        paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None) -> dict:
+        paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
+        effort: str | None = None) -> dict:
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     try:
         pin = config.pinned_option("l2", {}, engine=engine, model=model)
+        if effort is not None:
+            effective_pin = config.pinned_option("l2", config.project(project), engine=engine, model=model)
+            config.task_effort(effective_pin["engine"] if effective_pin else None, effort)
     except ValueError as exc:
         raise TransitionError(str(exc)) from exc
     if pin:
@@ -494,7 +498,7 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
                 "worktree": None,
                 "branch": None, "prs": [], "spend": {}, "blocked_reason": None, "source": source,
                 "verified": None, "model": model, "engine": engine, "l2_engine": None,
-                "engine_model": None, "routing": None,
+                "engine_model": None, "routing": None, "effort": effort,
                 "paths": [p.strip() for p in (paths or []) if p.strip()],
                 "hold_merge": (hold_merge or "").strip() or None}
         S.save_task(project, task)

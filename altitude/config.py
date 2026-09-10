@@ -67,8 +67,9 @@ AUTO_ROUTING = [[{"engine": PRIMARY_DEFAULT_ENGINE, "model": "fable" if PRIMARY_
                  {"engine": "claude" if PRIMARY_DEFAULT_ENGINE != "claude" else "codex",
                   "model": "fable" if PRIMARY_DEFAULT_ENGINE != "claude" else None}],
                 [{"engine": "claude", "model": "opus"}]]
-# Codex model and effort come from the Codex CLI's configuration and are recorded per session.
+# L3 effort remains native; new L2 tasks explicitly override native effort configuration.
 CODEX_EFFORT = {"l3": None}
+TASK_EFFORTS = ("high", "xhigh")
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
 WIP_PER_PROJECT = 8
 WIP_PER_MACHINE = 80
@@ -80,6 +81,15 @@ PROJECTS_FILE = ROOT / "projects.json"
 MONITOR_DIR = ROOT / "monitor"
 INCIDENT_INDEX = ROOT / "incidents.jsonl"
 DIGEST_FILE = ROOT / "DIGEST.md"
+
+
+def task_effort(engine: str | None, effort: str | None) -> str | None:
+    """Validate the task choice; model support is decided by the native provider at launch."""
+    if effort is not None and effort not in TASK_EFFORTS:
+        raise ValueError("task effort must be high or xhigh")
+    if effort is not None and engine is not None and engine != "codex":
+        raise ValueError(f"{engine} does not support task reasoning effort; omit --effort or select a supporting engine")
+    return (effort or "high") if engine == "codex" else effort
 
 
 def machine_settings() -> dict:
