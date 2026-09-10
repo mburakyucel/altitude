@@ -89,7 +89,7 @@ class TestTemporaryCapacity(AltitudeCase):
         self.assertEqual(held["state"], "blocked")
         self.assertEqual((held["l2_engine"], held["engine_model"], held["agent_id"]),
                          ("codex", "gpt-test-stable", task["agent_id"]))
-        self.assertEqual(held["resume_after"], out[0]["limited"])
+        self.assertEqual(held["resume_after"], out[0]["limited"]["until"])
         global_hold.assert_not_called()
         fault.assert_not_called()
 

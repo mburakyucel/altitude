@@ -45,6 +45,40 @@ same-user altd Unix socket. The socket fixes the project independently of reques
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
 repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
 
+### Explicit provider handoff
+
+L3 or the operator can continue an exited owner as a fresh attempt on another configured engine:
+
+```sh
+alt task status blocked-owner --json
+alt task handoff blocked-owner --engine <engine> --attempt <observed-attempt> --reason 'Continue the existing authorized work on this engine'
+alt task status blocked-owner --json
+```
+
+The coordinator transport takes the same argument list:
+`{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
+The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
+worker/session identity and be blocked by worker death (`l2-died`) or a recognized usage limit.
+The daemon checks the attempt, worker/session and block again. Live workers, active lifecycle claims,
+decision-only waits, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
+targets refuse. A changed block or replacement worker invalidates the request. An identical retry reuses
+its receipt while the resulting lifecycle still matches.
+
+Successful handoff queues the same task for ordinary dispatch, constrained to the requested engine's
+configured options for one fresh attempt. Configuration and availability are checked again at launch;
+an unavailable target does not fall through to another engine, and the queue shows that target's
+availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
+PRs, lease, progress, messages, provider history, questions and merge holds remain. Prior reports remain
+history; the fresh attempt establishes its own current verification. A queued receipt
+establishes only admission; recovery requires observing a new running attempt. Ordinary `task resume`
+keeps its provider session and launch model. Handoff supplies no approval for pending decisions or holds.
+
+Recognized model allowance exhaustion is scoped to that model. Unknown reset times stay unknown and
+create no resume timer; only a reported reset schedules one. The routing observation's thirty-minute
+expiry permits later availability checks without claiming that an allowance reset. Recovery changes no
+project routing, purchases no credits and implements no usage reset. After a repair, L3 verifies its
+activation and each owner's current status before requesting handoff; completed owners need no transfer.
+
 ### Durable CI recheck
 
 L3 or the operator records one probe against an existing fault-blocked task in its project:

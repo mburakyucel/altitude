@@ -37,7 +37,7 @@ L3_ALLOWED_TOOLS = ",".join((
     "Bash(alt project set *)", "Bash(alt state *)", "Bash(alt task new *)", "Bash(alt task reject *)",
     "Bash(alt task report *)", "Bash(alt task messages *)", "Bash(alt task events *)",
     "Bash(alt task status *)", "Bash(alt task show *)", "Bash(alt task list *)", "Bash(alt task message *)",
-    "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)",
+    "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)", "Bash(alt task handoff *)",
     "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
     "Bash(alt task preserve-checkout *)",
     "Bash(alt task recheck-ci *)",
@@ -197,8 +197,8 @@ class _BoundedRawCapture:
         data, truncated = cap_raw(bytes(self.head + self.tail), self.cap, total=self.total)
         return data.decode("utf-8", errors="replace"), truncated
 
-# ---- usage limit: the subscription window closing is a timed hold, not a failure ----------
-LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached", re.I)
+# ---- usage limits: exhausted allowance, with only the scope and reset actually reported ----
+LIMIT_TEXT = re.compile(r"hit your (?:session|usage) limit|usage limit reached|out of (?:extra )?usage|rate limit reached|reached your (?P<model>fable|opus|sonnet|haiku) limit", re.I)
 RESETS = re.compile(r"resets?\s+(?:(?:at|in)\s+)?(?:([A-Za-z]{3,9}\s+\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", re.I)
 TEMPORARY_CAPACITY_TEXT = "Selected model is at capacity. Please try a different model."
 
@@ -208,19 +208,27 @@ def temporary_capacity_in(text: str | None) -> bool:
     return bool(text and TEMPORARY_CAPACITY_TEXT in text)
 
 
-def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | None = None) -> str | None:
-    """The UTC ISO time the window reopens if `text`/`quota` say it is exhausted, else None.
+def _usage_limit(until: str | None, model: str | None = None) -> dict:
+    return {"scope": "model" if model else "engine", "model": model, "until": until,
+            "why": (f"{model} allowance exhausted" if model else "usage window exhausted")
+                   + (f"; resets {until}" if until else "; reset time unknown")}
+
+
+def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | None = None) -> dict | None:
+    """Recognized exhaustion with its reported scope and optional UTC reset, else None.
 
     Claude Code says it two ways: a synthetic assistant message ("You've hit your session limit · resets 8pm
     (America/Los_Angeles)") and, on the same record, `quotaLimits: {status: rejected, resetsAt: <epoch>}`."""
     now = now or datetime.now(timezone.utc)
-    if quota and quota.get("status") == "rejected" and quota.get("resetsAt"):
-        return datetime.fromtimestamp(int(quota["resetsAt"]), timezone.utc).isoformat(timespec="seconds")
-    if not text or not LIMIT_TEXT.search(text):
-        return None
+    match = LIMIT_TEXT.search(text or "")
+    model = match.group("model").lower() if match and match.group("model") else None
+    if not model and quota and quota.get("status") == "rejected" and quota.get("resetsAt"):
+        return _usage_limit(datetime.fromtimestamp(int(quota["resetsAt"]), timezone.utc).isoformat(timespec="seconds"))
+    if not match:
+        return _usage_limit(None) if quota and quota.get("status") == "rejected" else None
     m = RESETS.search(text)
     if not m:
-        return (now + timedelta(hours=1)).isoformat(timespec="seconds")  # no time given: hold an hour, then look again
+        return _usage_limit(None, model)
     day, hour, minute, ampm, tz = m.groups()
     try:
         zone = ZoneInfo(tz) if tz else (datetime.now().astimezone().tzinfo or timezone.utc)
@@ -236,7 +244,14 @@ def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | 
                 continue
     if when <= local:
         when += timedelta(days=1)
-    return when.astimezone(timezone.utc).isoformat(timespec="seconds")
+    return _usage_limit(when.astimezone(timezone.utc).isoformat(timespec="seconds"), model)
+
+
+def record_usage_limit(engine: str, limit: dict, detail: str = "") -> None:
+    from . import route
+    route.note_limit(engine, limit)
+    if engine == "claude" and limit["scope"] == "engine" and limit["until"]:
+        note_usage_limit(limit["until"], detail)
 
 
 def usage_limit_path() -> Path:
@@ -361,7 +376,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
                  durable_timeout: bool = False) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
-    raw_stdout/raw_stderr; `limited` (a reset time) when the subscription window is exhausted — the call is not even
+    raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
     made while a hold is in force.
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
@@ -369,7 +384,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
-                "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": held,
+                "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": _usage_limit(held),
                 "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False,
                 "safe_to_retry": True, "rejection": None}
     cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
@@ -487,11 +502,11 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     out.update({"raw_stdout": raw_stdout, "raw_stderr": raw_stderr,
                 "raw_stdout_truncated": raw_stdout_truncated, "raw_stderr_truncated": raw_stderr_truncated})
     out["text"] = "".join(parts).strip()
-    lim = usage_limit_in(out.get("synthetic") or out["text"] or raw_stderr, out.get("quota"))
+    lim = usage_limit_in(out.get("synthetic") or out["text"] or out.get("error") or raw_stderr, out.get("quota"))
     if lim:
-        note_usage_limit(lim, (out.get("synthetic") or out["text"])[:200])
+        record_usage_limit("claude", lim, (out.get("synthetic") or out["text"])[:200])
         out["limited"] = lim
-        out["error"] = f"usage limit: window exhausted until {lim}"
+        out["error"] = f"usage limit: {lim['why']}"
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     out.update(safe_to_retry=safe_to_retry, rejection=rejected or rejection("claude", out, model))

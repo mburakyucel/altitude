@@ -318,10 +318,24 @@ target. Without a matching project, reporting remains issue-only. The notificati
 and creates, reuses, resumes, or coordinates no receiving-project task. The reporting L3 does not repair Altitude;
 Altitude's operator/coordinator selects implementation separately. Normal issue verbs remain bound
 to the calling project's origin and accept no repository override. A cross-provider
-continuation is a deliberate, recorded fresh attempt based on saved work: when a worker's window runs
-out and the task has no explicit engine/model pin, an eligible configured alternative can receive a new
-attempt briefed with the task's `progress.md`. No eligible alternative leaves the task waiting for its
-window. Ordinary resume preserves the existing provider conversation and launch model.
+continuation is a deliberate, recorded fresh attempt based on saved work: when a worker exhausts an
+allowance and the task has no explicit engine/model pin, an eligible configured alternative can receive
+a new attempt briefed with the task's `progress.md`. A named model allowance excludes only that model.
+No eligible alternative leaves the task blocked. Only a provider-reported reset schedules resumption;
+unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
+availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
+
+For an already exited owner blocked by worker death or a recognized usage limit, L3 or the operator
+uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
+and reason. The daemon fences worker/session and block identity, refuses live workers, in-flight claims,
+finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
+the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
+current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
+and configured target options again, preserves committed and uncommitted work in the existing worktree,
+validates provenance, and increments the attempt only when the fresh worker binds. The target is then
+consumed. Task identity, PRs, lease, saved messages, unanswered questions, decisions and merge holds
+survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before
+requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.

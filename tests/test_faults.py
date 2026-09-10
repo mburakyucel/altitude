@@ -126,7 +126,7 @@ class TestSystemFault(AltitudeCase):
         from altitude import server
         source = self.project
         make_repo(self.repo)
-        checkout = self.tmp / "development"
+        checkout = self.tmp / "upstream" / "development"
         make_repo(checkout)
         git("remote", "set-url", "origin", "https://github.com/fictional/altitude.git", cwd=checkout)
         self.register(PROJECT, path=checkout)

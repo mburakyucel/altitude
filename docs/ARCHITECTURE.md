@@ -62,6 +62,14 @@ Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI afte
 state and worker/session identity, refuses a stale target, and treats a retry of the same completed
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
+`alt task handoff <slug> --engine <engine> --attempt <N> --reason "…"` uses this same coordinator
+transport and daemon request for an exited owner blocked by worker death or a recognized usage
+limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
+and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
+engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
+availability are checked again before execution and launch. `route.pick_task` supplies the same
+target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
+verification while retaining prior reports and delivery history. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
@@ -480,11 +488,14 @@ contract are described under [faults](#faults); private evidence stays in the ca
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
-with backoff; a usage-window stop starts a fresh attempt on an eligible configured alternative from
-the task's `progress.md`, or parks the task until its window reopens when no alternative is eligible
-or it is explicitly pinned; each writes one task
-event. A Claude usage-window stop is recorded once for the machine, because the subscription is
-machine-wide; Codex reports its limits per turn. Tier two is L3: whatever remains blocks only its own
+with backoff; a usage-limit stop starts a fresh attempt on an eligible configured alternative from
+the task's `progress.md`, or parks the task when no alternative is eligible or it is explicitly pinned.
+The engine seam reports allowance scope and an optional reset. A named model allowance excludes only
+that model, never unrelated models or engines. An unknown reset creates no resume timer or global
+timed hold; the existing routing observation expires after thirty minutes without claiming a reset.
+A provider-reported reset schedules resumption. Fresh attempts retain the existing worktree, including
+uncommitted work, and validate its branch and commit provenance. Task conversations, worker evidence,
+PRs, lease, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
 window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind
 blocking another task or changing its details adds one line for L3 within that window. Full fault
@@ -507,7 +518,7 @@ Incident records are evidence only and never create tasks, personas, or follow-u
 Restart inventories and incidental events do not turn saved blockers into new failures. Every L3
 turn receives this guidance, including resumed provider sessions. The originating L3 checks public
 delivery evidence and relevant local observations that the cause is gone before the existing
-reason-bearing resume. Notification receipt, issue closure or unrelated restart is insufficient.
+reason-bearing resume or explicit provider handoff. Notification receipt, issue closure or unrelated restart is insufficient.
 Coordinator messages to faulted tasks use the existing non-waking inbox marker; they remain in the
 conversation and reach the worker on a later supported resume. Operator discussion still uses its
 ordinary wake path. The original attempt, provider session, launch model, worktree and merge holds

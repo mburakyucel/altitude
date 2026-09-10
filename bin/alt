@@ -20,7 +20,7 @@ L3_COMMANDS = {
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
     *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
                                     "status", "show", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "list", "preserve-checkout", "recheck-ci")),
+                                    "done", "list", "preserve-checkout", "recheck-ci", "handoff")),
     *(("incident", name) for name in ("new", "amend", "list")),
 }
 
@@ -251,6 +251,9 @@ def main(argv=None) -> None:
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
     rs = ts.add_parser("resume", help="ask altd to re-attach a blocked L2 with its transcript, worktree, and queued messages")
     rs.add_argument("slug"); rs.add_argument("--reason", required=True)
+    ho = ts.add_parser("handoff", help="L3/operator: continue an exited, fault/limit-blocked owner as a fresh attempt on another configured engine")
+    ho.add_argument("slug"); ho.add_argument("--engine", required=True, choices=config.ENGINES)
+    ho.add_argument("--attempt", required=True, type=int); ho.add_argument("--reason", required=True)
     ms = ts.add_parser("message", help="queue a message for the task's L2; a blocked L2 resumes with it")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
@@ -383,9 +386,10 @@ def main(argv=None) -> None:
         p = _project(args); tc = args.tcmd
         if tc == "new":
             out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
-        elif tc in ("reject", "resume", "stop", "preserve-checkout"):
+        elif tc in ("reject", "resume", "stop", "preserve-checkout", "handoff"):
             from altitude import dispatch
-            out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR))
+            options = {"engine": args.engine, "expected_attempt": args.attempt} if tc == "handoff" else {}
+            out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR, **options))
         elif tc == "recheck-ci":
             out(T.recheck_ci(p, args.slug, args.run, args.at, args.reason, actor=ACTOR))
         elif tc == "block":

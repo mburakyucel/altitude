@@ -154,7 +154,7 @@ class TestL3Sessions(AltitudeCase):
     def test_partial_limited_claude_turn_is_not_replayed_on_codex(self):
         result = {"text": "I already changed state", "session_id": "cl-1", "usage": {},
                   "context_tokens": 100, "cost": 0.0, "turns": 1, "structured": None,
-                  "error": "usage limit", "tools": ["Bash"], "limited": "2099-01-01T00:00:00+00:00"}
+                  "error": "usage limit", "tools": ["Bash"], "limited": engines._usage_limit("2099-01-01T00:00:00+00:00")}
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
              mock.patch.object(engines, "claude_print", return_value=result), \
              mock.patch.object(engines, "codex_exec") as codex:
@@ -201,7 +201,7 @@ class TestL3Sessions(AltitudeCase):
     def test_pinned_claude_turn_never_falls_back_to_codex(self):
         limited = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
                    "structured": None, "error": "usage limit", "tools": [],
-                   "limited": "2099-01-01T00:00:00+00:00"}
+                   "limited": engines._usage_limit("2099-01-01T00:00:00+00:00")}
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
              mock.patch.object(engines, "claude_print", return_value=limited), \
              mock.patch.object(engines, "codex_exec") as codex:

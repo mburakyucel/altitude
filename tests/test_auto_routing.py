@@ -163,7 +163,7 @@ class TestAutoIntegration(AltitudeCase):
             dispatch.run(self.project, task["slug"])
         running = S.load_task(self.project, task["slug"])
         with mock.patch.object(engines, "remove_l2_worker") as remove:
-            server.on_l2_finished(self.project, {"task": running, "limited": "2099-01-01T00:00:00+00:00",
+            server.on_l2_finished(self.project, {"task": running, "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"),
                 "agent": {"id": "worker", "state": "failed"}})
         remove.assert_not_called()
         saved = S.load_task(self.project, task["slug"])
@@ -176,7 +176,7 @@ class TestAutoIntegration(AltitudeCase):
             dispatch.run(self.project, task["slug"], model="opus")
         running = S.load_task(self.project, task["slug"])
         with mock.patch.object(engines, "remove_l2_worker") as remove:
-            server.on_l2_finished(self.project, {"task": running, "limited": "2099-01-01T00:00:00+00:00",
+            server.on_l2_finished(self.project, {"task": running, "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"),
                 "agent": {"id": "worker", "state": "failed"}})
         remove.assert_not_called()
         self.assertEqual(S.load_task(self.project, task["slug"])["session_id"], "conversation")
@@ -243,7 +243,7 @@ class TestAutoIntegration(AltitudeCase):
     def test_l3_project_pin_does_not_fallback_on_quota_limit(self):
         self.policy("claude:fable > codex", l3_engine="claude", l3_model="opus")
         failure = {"session_id": "session", "text": "", "error": "usage window exhausted", "tools": [],
-                   "limited": "2099-01-01T00:00:00+00:00", "safe_to_retry": True}
+                   "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"), "safe_to_retry": True}
         with mock.patch.object(engines, "claude_print", return_value=failure) as execute, \
              mock.patch.object(engines, "codex_exec") as fallback:
             result = l3.turn(self.project, "Continue")
@@ -251,6 +251,73 @@ class TestAutoIntegration(AltitudeCase):
         self.assertEqual(execute.call_args.kwargs["model"], "opus")
         fallback.assert_not_called()
         self.assertFalse(result["completed"])
+
+    def test_l3_scoped_unknown_limit_falls_back_without_freezing_other_models(self):
+        self.policy("claude:fable > claude:opus")
+        limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
+        def answer(prompt, **kwargs):
+            return {"session_id": "conversation", "text": "" if kwargs["model"] == "fable" else "Continued",
+                    "error": limit["why"] if kwargs["model"] == "fable" else None, "tools": [],
+                    "limited": limit if kwargs["model"] == "fable" else None, "safe_to_retry": True,
+                    "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}
+        with mock.patch.object(engines, "claude_print", side_effect=answer) as execute:
+            result = l3.turn(self.project, "Continue the existing request")
+        self.assertTrue(result["completed"])
+        self.assertEqual([call.kwargs["model"] for call in execute.call_args_list], ["fable", "opus"])
+        self.assertFalse(engines.usage_limit_path().exists())
+
+    def test_model_limit_pinned_or_without_alternative_waits_without_a_reset_timer(self):
+        for pin in ({}, {"l2_model": "fable"}):
+            self.policy("claude:fable", **pin)
+            task = self.task()
+            running = {**task, "state": "running", "attempt": 1, "l2_engine": "claude", "agent_id": "worker",
+                       "session_id": "session", "launch_model": "fable"}
+            S.save_task(self.project, running)
+            limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
+            with mock.patch.object(engines, "remove_l2_worker") as remove:
+                server.on_l2_finished(self.project, {"task": running, "limited": limit})
+            remove.assert_not_called()
+            saved = S.load_task(self.project, task["slug"])
+            self.assertEqual(saved["state"], "blocked")
+            self.assertFalse(saved.get("resume_after") or saved.get("fault"))
+            self.assertEqual(saved["session_id"], "session")
+            self.assertIn("reset time unknown", saved["blocked_reason"])
+            self.assertFalse(engines.usage_limit_path().exists())
+
+    def test_limit_fallback_preserves_a_racing_resume_claim_and_its_messages(self):
+        for phase in ("before-retirement", "before-requeue"):
+            with self.subTest(phase=phase):
+                self.policy("claude:fable > codex")
+                task = self.task()
+                running = {**task, "state": "running", "attempt": 1, "l2_engine": "claude", "agent_id": "worker",
+                           "session_id": "session", "launch_model": "fable"}
+                S.save_task(self.project, running)
+                limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
+                claimed = {}
+                def claim():
+                    message = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Preserve this new instruction")
+                    claimed.update(claim=T.claim_resume(self.project, task["slug"]), message=message)
+                record = engines.record_usage_limit
+                requeue = T.requeue
+                def observe(*args):
+                    record(*args)
+                    if phase == "before-retirement":
+                        claim()
+                def move(*args, **kwargs):
+                    if phase == "before-requeue":
+                        claim()
+                    return requeue(*args, **kwargs)
+                with mock.patch.object(engines, "record_usage_limit", side_effect=observe), \
+                     mock.patch.object(T, "requeue", side_effect=move), \
+                     mock.patch.object(engines, "remove_l2_worker") as remove:
+                    server.on_l2_finished(self.project, {"task": running, "limited": limit})
+                saved = S.load_task(self.project, task["slug"])
+                self.assertEqual(saved["state"], "blocked")
+                self.assertEqual(saved["resume_claim"]["id"], claimed["claim"]["id"])
+                self.assertEqual([row["id"] for row in saved["resume_claim"]["messages"]], [claimed["message"]["id"]])
+                self.assertEqual((saved["agent_id"], saved["session_id"]), ("worker", "session"))
+                if phase == "before-retirement":
+                    remove.assert_not_called()
 
     def test_l3_one_off_model_pin_stays_strict_and_keeps_error_in_conversation(self):
         self.policy("claude:fable > claude:opus")

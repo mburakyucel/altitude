@@ -13,14 +13,30 @@ LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 class TestDetect(unittest.TestCase):
     def test_text_with_zone(self):
         now = datetime(2026, 8, 30, 2, 55, tzinfo=timezone.utc)  # 7:55pm in LA → 8pm is 5 minutes away
-        self.assertEqual(engines.usage_limit_in(LIMIT, now=now), "2026-08-30T03:00:00+00:00")
+        self.assertEqual(engines.usage_limit_in(LIMIT, now=now)["until"], "2026-08-30T03:00:00+00:00")
 
     def test_past_time_rolls_to_tomorrow(self):
         now = datetime(2026, 8, 30, 3, 30, tzinfo=timezone.utc)  # 8:30pm LA: the 8pm reset already happened → next one
-        self.assertEqual(engines.usage_limit_in(LIMIT, now=now), "2026-08-31T03:00:00+00:00")
+        self.assertEqual(engines.usage_limit_in(LIMIT, now=now)["until"], "2026-08-31T03:00:00+00:00")
 
     def test_quota_epoch_wins(self):
-        self.assertEqual(engines.usage_limit_in("", {"status": "rejected", "resetsAt": 1788058800}), "2026-08-30T03:00:00+00:00")
+        self.assertEqual(engines.usage_limit_in("", {"status": "rejected", "resetsAt": 1788058800})["until"], "2026-08-30T03:00:00+00:00")
+
+    def test_rejected_quota_without_epoch_still_uses_the_reported_text_reset(self):
+        now = datetime(2026, 8, 30, 2, 55, tzinfo=timezone.utc)
+        self.assertEqual(engines.usage_limit_in(LIMIT, {"status": "rejected"}, now=now)["until"],
+                         "2026-08-30T03:00:00+00:00")
+
+    def test_model_allowance_has_no_inferred_reset_or_account_scope(self):
+        text = "You've reached your Fable limit. Switch to another model, or manage usage credits to continue."
+        limit = engines.usage_limit_in(text, {"status": "rejected", "resetsAt": 1788058800})
+        self.assertEqual((limit["model"], limit["scope"], limit["until"]), ("fable", "model", None))
+        self.assertIn("reset time unknown", limit["why"])
+
+    def test_unknown_account_reset_is_not_a_timer(self):
+        for text, quota in (("usage limit reached", None), ("", {"status": "rejected"})):
+            limit = engines.usage_limit_in(text, quota)
+            self.assertEqual((limit["scope"], limit["until"]), ("engine", None))
 
     def test_ordinary_text_is_not_a_limit(self):
         self.assertIsNone(engines.usage_limit_in("PR #32 ready; awaiting reviewer pass to merge + restart"))
@@ -53,7 +69,7 @@ class TestPollAndResume(AltitudeCase):
         S.save_task(self.project, {"slug": "lim", "state": "running", "session_id": "s1", "agent_id": "w1"})
         out = dispatch.poll(self.project)
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0].get("limited"), "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
+        self.assertEqual(out[0]["limited"]["until"], "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
 
     def test_job_detail_reads_the_file_and_its_time(self):
         d = engines.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)

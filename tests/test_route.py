@@ -83,7 +83,7 @@ class TestPickEngine(AltitudeCase):
         project = {"routing": config.parse_routing("claude:fable>claude:opus>codex")}
         route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "engine", "why": "sign in"})
         self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
-        route.note_limit("codex", "2099-01-01T00:00:00+00:00")
+        route.note_limit("codex", engines._usage_limit("2099-01-01T00:00:00+00:00"))
         choice = route.pick_engine("l2", project=project)
         self.assertIsNone(choice["engine"])
         self.assertIn("sign in", choice["why"])
@@ -96,6 +96,15 @@ class TestPickEngine(AltitudeCase):
         route.note_rejection(choice, {"scope": "model", "why": "default model not accessible"})
         self.assertIsNone(route.pick_engine("l2", project=project)["engine"])
         self.assertEqual(route.pick_engine("l3", project=project)["engine"], "codex")
+
+    def test_exhausted_model_allowance_leaves_other_models_and_engines_eligible(self):
+        project = {"routing": config.parse_routing("claude:fable>claude:opus>codex")}
+        limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
+        engines.record_usage_limit("claude", limit)
+        self.assertFalse(engines.usage_limit_path().exists())
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "opus")
+        self.assertEqual(route.pick_engine("l2", project=project, excluded=(("claude", "opus"),))["engine"], "codex")
+        self.assertIn("reset time unknown", route.pick_engine("l2", forced="claude", model="fable")["why"])
 
     def test_no_entitlement_or_model_allowance_is_inferred_from_plan_or_account_meter(self):
         project = {"routing": config.parse_routing("claude:fable>claude:opus")}
