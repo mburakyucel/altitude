@@ -6,6 +6,7 @@ import threading
 import tomllib
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
@@ -383,10 +384,20 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(self.delivery(other), previous)
 
     def test_incident_linking_keeps_project_authority_and_sanitization(self):
+        self.check_incident_authority((0, 0, 0))
+
+    def test_incident_linking_keeps_project_authority_across_second_boundary(self):
+        self.check_incident_authority((0, 1, 1))
+
+    def check_incident_authority(self, seconds):
         self.register("other")
-        self.fault("foreign", "other")
-        foreign = self.fault("foreign-two", "other")
-        own = self.fault("own")
+        with mock.patch.object(incidents, "datetime") as clock:
+            clock.now.side_effect = [datetime(2026, 1, 1, 0, 0, second, tzinfo=timezone.utc) for second in seconds]
+            foreign_ids = [self.fault("foreign", "other"), self.fault("foreign-two", "other")]
+            own = self.fault("own")
+        # IDs are project-local: either foreign incident can share the local ID.
+        self.assertIn(own, foreign_ids)
+        foreign = next(incident for incident in foreign_ids if incident != own)
         for incident in (foreign, "../private", "I-20000101-000000"):
             with self.assertRaises(ValueError):
                 self.tracked(incident)

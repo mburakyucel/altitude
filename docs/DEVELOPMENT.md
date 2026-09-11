@@ -39,6 +39,14 @@ execution. Local Git repositories, scripted child processes and loopback HTTP re
 A focused module can be run with `env -u ALTITUDE_ACTOR python3 -m unittest tests.test_isolation`;
 modules use the same bootstrap. The tests do not run the production daemon or its timer.
 
+Incident IDs are project-local. Cross-project authority fixtures select a foreign incident ID
+absent from the local project, rather than assuming creation order makes IDs globally unique.
+`test_upstream_issues.py` controls the incident allocator's clock to exercise both same-second
+allocation and a second boundary while retaining real incident storage and authority checks.
+Independent Git fixtures created with `make_repo` use separate parent directories because each
+bare `origin.git` lives beside its checkout. The fault/recovery reporting test gives its two
+initial commits distinct timestamps so shared origins cannot hide behind identical commits.
+
 ## Browser walkthroughs
 
 Build the candidate app before `make ui`; `make check` does this in order. Every test uses a
