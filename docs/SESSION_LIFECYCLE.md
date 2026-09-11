@@ -414,6 +414,8 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
 3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
    worktree and commit provenance are validated, and a worker that is still live is stopped first;
+   systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
+   Unknown or unavailable status refuses the launch and preserves the claimed inbox for recovery;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
    inbox text (or "Continue from your progress file."); changed Auto preferences and project defaults do not
    alter that attempt. The replacement worker is bound atomically; a superseded bind stops the unowned

@@ -524,7 +524,10 @@ Altitude is the `alt` CLI; the backend validates each command against the task r
 project lock. Claude Code runs as a foreground CLI inside an independent transient unit with Altitude's
 hooks for inbox delivery and telemetry. Codex keeps its native workspace-write sandbox inside the same
 unit boundary and uses the same door; private worker records and output identify both engines' sessions
-after restart. A turn that ends without a
+after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
+collected transient unit as termination evidence. Unknown states, bus failures and query timeouts
+remain unavailable and refuse resume or stop confirmation; an active worker must be stopped before
+its replacement launches. A turn that ends without a
 report, a block, or a completion blocks the task with its result error or stderr tail, on either engine. A
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,

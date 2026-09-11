@@ -330,7 +330,8 @@ class TestStopEvidence(AltitudeCase):
 
     def test_unit_query_distinguishes_terminal_live_and_unavailable(self):
         for code, state, expected in ((0, "active", True), (3, "activating", True), (3, "deactivating", True),
-                                       (3, "inactive", False), (3, "failed", False), (1, "inactive", None),
+                                       (3, "inactive", False), (4, "inactive", False), (3, "failed", False),
+                                       (4, "active", None), (4, "failed", None), (1, "inactive", None),
                                        (1, "", None), (4, "unknown", None), (0, "unrecognized", None)):
             with self.subTest(code=code, state=state), mock.patch.object(engines.subprocess, "run",
                     return_value=subprocess.CompletedProcess([], code, state, "")):
@@ -376,11 +377,12 @@ class TestStopEvidence(AltitudeCase):
             task = {"agent_id": "worker", "l2_engine": engine, "session_id": "session"}
             with self.subTest(engine=engine), mock.patch.object(engines.subprocess, "run", side_effect=[
                     subprocess.CompletedProcess([], 5, "", "unit already collected"),
-                    subprocess.CompletedProcess([], 3, "inactive", "")]):
+                    subprocess.CompletedProcess([], 4, "inactive", "")]):
                 engines.stop_l2_worker(engine, "worker", job_root=self.root)
                 self.assertEqual(S.read_json(self.paths["record"])["stopped"], START)
             before = self.paths["record"].read_bytes()
-            for code, state, expected in ((3, "inactive", True), (0, "active", False), (1, "", None)):
+            for code, state, expected in ((3, "inactive", True), (4, "inactive", True),
+                                          (0, "active", False), (1, "", None), (4, "unknown", None)):
                 with mock.patch.object(engines.subprocess, "run", return_value=
                         subprocess.CompletedProcess([], code, state, "")) as run:
                     self.assertIs(engines.worker_termination(task, job_root=self.root), expected)

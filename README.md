@@ -70,6 +70,8 @@ L3 can also request continuation with `alt task resume <slug> --reason "…"`. T
 stays in task history; resumed work needs a fresh report. A saved message is not proof that the
 worker has restarted: capacity and recovery waits remain visible. Done, archived and rejected tasks
 remain read-only; reopening their lifecycle is a separate, unsettled product decision.
+An exited worker whose transient unit has been collected can resume once systemd confirms it is
+inactive; unavailable or ambiguous status keeps the task blocked to prevent overlapping workers.
 
 Large or complex issues can move through small, reviewable increments that keep supported user journeys
 working. L3 records the breakdown and delivery evidence in the issue; each task completes its agreed
