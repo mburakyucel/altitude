@@ -68,6 +68,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         slug, worktree = initial["slug"], Path(initial["worktree"])
         T.set_hold_merge(self.project, slug, hold)
         (worktree / "README.md").write_text(content)
+        git("add", "README.md", cwd=worktree)
         gh = self.fake_gh()
         for key, value in dispatch.l2_env(self.project, slug, initial["attempt"]).items():
             self.setenv(key, value)

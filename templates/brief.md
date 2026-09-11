@@ -21,7 +21,8 @@ required.
 **Hard boundaries:** {never_list}
 
 **Ownership and isolation:** repository `{repo}`; task folder `{task_dir}`; worktree branch `{branch}`;
-lease `{paths}`. Other current task leases: {leases}. Stay within your lease. Never restart or stop the
+expected files `{paths}`. Other current tasks' expected files: {leases}. File lists guide coordination;
+stay within the authorized objective and explicit exclusions. Never restart or stop the
 `altitude` or `tutor` services and never bind their reserved ports. {publication_contract}
 
 **Request:**

@@ -68,7 +68,7 @@ Successful handoff queues the same task for ordinary dispatch, constrained to th
 configured options for one fresh attempt. Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
-PRs, lease, progress, messages, provider history, questions and merge holds remain. Prior reports remain
+PRs, expected files, progress, messages, provider history, questions and merge holds remain. Prior reports remain
 history; the fresh attempt establishes its own current verification. A queued receipt
 establishes only admission; recovery requires observing a new running attempt. Ordinary `task resume`
 keeps its provider session and launch model. Handoff supplies no approval for pending decisions or holds.
@@ -343,32 +343,18 @@ upstream issue. Missing status does not authorize publication. Historical incide
 fault identity remain visibly missing; bulk publication/backfill and uncertain-result creation retries
 require a separate operator decision and are not supported by this operation.
 
-## Task file leases
+## Task file lists
 
-`alt task paths <slug> <complete-comma-separated-lease>` is available to the operator and the
-project's L3 through its coordinator transport, and denied to L2. It replaces the complete lease
-in any task state, so include existing paths that still belong to the task. Status exposes the
-saved lease; the `paths` event records actor, previous paths and assigned paths. Assignment alone
-does not resume a task or change its owner, attempt, session, worktree, branch or merge hold.
+Task `paths` lists expected files for coordination. An empty list or a newly needed file never
+blocks authorized work. The task's objective and explicit exclusions still bind the owner.
+`alt task paths <slug> <comma-separated-paths>` lets L3 or the operator replace this advisory list;
+status and the `paths` event retain it. Updating the list grants no authority and starts no worker.
+An owner does not need to update it before editing, recovering or landing authorized changes.
 
-For a fictional `demo` recovery task missing `docs/archive/`:
-
-1. **L2:** inspect `alt task status "$ALTITUDE_TASK"`, checkpoint `progress.md`, then run
-   `alt task block "$ALTITUDE_TASK" --reason "Please add docs/archive/ to my lease to review the preserved documentation."`
-   and stop before editing or applying that scope. This goes to L3 without `--fault` or an
-   operator escalation flag. L2 cannot claim paths itself and must not use `alt land --paths`
-   to bypass the recorded lease.
-2. **L3:** inspect `alt task status recover-demo` and the scope request through the project's
-   coordinator transport. For authorized scope and an empty lease, run
-   `alt task paths recover-demo docs/archive/`. If the task also needs its existing `README.md`
-   scope, use `alt task paths recover-demo README.md,docs/archive/`. A failed assignment leaves
-   the request blocked; a decision beyond the authorized scope follows the normal escalation path.
-3. **L3:** inspect `alt task status recover-demo` again. Only after the required lease is recorded,
-   send `alt task message recover-demo "docs/archive/ is recorded in your lease; continue reviewing in your worktree."`.
-   The message requests the normal daemon resume of the same owner session.
-4. **L2:** on resume, verify the recorded lease in `alt task status "$ALTITUDE_TASK"` and resolve
-   the scope question against L3's reply with `alt task resolve` before continuing. Work stays in
-   the same task worktree and goes through the usual staging lease, checks, hold and PR path.
+Select files or hunks with `git add`, inspect `git diff --cached`, then run `alt land`. Landing
+commits exactly the selected index; it does not stage files or take a `--paths` option. Unrelated
+unstaged and untracked edits stay in the worktree. If staged and working versions differ, the
+staged version is published and the working version is preserved.
 
 ## Dirty-checkout recovery
 
@@ -392,13 +378,10 @@ operator's shell selects the project by inserting `--project example` after `alt
 3. Wait for `alt task status reconcile-edits` to show the completed request and
    its `checkout_archive` branch and SHA. A successful preservation leaves clean main at `origin/main`
    and keeps the task blocked. Snapshot commits live only on the local archive branch.
-4. Inspect the intended reconciliation scope and the task's lease. L3 or the operator assigns
-   any missing scope with `alt task paths reconcile-edits <complete-comma-separated-lease>`,
-   retaining existing required paths, then verifies the recorded lease in task status.
-5. Give the owner the branch, SHA and reconciliation scope with
+4. Give the owner the branch, SHA and authorized reconciliation scope with
    `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
-   This message requests resume. The owner verifies its lease and inspects the snapshot before
-   applying, staging and publishing it; later missing scope uses the [L2-to-L3 route](#task-file-leases).
+   This message requests resume. The owner inspects the snapshot before applying authorized changes
+   and selecting what to stage and publish.
    Resume any other blocked task separately with `alt task resume <slug> --reason "Checkout is clean after preservation"`.
 
 In the owner's isolated worktree, inspect and apply using the recorded immutable SHA:
@@ -418,7 +401,7 @@ Review scope before applying; inspect individual staged versions
 with `git show <SHA>^:<path>`. The archive has two ordinary commits: the staged checkpoint on
 original main, then the working snapshot. Applying the net diff preserves final file content and
 flattens staging intent; staged-only versions remain available in the parent commit. Reconcile
-conflicts in the task worktree and commit only reviewed, leased changes through the normal PR path.
+conflicts in the task worktree and commit only reviewed, authorized changes through the normal PR path.
 
 Git preserves staged and unstaged content, tracked deletions and untracked files. Ignored files
 remain in place; an ignored file obstructing a tracked path refuses cleanup with the archive retained.
@@ -577,7 +560,7 @@ help.
 owner whose recorded PR is still open. `alt task resume <slug> --reason "Continue the existing PR"`
 is the equivalent coordinator/operator continuation without a new conversation message. Both use
 the daemon's existing resume path and retain the attempt, provider session, worktree, branch, PR,
-file lease and all holds. PR lookup failure or a closed PR refuses admission. A saved message or
+expected files and all holds. PR lookup failure or a closed PR refuses admission. A saved message or
 queued resume receipt means accepted work; inspect `alt task status <slug>` for observed running
 state or a capacity/recovery wait. Repeating the same outstanding coordinator resume request reuses
 its receipt. Separate messages remain separate, even when their text matches.
@@ -738,6 +721,8 @@ The operator's 2026-09-09 Pacific policy selects verified local checks for this 
 the trusted configuration seam. Use the existing commands:
 
 ```sh
+git add <selected-files>
+git diff --cached
 alt land --message "fix: describe the change" --pr-body-file /tmp/pr.md
 alt land --message "fix: describe the change" --merge
 ```
@@ -762,11 +747,13 @@ An active task can deliver more than one PR. Its owner continues authorized work
 conversation, isolated worktree and local branch, then uses the usual command:
 
 ```sh
+git add <selected-files>
+git diff --cached
 alt land --message "fix: finish the remaining work" --pr-body-file /tmp/next-pr.md
 alt land --message "fix: finish the remaining work" --merge
 ```
 
-Landing verifies the earlier merge on fetched main, commits leased edits, and puts only follow-up
+Landing verifies the earlier merge on fetched main, commits selected staged edits, and puts only follow-up
 commits onto current main before opening a fresh PR. This handles squash history and a deleted
 remote branch. Previously published changes are not duplicated. An unchanged retry reports
 `checks: merged` as historical delivery, never a new check pass, and creates nothing. If main
@@ -779,7 +766,8 @@ adoption remains supported, and further ordinary work after an adopted merge use
 while preserving its adoption receipt in history.
 
 If updating onto main conflicts or fails, landing aborts the rebase and keeps the committed work
-on the task branch. The refusal names the exact rebase command for the owner to resolve in that
+on the task branch. Dirty working edits can prevent rebasing; landing preserves them without
+auto-stashing. The refusal names the exact rebase command for the owner to resolve in that
 same worktree. Follow-up merge commits require manual reconciliation first because replaying them
 could drop merge-resolution edits. Unseen remote changes also require incorporation before
 continuation. Failures after reconciliation or push can be retried with `alt land`.
@@ -863,8 +851,8 @@ content change creates a replacement revision. Symlinked saved paths still refus
 ### Adopt an existing PR
 
 The task owner or operator can explicitly adopt an assigned, open, same-repository PR targeting
-main. The task keeps its isolated worktree and `worktree-<slug>` branch. Its lease must include
-the original committed paths and the complete PR diff, as well as task edits. Adoption refuses
+main. The task keeps its isolated worktree and `worktree-<slug>` branch. The owner reviews the
+original commits and complete PR diff against the assignment. Adoption refuses
 another task's branch, foreign task trailers, unrelated local history and a PR already adopted
 by another active task. Fork PRs are not supported.
 
@@ -879,23 +867,23 @@ git diff origin/main...origin/proposal/external
 git merge --ff-only origin/proposal/external
 alt land --adopt-pr 42 --expected-head <full-observed-head-sha> \
   --reason "This task is assigned to reconcile the existing proposal" \
-  --message "docs: reconcile proposal" --paths docs/proposal.md --dry-run
+  --message "docs: reconcile proposal" --dry-run
 alt land --adopt-pr 42 --expected-head <full-observed-head-sha> \
   --reason "This task is assigned to reconcile the existing proposal" \
-  --message "docs: reconcile proposal" --paths docs/proposal.md
+  --message "docs: reconcile proposal"
 ```
 
 Use the actual full SHA observed from the PR. The head must agree with origin and be an ancestor
 of local HEAD; already-present task-owned additions are allowed. If the local task branch has
 diverged, incorporate the inspected PR with a merge commit carrying the exact
 `Altitude-Task: <project>/<slug>` trailer. Never rewrite the original history. Add any reconciliation
-edits before landing; `alt land` stages only the lease and adds the trailer to its commit.
+edits before landing, select them with `git add`, and inspect `git diff --cached`.
+`alt land` commits that index and adds the task trailer.
 
 The explicit command records the active immutable `adopted_pr` receipt and `pr-adopted` event before
 publication, visible through `alt task status` and `alt task events`. `--dry-run` fetches and
 validates the PR but records nothing and stages/pushes nothing. After adoption, ordinary
-`alt land --message "…" [--merge]` reuses that PR and its original branch. Supply `--paths` again
-if it overrides the task's declared lease. Retrying adoption with the same original PR/head is
+`alt land --message "…" [--merge]` reuses that PR and its original branch. Retrying adoption with the same original PR/head is
 idempotent; selecting another original head for that PR is refused. Later unowned commits cannot be adopted by
 repeating the command. If origin moves, inspect and incorporate only changes belonging to this
 task; unrelated history requires a separate ownership decision, not a broader adoption receipt.
@@ -910,7 +898,7 @@ needed. Refused adoption validation leaves the active receipt unchanged. Once ad
 publication, check or hold failures retain the new active receipt for retry. Earlier receipts cannot
 be reactivated.
 Ordinary subsequent landing and recorded hold approval target the active PR. Each PR still requires
-explicit task authorization, its full lease, applicable checks and review; holds remain in force.
+explicit task authorization, applicable checks and review; holds remain in force.
 A recorded approval of the previous PR restores that review hold for the next adoption. An explicit
 later task-wide `hold-merge --off` remains effective; earlier PR approval cannot release the new hold.
 

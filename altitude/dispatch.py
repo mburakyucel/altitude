@@ -1215,7 +1215,7 @@ def inside_lease(path: str, lease: list[str]) -> bool:
 
 
 def shared_paths(a: list[str], b: list[str]) -> list[str]:
-    """Informational shared scope for briefs and status, using the staging lease semantics."""
+    """Shared planned paths for briefs and status; not a permission boundary."""
     return sorted({p for p in map(_norm, a + b) if inside_lease(p, a) and inside_lease(p, b)})
 
 
@@ -1304,7 +1304,7 @@ def _expand_entry(entry: str) -> list[str]:
 
 
 def task_paths(project: str, task: dict) -> list[str]:
-    """The task's declared staging lease; `alt land` refuses changes outside it."""
+    """The task's advisory planned files, for coordination and inspection."""
     entries = task.get("paths") or []
     return [path for entry in entries for path in _expand_entry(str(entry))]
 

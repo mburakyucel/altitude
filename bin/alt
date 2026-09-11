@@ -148,7 +148,7 @@ def _brief_text(record: dict) -> str:
     return "\n".join([f"task {record['slug']}: {record.get('state') or '?'}", f"engine/model: {engine}",
                       f"attempt: {record.get('attempt') or 0}", f"PRs: {prs}", f"hold: {hold or 'none'}",
                       f"blocked: {record.get('blocked_reason') or 'none'}", f"wip_hold: {record.get('wip_hold') or 'none'}",
-                      "lease: " + (", ".join(record["lease"]) or "none"),
+                      "planned files: " + (", ".join(record["lease"]) or "none"),
                       "overlaps: " + ("; ".join(overlaps) or "none")]
                      + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
 
@@ -266,7 +266,7 @@ def main(argv=None) -> None:
     ci = ts.add_parser("recheck-ci", help="L3/operator: record one bounded CI evidence probe for a fault-blocked task")
     ci.add_argument("slug"); ci.add_argument("--run", required=True, type=int)
     ci.add_argument("--at", required=True); ci.add_argument("--reason", required=True)
-    tp = ts.add_parser("paths", help="L3/operator: replace the complete comma-separated file lease; L2 requests changes through task block")
+    tp = ts.add_parser("paths", help="L3/operator: replace the advisory comma-separated planned file list")
     tp.add_argument("slug"); tp.add_argument("paths", metavar="a,b")
     hm = ts.add_parser("hold-merge", help="Burak merges this task's PRs himself (--why), or releases the hold (--off)")
     hm.add_argument("slug"); hm.add_argument("--why"); hm.add_argument("--off", action="store_true")
@@ -296,7 +296,7 @@ def main(argv=None) -> None:
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
-    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--paths", help="comma-separated lease override"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="full local suite used only when the pinned PR pair configures no CI"); ln.add_argument("--dry-run", action="store_true")
+    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--wait", type=int, default=600, help="seconds to wait for PR checks (0 = report current state, don't wait)"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="full local suite used only when the pinned PR pair configures no CI"); ln.add_argument("--dry-run", action="store_true")
     ln.add_argument("--adopt-pr", type=int, help="adopt an existing same-repository PR, preserving its branch and history")
     ln.add_argument("--closes-issue", type=int, action="append", default=[], help="require a GitHub closing link for this fully resolved issue in the project repository (repeatable)")
     ln.add_argument("--expected-head", help="full observed PR head SHA required with --adopt-pr")
@@ -316,10 +316,6 @@ def main(argv=None) -> None:
     config.ensure_root()
     c = args.cmd
     if ACTOR == "l2" and (c, getattr(args, "tcmd", None)) not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
-        if (c, getattr(args, "tcmd", None)) == ("task", "paths"):
-            sys.exit('alt task paths: not available to an L2 worker; ask L3 to assign the missing scope with '
-                     'alt task block "$ALTITUDE_TASK" --reason "Need lease paths <paths> for <reason>"; '
-                     'after resume, verify the recorded lease with alt task status "$ALTITUDE_TASK"')
         sys.exit(f"alt {c}: not available to an L2 worker; use status, messages, reply, block, done, or land")
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "icmd", None) if c == "incident" else
@@ -559,12 +555,10 @@ def main(argv=None) -> None:
         from altitude import land
         try:
             out(land.land(args.message, project=args.project, pr_title=args.pr_title, pr_body_file=args.pr_body_file,
-                          merge=args.merge, wait=args.wait, paths=args.paths, base=args.base,
+                          merge=args.merge, wait=args.wait, base=args.base,
                           test_cmd=args.test_cmd, dry_run=args.dry_run,
                           adopt_pr=args.adopt_pr, expected_head=args.expected_head, reason=args.reason,
                           closes_issues=args.closes_issue))
-        except land.EmptyLeaseError as e:
-            sys.exit(str(e))
         except land.LandError as e:
             sys.exit(f"alt land: {e}")
         return

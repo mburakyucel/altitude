@@ -180,7 +180,7 @@ def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
 def status(project: str, slug: str) -> dict:
     """Return read-only orientation signals; faults never escape.
 
-    ``wip_hold`` reports capacity; leases describe staging scope and informational overlaps.
+    ``wip_hold`` reports capacity; planned files describe expected work and informational overlaps.
     """
     errors: list[str] = []
     out = {

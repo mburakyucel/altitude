@@ -51,7 +51,7 @@ suggestions and one-off exceptions stay scoped. L3 distinguishes queued work, me
 and their effective loading. These are role instructions, with no automatic broadcast, runtime classifier
 or memory store and no expansion of project-local or upstream reporting authority.
 
-L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
+L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; an explicit Stop ends a worker. Appending a message to a blocked
@@ -310,18 +310,20 @@ evidence available through inspection commands.
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
 based on the exact fetched `origin/main`. Task commits require the task provenance trailer. Protected
 branches cannot be updated outside the guarded landing path. The trusted landing code validates the
-staging lease and repository, fetches the base, commits, pushes, opens the PR, pins the current
-base/head pair, waits for configured checks, and merges only
+task ownership and repository, fetches the base, commits the selected index, pushes, opens the PR,
+pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. A task may carry an explicit merge hold for Burak review.
 The temporary local-check repository in `config.py` selects this project's operator-authorized
 exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
 its verdict. Active required hosted checks must be removed by the operator before this route can
-run; identity, scope, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
+run; identity, provenance, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
 retains logs, browser artifacts and a result binding command, base, head, candidate and tree. A
 successful current run writes a concise PR test line through the ordinary landing boundary.
 See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
-The lease limits which changes can be staged. Parallel tasks may edit shared paths; their briefs
+Planned file lists guide coordination without limiting edits or landing. The owner stages selected
+files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
+unstaged and untracked work. Parallel tasks may edit shared paths; their briefs
 name those paths and ask owners to rebase onto main before landing and keep shared-doc edits to
 their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
@@ -331,8 +333,9 @@ A merge completes a delivery, while an active task can continue authorized work 
 worktree, local branch and provider conversation. On the next `alt land`, the merged PR's final
 head separates follow-up commits from already delivered history. Landing verifies the merge is
 on fetched main and rebases only that follow-up, so squash commits are not replayed. An already
-reconciled retry uses its common main ancestor. Leased uncommitted changes are committed before
-reconciliation; conflicts and raised rebase errors abort back to the task branch with that work
+reconciled retry uses its common main ancestor. Selected staged changes are committed before
+reconciliation. Dirty working files can prevent Git's rebase; landing does not auto-stash them.
+Conflicts and raised rebase errors abort back to the task branch with committed and working edits
 retained. Follow-up merge commits require owner reconciliation before landing, preserving edits
 made in merge resolutions. Work already present on main produces a truthful merged retry.
 
@@ -348,7 +351,7 @@ Starting another delivery or claiming a resume invalidates previous completion v
 Reported owners with recorded open-PR evidence expose the ordinary task composer and Resume action.
 Message or coordinator-resume admission confirms that a recorded PR is still open through the existing
 GitHub adapter, preserves the report and verification in a `report-superseded` event, and moves the
-same owner into the existing blocked/resume path. No new attempt, provider, worktree, PR or lease is
+same owner into the existing blocked/resume path. No new attempt, provider, worktree or PR is
 created, and merge holds and original decision evidence remain intact. A failed PR lookup refuses
 the action before saving its text; after acceptance, wake failures retain the saved inbox request.
 
@@ -366,13 +369,10 @@ older reports and a raced delivery cannot complete the task. Recorded deliveries
 path even when the local branch has no remaining diff. Merges continue activating independently
 of owner completion through the existing deployment observation.
 
-Only L3 or the operator assigns a lease with `alt task paths`; it replaces the complete `paths`
-list and records a `paths` event with the actor and previous scope. A missing-scope L2, including
-a recovery owner, uses an ordinary block to L3 and stops before editing or applying that work.
-L3 retains the authorized existing paths, assigns the required scope through its project-bound
-transport, and observes the saved lease in task status before messaging the owner to resume.
-Assignment alone leaves the task blocked. The normal daemon resume keeps the attempt, provider
-session, worktree, branch and merge hold; the owner rechecks the lease before continuing.
+L3 or the operator can update expected files with `alt task paths`; it replaces the `paths` list
+and records the actor and previous list. This is coordination metadata, not a permission grant or
+resume action. Owners need no file-list update to finish the authorized objective, including recovery;
+the objective and explicit exclusions remain binding.
 
 Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
 text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
@@ -394,8 +394,8 @@ records the active immutable receipt in `adopted_pr` and a `pr-adopted` event un
 The current owner or operator can adopt; another active task cannot own that PR or branch.
 Adoption requires the registered isolated worktree, a same-repository open PR targeting main,
 and agreement between its observed head and origin. GitHub operations select the origin repository
-explicitly. Original commits and the complete PR diff must fit the landing lease, including
-rename sources and reverted original changes. The local branch must contain the remote head.
+explicitly. The owner reviews the original commits and complete PR diff against the assignment.
+The local branch must contain the remote head.
 Dry-run checks this evidence without recording adoption, committing or publishing.
 
 An explicitly authorized sequence uses the same command with each next PR's observed head and
@@ -513,7 +513,7 @@ the window before the task receipt is written. Archives remain local until expli
 removal; Altitude never pushes or deletes them and never resumes a task as part of preservation.
 Legacy `preserved_checkout` string SHAs and stash events remain readable; their stashes are neither
 deleted nor converted. The task owner inspects and applies the snapshot in its own worktree,
-reviews its lease and publication scope, and uses the normal PR path.
+reviews the authorized objective and publication scope, and uses the normal PR path.
 The [recovery procedure](CLI.md#dirty-checkout-recovery) requires a separate resume after the
 checkout passes the guard. Workerless `main-unpushed` tasks retain their fault and blocked reason
 when a resume still fails that guard; a failed message wake leaves the inbox intact and does not
@@ -571,7 +571,7 @@ that model, never unrelated models or engines. An unknown reset creates no resum
 timed hold; the existing routing observation expires after thirty minutes without claiming a reset.
 A provider-reported reset schedules resumption. Fresh attempts retain the existing worktree, including
 uncommitted work, and validate its branch and commit provenance. Task conversations, worker evidence,
-PRs, lease, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
+PRs, expected files, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
 window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind
 blocking another task or changing its details adds one line for L3 within that window. Full fault
@@ -929,7 +929,7 @@ The task card (`web/src/components/TaskCard.tsx`, spec §3.5) is one component i
 bordered card under an L3 reply that created the task and the row in the work panel. Its meta line
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
 the queue's own reason (the WIP limit, an engine hold, a restart in progress, a resume checkpoint,
-or plain dispatch), so the card never names a file lease. A task blocked waiting on L3 reads "Waits
+or plain dispatch), so the card never names a file list. A task blocked waiting on L3 reads "Waits
 for L3" with the running dot, and the rail's project dot counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. The work panel (spec §3.7) reads the project's
 tasks and the overview queue filtered to the project. **Current** contains every unfinished task

@@ -103,18 +103,13 @@ queued task
   └─ bind its concrete session and worker → running
 ```
 
-WIP defaults to 8 running tasks per project and 80 across the machine. Shared lease paths do not
+WIP defaults to 8 running tasks per project and 80 across the machine. Shared planned files do not
 hold dispatch or resume. The brief names overlaps, asks the owner to rebase onto main before
-landing, and keeps shared-doc edits in that task's own sections. Status shows the lease and
-informational overlaps; the lease remains the staging boundary enforced by `alt land`.
-
-If required paths are missing, an L2 checkpoints progress and blocks to L3 with the paths and reason,
-including during recovery. This ordinary scope request uses no fault flag. L3 inspects task status,
-assigns the complete lease with `alt task paths <slug> <paths>` through its coordinator transport,
-and verifies the saved scope before sending a task message to resume. Assignment replaces `paths`,
-retains the blocked state and starts no worker. The message takes the normal daemon resume path,
-preserving the attempt, provider session, worktree, branch and merge hold. L2 verifies the recorded
-lease before editing or applying work; it cannot assign its own lease.
+landing, and keeps shared-doc edits in that task's own sections. Status shows expected files and
+informational overlaps. Owners can edit newly needed files within the authorized objective without
+another permission or resume. L3 and the operator can update the advisory list with `alt task paths`.
+The owner selects files or hunks with `git add` and reviews `git diff --cached`; `alt land` commits
+that index and leaves unstaged and untracked work intact.
 
 Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
@@ -235,7 +230,7 @@ For a faulted task, L3 messages remain non-waking discussion and verified recove
 A reported task with an open PR retains its owner conversation. The ordinary composer and coordinator
 Resume path validate a currently open recorded PR, retain the previous report and verifier result in
 task events, and invalidate that report's completion authority before entering the existing pending
-resume flow. The attempt, provider session, worktree, branch, PRs, lease, holds and original source
+resume flow. The attempt, provider session, worktree, branch, PRs, expected files, holds and original source
 messages remain attached to the same task. Each distinct send keeps its own conversation/inbox row;
 the resume claim consumes one exact batch and leaves later sends for the next checkpoint. A refused
 or uncertain provider launch uses the existing claim recovery, without duplicating the conversation.
@@ -485,14 +480,14 @@ the old worker records and requeues the same task with a one-attempt `next_engin
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
 and configured target options again, preserves committed and uncommitted work in the existing worktree,
 validates provenance, and increments the attempt only when the fresh worker binds. The target is then
-consumed. Task identity, PRs, lease, saved messages, unanswered questions, decisions and merge holds
+consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
 survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before
 requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
 Both engines have one contract: the persona may invoke the scoped Altitude
-CLI, and the backend applies the identity, clean-Git, staging-scope, provenance, and merge-policy checks relevant to each
+CLI, and the backend applies the identity, clean-Git, provenance, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
 Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs

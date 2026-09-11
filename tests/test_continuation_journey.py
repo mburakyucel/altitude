@@ -71,6 +71,7 @@ class TestContinuationJourney(AltitudeCase):
         first_commit = self.commit("README.md", "First delivery.\n", "first owned change")
         (self.worktree / "altitude").mkdir()
         (self.worktree / "altitude/fixture.py").write_text("value = 1\n")
+        git("add", "altitude/fixture.py", cwd=self.worktree)
         first = land.land("first checked delivery", cwd=self.worktree, merge=True, wait=0)
         self.assertEqual((first["pr"], first["checks"], first["merged"]), (101, "pass", True))
         first_head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
@@ -110,6 +111,7 @@ class TestContinuationJourney(AltitudeCase):
         (self.worktree / "altitude/fixture.py").write_text("value = 2\n")
         git("add", "altitude/fixture.py", cwd=self.worktree)
         (self.worktree / "altitude/extra.py").write_text("extra = True\n")
+        git("add", "altitude/extra.py", cwd=self.worktree)
         self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "contradicted",
                          "a first-delivery report cannot complete unpublished follow-up work")
         (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')

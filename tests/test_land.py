@@ -50,10 +50,12 @@ class TestLand(AltitudeCase):
         git("config", "commit.gpgsign", "false", cwd=other)
         return other
 
-    def leased_change(self, name="src/thing.py"):
+    def staged_change(self, name="src/thing.py"):
         p = self.repo / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("changed\n")
+        self.git("add", "--", name)
+        self.selected_index = self.git("write-tree")
 
     def set_current_l2(self, *, state="running", attempt=1):
         path = S.tasks_dir("demo") / "fix-x" / "status.json"
@@ -83,7 +85,7 @@ class TestLand(AltitudeCase):
             [args for args in commands if len(args) > 1 and args[0] == "git" and args[1] in forbidden_git],
             [],
         )
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertNotIn("worktree-fix-x", self.remote_heads())
 
     def fake_runner(self, name, exit_code=0, output="", script=None):
@@ -132,21 +134,25 @@ class TestLand(AltitudeCase):
             land.land("msg", cwd=self.repo)
 
     def test_rebase_in_progress_refuses(self):
-        self.leased_change()
+        self.staged_change()
         (self.repo / ".git" / "rebase-merge").mkdir()
         with self.assertRaisesRegex(land.LandError, "rebase is in progress"):
             land.land("msg", cwd=self.repo)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
 
-    def test_refuses_outside_lease_and_stages_nothing(self):
-        self.leased_change()
-        (self.repo / "rogue.txt").write_text("outside\n")
-        with self.assertRaisesRegex(land.LandError, "rogue.txt"):
-            land.land("msg", cwd=self.repo, wait=0)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+    def test_needed_file_outside_expected_paths_is_selected_without_private_file(self):
+        self.staged_change("needed.txt")
+        private = self.repo / "private.txt"
+        private.write_text("Unpublished private notes\n")
+        result = land.land("fix: selected file", cwd=self.repo, wait=0)
+        self.assertEqual(result["staged"], ["needed.txt"])
+        self.assertEqual(self.git("show", "HEAD:needed.txt"), "changed\n")
+        self.assertNotIn("private.txt", self.git("ls-tree", "-r", "--name-only", "HEAD").splitlines())
+        self.assertEqual(private.read_text(), "Unpublished private notes\n")
+        self.assertIn("?? private.txt", self.git("status", "--short"))
 
     def test_non_l2_automated_actors_cannot_land(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.record_commands()
         self.setenv("ALTITUDE_ACTOR", "l3")
         for actor in ("l3", "altd"):
@@ -158,7 +164,7 @@ class TestLand(AltitudeCase):
 
     def test_l2_must_own_the_running_attempt(self):
         self.set_current_l2(attempt=2)
-        self.leased_change()
+        self.staged_change()
         commands = self.record_commands()
 
         os.environ["ALTITUDE_ATTEMPT"] = "1"
@@ -180,7 +186,7 @@ class TestLand(AltitudeCase):
 
     def test_current_l2_can_land(self):
         self.set_current_l2()
-        self.leased_change()
+        self.staged_change()
         result = land.land("fix: current publisher", cwd=self.repo, wait=0)
         self.assertEqual(result["pr"], 101)
         self.assertEqual(result["staged"], ["src/thing.py"])
@@ -189,20 +195,20 @@ class TestLand(AltitudeCase):
         (self.repo / "rogue-history.txt").write_text("direct commit\n")
         self.git("add", "rogue-history.txt")
         self.git("commit", "-q", "-m", "missing task trailer")
-        self.leased_change()
+        self.staged_change()
 
         for merge in (False, True):
             with self.subTest(merge=merge), self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
                 land.land("must refuse", cwd=self.repo, wait=0, merge=merge)
 
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.gh_log(), [])
         self.assertNotIn("worktree-fix-x", self.remote_heads())
 
     def test_happy_path(self):
-        self.leased_change("src/has space.py")
-        self.leased_change("src/a[1].py")  # a bracket-expression name must stage as a literal, not a glob
-        self.leased_change("docs/NOTES.md")
+        self.staged_change("src/has space.py")
+        self.staged_change("src/a[1].py")  # literal filename selected in the index
+        self.staged_change("docs/NOTES.md")
         self.assertIsNone(land._pr_view(self.repo, "worktree-fix-x"))
         res = land.land("fix: land the thing\n\nlonger body", cwd=self.repo, wait=0)
         self.assertEqual(res["pr"], 101)
@@ -227,7 +233,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(creates[0][creates[0].index("--title") + 1], "fix: land the thing")
 
     def test_idempotent_rerun(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: once", cwd=self.repo, wait=0)
         head = self.git("rev-parse", "HEAD").strip()
         res = land.land("fix: once", cwd=self.repo, wait=0)
@@ -266,7 +272,7 @@ class TestLand(AltitudeCase):
 
     def test_complete_issue_delivery_creates_reuses_and_merges_linked_pr(self):
         self.set_current_l2()
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([
             {"url": "https://github.com/acme/widget/issues/42"},
             {"url": "https://github.com/acme/widget/issues/43"},
@@ -291,7 +297,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:2] == ["gh", "issue"] for args in commands))
 
     def test_mentions_and_partial_work_do_not_declare_closure(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([])
         (S.task_dir("demo", "fix-x") / "request.md").write_text("Design one part of GitHub issue #42.")
         body = self.tmp / "partial.md"
@@ -302,7 +308,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:2] == ["gh", "issue"] for args in commands))
 
     def test_missing_or_foreign_closing_links_refuse_merge(self):
-        self.leased_change()
+        self.staged_change()
         links = []
         commands = self.closing_link_fixture(links)
         for response in ([], [{"url": "https://github.com/other/widget/issues/42"}],
@@ -313,7 +319,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_removed_closing_link_before_merge_refuses_merge(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}],
                                              remove_after_validation=True)
         with self.assertRaisesRegex(land.LandError, "lacks GitHub closing links"):
@@ -323,7 +329,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_merged_retry_routes_missing_closure_to_l3(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([])
         landed = land.land("fix: historical delivery", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(landed["merged"])
@@ -335,14 +341,14 @@ class TestLand(AltitudeCase):
 
     def test_manual_closing_link_on_nondefault_target_refuses_merge(self):
         self.git("push", "origin", "HEAD:refs/heads/release")
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}])
         with self.assertRaisesRegex(land.LandError, "must target GitHub's default branch"):
             land.land("fix: release only", cwd=self.repo, wait=0, base="release", closes_issues=[42], merge=True)
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_closing_link_does_not_bypass_hold_or_failed_checks(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.closing_link_fixture([{"url": "https://github.com/acme/widget/issues/42"}])
         (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
         result = land.land("fix: linked but red", cwd=self.repo, wait=0, closes_issues=[42], merge=True)
@@ -353,7 +359,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:3] == ["gh", "pr", "merge"] for args in commands))
 
     def test_closes_issue_cli_rejects_invalid_numbers_before_publication(self):
-        self.leased_change()
+        self.staged_change()
         for number in ("0", "-1", "42"):
             result = subprocess.run([str(ALT), "land", "--message", "fix: linked", "--wait", "0",
                                      "--closes-issue", number, "--merge"], cwd=self.repo,
@@ -363,13 +369,12 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(args[:2] == ["pr", "merge"] for args in self.gh_log()))
 
     def test_rebased_push_retries_with_recorded_tip_lease_exactly_once(self):
-        self.leased_change("src/original.py")
-        self.git("add", "src/original.py")
+        self.staged_change("src/original.py")
         self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
         self.git("commit", "--amend", "-q", "-m", "rebased", "-m", "Altitude-Task: demo/fix-x")
-        self.leased_change()
+        self.staged_change()
         commands = self.record_commands()
         res = land.land("fix: retry", cwd=self.repo, wait=0)
         pushes = [a for a in commands if a[:2] == ["git", "push"]]
@@ -384,8 +389,7 @@ class TestLand(AltitudeCase):
         self.assertIn(recorded_tip[:7], res["replaced"][0])
 
     def test_refused_lease_reports_recorded_and_current_tips(self):
-        self.leased_change()
-        self.git("add", "src/thing.py")
+        self.staged_change()
         self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
@@ -415,7 +419,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in commands if a[:2] == ["git", "pull"]], [])
 
     def test_up_to_date_push_does_not_force_or_refetch_after_push(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: first", cwd=self.repo, wait=0)
         commands = self.record_commands()
         res = land.land("fix: first", cwd=self.repo, wait=0)
@@ -428,7 +432,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(res["head"], self.git("rev-parse", "origin/worktree-fix-x").strip())
 
     def test_first_push_without_remote_tip_uses_plain_push_with_localized_fetch_error(self):
-        self.leased_change()
+        self.staged_change()
 
         def answer(args):
             if args == ["git", "fetch", "-q", "origin",
@@ -447,7 +451,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(res["replaced"], [])
 
     def test_inconsistent_remote_tracking_head_fails_the_pr_pin(self):
-        self.leased_change()
+        self.staged_change()
         pushed_head = "a" * 40
         self.record_commands(lambda args: subprocess.CompletedProcess(args, 0, pushed_head + "\n", "")
                              if args == ["git", "rev-parse", "origin/worktree-fix-x"] else None)
@@ -455,7 +459,7 @@ class TestLand(AltitudeCase):
             land.land("fix: report remote", cwd=self.repo, wait=0)
 
     def test_wait_zero_reports_pending_without_waiting(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "pending"}]')
         res = land.land("fix: pending", cwd=self.repo, wait=0)
         self.assertEqual(res["checks"], "pending")
@@ -471,7 +475,7 @@ class TestLand(AltitudeCase):
 
     def test_merge_hold_refuses_before_any_mutation(self):
         reason = self.hold_merge()
-        self.leased_change()
+        self.staged_change()
         commands = self.record_commands()
         with self.assertRaises(land.LandError) as cm:
             land.land("fix: held", cwd=self.repo, wait=0, merge=True)
@@ -484,30 +488,23 @@ class TestLand(AltitudeCase):
             ["git", "symbolic-ref", "-q", "HEAD"],
         ])
 
-    def test_merge_hold_refuses_with_explicit_paths(self):
-        self.hold_merge()
-        self.leased_change()
-        with self.assertRaises(land.LandError):
-            land.land("fix: held", cwd=self.repo, wait=0, merge=True, paths="src")
-        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
-
     def test_merge_without_resolved_task_refuses(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
             self.setenv(key, None)
-        self.leased_change()
+        self.staged_change()
         with self.assertRaisesRegex(land.LandError, "worktree-fix-x.*--project"):
             land.land("fix: unresolved", cwd=self.repo, wait=0, merge=True)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_merge_hold_refuses_dry_run(self):
         self.hold_merge()
-        self.leased_change()
+        self.staged_change()
         with self.assertRaises(land.LandError):
             land.land("fix: held", cwd=self.repo, merge=True, dry_run=True)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_merge_without_hold_after_checks_pass(self):
-        self.leased_change()
+        self.staged_change()
         res = land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(res["merged"])
         self.assertEqual(res["main_run"], {"databaseId": 7, "status": "completed", "conclusion": "success"})
@@ -516,7 +513,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(merge[merge.index("--match-head-commit") + 1], self.git("rev-parse", "HEAD").strip())
 
     def test_changed_pr_head_is_refused_atomically(self):
-        self.leased_change()
+        self.staged_change()
         commands = self.record_commands(
             lambda args: subprocess.CompletedProcess(args, 1, "", "head branch was modified")
             if args[:3] == ["gh", "pr", "merge"] else None)
@@ -530,7 +527,7 @@ class TestLand(AltitudeCase):
 
     def test_merge_hold_without_merge_opens_pr_and_emits_notice(self):
         reason = self.hold_merge()
-        self.leased_change()
+        self.staged_change()
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             res = land.land("fix: held", cwd=self.repo, wait=0)
@@ -546,7 +543,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_no_merge_when_checks_fail(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}, {"bucket": "pass"}]')
         res = land.land("fix: red", cwd=self.repo, wait=0, merge=True)
         self.assertEqual(res["checks"], "fail")
@@ -556,17 +553,17 @@ class TestLand(AltitudeCase):
 
     def test_detached_head_refuses(self):
         self.git("checkout", "-q", "--detach")
-        self.leased_change()
+        self.staged_change()
         with self.assertRaisesRegex(land.LandError, "detached"):
             land.land("msg", cwd=self.repo, wait=0)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
 
     def test_refuses_when_branch_equals_base(self):
         self.git("checkout", "-q", "-b", "develop")
-        self.leased_change()
+        self.staged_change()
         with self.assertRaisesRegex(land.LandError, "develop"):
             land.land("msg", cwd=self.repo, wait=0, base="develop")
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.remote_heads(), ["main"])
 
     def test_preexisting_remote_divergence_is_replaced_without_rebasing(self):
@@ -584,6 +581,7 @@ class TestLand(AltitudeCase):
         git("commit", "-q", "-m", "remote change", "-m", "Altitude-Task: demo/fix-x", cwd=other)
         git("push", "-q", cwd=other)
         seed.write_text("local\n")
+        self.git("add", "src/f.py")
         res = land.land("fix: conflict", cwd=self.repo, wait=0)
         self.assertEqual(res["head"], self.git("rev-parse", "HEAD").strip())
         self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), res["head"])
@@ -593,8 +591,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.git("log", "--all", "-S", "<<<<<<<", "--oneline").strip(), "")
 
     def test_strictly_behind_branch_is_not_force_rewound(self):
-        self.leased_change("src/f.py")
-        self.git("add", "src/f.py")
+        self.staged_change("src/f.py")
         self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         local_tip = self.git("rev-parse", "HEAD").strip()
@@ -616,42 +613,57 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), local_tip)
         self.assertEqual(git("rev-parse", "worktree-fix-x", cwd=self.remote).strip(), foreign_tip)
 
-    def test_resolved_task_with_empty_lease_fails_loudly(self):
-        d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
-        self.leased_change()
-        (self.repo / "secrets.env").write_text("x\n")
-        p = subprocess.run([sys.executable, str(ALT), "land", "--message", "msg", "--wait", "0"],
-                           cwd=self.repo, capture_output=True, text=True)
-        self.assertNotEqual(p.returncode, 0)
-        self.assertIn(f"task demo/fix-x {land.EMPTY_LEASE_MESSAGE}", p.stderr)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+    def test_empty_expected_paths_publish_only_selected_content_through_cli(self):
+        task = S.load_task("demo", "fix-x")
+        task["paths"] = []
+        S.save_task("demo", task)
+        self.staged_change()
+        private = self.repo / "private.txt"
+        private.write_text("Unpublished notes\n")
+        run = subprocess.run([sys.executable, str(ALT), "land", "--message", "msg", "--wait", "0"],
+                             cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout)["staged"], ["src/thing.py"])
+        self.assertEqual(private.read_text(), "Unpublished notes\n")
+        self.assertNotIn("private.txt", self.git("ls-tree", "-r", "--name-only", "HEAD"))
 
-    def test_explicit_paths_override_empty_task_lease(self):
-        d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": []}))
-        self.leased_change()
-        res = land.land("fix: explicit lease", cwd=self.repo, wait=0, paths="src")
-        self.assertEqual(res["lease"], ["src"])
-        self.assertEqual(res["staged"], ["src/thing.py"])
-
-    def test_absolute_lease_entry_still_matches(self):
-        d = S.tasks_dir("demo") / "fix-x"
-        (d / "status.json").write_text(json.dumps({"slug": "fix-x", "state": "running", "paths": ["/src"]}))
-        self.leased_change("src/thing.py")
-        res = land.land("fix: abs", cwd=self.repo, wait=0)
-        self.assertEqual(res["staged"], ["src/thing.py"])
-
-    def test_rename_crossing_the_lease_boundary_refuses(self):
-        self.leased_change("src/keep.py")
-        self.git("add", "src/keep.py")
+    def test_staged_rename_can_cross_expected_paths(self):
+        self.staged_change("src/keep.py")
         self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
-        self.git("mv", "src/keep.py", "escaped.py")
-        with self.assertRaisesRegex(land.LandError, "escaped.py"):
-            land.land("msg", cwd=self.repo, wait=0)
+        self.git("mv", "src/keep.py", "needed.py")
+        result = land.land("move selected file", cwd=self.repo, wait=0)
+        self.assertEqual(result["pr"], 101)
+        self.assertEqual(self.git("show", "HEAD:needed.py"), "changed\n")
+        self.assertFalse((self.repo / "src/keep.py").exists())
+
+    def test_partial_selection_commits_index_bytes_and_keeps_later_work(self):
+        self.staged_change("src/value.py")
+        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        target = self.repo / "src/value.py"
+        target.write_text("selected hunk\nunchanged line\n")
+        self.git("add", "src/value.py")
+        selected = self.git("show", ":src/value.py")
+        target.write_text("selected hunk\nworking hunk remains private\n")
+        working = target.read_bytes()
+        result = land.land("selected hunk only", cwd=self.repo, wait=0)
+        self.assertEqual(result["staged"], ["src/value.py"])
+        self.assertEqual(self.git("show", "HEAD:src/value.py"), selected)
+        self.assertEqual(target.read_bytes(), working)
+        self.assertEqual(self.git("diff", "--cached"), "")
+        self.assertIn("working hunk remains private", self.git("diff"))
+        self.assertEqual(git("show", "worktree-fix-x:src/value.py", cwd=self.remote), selected)
+
+    def test_selected_literal_names_keep_leading_space_and_newline(self):
+        names = [" leading.txt", "src/line\nbreak.txt"]
+        for name in names:
+            self.staged_change(name)
+        result = land.land("literal selected names", cwd=self.repo, wait=0)
+        self.assertEqual(result["staged"], names)
+        for name in names:
+            self.assertEqual(self.git("show", f"HEAD:{name}"), "changed\n")
 
     def test_unknown_check_bucket_is_an_error_not_a_pass(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "neutral"}]')
         with self.assertRaisesRegex(land.LandError, "neutral"):
             land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
@@ -661,7 +673,7 @@ class TestLand(AltitudeCase):
     # skipped checks, stale revisions, and unreadable test reports never become green.
 
     def test_no_ci_merges_after_a_green_local_suite_and_records_the_count(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: no ci", cwd=self.repo, wait=0, merge=True)
@@ -691,7 +703,7 @@ class TestLand(AltitudeCase):
 
     def test_project_local_policy_replaces_historical_failure_and_uses_full_candidate(self):
         self.local_policy()
-        self.leased_change()
+        self.staged_change()
         self.advance_base("src/integration.py")
         (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
         (self.ghdir / "runs.json").write_text('[{"databaseId": 7, "conclusion": "failure"}]')
@@ -730,7 +742,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
 
     def test_local_policy_is_selected_only_for_the_configured_repository(self):
-        self.leased_change()
+        self.staged_change()
         self.configure_ci()
         (self.ghdir / "checks.json").write_text('[{"bucket": "fail"}]')
         result = land.land("fix: ordinary hosted gate", cwd=self.repo, wait=0, merge=True)
@@ -740,7 +752,7 @@ class TestLand(AltitudeCase):
 
     def test_project_local_failure_retains_evidence_without_passing_summary(self):
         self.local_policy(exit_code=1, output="Ran 12 tests in 0.4s\n\nFAILED (failures=1)\n")
-        self.leased_change()
+        self.staged_change()
         result = land.land("fix: failing local check", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(result["merged"])
         self.assertEqual(result["checks"], "local-fail")
@@ -767,7 +779,7 @@ class TestLand(AltitudeCase):
             "    (raw / name).write_bytes(data)\n"
             "print('Ran 12 tests in 0.4s\\n\\nFAILED (failures=1)')\n"
             "sys.exit(1)\n"))
-        self.leased_change()
+        self.staged_change()
         result = land.land("fix: retain failed browser evidence", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(result["merged"])
         self.assertEqual(result["checks"], "local-fail")
@@ -788,7 +800,7 @@ class TestLand(AltitudeCase):
     def test_project_local_install_failure_does_not_run_or_claim_tests(self):
         self.local_policy()
         self.fake_runner("pnpm", 1, "installation failed\n")
-        self.leased_change()
+        self.staged_change()
         result = land.land("fix: missing prerequisites", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(result["merged"])
         self.assertEqual(result["checks"], "local-fail")
@@ -801,7 +813,7 @@ class TestLand(AltitudeCase):
 
     def test_project_local_gate_tests_held_pr_without_merging(self):
         self.local_policy()
-        self.leased_change()
+        self.staged_change()
         task = S.load_task("demo", "fix-x")
         task["hold_merge"] = "operator UX review"
         S.save_task("demo", task)
@@ -817,7 +829,7 @@ class TestLand(AltitudeCase):
         for moving_ref in ("main", "worktree-fix-x"):
             with self.subTest(ref=moving_ref):
                 self.local_policy()
-                self.leased_change()
+                self.staged_change()
                 real = land._local_suite
 
                 def moving(cwd, command, **kwargs):
@@ -841,7 +853,7 @@ class TestLand(AltitudeCase):
 
     def test_project_local_gate_preserves_late_hold_and_required_reviews(self):
         self.local_policy()
-        self.leased_change()
+        self.staged_change()
         real = land._local_suite
 
         def hold(cwd, command, **kwargs):
@@ -866,7 +878,7 @@ class TestLand(AltitudeCase):
 
     def test_project_local_gate_refuses_required_hosted_checks_even_after_passing_tests(self):
         self.local_policy()
-        self.leased_change()
+        self.staged_change()
         real = land._local_suite
 
         def require_check(cwd, command, **kwargs):
@@ -885,7 +897,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
     def test_the_suite_runs_on_the_merge_candidate_not_on_this_worktree(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         land.land("fix: candidate", cwd=self.repo, wait=0, merge=True)
@@ -902,7 +914,7 @@ class TestLand(AltitudeCase):
                   "sys.stdout.write('Ran 4 tests in 0.1s\\n\\n'\n"
                   "                 + ('FAILED (failures=1)\\n' if both else 'OK\\n'))\n"
                   "sys.exit(1 if both else 0)\n")
-        self.leased_change()
+        self.staged_change()
         self.advance_base("src/integration.py")
         self.no_checks()
         self.fake_runner("make", script=runner)
@@ -915,7 +927,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_no_ci_merge_pins_the_tested_head_revision(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: pinned", cwd=self.repo, wait=0, merge=True)
@@ -928,7 +940,7 @@ class TestLand(AltitudeCase):
                       self.gh_log())
 
     def test_a_base_that_moves_during_the_suite_is_not_merged(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         real = land._local_suite
@@ -947,7 +959,7 @@ class TestLand(AltitudeCase):
 
     def test_ci_added_after_no_checks_classification_is_not_merged(self):
         """Regression: classification and candidate snapshot used to be separate, adopt-new-tip operations."""
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         real = land._checks_value
@@ -966,7 +978,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_checks_appearing_during_the_local_suite_block_the_merge(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         real = land._local_suite
@@ -983,7 +995,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_required_gate_appearing_during_local_suite_cannot_use_no_ci_fallback(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 4 tests in 0.1s\n\nOK\n")
         real = land._local_suite
@@ -1003,7 +1015,7 @@ class TestLand(AltitudeCase):
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
     def test_first_adoption_during_ordinary_checks_cannot_change_the_merge_target(self):
-        self.leased_change()
+        self.staged_change()
         real = land._checks_state
 
         def adopt_after_checks(root, number):
@@ -1026,7 +1038,7 @@ class TestLand(AltitudeCase):
                   "sys.stdout.write('Ran 1 test in 0.1s\\n\\n' + ('OK\\n' if single_parent else "
                   "'FAILED (failures=1)\\n'))\n"
                   "sys.exit(0 if single_parent else 1)\n")
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", script=runner)
         result = land.land("fix: squash candidate", cwd=self.repo, wait=0, merge=True)
@@ -1034,7 +1046,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["local_tests"]["tests"], 1)
 
     def test_zero_tests_is_not_a_green_local_gate(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 0 tests in 0.0s\n\nOK\n")
         result = land.land("fix: zero tests", cwd=self.repo, wait=0, merge=True)
@@ -1043,7 +1055,7 @@ class TestLand(AltitudeCase):
         self.assertIn("no passing tests", result["local_tests"]["error"])
 
     def test_all_skipped_tests_is_not_a_green_local_gate(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.1s\n\nOK (skipped=12)\n")
         result = land.land("fix: all skipped", cwd=self.repo, wait=0, merge=True)
@@ -1053,7 +1065,7 @@ class TestLand(AltitudeCase):
         self.assertIn("no passing tests", result["local_tests"]["error"])
 
     def test_unittest_expected_failures_are_not_reported_as_passes(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 5 tests in 0.1s\n\nOK (skipped=1, expected failures=2)\n")
         result = land.land("fix: honest count", cwd=self.repo, wait=0, merge=True)
@@ -1063,7 +1075,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["local_tests"]["expected_failures"], 2)
 
     def test_candidate_cleanup_continues_when_git_remove_raises(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
         candidate_paths = []
@@ -1084,7 +1096,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_candidate_cleanup_does_not_mask_the_original_merge_error(self):
-        self.leased_change("src/collision.py")
+        self.staged_change("src/collision.py")
         self.advance_base("src/collision.py", "incompatible base\n")
         self.no_checks()
         self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
@@ -1095,14 +1107,13 @@ class TestLand(AltitudeCase):
             return None
 
         self.record_commands(fail_remove)
-        result = land.land("fix: conflict cleanup", cwd=self.repo, wait=0, merge=True,
-                           paths="src/collision.py")
+        result = land.land("fix: conflict cleanup", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(result["merged"])
         self.assertIn("does not merge cleanly", result["local_tests"]["error"])
         self.assertNotIn("cleanup failed", result["local_tests"]["error"])
 
     def test_no_ci_red_local_suite_blocks_the_merge(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 1, "Ran 12 tests in 0.4s\n\nFAILED (failures=1)\n")
         result = land.land("fix: red suite", cwd=self.repo, wait=0, merge=True)
@@ -1113,7 +1124,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_a_local_suite_that_cannot_run_blocks_rather_than_passes(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         result = land.land("fix: no runner", cwd=self.repo, wait=0, merge=True,
                            test_cmd="definitely-not-a-real-command")
@@ -1125,7 +1136,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_a_green_suite_with_an_unreadable_count_is_not_a_pass(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "everything is fine, trust me\n")
         result = land.land("fix: uncountable", cwd=self.repo, wait=0, merge=True)
@@ -1137,7 +1148,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_skipped_tests_are_excluded_from_the_reported_count(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK (skipped=2)\n")
         result = land.land("fix: some skips", cwd=self.repo, wait=0, merge=True)
@@ -1146,7 +1157,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["local_tests"]["skipped"], 2)
 
     def test_gh_refusing_with_no_checks_reported_is_the_same_gate(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks("")
         self.fake_runner("make", 0, "Ran 3 tests in 0.1s\n\nOK\n")
         result = land.land("fix: nothing reported", cwd=self.repo, wait=0, merge=True)
@@ -1155,7 +1166,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["local_tests"]["tests"], 3)
 
     def test_test_cmd_override_is_the_command_that_gates(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
         result = land.land("fix: override", cwd=self.repo, wait=0, merge=True,
@@ -1167,7 +1178,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.runner_log(), [["otherrunner", "-q", "tests"]])
 
     def test_cli_exposes_the_test_command_override(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("otherrunner", 0, "=== 5 passed, 2 skipped in 0.2s ===\n")
         run = subprocess.run(
@@ -1183,7 +1194,7 @@ class TestLand(AltitudeCase):
 
     def test_no_checks_but_workflows_configured_never_reaches_the_local_suite(self):
         self.configure_ci()
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: unreported", cwd=self.repo, wait=0, merge=True)
@@ -1198,7 +1209,7 @@ class TestLand(AltitudeCase):
         self.configure_ci()
         self.git("push", "-q", "origin", "main")
         self.git("checkout", "-q", "worktree-fix-x")
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: base has ci", cwd=self.repo, wait=0, merge=True)
@@ -1208,7 +1219,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.runner_log(), [])
 
     def test_a_base_that_cannot_be_refreshed_fails_closed(self):
-        self.leased_change()
+        self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         git("symbolic-ref", "HEAD", "refs/heads/gone", cwd=self.remote)
@@ -1219,7 +1230,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_skipped_checks_are_not_a_no_ci_repository(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "skipping"}]')
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: skipping", cwd=self.repo, wait=0, merge=True)
@@ -1229,7 +1240,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.runner_log(), [])
 
     def test_a_pass_mixed_with_a_skip_is_skipped_not_a_pass(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}, {"bucket": "skipping"}]')
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: half skipped", cwd=self.repo, wait=0, merge=True)
@@ -1240,7 +1251,7 @@ class TestLand(AltitudeCase):
 
     def test_configured_checks_that_pass_merge_without_the_local_suite(self):
         self.configure_ci()
-        self.leased_change()
+        self.staged_change()
         self.fake_runner("make", 1, "the local suite must not be consulted here\n")
         result = land.land("fix: green ci", cwd=self.repo, wait=0, merge=True)
         self.assertEqual(result["checks"], "pass")
@@ -1249,7 +1260,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.runner_log(), [])
 
     def test_rerun_after_merge_does_not_resurrect_the_branch(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         # GitHub deletes the remote head branch on merge; mirror that on the bare remote
         self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
@@ -1261,15 +1272,15 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.remote_heads(), ["main"])
 
     def test_merged_followup_requires_verified_merge_evidence(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
-        self.leased_change("src/late.py")
+        self.staged_change("src/late.py")
         with self.assertRaisesRegex(land.LandError, "previous PR identity, final head or merge is unavailable"):
             land.land("fix: late", cwd=self.repo, wait=0)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
 
     def test_merged_no_op_asks_for_no_checks(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
         self.git("push", "-q", "origin", "--delete", "worktree-fix-x")
         (self.ghdir / "log.jsonl").unlink()  # only the second run's gh traffic is under test
@@ -1279,14 +1290,14 @@ class TestLand(AltitudeCase):
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
 
     def test_closed_unmerged_pr_refuses_before_any_mutation(self):
-        self.leased_change()
+        self.staged_change()
         (self.ghdir / "pr.json").write_text(json.dumps(
             {"number": 55, "url": "https://example.invalid/pr/55", "state": "CLOSED"}))
         head = self.git("rev-parse", "HEAD").strip()
         with self.assertRaisesRegex(land.LandError, "closed"):
             land.land("fix: onto a closed pr", cwd=self.repo, wait=0)
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.remote_heads(), ["main"])  # nothing pushed onto the closed PR's branch
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
 
@@ -1297,13 +1308,13 @@ class TestLand(AltitudeCase):
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "create"], ["pr", "view"]])
 
     def test_full_run_rechecks_the_pr_around_check_classification(self):
-        self.leased_change()
+        self.staged_change()
         land.land("fix: once", cwd=self.repo, wait=0)
         # Prefetch + create read-back + snapshot + the before/after check-state bracket.
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 5)
 
     def test_gh_404_stops_the_run_before_any_mutation(self):
-        self.leased_change()
+        self.staged_change()
         head = self.git("rev-parse", "HEAD").strip()
         message = "gh: Not Found (HTTP 404)"
         (self.ghdir / "view_error.txt").write_text(message)
@@ -1312,8 +1323,8 @@ class TestLand(AltitudeCase):
         self.assertIn("gh pr view worktree-fix-x", str(cm.exception))
         self.assertIn(message, str(cm.exception))
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
-        self.assertIn("?? src/thing.py", self.git("status", "--short", "--untracked-files=all").splitlines())
+        self.assertEqual(self.git("write-tree"), self.selected_index)
+        self.assertIn("A  src/thing.py", self.git("status", "--short", "--untracked-files=all").splitlines())
         self.assertEqual((self.repo / "src" / "thing.py").read_text(), "changed\n")
         self.assertEqual(self.remote_heads(), ["main"])
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
@@ -1322,21 +1333,21 @@ class TestLand(AltitudeCase):
         self.assertIn("nothing committed", doc)
 
     def test_dry_run_reports_a_distinct_checks_value(self):
-        self.leased_change()
+        self.staged_change()
         res = land.land("msg", cwd=self.repo, dry_run=True)
         self.assertEqual(res["checks"], "dry-run")
         self.assertTrue(res["dry_run"])
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.gh_log(), [])
 
-    def test_unresolved_task_is_refused_before_staging(self):
+    def test_unresolved_task_refusal_preserves_selection(self):
         for key in ("ALTITUDE_PROJECT", "ALTITUDE_TASK"):
             self.setenv(key, None)
-        self.leased_change()
-        (self.repo / "anything.txt").write_text("also staged\n")
+        self.staged_change()
+        (self.repo / "anything.txt").write_text("unselected work\n")
         with self.assertRaisesRegex(land.LandError, "cannot verify commit provenance"):
             land.land("fix: undeclared", cwd=self.repo, wait=0)
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.gh_log(), [])
 
 
@@ -1345,7 +1356,7 @@ class TestCheckEvidence(AltitudeCase):
     git = TestLand.git
     clone = TestLand.clone
     advance_base = TestLand.advance_base
-    leased_change = TestLand.leased_change
+    staged_change = TestLand.staged_change
     workflow_path = ".github/workflows/checks.yml"
     condition = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
     source = ("on: [pull_request, push, workflow_dispatch]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
@@ -1371,7 +1382,7 @@ class TestCheckEvidence(AltitudeCase):
         for key, value in {"ALTITUDE_PROJECT": "demo", "ALTITUDE_TASK": "fix-x",
                            "ALTITUDE_ACTOR": "burak", "ALTITUDE_ATTEMPT": ""}.items():
             self.setenv(key, value)
-        self.leased_change()
+        self.staged_change()
         self.refresh()
 
     @staticmethod
@@ -1618,12 +1629,14 @@ class TestCheckEvidence(AltitudeCase):
         for label, source in cases.items():
             with self.subTest(source=label):
                 (self.repo / self.workflow_path).write_text(source)
+                self.git("add", self.workflow_path)
                 self.refresh()
                 self.optional_deploy()
                 self.assertEqual(self.classify(), "skipped")
 
     def test_complete_expression_wrapper_is_supported(self):
         (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "${{ " + self.condition + " }}"))
+        self.git("add", self.workflow_path)
         self.refresh()
         self.optional_deploy()
         self.assertEqual(self.classify(), "pass")
@@ -1643,6 +1656,7 @@ class TestCheckEvidence(AltitudeCase):
 
     def test_working_tree_cannot_replace_the_executed_workflow_condition(self):
         (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "true"))
+        self.git("add", self.workflow_path)
         self.refresh()
         self.optional_deploy()
         (self.repo / self.workflow_path).write_text(self.source)
@@ -1736,6 +1750,7 @@ class TestPullRequestExcludedCheckEvidence(TestCheckEvidence):
                           "github.event_name != inputs.event", "github.event_name != 'pull_request' && true"):
             with self.subTest(condition=condition):
                 (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, condition))
+                self.git("add", self.workflow_path)
                 self.refresh()
                 self.optional_deploy()
                 self.assertEqual(self.classify(), "skipped")
