@@ -12,12 +12,11 @@ personas in `personas/` are the global layer — how anyone works under Altitude
 carry nothing project-specific. Rules like the seams rule, the review questions, and deletion first
 belong here, never in a persona.
 
-## Engineering tenet
+## Standing tenet
 
-Simplicity and elegance guide all work on Altitude's paradigm, architecture, and implementation.
-Use engineering judgment to favor long-term clarity and maintainability. When cases recur,
-reconsider and simplify the underlying design instead of accumulating symptom-specific patches,
-redundant checks, or unnecessary abstractions.
+Simplicity, clarity and elegance guide everything that happens in Altitude. Use judgment to favor
+approaches that are easy to understand and maintain. When friction recurs, simplify the underlying
+approach instead of accumulating exceptions, redundant checks or unnecessary procedure.
 
 ## Seams
 
