@@ -47,11 +47,44 @@ def main():
                 updates={"waiting_on": "burak"}, recommendation="Use the captured conversation layout.",
                 recommendation_label="Use this design", design=design)
 
+    def later_updates():
+        for index in range(20):
+            T.message("atlas", slug, "l2", f"Walkthrough update {index + 1}: "
+                      "The saved implementation preview includes phone and desktop states. "
+                      "The question remains open and the merge hold is unchanged.")
+
     T.message("atlas", slug, "l2", "The screenshots show the proposed conversation layout on phone and desktop.")
     present()
 
     class Handler(server.Handler):
         def do_POST(self):
+            if self.path == "/fixture/implementation-review":
+                question = S.load_task("atlas", slug)["questions"][-1]
+                answer = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Use the proposed layout.")
+                T.resolve_question("atlas", slug, question["id"], question["revision"], answer["id"],
+                                   disposition="answered", reason="Use the proposed layout.", expected_attempt=1)
+                T.resume("atlas", slug)
+                proposal.write_text("Review the implemented conversation layout before merging. "
+                                    "The earlier proposal is approved; this implementation still needs review.")
+                T.block("atlas", slug, "Review the implemented conversation layout before merging?",
+                        actor="l2", expected_attempt=1, updates={"waiting_on": "burak"},
+                        design={**design, "title": "Conversation layout — implementation review"})
+                later_updates()
+                return self._json({"ok": True})
+            if self.path == "/fixture/group-review":
+                T.resume("atlas", slug)
+                T.block("atlas", slug, "Review the implementation and choose a release date.",
+                        actor="l2", expected_attempt=1, updates={"waiting_on": "burak"},
+                        questions={"questions": [{"question": "Should the release be on Monday?"}]})
+                later_updates()
+                return self._json({"ok": True})
+            if self.path == "/fixture/resolve-question":
+                question_id = self._body()["id"]
+                question = next(q for q in S.load_task("atlas", slug)["questions"] if q["id"] == question_id)
+                answer = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Yes, use this approach.")
+                T.resolve_question("atlas", slug, question_id, question["revision"], answer["id"],
+                                   disposition="answered", reason="Use this approach.", expected_attempt=1)
+                return self._json({"ok": True})
             if self.path == "/fixture/revise":
                 T.resume("atlas", slug)
                 proposal.write_text("The revised proposal keeps replies together and moves the question below the explanation.")

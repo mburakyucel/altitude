@@ -17,7 +17,7 @@ function Screenshot({ title, url }: { title: string; url: string }) {
   </figure>;
 }
 
-/** A fixed proposal revision, read beside its existing question without a second approval flow. */
+/** A fixed preview revision, read beside its existing question without a second approval flow. */
 export default function TaskDesign() {
   const { name = "", slug = "", questionId = "", revision = "" } = useParams();
   const preview = useTaskDesign(name, slug, questionId, revision);
@@ -25,18 +25,18 @@ export default function TaskDesign() {
   const denied = preview.error instanceof ApiError && [401, 403].includes(preview.error.status);
   return <div className="page design-page">
     <Link className="text-meta" to={preview.data?.question_url ?? back}>← Back to question</Link>
-    {preview.isPending ? <p className="text-muted" role="status">Loading proposal…</p> : preview.isError ? <div role="alert" className="design-unavailable">
+    {preview.isPending ? <p className="text-muted" role="status">Loading preview…</p> : preview.isError ? <div role="alert" className="design-unavailable">
       <h1>Design unavailable</h1>
-      <p className="text-muted">{denied ? "Access to this proposal is unavailable. Retry after access is restored." : "This saved proposal could not be loaded. Return to the question for an update, or try again."}</p>
+      <p className="text-muted">{denied ? "Access to this preview is unavailable. Retry after access is restored." : "This saved preview could not be loaded. Return to the question for an update, or try again."}</p>
       <button className="link" onClick={() => void preview.refetch()}>Retry</button>
     </div> : <>
       <header className="design-heading">
-        <p className="text-meta text-muted">Proposal · v{preview.data.revision}</p>
+        <p className="text-meta text-muted">Preview · v{preview.data.revision}</p>
         <h1>{preview.data.title}</h1>
         {preview.data.superseded ? <p className="text-meta" role="status">Earlier version. {preview.data.current_question_url ? <Link to={preview.data.current_question_url}>Open current question</Link> : "Return to the question for the latest discussion."}</p> : null}
       </header>
       {preview.data.images.map((item) => <Screenshot key={item.url} {...item} />)}
-      <section aria-label="Proposal text" className="design-text"><h2>Proposal</h2><Prose text={preview.data.text} /></section>
+      <section aria-label="Preview text" className="design-text"><h2>Preview</h2><Prose text={preview.data.text} /></section>
     </>}
   </div>;
 }

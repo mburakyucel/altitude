@@ -1111,7 +1111,12 @@ question revision; changing any selected content or label advances it, preservin
 and design. A normal block without design inputs retains the attached capture. There is no separate
 review conversation, approval state or artifact registry.
 
-`question_view` exposes `design_url` for the conversation's compact **View proposal · vN** link.
+`question_view` exposes `design_url` for **View preview · vN** in Needs you and the owning question.
+The conversation's offscreen-question navigation also exposes the open question's attachment.
+Within a group it follows an open member with a preview, then another open member, including after
+partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
+question through its task row. Preview headings use the captured title to distinguish a proposal
+from an implementation review. Opening a separate tab preserves the originating route and draft.
 `/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
 screenshots, full-size image links, explanation and **Back to question**. The page reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use

@@ -298,8 +298,11 @@ explicit worktree selection with `alt task block --design-file` in the ordinary 
 publication neither launches a worker nor releases a merge hold. Selected content, including
 ignored or untracked captures, is copied without Git changes before
 the question is persisted. Its fixed image files stay with the task through archival, and the
-captured text and manifest stay in the question. The conversation's **View proposal · vN** opens a
-browser preview and **Back to question** returns to the exact question/revision. Viewing creates no
+captured text and manifest stay in the question. **View preview · vN** appears in Needs you, the
+owning question and its offscreen-question navigation. Work opens the owning question from its row.
+The preview's saved title distinguishes proposal from implementation review; older attachments
+remain with their historical questions. It opens in another tab, preserving the original view and
+draft; **Back to question** opens the exact question/revision. Viewing creates no
 message or decision. A replacement capture advances the question revision even when the question
 text is unchanged, so stale controls and earlier conversational answers cannot accept it. First
 acceptance checks saved content integrity; unavailable or altered evidence leaves the decision open.

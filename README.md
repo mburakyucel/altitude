@@ -281,9 +281,12 @@ browser history entries. Browser Back and the task's Back control return to the 
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
 opens the live session, including after reload.
 
-An L2 design question can include **View proposal · vN**. It opens saved screenshots and the
-proposal text in a browser tab over the normal app connection, on phone or desktop, before the
-design is merged. **Back to question** returns to the same discussion and decision controls.
+An L2 question with attached evidence shows **View preview · vN** in Needs you and its owning
+conversation. When the open question scrolls out of view, the chat's question navigation keeps
+its preview reachable. Work opens that same question from the task row. The preview opens saved
+screenshots and text in another browser tab, leaving the original view and draft in place;
+closing that tab returns there. **Back to question** opens the exact discussion and decision controls.
+The captured title identifies a design proposal or implementation review without relabelling old evidence.
 Each version keeps its captured content; a replacement advances the question revision and earlier
 links remain identifiable. Interactive wireframes are represented by screenshots of their states;
 submitted HTML does not execute. Viewing or discussing a proposal leaves its question open, and

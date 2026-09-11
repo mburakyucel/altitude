@@ -179,7 +179,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
-  const current = task.question?.status === "open" ? task.question : undefined;
+  const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open");
+  const current = open.find((question) => question.design_url) ?? open[0];
   const scroller = useRef<HTMLDivElement>(null);
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
@@ -329,6 +330,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>
       {(latest || (current && questionOffscreen)) ? <div className="conversation-jumps">
         {current && questionOffscreen ? <button type="button" className="link" onClick={() => jumpTo(current)}>View question</button> : null}
+        {current?.design_url && questionOffscreen ? <a href={current.design_url} target="_blank" rel="noopener noreferrer">View preview · v{current.revision}</a> : null}
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
       {facts.canMessage ? <div className="convo-dock"><Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send}

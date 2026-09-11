@@ -446,10 +446,16 @@ every write names its exact question revision. Archived tasks retain history wit
 
 #### 3.9.1 Pending design preview
 
-A question with saved design content has one **View proposal · vN** link within its owning task
-conversation. It opens `/projects/:name/tasks/:slug/design/:questionId/:revision` in a browser tab.
-The page shows the proposal title and version, named screenshots with **Full size** links, captured
-proposal text and **Back to question**. Screenshot links open the fixed image in a browser tab for
+A question with saved design content has a **View preview · vN** link in Needs you and its owning
+task conversation. When the open question is offscreen, the conversation's **View question** row
+also exposes its preview, including on direct chat entry at the latest messages and after partial
+answers. Question navigation follows an open group member with an attachment before another open
+member. Work's task row opens the exact owning question.
+Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
+in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
+The page shows the captured title (identifying proposal or implementation review) and version,
+named screenshots with **Full size** links, captured text and **Back to question**. Earlier proposal
+attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
 native zoom. There is no added conversation, approval control or permanent task banner.
 
 Each version contains explicitly selected PNG/JPEG screenshots and text. HTML simulations are shown
@@ -460,7 +466,7 @@ exact version inspected. Viewing, opening a full-size screenshot and sending a f
 question unanswered. The existing decision controls record approval; merge holds remain unchanged.
 
 Phone and desktop states are walked in `web/e2e/task-design.pw.ts`: no design means no link;
-**Loading proposal…** gives way to content; missing, changed, denied or failed reads show **Design
+**Loading preview…** gives way to content; missing, changed, denied or failed reads show **Design
 unavailable**, **Retry** and **Back to question**, with saved content hidden. An image starts at
 **Loading screenshot…**; a failed image hides its preview and full-size control and shows
 **Screenshot unavailable** with **Retry screenshot**. Recovery removes the error/loading text.
