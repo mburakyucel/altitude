@@ -128,6 +128,76 @@ test("accepted L2 input stays sent through a failed refresh and preserves the ne
   expect((await task()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
 });
 
+for (const lostReceipt of [false, true]) test(`L2 immediate Live and task navigation retains ${lostReceipt ? "unconfirmed recovery" : "accepted input"} through reload`, async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const slug = "prepare-index-migration";
+  const other = "clarify-retry-policy";
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  const text = "Retain this fictional navigation instruction.";
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let arrived!: () => void;
+  const waiting = new Promise<void>((resolve) => { arrived = resolve; });
+  let finished!: () => void;
+  const delivered = new Promise<void>((resolve) => { finished = resolve; });
+  let receipt!: { id: string };
+  let submissions = 0;
+  await page.route("**/api/l2/message", async (route) => {
+    submissions++;
+    arrived();
+    await gate; // Navigation happens before the real handler accepts the message.
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    receipt = (await response.json()).message;
+    if (lostReceipt) await route.abort("connectionfailed");
+    else await route.fulfill({ response });
+    finished();
+  });
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  await field.fill(text);
+  await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  await waiting;
+  if (info.project.name === "phone") {
+    await page.getByRole("navigation", { name: "Task views" }).getByRole("link", { name: "Live session", exact: true }).click();
+  } else {
+    const toggle = page.getByRole("button", { name: "Live session", exact: true });
+    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+  }
+  await walk.state("01-live-before-admission", { visible: [page.getByRole("region", { name: "Live session", exact: true })], hidden: info.project.name === "phone" ? [conversation] : [] });
+  const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  await nav.locator('a[href="/projects/atlas"]').click();
+  if (info.project.name === "phone") await nav.getByRole("link", { name: "Work", exact: true }).click();
+  await page.locator(`a[href="/projects/atlas/tasks/${other}"]`).first().click();
+  await field.fill("Other task draft remains local.");
+  release();
+  await delivered;
+  await expect(field).toHaveValue("Other task draft remains local.");
+  await walk.state("02-other-task-after-late-response", { visible: [field], hidden: [conversation.getByRole("alert"), conversation.getByText(text, { exact: true })] });
+  const original = await (await request.get(`/api/task/atlas/${slug}`)).json();
+  expect(original.messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+  const destination = await (await request.get(`/api/task/atlas/${other}`)).json();
+  expect(destination.messages.some((row: { text: string }) => row.text === text)).toBe(false);
+  const workers = await (await request.get("/fixture/workers")).json();
+  expect(workers.pending[slug].filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+  expect(workers.calls).toHaveLength(0);
+  await nav.locator('a[href="/projects/atlas"]').click();
+  if (info.project.name === "phone") await nav.getByRole("link", { name: "Work", exact: true }).click();
+  await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
+  await expect(page).toHaveURL(`/projects/atlas/tasks/${slug}`);
+  const bubble = conversation.locator(".bubble").filter({ hasText: text });
+  const hint = conversation.getByRole("alert").filter({ hasText: "Could not confirm delivery." });
+  const retry = conversation.getByRole("button", { name: "Retry", exact: true });
+  await expect(field).toHaveValue(lostReceipt ? text : "");
+  await walk.state("03-returned-original-conversation", { visible: [bubble, ...(lostReceipt ? [hint] : [])], hidden: [retry, ...(!lostReceipt ? [hint] : [])] });
+  await page.reload();
+  await expect(field).toHaveValue(lostReceipt ? text : "");
+  await walk.state("04-reloaded-original-conversation", { visible: [bubble, ...(lostReceipt ? [hint] : [])], hidden: [retry, ...(!lostReceipt ? [hint] : [])] });
+  await expect(bubble).toHaveCount(1);
+  expect(submissions).toBe(1);
+  expect((await (await request.get(`/api/task/atlas/${slug}`)).json()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
+});
+
 for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost receipt preserve all drafts without Retry; refusal first: ${refusalFirst}`, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "prepare-index-migration";

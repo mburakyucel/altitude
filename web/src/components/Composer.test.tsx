@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
@@ -21,6 +21,7 @@ function Harness(props: Partial<ComposerProps> & { initial?: string }) {
   const [value, setValue] = useState(props.initial ?? "");
   return (
     <Composer
+      conversation="project/altitude"
       value={value}
       onChange={setValue}
       onSubmit={props.onSubmit ?? (() => undefined)}
@@ -33,8 +34,8 @@ function Harness(props: Partial<ComposerProps> & { initial?: string }) {
 
 function mount(props: Partial<ComposerProps> & { initial?: string } = {}) {
   const user = userEvent.setup();
-  render(<Harness {...props} />);
-  return { user, field: screen.getByLabelText("Message L3 about altitude") as HTMLTextAreaElement };
+  const view = render(<Harness {...props} />);
+  return { ...view, user, field: screen.getByLabelText("Message L3 about altitude") as HTMLTextAreaElement };
 }
 
 /** /api/transcribe answers `text` (or 503 for null); `gate` holds the answer until released. */
@@ -50,6 +51,167 @@ function stubTranscribe(text: string | null, gate?: Promise<void>) {
 }
 
 describe("Composer", () => {
+  it("delivers a late failure to the remounted composer while retaining its newer draft", async () => {
+    let reject!: (error: Error) => void;
+    const onSubmit = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    const first = mount({ onSubmit });
+    await first.user.type(first.field, "Submitted before leaving");
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    const second = mount({ onSubmit });
+    await second.user.type(second.field, "Typed after returning");
+    await act(async () => reject(new TypeError("Lost receipt")));
+    expect(second.field).toHaveValue("Submitted before leaving\nTyped after returning");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+    expect(onSubmit).toHaveBeenCalledOnce();
+    second.unmount();
+    const third = mount({ onSubmit });
+    expect(third.field).toHaveValue("Submitted before leaving\nTyped after returning");
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("retires recovery at acceptance while the response remains open and leaves the next draft alone", async () => {
+    let accept!: () => void;
+    let finish!: () => void;
+    const onSubmit = vi.fn((_text: string, accepted: () => void) => {
+      accept = accepted;
+      return new Promise<void>((resolve) => { finish = resolve; });
+    });
+    const first = mount({ onSubmit });
+    await first.user.type(first.field, "Accepted turn");
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => accept());
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
+    first.unmount();
+    const second = mount({ onSubmit });
+    expect(second.field).toHaveValue("");
+    await second.user.type(second.field, "Next draft");
+    await act(async () => finish());
+    expect(second.field).toHaveValue("Next draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("restores reload evidence once under StrictMode and repeated task tab remounts", async () => {
+    sessionStorage.setItem("altitude.submitted:task/sample/timer", JSON.stringify({
+      pending: { "request-from-previous-document": "Reloaded submission" }, text: "", failure: null,
+    }));
+    const submit = vi.fn();
+    function Tabs() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("Later task draft");
+      return <><button onClick={() => setOpen(!open)}>Switch view</button>{open ?
+        <Composer conversation="task/sample/timer" value={value} onChange={setValue} onSubmit={submit}
+          ariaLabel="Task message" placeholder="Task message" /> : null}</>;
+    }
+    render(<StrictMode><Tabs /></StrictMode>);
+    const user = userEvent.setup();
+    const field = () => screen.getByRole("textbox", { name: "Task message" });
+    expect(field()).toHaveValue("Reloaded submission\nLater task draft");
+    for (let index = 0; index < 2; index++) {
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      expect(field()).toHaveValue("Reloaded submission\nLater task draft");
+    }
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps dictated edits in unconfirmed recovery across remount", async () => {
+    installVoiceBrowser();
+    stubTranscribe("and the tests");
+    const first = mount({ onSubmit: () => Promise.reject(new TypeError("Lost receipt")) });
+    await first.user.type(first.field, "Inspect the sample");
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("alert");
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(await screen.findByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(first.field).toHaveValue("Inspect the sample and the tests"));
+    first.unmount();
+    expect(mount().field).toHaveValue("Inspect the sample and the tests");
+  });
+
+  it("retains newer recovery edits across task tabs when browser updates fail", async () => {
+    const submit = vi.fn(() => Promise.reject(new TypeError("Lost receipt")));
+    function Tabs() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("");
+      return <><button onClick={() => setOpen(!open)}>Switch view</button>{open ?
+        <Composer conversation="task/sample/write-failure" value={value} onChange={setValue} onSubmit={submit}
+          ariaLabel="Task message" placeholder="Task message" /> : null}</>;
+    }
+    render(<Tabs />);
+    const user = userEvent.setup();
+    const field = () => screen.getByRole("textbox", { name: "Task message" });
+    await user.type(field(), "Submitted text");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("alert");
+    const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage full"); });
+    try {
+      await user.type(field(), " and newer edits");
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      expect(field()).toHaveValue("Submitted text and newer edits");
+      expect(screen.getByRole("alert")).toHaveTextContent("Keep this tab open");
+      expect(submit).toHaveBeenCalledOnce();
+    } finally { storage.mockRestore(); }
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Submitted text and newer edits");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Keep this tab open");
+  });
+
+  it("keeps the draft unsent if its recovery copy cannot be saved", async () => {
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ onSubmit });
+    const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+    try {
+      await user.type(field, "Keep this text");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(field).toHaveValue("Keep this text");
+      expect(screen.getByRole("alert")).toHaveTextContent("Your message was not sent.");
+      expect(onSubmit).not.toHaveBeenCalled();
+    } finally { storage.mockRestore(); }
+  });
+
+  it.each([true, false])("storage read failure after submission preserves accepted=%s semantics", async (accepted) => {
+    let finish!: () => void;
+    const onSubmit = vi.fn((_text: string, accept: () => void) => new Promise<void>((resolve, reject) => {
+      finish = () => { if (accepted) { accept(); resolve(); } else reject(new TypeError("Lost receipt")); };
+    }));
+    const { user, field } = mount({ onSubmit });
+    await user.type(field, "Submitted text");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "New draft");
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+    try {
+      await act(async () => finish());
+      expect(field).toHaveValue(accepted ? "New draft" : "Submitted text\nNew draft");
+      if (accepted) expect(screen.queryByRole("alert")).toBeNull();
+      else expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+    } finally { storage.mockRestore(); }
+  });
+
+  it("does not overwrite unread pending evidence or offer Retry for mixed unconfirmed recovery", async () => {
+    const failures: Array<(error: Error) => void> = [];
+    const { user, field } = mount({ onSubmit: () => new Promise<void>((_, reject) => failures.push(reject)) });
+    for (const text of ["Unconfirmed text", "Refused text"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await act(async () => failures[0]!(new TypeError("Lost receipt")));
+    const evidence = sessionStorage.getItem("altitude.submitted:project/altitude");
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => failures[1]!(new ApiError(409, "Refused")));
+      expect(field).toHaveValue("Refused text\nUnconfirmed text");
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    } finally { storage.mockRestore(); }
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBe(evidence);
+  });
+
   // 2026-09-07 decision: the send control must not turn into visible Send/Queue words.
   it("Idle and Typing: the arrow enables with a draft; Enter sends and clears; Shift+Enter adds a line", async () => {
     const onSubmit = vi.fn();
@@ -66,7 +228,7 @@ describe("Composer", () => {
     expect(field).toHaveValue("hello\n");
     await user.type(field, "there");
     await user.keyboard("{Enter}");
-    expect(onSubmit).toHaveBeenCalledWith("hello\nthere");
+    expect(onSubmit).toHaveBeenCalledWith("hello\nthere", expect.any(Function));
     expect(field).toHaveValue("");
     expect(send).toBeDisabled();
   });
@@ -83,7 +245,7 @@ describe("Composer", () => {
     await user.type(field, "later please");
     expect(queue).toBeEnabled();
     await user.click(queue);
-    expect(onSubmit).toHaveBeenCalledWith("later please");
+    expect(onSubmit).toHaveBeenCalledWith("later please", expect.any(Function));
     expect(field).toHaveValue("");
     expect(queue).toBeDisabled();
   });
@@ -104,7 +266,7 @@ describe("Composer", () => {
     refuse = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
-    expect(onSubmit).toHaveBeenLastCalledWith("ship it");
+    expect(onSubmit).toHaveBeenLastCalledWith("ship it", expect.any(Function));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(field).toHaveValue("");
     expect(screen.getByText("L3 answers or creates one task.")).toBeInTheDocument();
@@ -121,7 +283,7 @@ describe("Composer", () => {
     expect(field).toHaveValue("Original draft\nNew draft");
     if (status === 409) {
       await user.click(screen.getByRole("button", { name: "Retry" }));
-      expect(onSubmit).toHaveBeenLastCalledWith("Original draft\nNew draft");
+      expect(onSubmit).toHaveBeenLastCalledWith("Original draft\nNew draft", expect.any(Function));
       expect(field).toHaveValue("");
     } else {
       expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
@@ -238,7 +400,7 @@ describe("Composer", () => {
     await user.keyboard("{Enter}");
     expect(onSubmit).not.toHaveBeenCalled();
     release();
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith("Fix the timer and the tests"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledExactlyOnceWith("Fix the timer and the tests", expect.any(Function)));
     expect(field).toHaveValue("");
     expect(screen.queryByText("Transcribing…")).toBeNull();
   });
@@ -278,7 +440,7 @@ describe("Composer", () => {
       expect(latest).not.toHaveBeenCalled();
       expect(screen.getByRole("textbox")).toHaveValue("Keep the transcript");
     } else {
-      expect(latest).toHaveBeenCalledExactlyOnceWith("Keep the transcript");
+      expect(latest).toHaveBeenCalledExactlyOnceWith("Keep the transcript", expect.any(Function));
       expect(screen.getByRole("textbox")).toHaveValue("");
     }
   });

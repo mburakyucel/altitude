@@ -337,6 +337,15 @@ Explicit refusal restores recoverable text with Retry. When transport or a serve
 delivery unconfirmed, the composer preserves both submitted and newly typed text, asks the operator
 to check the conversation, and offers no send Retry, including when another overlapping send is refused.
 It never infers acceptance by matching text.
+Submitted-text recovery belongs to the original project/task beyond a composer mount. Browser-tab
+storage retains each outstanding submission and the recovered draft; a live receipt retires only
+its own submission immediately. Navigation preserves late failure recovery, and reload without a
+receipt restores text with the unconfirmed hint rather than replaying it. Newly typed or dictated
+text survives recovery; ordinary unsent project-switch drafts still discard. If initial recovery
+storage is unavailable, submission does not start and the editable text stays visible. Response
+streams do not pause conversation polling, and receipt updates cancel older reads of their own
+conversation before updating cached records. Later failed recovery writes retain edits for in-app
+navigation, with a keep-tab-open warning until storage succeeds; reload cannot recover unwritten edits.
 
 `dispatch.resume` is the only way a session is launched again, and altd owns it for message-triggered and
 explicit resumes. `alt task resume`, `stop`, and `reject` require a reason and persist a task-local
@@ -618,8 +627,11 @@ neither L3's project-level responsibility nor L2's end-to-end task ownership.
 Every direct, queued, folded, or server-triggered L3 turn publishes one process-local active record
 while it owns the project turn lock. The record contains only a stable turn id, its start time, and
 trigger; the prompt remains in the normal private/history path. `GET /api/chat` is the UI authority
-for this state. It snapshots the waiting queue and active record under one lifecycle guard, so claiming
-a queued row and publishing its turn cannot expose an idle state between them. The initiating tab keeps its streamed response and suppresses a duplicate indicator, while a newly
+for this state. It snapshots history, the waiting queue and active record under one lifecycle guard.
+Queued admission records the user text before publishing its turn through that same guard, so a
+returning conversation sees either the queued text or its history row. Routing happens before claim,
+and a failed history append restores the waiting queue. The initiating tab keeps its streamed
+response and suppresses a duplicate indicator, while a newly
 mounted or reconnected conversation reconstructs the typing indicator (a chat turn) or the "L3 is
 handling <what>" line (a server-triggered turn) from the active record. The stream's first line
 names the turn, and history rows carry the same turn id. After the stream ends, saved history

@@ -695,12 +695,15 @@ def deliver_queued(project: str) -> dict | None:
     for row in queued(project):
         if row.get("trigger") == "ci-recheck":
             queue_ci_recheck(project, row["slug"])
-    if not path.exists() or not _select(project).get("engine"):
+    if not path.exists():
         return None
     turn_lock = lock(project)
     if not turn_lock.acquire(blocking=False):
         return None
     try:
+        choice = _select(project)
+        if not choice.get("engine"):
+            return None
         while True:
             with S.project_lock(project):
                 rows = [row for row in _queue_rows(path) if _ci_recheck_ready(project, row)]
@@ -713,6 +716,7 @@ def deliver_queued(project: str) -> dict | None:
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
+            prompt = "\n\n".join(row["text"] for row in selected)
 
             def claim(active_turn) -> bool:
                 with S.project_lock(project):
@@ -737,6 +741,12 @@ def deliver_queued(project: str) -> dict | None:
                             S.project_log(project, "upstream-notification-received", url=row["upstream_url"],
                                           message_id=row["id"])
                     _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
+                    try:
+                        chat_log(project, "user", prompt, trigger=trigger, engine=choice["engine"],
+                                 at=active_turn["started_at"], turn_id=active_turn["id"], **_slug_meta(slug))
+                    except Exception:
+                        _write_queue(path, current)
+                        raise
                     return True
 
             trigger = selected[0].get("trigger") or "queued"
@@ -745,10 +755,10 @@ def deliver_queued(project: str) -> dict | None:
                 with _active_turn(project, trigger, claim=claim, slug=slug) as active_turn:
                     if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
                         return None
-                    _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn}
+                    _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn,
+                                           "choice": choice, "logged": trigger != "ci-recheck"}
                     try:
-                        result = turn(project, "\n\n".join(row["text"] for row in selected), trigger=trigger,
-                                      **_slug_meta(slug))
+                        result = turn(project, prompt, trigger=trigger, **_slug_meta(slug))
                     finally:
                         del _turn_local.claimed
             except Exception as exc:
@@ -850,10 +860,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                                 slug=slug)
             return {"queued": row, "error": "Altitude is restarting; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
-        choice = _select(project, requested, model=model)
+        claimed = getattr(_turn_local, "claimed", None)
+        claimed = claimed if claimed and claimed["turn"] is active_turn else None
+        choice = claimed["choice"] if claimed else _select(project, requested, model=model)
         turn_started_at = active_turn["started_at"]
-        chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
-                 turn_id=turn_id, **_slug_meta(slug))
+        if not claimed or not claimed["logged"]:
+            chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
+                     turn_id=turn_id, **_slug_meta(slug))
         tried = []
         while choice.get("engine"):
             res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug)

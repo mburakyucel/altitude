@@ -279,6 +279,16 @@ to that project shows its saved history and any active turn. Retry sends to the 
 Switching also stops voice recording and releases the microphone; a late transcription cannot fill
 the destination draft.
 
+Submitted text awaiting confirmation stays recoverable in its original conversation across
+navigation and reload in the same browser tab. A receipt clears that recovery copy immediately;
+without one, the existing refusal or unconfirmed-delivery hint accompanies the recovered text.
+Recovery never resends automatically or infers delivery from matching text. If the browser cannot
+save a recovery copy, the message remains in the composer and is not submitted. Ordinary unsent
+drafts still clear when switching projects. If a later recovery update fails, the latest text stays
+available across in-app navigation and the composer asks you to keep the tab open until it can save.
+Conversation polling continues while replies stream,
+and a queued message moves into history as part of the server's guarded turn admission.
+
 An accepted project or task message stays sent if its response stream, a later refresh, or the
 immediate worker wake fails. The composer stays cleared and keeps any new draft. A refused send
 restores recoverable text with Retry; an unconfirmed delivery preserves the text and asks you to
