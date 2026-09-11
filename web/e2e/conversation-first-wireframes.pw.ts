@@ -158,7 +158,7 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
     if (state === "denied") await expect(page.getByRole("textbox")).toBeDisabled();
     if (["list-loading", "list-error"].includes(state)) {
       await expect(page.locator(".badge:visible").filter({ hasText: /^\d+$/ })).toHaveCount(0);
-      await expect(page.getByLabel("Attention unavailable").filter({ visible: true })).toBeVisible();
+      await expect(page.getByLabel(state === "list-loading" ? "Attention loading" : "Attention unavailable").filter({ visible: true })).toBeVisible();
     }
     if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: /Use 7 days|Recording/ })).toBeDisabled();
     const overflow = await page.locator(".cf").evaluate(el => el.scrollWidth > el.clientWidth);

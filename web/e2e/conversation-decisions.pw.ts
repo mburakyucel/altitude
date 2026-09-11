@@ -204,6 +204,9 @@ test("a concise decision retains its material consequence and reveals complete t
   const list = page.getByRole("article", { name: "Choose retention window", exact: true });
   const evidence = "Final verification: cleanup waits for the last retained backup and records its result in the task conversation.";
   await walk.open("/");
+  await list.scrollIntoViewIfNeeded();
+  await expect(list.getByText("Longer instant rollback uses twice the temporary storage.", { exact: true })).toBeInViewport();
+  await expect(list.getByRole("button", { name: "Keep 14 days", exact: true })).toBeInViewport();
   await walk.state("01-concise-decision-and-material-consequence", {
     visible: [list.getByText("Choose retention window", { exact: true }), list.getByText(question.question, { exact: true }), list.getByText("Longer instant rollback uses twice the temporary storage.", { exact: true }), list.getByRole("button", { name: "Keep 14 days", exact: true })],
     hidden: [list.getByText(evidence, { exact: false }), list.getByText("More context", { exact: true })],
