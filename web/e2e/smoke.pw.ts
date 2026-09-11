@@ -63,14 +63,14 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
     await expect(main).toBeVisible();
     if (task && design) {
       await expect(main.getByRole("heading", { name: "Conversation layout", exact: true })).toBeVisible();
-      await expect(main.getByText(`Proposal · v${task.question!.revision}`, { exact: true })).toBeVisible();
+      await expect(main.getByText(`Preview · v${task.question!.revision}`, { exact: true })).toBeVisible();
       await expect(main.getByRole("img", { name: "Phone conversation", exact: true })).toBeVisible();
       await expect(main.getByRole("img", { name: "Desktop conversation", exact: true })).toBeVisible();
-      await expect(main.getByRole("region", { name: "Proposal text", exact: true }))
+      await expect(main.getByRole("region", { name: "Preview text", exact: true }))
         .toContainText("Keep the conversation easy to read.");
       await expect(main.getByRole("link", { name: "← Back to question", exact: true }))
         .toHaveAttribute("href", `/projects/${project.name}/tasks/${task.slug}?question=${task.question!.id}&revision=${task.question!.revision}`);
-      await expect(main.getByText("Loading proposal…", { exact: true })).toHaveCount(0);
+      await expect(main.getByText("Loading preview…", { exact: true })).toHaveCount(0);
       await expect(main.getByText("Loading screenshot…", { exact: true })).toHaveCount(0);
     } else if (task && route.includes("/decisions/")) {
       // Legacy decision links resolve to the owning human conversation, including archived tasks.
