@@ -1,6 +1,6 @@
 """Real decision API/storage with a deliberately stepped, deterministic L2 engine."""
 from service_support import configure, serve
-from tests.support import add_worktree, make_repo
+from tests.support import add_worktree, git, make_repo
 from tests.fakes import FakeL2
 from altitude import config, engines, server, state as S, tasks as T
 
@@ -139,7 +139,8 @@ def main():
                            recommendation_label="Keep 14 days", recommendation_why="Longer instant rollback uses twice the temporary storage.")
                 return self._json({"slug": slug, "detail": detail})
             if self.path == "/fixture/second-project":
-                other_repo = make_repo(config.PROJECT_ROOTS[0] / "beacon")
+                other_repo = make_repo(config.PROJECT_ROOTS[0] / "second-project" / "beacon")
+                assert git("remote", "get-url", "origin", cwd=other_repo) != git("remote", "get-url", "origin", cwd=repo)
                 with config.add_project("beacon", path=other_repo):
                     pass
                 row = T.new("beacon", "Choose backup retention", "Fictional second-project question.")
