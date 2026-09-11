@@ -1333,6 +1333,8 @@ def _unit_active(unit: str) -> bool:
     p = subprocess.run([SYSTEMCTL_BIN, "--user", "is-active", unit], capture_output=True, text=True, timeout=30,
                        env=codex_env(retain_user_bus=True))
     state = (p.stdout or "").strip()
+    if p.returncode == 4 and state == "inactive":  # A collected transient unit is no longer running.
+        return False
     if p.returncode in (0, 3):
         if state in ("active", "activating", "deactivating", "reloading", "refreshing", "maintenance"):
             return True
