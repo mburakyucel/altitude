@@ -371,6 +371,9 @@ def merge_approval_parser() -> argparse.ArgumentParser:
     parser.add_argument("--approval", required=True)
     parser.add_argument("--presentation", required=True)
     parser.add_argument("--latest-operator", required=True)
+    parser.add_argument("--source", choices=("task", "project"), default="task")
+    parser.add_argument("--latest-other-operator")
+    parser.add_argument("--integration-presentation")
     parser.add_argument("--question")
     parser.add_argument("--revision", type=int)
     parser.add_argument("--pr-number", dest="pr", required=True, type=int)
@@ -381,11 +384,18 @@ def merge_approval_parser() -> argparse.ArgumentParser:
 
 def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: int, head: str, reason: str,
                                  presentation: str, latest_operator: str,
-                                 question: str | None = None, revision: int | None = None) -> dict:
+                                 question: str | None = None, revision: int | None = None,
+                                 source: str = "task", latest_other_operator: str | None = None,
+                                 integration_presentation: str | None = None) -> dict:
     """I-20260907-205556: bind durable operator approval to the checkout-origin PR before releasing a hold."""
     S.require_task_slug(slug)
-    if (pr < 1 or any(not re.fullmatch(r"[0-9a-f]{32}", identity)
-                      for identity in (approval, presentation, latest_operator))
+    if (pr < 1 or source not in ("task", "project")
+            or any(not re.fullmatch(r"[0-9a-f]{12}" if source == "project" else r"[0-9a-f]{32}", identity)
+                   for identity in (approval, latest_operator))
+            or not re.fullmatch(r"[0-9a-f]{32}", presentation)
+            or latest_other_operator is not None and not re.fullmatch(
+                r"[0-9a-f]{32}" if source == "project" else r"[0-9a-f]{12}", latest_other_operator)
+            or integration_presentation is not None and not re.fullmatch(r"[0-9a-f]{32}", integration_presentation)
             or (question is None) != (revision is None)
             or question is not None and (not re.fullmatch(r"[0-9a-f]{32}", question) or revision < 1)
             or not re.fullmatch(r"[0-9a-f]{40}", head) or not reason.strip()):
@@ -404,7 +414,9 @@ def apply_recorded_merge_approval(project: str, slug: str, approval: str, pr: in
     try:
         return T.apply_merge_approval(project, slug, approval, pull, head=head, reason=reason, actor="l3",
                                       presentation=presentation, latest_operator=latest_operator,
-                                      question=question, revision=revision)
+                                      question=question, revision=revision, source=source,
+                                      latest_other_operator=latest_other_operator,
+                                      integration_presentation=integration_presentation)
     except T.TransitionError as exc:
         raise ValueError(str(exc)) from exc
 

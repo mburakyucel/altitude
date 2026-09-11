@@ -1,5 +1,5 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { ChatView } from "../data/api";
 import { FakeMediaRecorder, installVoiceBrowser } from "../components/voiceTest";
@@ -102,6 +102,7 @@ function posted(fetchMock: ReturnType<typeof vi.fn>, path: string, nth = 0) {
 }
 
 const conversation = () => screen.findByRole("region", { name: "Conversation" });
+afterEach(() => vi.useRealTimers());
 
 /** Separate server snapshots and delayed network responses exercise the real route and stream reader. */
 function projectChats(post: (body: { project: string; text: string }) => Response | Promise<Response>) {
@@ -426,8 +427,13 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("article")).toBeNull();
   });
 
-  it("renders bubbles, prose, day dividers, and the task a turn created", async () => {
-    mockFetch();
+  it.each([0, 12])("renders bubbles, prose, day dividers, and the task a turn created at hour %i", async (hour) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 8, 11, hour, 3));
+    const datedHistory = history.map((row, index) => ({
+      ...row, at: new Date(2026, 8, index < 2 ? 10 : 11, 0, 0, index).toISOString(),
+    }));
+    mockFetch({ chat: { ...chatView, history: datedHistory } });
     renderApp({ route: "/projects/altitude" });
     const region = await conversation();
 

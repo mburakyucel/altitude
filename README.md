@@ -94,7 +94,10 @@ The coordinator can reconcile an operator's recorded merge decision, including a
 and a later conversational reaffirmation, through the daemon's
 [`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). L3 cites the original messages
 and question revision and judges that they authorize this merge without unresolved conditions or
-revocation. The daemon verifies those sources, the current hold and unchanged PR before recording
+revocation. Original project-chat decisions use the same path, independently for each named task PR.
+L3 reviews later operator messages in both conversations. Explicitly delegated rebasing or overlap
+resolution retains the original authority and adds the owner's current PR/head presentation;
+it grants no scope expansion. The daemon verifies those sources, the current hold and PR before recording
 the release. Meaning remains model judgment; accepting a design or discussing a PR alone never
 releases its hold. The owner then rechecks and lands normally.
 

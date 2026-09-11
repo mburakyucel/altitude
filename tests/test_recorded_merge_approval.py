@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase, git, make_repo
-from altitude import land, server, state as S, tasks as T
+from altitude import config, l3, land, server, state as S, tasks as T
 
 
 class TestRecordedMergeApproval(AltitudeCase):
@@ -106,6 +106,143 @@ class TestRecordedMergeApproval(AltitudeCase):
         with self.assertRaisesRegex(ValueError, "no active merge hold"):
             self.request()  # retries do not apply a release twice
         self.assertEqual(task, S.load_task(self.project, self.slug))
+
+    def project_approval(self, text="Both may merge; resolve overlaps and rebase within these outcomes."):
+        self.at = "2026-09-07T20:04:30+00:00"
+        return l3.chat_log(self.project, "user", text, trigger="chat", turn_id="a" * 12)
+
+    def project_args(self):
+        args = self.args()
+        for flag in ("--approval", "--latest-operator"):
+            args[args.index(flag) + 1] = "a" * 12
+        return args + ["--source", "project", "--latest-other-operator", self.approval["id"]]
+
+    def test_project_original_is_applied_independently_to_two_task_prs(self):
+        self.project_approval("Merge https://github.com/team/project/pull/235 and https://github.com/team/project/pull/236.")
+        l3.chat_log(self.project, "assistant", "I will coordinate both deliveries.", trigger="chat", turn_id="a" * 12)
+        first = json.loads(self.request(self.project_args())["stdout"])
+        self.record_approval("Ready for project coordination", title="Second story")
+        self.pull.update(number=236, url="https://github.com/team/project/pull/236")
+        self.at = "2026-09-07T20:03:30+00:00"
+        self.presentation = T.message(self.project, self.slug, "l2", self.pull["url"])
+        task = S.load_task(self.project, self.slug)
+        task["prs"] = [236]
+        S.save_task(self.project, task)
+        S.write_json(self.gh / "prs.json", {"236": self.pull})
+        args = self.project_args()
+        args[args.index("--pr-number") + 1] = "236"
+        second = json.loads(server.l3_verb_request(self.project, {"kind": "alt", "args": args})["stdout"])
+        self.assertEqual((first["pr"], second["pr"]), (235, 236))
+        for receipt in (first, second):
+            self.assertEqual((receipt["source"], receipt["approval"], receipt["authorized_by"]),
+                             ("project", "a" * 12, T.OPERATOR_MESSAGE_ROLE))
+
+    def test_project_and_task_corrections_require_both_reviewed_watermarks(self):
+        self.project_approval()
+        args = self.project_args()
+        self.at = "2026-09-07T20:06:00+00:00"
+        l3.chat_log(self.project, "user", "Stop; retain both holds.", turn_id="b" * 12, trigger="chat")
+        with self.assertRaisesRegex(ValueError, "latest operator"):
+            self.request(args)
+        args[args.index("--latest-operator") + 1] = "b" * 12
+        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Do not merge this PR", wake_blocked=False)
+        with self.assertRaisesRegex(ValueError, "other conversation"):
+            self.request(args)
+        self.assertTrue(S.load_task(self.project, self.slug)["hold_merge"])
+        # Coordinator judgment must reject the now-reviewed revocations; no classifier applies them.
+
+    def test_task_source_also_cannot_ignore_project_correction(self):
+        self.project_approval("Retain the hold after all.")
+        self.refused("other conversation")
+
+    def test_pending_project_correction_is_not_yet_reviewed_authority(self):
+        self.project_approval()
+        before = S.load_task(self.project, self.slug)
+        l3.queue_message(self.project, "Stop; do not merge.", trigger="chat", role=T.OPERATOR_MESSAGE_ROLE)
+        for args in (self.args(), self.project_args()):
+            with self.assertRaisesRegex(ValueError, "pending project chat"):
+                self.request(args)
+        self.assertEqual(S.load_task(self.project, self.slug), before)
+
+    def test_unidentified_latest_correction_refuses_but_older_history_remains_readable(self):
+        for _ in range(2):
+            l3.chat_log(self.project, "user", "Earlier discussion", trigger="chat")
+        self.refused("other conversation")
+        self.project_approval()
+        receipt = json.loads(self.request(self.project_args())["stdout"])
+        self.assertEqual(receipt["approval"], "a" * 12)
+
+    def test_project_forgery_foreign_source_corrupt_and_duplicate_evidence_refuse(self):
+        path = config.project_dir(self.project) / "chat.jsonl"
+        for fields in ({"role": "assistant"}, {"trigger": "task-blocked"}, {"by": "l3"},
+                       {"turn_id": "b" * 12}):
+            row = {"role": "user", "trigger": "chat", "turn_id": "a" * 12,
+                   "at": "2026-09-07T20:04:30+00:00", "text": "Merge it", **fields}
+            path.write_text(json.dumps(row) + "\n")
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, "original operator"):
+                self.request(self.project_args())
+        path.unlink()
+        self.project_approval()
+        original = path.read_text()
+        for suffix in (original, "{broken later correction\n"):
+            path.write_text(original + suffix)
+            with self.assertRaises(ValueError):
+                self.request(self.project_args())
+        path.unlink()
+        self.register("another")
+        l3.chat_log("another", "user", "Merge it", trigger="chat", turn_id="a" * 12)
+        with self.assertRaisesRegex(ValueError, "original operator"):
+            self.request(self.project_args())
+
+    def test_project_wrong_pr_or_repository_refuses(self):
+        path = config.project_dir(self.project) / "chat.jsonl"
+        for url in ("https://github.com/team/project/pull/236", "https://github.com/foreign/project/pull/235"):
+            if path.exists():
+                path.unlink()
+            self.project_approval(f"Merge {url}")
+            with self.assertRaisesRegex(ValueError, "different PR"):
+                self.request(self.project_args())
+
+    def test_project_answer_preserves_exact_question_source_and_revision(self):
+        self.at = "2026-09-07T20:04:10+00:00"
+        task = T.escalate(self.project, self.slug, "May this reviewed PR merge?",
+                          recommendation=f"Merge {self.pull['url']}.")
+        self.question = task["questions"][-1]
+        original = self.project_approval("Merge the reviewed PR.")
+        args = self.project_args()
+        with self.assertRaisesRegex(ValueError, "current answered"):
+            self.request(args)
+        T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"],
+                           original["turn_id"], source="project", disposition="answered", reason="Merge this PR",
+                           expected_attempt=1)
+        receipt = json.loads(self.request(args)["stdout"])
+        self.assertEqual((receipt["source"], receipt["question"], receipt["revision"], receipt["question_context_only"]),
+                         ("project", self.question["id"], self.question["revision"], False))
+
+    def test_integration_reuses_original_authority_but_checks_current_head_and_hold(self):
+        self.project_approval()
+        args = self.project_args()
+        self.pull.update(headRefOid="e" * 40, updatedAt="2026-09-07T20:06:00Z")
+        args[args.index("--head") + 1] = "e" * 40
+        with self.assertRaisesRegex(ValueError, "stale"):
+            self.request(args)
+        self.at = "2026-09-07T20:07:00+00:00"
+        integrated = T.message(self.project, self.slug, "l2",
+                               f"Rebased within the approved outcome: {self.pull['url']} head {'e' * 40}")
+        args += ["--integration-presentation", integrated["id"]]
+        args[args.index("--reason") + 1] = "Original decision delegates rebasing; reviewed diff retains the approved outcome."
+        before = S.load_task(self.project, self.slug)
+        stale = list(args)
+        stale[stale.index("--head") + 1] = "d" * 40
+        with self.assertRaisesRegex(ValueError, "exact head"):
+            self.request(stale)
+        self.assertEqual(S.load_task(self.project, self.slug), before)
+        receipt = json.loads(self.request(args)["stdout"])
+        self.assertEqual((receipt["head"], receipt["integration_presentation"], receipt["approval"]),
+                         ("e" * 40, integrated["id"], "a" * 12))
+        T.set_hold_merge(self.project, self.slug, "New review")
+        with self.assertRaisesRegex(ValueError, "stale"):
+            self.request(args)
 
     def test_absent_foreign_and_nonoperator_messages_cannot_authorize(self):
         foreign = T.new(self.project, "Another task", "Other work")
