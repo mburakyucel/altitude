@@ -67,6 +67,8 @@ record delivery for the exact bound batch; native hook attachments can independe
 Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
 empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
 session, while engine failures and explicit question blocks retain their existing recovery paths.
+No-code completion checks for accepted steering under the same task lock as archival. A pending
+message keeps the saved owner session available for continuation instead of finalizing its earlier result.
 An explicit question block needs a later message or resume request; pre-block inbox messages stay
 available but cannot wake it. Each block or escalation supersedes earlier wake requests and stamps
 the block identity checked by resume claims. A stale launch cannot clear a newer block: dispatch

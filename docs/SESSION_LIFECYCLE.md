@@ -429,6 +429,9 @@ Fault bookkeeping checks its observed block, resume request, worker/session and 
 operation before changing the task. A message accepted after a worker-exit block keeps its wake;
 a replacement worker or newer question keeps ownership. The incident evidence remains recorded.
 An engine failure with an older queued message still follows the fault path.
+At clean no-code completion, the final task lock checks the inbox before archival. Accepted steering
+continues the saved session and supersedes the earlier completion request, including when Send arrives
+after the daemon first observed the worker exit.
 
 **Stop** is directly accessible beside the composer and in Live session on phone and desktop.
 It queues one operation in altd without confirmation, records the observed worker and Stop identity,

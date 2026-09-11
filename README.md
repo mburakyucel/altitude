@@ -122,6 +122,7 @@ releases its hold. The owner then rechecks and lands normally.
   is visible from the current worker. Messages queue for the engine's next checkpoint, with delivery
   labeled only when evidenced. Stop holds queued messages until an explicit correction or Continue
   resumes the saved session; file edits and the draft remain intact.
+  Steering accepted before a clean completion is finalized keeps the owner reachable for the next turn.
   An explicit question block survives worker exit and restart; older queued messages do not
   resume it. A later message or explicit Resume brings the session back.
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.

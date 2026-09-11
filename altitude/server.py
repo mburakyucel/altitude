@@ -633,6 +633,8 @@ def on_l2_finished(project: str, item: dict) -> None:
 def _on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    agent = item.get("agent") or {}
+    clean_exit = agent.get("state") == "done" and not agent.get("detail")
     worker_outcome = any(item.get(key) for key in ("died", "capacity", "limited", "rejection", "needs_input"))
     with S.project_lock(project):
         live = S.load_task(project, slug)
@@ -661,7 +663,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
                        expected_block_id=t.get("block_id"),
                        expected_owner=None if worker_outcome else T.report_owner(t))
 
-    if t.get("completion_requested"):
+    if t.get("completion_requested") and (not worker_outcome or (item.get("died") and clean_exit)):
         a = item.get("agent") or {}
         if a.get("state") == "working" or a.get("status") in ("busy", "idle"):
             raise RuntimeError(f"{project}/{slug}: completion reached finished handling while its L2 is still live")
@@ -766,7 +768,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
                   f"worker state={a.get('state', 'absent')}; {item.get('detail') or a.get('detail') or ''}")
         try:
             blocked = block_snapshot(f"system fault [l2-died]: {detail}",
-                                     resume_pending=a.get("state") == "done" and not a.get("detail"))
+                                     resume_pending=clean_exit)
         except T.TransitionError:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return

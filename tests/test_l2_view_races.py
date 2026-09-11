@@ -49,8 +49,8 @@ class TestL2ViewRaces(AltitudeCase):
                         T.block(self.project, task["slug"], "Operational wait")
                         action = lambda: T.claim_resume(self.project, task["slug"])
                     elif operation == "archive":
-                        T.report(self.project, task["slug"], {"verdict": "done"})
-                        action = lambda: T.done(self.project, task["slug"], digest="Fixture completed")
+                        # Explicit rejection can archive queued steering; ordinary completion must continue it.
+                        action = lambda: T.reject(self.project, task["slug"], "Operator ended this task")
                     else:
                         action = lambda: T.take_inbox(self.project, task["slug"])
                     view = self.race(task, action)
@@ -61,7 +61,7 @@ class TestL2ViewRaces(AltitudeCase):
                     self.assertEqual(settled["messages"][0]["delivery"]["state"],
                                      "queued" if operation in ("claim", "archive") else "unconfirmed")
                     if operation == "archive":
-                        self.assertEqual(settled["state"], "done")
+                        self.assertEqual(settled["state"], "rejected")
                         self.assertTrue((S.archive_dir(self.project) / task["slug"] / "inbox.jsonl").exists())
 
     def test_known_delivery_survives_a_later_inbox_consumption_race(self):

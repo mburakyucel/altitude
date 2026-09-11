@@ -45,11 +45,22 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
   await walk.open(`/projects/${project.name}/tasks/${task.slug}`);
   if (!phone) await page.getByRole("button", { name: "Live session", exact: true }).click();
   await field.fill("Keep this unsent draft and its cursor.");
-  await scroller.evaluate((node) => { node.scrollTop = 170; });
-  await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(100);
-  const readingTop = await scroller.evaluate((node) => node.scrollTop);
+  await field.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
+  const latest = page.getByRole("button", { name: "Latest messages", exact: true });
+  const readingTop = 170;
+  // Draft resizing can still be following the bottom. Establish older reading before testing
+  // restoration: accepting any positive scrollTop also accepts that unrelated bottom position.
+  await expect(async () => {
+    await scroller.evaluate((node, top) => { node.scrollTop = top; }, readingTop);
+    await expect(latest).toBeVisible({ timeout: 250 });
+    expect(await scroller.evaluate((node) => node.scrollTop)).toBe(readingTop);
+  }).toPass({ timeout: 5_000 });
+  const readingAnchor = conversation.getByText(messages[2].text, { exact: true });
+  const anchorOffset = () => readingAnchor.evaluate((node) => node.getBoundingClientRect().top - node.closest(".convo-scroll")!.getBoundingClientRect().top);
+  await expect(readingAnchor).toBeInViewport();
+  const readingOffset = await anchorOffset();
   await walk.state("01-reading-collapsed", {
-    visible: [opener, field, page.getByText(scene.label, { exact: true }).first(), ...(scene.fault ? [page.getByText("The verification browser could not start. L3 has been told.")] : [])],
+    visible: [opener, field, latest, readingAnchor, page.getByText(scene.label, { exact: true }).first(), ...(scene.fault ? [page.getByText("The verification browser could not start. L3 has been told.")] : [])],
     hidden: [dialog, page.getByText(hold, { exact: true }), page.getByText(reason, { exact: true }), ...(phone ? [page.getByRole("button", { name: "Reject", exact: true })] : [])],
   });
   for (const keyboard of phone ? [false, true] : [false]) {
@@ -87,6 +98,10 @@ for (const scene of cases) test(`task details: ${scene.key}, full reasons and re
     await walk.state(`${prefix}-restored`, { action: () => page.keyboard.press("Escape"), visible: [field, opener], hidden: [dialog] });
     await expect(opener).toBeFocused();
     await expect(field).toHaveValue("Keep this unsent draft and its cursor.");
+    expect(await field.evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd])).toEqual([5, 9]);
+    await expect(latest).toBeVisible();
+    await expect(readingAnchor).toBeInViewport();
+    expect(await anchorOffset()).toBeCloseTo(readingOffset, 0);
     expect(await scroller.evaluate((node) => node.scrollTop)).toBeCloseTo(readingTop, 0);
   }
   if (phone) {

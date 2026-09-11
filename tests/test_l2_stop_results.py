@@ -128,6 +128,66 @@ class TestStopResults(AltitudeCase):
                                                 "agent": {"state": "done"}})
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
+    def test_accepted_follow_up_wins_no_code_completion_before_poll_or_finalization(self):
+        for engine in config.ENGINES:
+            for late in (False, True):
+                with self.subTest(engine=engine, late=late):
+                    task = self.running(engine)
+                    slug = task["slug"]
+                    T.done(self.project, slug, actor="l2", digest="Original proposal complete")
+                    accepted = []
+
+                    def send():
+                        accepted.append(T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE,
+                                                  "Please adjust the proposal."))
+
+                    if not late:
+                        send()
+                    item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == slug)
+                    self.assertTrue(item.get("died"), "clean no-report exits take the worker-exit path")
+                    finalize = T.finalize_completion
+
+                    def finish(*args, **kwargs):
+                        if late:
+                            send()
+                        return finalize(*args, **kwargs)
+
+                    with mock.patch.object(T, "finalize_completion", side_effect=finish):
+                        server._on_l2_finished(self.project, item)
+                    current = S.load_task(self.project, slug)
+                    self.assertEqual(current["state"], "blocked")
+                    self.assertFalse((S.archive_dir(self.project) / slug).exists())
+                    self.assertNotIn("fault", current)
+                    self.assertEqual([row["id"] for row in T.pending(self.project, slug)],
+                                     [accepted[0]["id"]])
+                    self.assertIn(slug, dispatch.resume_due(self.project))
+                    dispatch.resume(self.project, slug)
+                    resumed = S.load_task(self.project, slug)
+                    self.assertEqual(resumed["state"], "running")
+                    self.assertEqual(resumed["session_id"], task["session_id"])
+                    self.assertEqual(resumed["worktree"], task["worktree"])
+                    self.assertNotIn("completion_requested", resumed)
+                    self.assertEqual(T.pending(self.project, slug), [])
+                    self.assertEqual(T.message_views(self.project, slug, resumed, [])[0]["delivery"]["state"],
+                                     "delivered")
+
+    def test_completion_request_and_old_inbox_cannot_hide_engine_failure(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = self.running(engine)
+                slug = task["slug"]
+                T.done(self.project, slug, actor="l2", digest="Original proposal complete")
+                accepted = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Adjust the proposal.")
+                self.worker.workers[task["agent_id"]].update(state="failed", detail="fixture engine failure")
+                item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == slug)
+                server._on_l2_finished(self.project, item)
+                current = S.load_task(self.project, slug)
+                self.assertEqual(current["state"], "blocked")
+                self.assertEqual(current["fault"], "l2-died")
+                self.assertNotIn(slug, dispatch.resume_due(self.project))
+                self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [accepted["id"]])
+                self.assertFalse((S.archive_dir(self.project) / slug).exists())
+
     def test_continuation_supersedes_the_stopped_workers_no_code_completion(self):
         for engine in config.ENGINES:
             for has_report in (False, True):

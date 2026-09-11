@@ -1037,6 +1037,9 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
         request = task.pop("completion_requested", None)
         if task.get("state") != "running" or not request:
             raise TransitionError(f"{slug}: no completion to finalize")
+        if any(row.get("wake", True) for row in pending(project, slug)):
+            continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
+            raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(task)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
