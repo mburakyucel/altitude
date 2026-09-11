@@ -6,6 +6,65 @@ test.use({ scenario: "isolation" });
 
 test.setTimeout(60_000);
 
+test("unavailable recovery storage keeps the message unsent and editable", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  await page.addInitScript(() => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("altitude.submitted:")) throw new DOMException("Fixture storage full", "QuotaExceededError");
+      return setItem.call(this, key, value);
+    };
+  });
+  await walk.open(`${service}/projects/alpha`);
+  await v.field("alpha").fill("Keep this sample draft");
+  await v.send.click();
+  await walk.state("01-recovery-storage-unavailable-unsent", {
+    visible: [v.field("alpha"), v.convo.getByRole("alert").filter({ hasText: "Your message was not sent." })],
+    hidden: [v.convo.locator(".bubble").filter({ hasText: "Keep this sample draft" })],
+  });
+  await expect(v.field("alpha")).toHaveValue("Keep this sample draft");
+  const state = await (await request.get(`${service}/api/chat/alpha`)).json();
+  expect(state.queued).toEqual([]);
+  expect(state.history.filter((row: { role: string }) => row.role === "user")).toEqual([]);
+  expect((await (await request.get(`${service}/fixture/calls`)).json()).calls).toEqual([]);
+});
+
+test("failed recovery updates preserve newer edits across navigation and explain the reload limit", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  await walk.open(`${service}/projects/alpha`);
+  await page.route((url) => url.pathname === "/api/chat", (route) => route.abort("connectionfailed"), { times: 1 });
+  await v.field("alpha").fill("Unconfirmed sample");
+  await v.send.click();
+  await expect(v.convo.getByRole("alert")).toContainText("Could not confirm delivery.");
+  await page.evaluate(() => {
+    const setItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "restoreRecoveryStorage", { value: () => { Storage.prototype.setItem = setItem; } });
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("altitude.submitted:")) throw new DOMException("Fixture storage full", "QuotaExceededError");
+      return setItem.call(this, key, value);
+    };
+  });
+  await v.field("alpha").fill("Unconfirmed sample with newer edits");
+  await switchProject(page, info, "beta");
+  await switchProject(page, info, "alpha");
+  await walk.state("01-newer-recovery-retained-with-write-warning", {
+    visible: [v.field("alpha"), v.convo.getByRole("alert").filter({ hasText: "Keep this tab open" })], hidden: [v.retry],
+  });
+  await expect(v.field("alpha")).toHaveValue("Unconfirmed sample with newer edits");
+  await page.evaluate("window.restoreRecoveryStorage()");
+  await switchProject(page, info, "beta");
+  await switchProject(page, info, "alpha");
+  await page.reload();
+  await walk.state("02-storage-restored-recovery-survives-reload", {
+    visible: [v.field("alpha"), v.convo.getByRole("alert").filter({ hasText: "Could not confirm delivery." })],
+    hidden: [v.retry, v.convo.getByText(/Keep this tab open/)],
+  });
+  await expect(v.field("alpha")).toHaveValue("Unconfirmed sample with newer edits");
+  expect((await (await request.get(`${service}/fixture/calls`)).json()).calls).toEqual([]);
+});
+
 function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => { release = resolve; });
@@ -134,8 +193,8 @@ test("late refused sends leave Beta alone and a visible refusal retries only in 
   await expect(v.field("beta")).toHaveValue("Beta untouched draft");
   await walk.state("01-beta-after-late-refusal-overlay", { visible: [v.field("beta"), v.send], hidden: [v.retry, v.convo.getByRole("alert"), v.text("Alpha refused request")] });
   await switchProject(page, info, "alpha");
-  await expect(v.field("alpha")).toHaveValue("");
-  await walk.state("02-alpha-no-unaccepted-draft", { visible: [v.text("Alpha saved history.")], hidden: [v.retry, v.text("Alpha refused request")] });
+  await expect(v.field("alpha")).toHaveValue("Alpha refused request");
+  await walk.state("02-alpha-refused-submission-recovered", { visible: [v.text("Alpha saved history."), v.retry, v.convo.getByRole("alert").filter({ hasText: "Not sent." })], hidden: [v.convo.locator(".bubble").filter({ hasText: "Alpha refused request" })] });
   await page.route((url) => url.pathname === "/api/chat", (route) => route.fulfill({ status: 409, json: { error: "Controlled refusal" } }), { times: 1 });
   await v.field("alpha").fill("Alpha retry request");
   await v.send.click();
@@ -297,4 +356,139 @@ test("listening, late transcription and denied microphone state reset on selecti
   await expect(v.field("beta")).toHaveValue("");
   await walk.state("06-beta-microphone-state-reset-overlay", { visible: [mic, v.field("beta")], hidden: [denied, wave, stop] });
   await expect.poll(() => page.evaluate("window.fixtureStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended'))")).toBe(true);
+});
+
+test("immediate navigation preserves ordered L3 admission, queue and active history", async ({ page, request, context, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  const read = async (project = "alpha") => (await (await request.get(`${service}/api/chat/${project}`)).json());
+  const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  const first = "Alpha first navigation request";
+  const second = "Alpha second navigation request";
+  await walk.open(`${service}/projects/alpha`);
+  await v.field("alpha").fill("Alpha running request");
+  await v.send.click();
+  await expect(v.queue).toBeVisible();
+
+  for (const [index, text] of [first, second].entries()) {
+    const arrived = deferred();
+    const gate = deferred();
+    const delivered = deferred();
+    await page.route((url) => url.pathname === "/api/chat", async (route) => {
+      // First delay is before admission; second delay is after real durable queue admission.
+      if (index === 0) { arrived.release(); await gate.promise; }
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      if (index === 1) { arrived.release(); await gate.promise; }
+      await route.fulfill({ response });
+      delivered.release();
+    }, { times: 1 });
+    await v.field("alpha").fill(text);
+    await v.queue.click();
+    await arrived.promise;
+    if (index === 0) {
+      if (info.project.name === "phone") {
+        await nav.getByRole("link", { name: "Work", exact: true }).click();
+        await walk.state("01-work-before-admission", { visible: [page.getByRole("region", { name: "Work", exact: true })], hidden: [v.convo] });
+      }
+      await nav.getByRole("link", { name: "Needs you", exact: true }).click();
+      await walk.state("02-needs-you-before-admission", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [v.convo] });
+      await nav.getByRole("link", { name: "Monitor", exact: true }).click();
+      await walk.state("03-monitor-before-admission", { visible: [page.getByRole("heading", { name: "Monitor", exact: true })], hidden: [v.convo] });
+      await nav.getByRole("link", { name: info.project.name === "phone" ? "Chat" : "alpha", exact: true }).click();
+    }
+    await switchProject(page, info, "beta");
+    await v.field("beta").fill("Beta draft stays local");
+    expect((await read()).queued.map((row: { text: string }) => row.text)).toEqual(index === 0 ? [] : [first, second]);
+    gate.release();
+    await delivered.promise;
+    await expect(v.field("beta")).toHaveValue("Beta draft stays local");
+    await walk.state(`04-${index}-destination-isolated`, { visible: [v.field("beta")], hidden: [v.queued, v.text(text), v.retry] });
+    await switchProject(page, info, "alpha");
+    await walk.state(`05-${index}-returned-queue`, { visible: [v.queued.getByText(text, { exact: true })], hidden: [v.retry] });
+    await expect(v.field("alpha")).toHaveValue("");
+  }
+  const ids = (await read()).queued.map((row: { id: string }) => row.id);
+  expect(ids).toHaveLength(2);
+  await v.field("alpha").fill("Explicitly removed navigation request");
+  await v.queue.click();
+  const removed = v.queued.getByRole("listitem").filter({ hasText: "Explicitly removed navigation request" });
+  await removed.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(removed).toBeHidden();
+  await page.reload();
+  await walk.state("06-reloaded-ordered-queue", { visible: [v.queued.getByText(first, { exact: true }), v.queued.getByText(second, { exact: true })], hidden: [v.retry] });
+  expect((await read()).queued.map((row: { id: string }) => row.id)).toEqual(ids);
+
+  const otherTab = await context.newPage();
+  await otherTab.goto(`${service}/projects/beta`);
+  await otherTab.bringToFront();
+  // Chromium headless keeps tabs visible; dispatch the browser's background/foreground signals.
+  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" }); document.dispatchEvent(new Event("visibilitychange")); });
+  expect((await request.post(`${service}/fixture/release/alpha`)).ok()).toBe(true);
+  const combined = `${first}\n\n${second}`;
+  await expect.poll(async () => (await read()).history.some((row: { role: string; text: string }) => row.role === "user" && row.text === combined)).toBe(true);
+  const active = await read();
+  expect(active.queued).toEqual([]);
+  expect(active.active).toBeTruthy();
+  await page.bringToFront();
+  await page.evaluate(() => { Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); document.dispatchEvent(new Event("visibilitychange")); window.dispatchEvent(new Event("focus")); });
+  await walk.state("07-foreground-active-history", { visible: [v.convo.locator(".bubble").filter({ hasText: first }), v.convo.getByRole("status", { name: "L3 is answering", exact: true })], hidden: [v.queued, v.retry] });
+  await page.reload();
+  await walk.state("08-reloaded-active-history", { visible: [v.convo.locator(".bubble").filter({ hasText: second }), v.queue], hidden: [v.queued, v.retry] });
+  expect((await read()).active.id).toBe(active.active.id);
+  expect((await request.post(`${service}/fixture/release-queued`)).ok()).toBe(true);
+  await expect(v.text(`${second} answered.`)).toBeVisible({ timeout: 25_000 });
+  await walk.state("09-completed-history-without-navigation-refresh", { visible: [v.text(`${second} answered.`)], hidden: [v.queued, v.retry, v.convo.getByRole("status", { name: "L3 is answering", exact: true })] });
+  const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;
+  expect(calls.map((row: { text: string }) => row.text)).toEqual(["Alpha running request", combined]);
+  expect((await read()).history.filter((row: { role: string; text: string }) => row.role === "user" && row.text === combined)).toHaveLength(1);
+  expect((await read("beta")).history).toEqual([]);
+  await otherTab.close();
+});
+
+test("lost L3 queue receipt survives navigation and reload without automatic resend", async ({ page, request, service }, info) => {
+  const walk = walkthrough(page, info);
+  const v = views(page);
+  const text = "Alpha unconfirmed navigation request";
+  await walk.open(`${service}/projects/alpha`);
+  await v.field("alpha").fill("Alpha running request");
+  await v.send.click();
+  await expect(v.queue).toBeVisible();
+  const saved = deferred();
+  const gate = deferred();
+  const failed = deferred();
+  let submissions = 0;
+  await page.route((url) => url.pathname === "/api/chat", async (route) => {
+    submissions++;
+    expect((await route.fetch()).ok()).toBe(true);
+    saved.release();
+    await gate.promise;
+    await route.abort("connectionfailed");
+    failed.release();
+  });
+  await v.field("alpha").fill(text);
+  await v.queue.click();
+  await saved.promise;
+  await switchProject(page, info, "beta");
+  await v.field("beta").fill("Beta keeps its draft");
+  gate.release();
+  await failed.promise;
+  await expect(v.field("beta")).toHaveValue("Beta keeps its draft");
+  await walk.state("01-lost-receipt-destination-untouched", { visible: [v.field("beta")], hidden: [v.retry, v.convo.getByRole("alert")] });
+  await switchProject(page, info, "alpha");
+  await expect(v.field("alpha")).toHaveValue(text);
+  const hint = v.convo.getByRole("alert").filter({ hasText: "Could not confirm delivery." });
+  await walk.state("02-original-submitted-text-recovered", { visible: [hint, v.queued.getByText(text, { exact: true })], hidden: [v.retry] });
+  await page.reload();
+  await expect(v.field("alpha")).toHaveValue(text);
+  await walk.state("03-reload-preserves-uncertainty", { visible: [hint, v.queued.getByText(text, { exact: true })], hidden: [v.retry] });
+  const view = await (await request.get(`${service}/api/chat/alpha`)).json();
+  expect(view.queued.filter((row: { text: string }) => row.text === text)).toHaveLength(1);
+  expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
+  expect(submissions).toBe(1);
+  expect((await request.post(`${service}/fixture/release/alpha`)).ok()).toBe(true);
+  await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).history.some((row: { text: string }) => row.text === `${text} answered.`)).toBe(true);
+  await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).busy).toBe(false);
+  const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;
+  expect(calls.map((row: { text: string }) => row.text)).toEqual(["Alpha running request", text]);
 });

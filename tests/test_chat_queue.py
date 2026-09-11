@@ -837,6 +837,8 @@ class TestChatQueue(AltitudeCase):
             self.assertTrue(view_done.wait(5))
             self.assertEqual(views[0]["queued"], [])
             self.assertIsNotNone(views[0]["active"])
+            self.assertEqual(views[0]["history"][-1]["text"], "start this")
+            self.assertEqual(views[0]["history"][-1]["turn_id"], views[0]["active"]["id"])
             self.assertTrue(views[0]["busy"])
             self.assertTrue(provider_started.wait(5))
             release_provider.set()
@@ -844,6 +846,76 @@ class TestChatQueue(AltitudeCase):
             reader.join(5)
 
         self.assertIsNone(self.chat_view()["active"])
+
+    def test_queued_text_stays_durable_and_visible_before_turn_execution(self):
+        text = "Please inspect the sample project"
+        l3.queue_message(self.project, text, trigger="chat", role="burak")
+        selecting, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        run_turn = l3.turn
+
+        def paused_turn(*args, **kwargs):
+            selecting.set()
+            release.wait(10)
+            return run_turn(*args, **kwargs)
+
+        with self.deliverable(), mock.patch.object(l3, "turn", side_effect=paused_turn), mock.patch.object(
+                engines, "claude_print", return_value=self.claude_result()) as provider:
+            worker = threading.Thread(target=l3.deliver_queued, args=(self.project,), daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(selecting.wait(5))
+                view = self.chat_view()
+                self.assertIn(text, [row["text"] for row in view["queued"] + view["history"]],
+                              "returning Chat loses the accepted bubble during the queue handoff")
+                durable = l3.queued(self.project) + l3.chat_history(self.project)
+                self.assertEqual(sum(row["text"] == text for row in durable), 1)
+            finally:
+                release.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertIsNone(l3.deliver_queued(self.project))
+            provider.assert_called_once()
+        view = self.chat_view()
+        self.assertEqual(view["queued"], [])
+        self.assertIsNone(view["active"])
+        self.assertEqual([row["text"] for row in view["history"]], [text, "done"])
+
+    def test_history_admission_failure_restores_the_ordered_queue_before_a_turn_runs(self):
+        rows = [l3.queue_message(self.project, text, trigger="chat", role="burak")
+                for text in ("first", "second")]
+        with self.deliverable(), mock.patch.object(l3, "chat_log", side_effect=OSError("History unavailable")), \
+             mock.patch.object(engines, "claude_print") as provider:
+            with self.assertRaisesRegex(OSError, "History unavailable"):
+                l3.deliver_queued(self.project)
+            provider.assert_not_called()
+        view = self.chat_view()
+        self.assertEqual([row["id"] for row in view["queued"]], [row["id"] for row in rows])
+        self.assertEqual(view["history"], [])
+        self.assertIsNone(view["active"])
+        self.assertTrue(l3.drop_queued(self.project, rows[0]["id"]))
+        with self.deliverable(), mock.patch.object(
+                engines, "claude_print", return_value=self.claude_result()) as provider:
+            l3.deliver_queued(self.project)
+            self.assertIsNone(l3.deliver_queued(self.project))
+            provider.assert_called_once()
+        self.assertEqual([row["text"] for row in self.chat_view()["history"]], ["second", "done"])
+
+    def test_queued_provider_failure_retains_one_user_row_and_terminal_error(self):
+        l3.queue_message(self.project, "inspect sample", trigger="chat", role="burak", slug="sample-task")
+        with self.deliverable(), mock.patch.object(
+                engines, "claude_print", side_effect=RuntimeError("Provider unavailable")) as provider:
+            with self.assertRaisesRegex(RuntimeError, "Provider unavailable"):
+                l3.deliver_queued(self.project)
+            self.assertIsNone(l3.deliver_queued(self.project))
+            provider.assert_called_once()
+        view = self.chat_view()
+        self.assertEqual(view["queued"], [])
+        self.assertIsNone(view["active"])
+        user, error = view["history"]
+        self.assertEqual((user["role"], user["text"], error["role"]), ("user", "inspect sample", "error"))
+        self.assertEqual(user["turn_id"], error["turn_id"])
+        self.assertEqual((user["slug"], error["slug"]), ("sample-task", "sample-task"))
 
     def test_provider_exception_clears_the_active_turn(self):
         with self.deliverable(), mock.patch.object(
@@ -952,14 +1024,14 @@ class TestChatQueue(AltitudeCase):
         turn.assert_called_once()
         self.assertEqual(l3.queue_upstream_issue(self.project, url, checkout=self.repo)["status"], "received")
 
-    def test_upstream_claim_survives_exit_between_dequeue_and_chat(self):
+    def test_upstream_claim_preserves_history_on_exit_before_execution(self):
         url = "https://github.com/fictional/altitude/issues/42"
         row = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
-        with self.deliverable(), mock.patch.object(l3, "turn", side_effect=SystemExit("Daemon exit before chat")):
+        with self.deliverable(), mock.patch.object(l3, "turn", side_effect=SystemExit("Daemon exit before execution")):
             with self.assertRaises(SystemExit):
                 l3.deliver_queued(self.project)
         self.assertEqual(l3.queued(self.project), [])
-        self.assertEqual(l3.chat_history(self.project), [])
+        self.assertIn(url, l3.chat_history(self.project)[0]["text"])
         retried = l3.queue_upstream_issue(self.project, url, checkout=self.repo)
         self.assertEqual(retried["status"], "received")
         self.assertEqual(retried["message_id"], row["message_id"])

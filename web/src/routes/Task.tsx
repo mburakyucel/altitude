@@ -226,7 +226,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [updateQuestionVisibility]);
-  const send = async (text: string) => {
+  const send = async (text: string, onAccepted: () => void) => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
     const currentBounds = currentNode?.getBoundingClientRect();
@@ -242,6 +242,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         ...(group && group.questions.length > 1 && context && inGroup(context)
           ? { group_id: group.id, group_revision: group.revision }
           : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
+      onAccepted();
+      await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
         cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
       );
@@ -329,7 +331,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {current && questionOffscreen ? <button type="button" className="link" onClick={() => jumpTo(current)}>View question</button> : null}
         {latest ? <button type="button" className="link" onClick={() => { following.current = true; if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; setLatest(false); }}>Latest messages</button> : null}
       </div> : null}
-      {facts.canMessage ? <div className="convo-dock"><Composer value={draft} onChange={setDraft} onSubmit={send}
+      {facts.canMessage ? <div className="convo-dock"><Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         hint={task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} /></div> : null}
     </section>

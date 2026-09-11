@@ -19,13 +19,61 @@ const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
+type SendFailure = "refused" | "unconfirmed" | null;
+
+// #320: only submitted text lives beyond a composer. These records never initiate a send.
+type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure };
+const liveSubmissions = new Set<string>();
+// A failed update retains the current recovery within this document. The stored bytes identify
+// the copy it supersedes; clearing/replacing browser storage also discards that fallback.
+const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
+const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean) => void }>();
+const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
+function readSubmitted(conversation: string): SubmittedText {
+  const saved = sessionStorage.getItem(recoveryKey(conversation));
+  const unwritten = unwrittenRecovery.get(conversation);
+  if (unwritten?.stored === saved) return structuredClone(unwritten.value);
+  unwrittenRecovery.delete(conversation);
+  return saved ? JSON.parse(saved) as SubmittedText : { pending: {}, text: "", failure: null };
+}
+function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = false) {
+  const key = recoveryKey(conversation);
+  const stored = sessionStorage.getItem(key);
+  try {
+    if (saved.text || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
+    else sessionStorage.removeItem(key);
+    unwrittenRecovery.delete(conversation);
+  } catch (error) {
+    if (!beforeSend) unwrittenRecovery.set(conversation, { stored, value: structuredClone(saved) });
+    throw error;
+  }
+}
+function settleSubmitted(conversation: string, id: string, text: string, failure: SendFailure) {
+  if (!liveSubmissions.delete(id)) return;
+  let saved: SubmittedText;
+  let readable = true;
+  try { saved = readSubmitted(conversation); }
+  catch { readable = false; saved = { pending: {}, text: "", failure: null }; }
+  delete saved.pending[id];
+  const view = recoveryViews.get(conversation);
+  if (failure) {
+    saved.text = [text, view?.draft() ?? saved.text].filter(Boolean).join("\n");
+    saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : "refused";
+  }
+  // If browser storage stops accepting writes after admission, its earlier pending copy remains
+  // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
+  try { if (readable) saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
+  if (failure) view?.restore(saved, !readable || unwrittenRecovery.has(conversation));
+}
 
 export interface ComposerProps {
+  /** Stable project/task identity, independent of route tab and display title. */
+  conversation: string;
   value: string;
   onChange: (value: string) => void;
   /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
    * transport/server failure restores it with a reminder to check the conversation first. */
-  onSubmit: (text: string) => void | Promise<void>;
+  onSubmit: (text: string, onAccepted: () => void) => void | Promise<void>;
   placeholder: string;
   ariaLabel: string;
   /** L3 is mid-turn: the arrow queues; desktop also explains that the message runs next. */
@@ -175,6 +223,7 @@ function useWaveform(stream: MediaStream | null, running: boolean) {
 }
 
 export default function Composer({
+  conversation,
   value,
   onChange,
   onSubmit,
@@ -205,7 +254,10 @@ export default function Composer({
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
   const [voiceFailure, setVoiceFailure] = useState("");
-  const [sendFailure, setSendFailure] = useState<"refused" | "unconfirmed" | null>(null);
+  const [sendFailure, setSendFailure] = useState<SendFailure>(null);
+  const [recoveryUnavailable, setRecoveryUnavailable] = useState(false);
+  const failure = useRef(sendFailure);
+  failure.current = sendFailure;
   const unavailable = voiceUnavailable();
   const canvas = useWaveform(stream, phase === "listening");
 
@@ -263,6 +315,61 @@ export default function Composer({
     });
   }, []);
 
+  useEffect(() => {
+    const view = {
+      draft: () => draft.current,
+      failure: () => failure.current,
+      restore: (saved: SubmittedText, unavailable = false) => {
+        draft.current = saved.text;
+        onChange(saved.text);
+        failure.current = saved.failure;
+        setSendFailure(saved.failure);
+        setRecoveryUnavailable(unavailable);
+        focusField(saved.text.length);
+      },
+    };
+    recoveryViews.set(conversation, view);
+    try {
+      const saved = readSubmitted(conversation);
+      // A reload has no live request to await. Keep its text without claiming acceptance or resending.
+      for (const [id, text] of Object.entries(saved.pending)) {
+        if (liveSubmissions.has(id)) continue;
+        saved.text = [text, saved.text].filter(Boolean).join("\n");
+        saved.failure = "unconfirmed";
+        delete saved.pending[id];
+      }
+      if (saved.text) {
+        saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
+        view.restore(saved);
+        try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
+        catch { setRecoveryUnavailable(true); }
+      }
+    } catch { setVoiceFailure("Message recovery is unavailable in this browser."); }
+    return () => {
+      if (recoveryViews.get(conversation) === view) recoveryViews.delete(conversation);
+      // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
+      // remount restores it once, while ordinary unsent task drafts keep their existing owner.
+      try {
+        if (readSubmitted(conversation).text) { draft.current = ""; onChange(""); }
+      } catch { /* keep the parent draft */ }
+    };
+  }, [conversation, focusField, onChange]);
+
+  const editDraft = useCallback((text: string) => {
+    draft.current = text;
+    onChange(text);
+    try {
+      const saved = readSubmitted(conversation);
+      if (saved.failure) {
+        saved.text = saved.failure === "unconfirmed" ? text : "";
+        if (saved.failure === "refused") saved.failure = null;
+        saveSubmitted(conversation, saved);
+      }
+      setRecoveryUnavailable(false);
+    } catch { setRecoveryUnavailable(true); }
+    if (failure.current === "refused") { failure.current = null; setSendFailure(null); }
+  }, [conversation, onChange]);
+
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());
     setStream(null);
@@ -274,24 +381,39 @@ export default function Composer({
     async (text: string) => {
       const ready = text.trim();
       if (!ready || disabled) return;
+      const id = crypto.randomUUID();
+      try {
+        const saved = readSubmitted(conversation);
+        saved.pending[id] = text;
+        saved.text = "";
+        saved.failure = null;
+        saveSubmitted(conversation, saved, true);
+      } catch {
+        setVoiceFailure("Could not save message recovery. Your message was not sent.");
+        return;
+      }
+      liveSubmissions.add(id);
+      failure.current = null;
       setSendFailure(null);
+      setRecoveryUnavailable(false);
       setVoiceFailure("");
       draft.current = "";
       onChange("");
+      let accepted = false;
+      const accept = () => {
+        accepted = true;
+        settleSubmitted(conversation, id, text, null);
+      };
       try {
-        await onSubmit(ready);
-        focusField();
+        await onSubmit(ready, accept);
+        accept();
+        if (mounted.current) focusField();
       } catch (error) {
-        if (!mounted.current) return;
-        const recovered = [text, draft.current].filter(Boolean).join("\n");
-        draft.current = recovered;
-        onChange(recovered);
-        setSendFailure((current) => current === "unconfirmed" || !(error instanceof ApiError && error.status < 500)
-          ? "unconfirmed" : "refused");
-        focusField(recovered.length);
+        if (!accepted) settleSubmitted(conversation, id, text,
+          error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
       }
     },
-    [disabled, focusField, onChange, onSubmit],
+    [conversation, disabled, focusField, onChange, onSubmit],
   );
   // A recording can outlive the render that supplied its submit callback or disabled state.
   const currentSubmit = useRef(submit);
@@ -331,7 +453,7 @@ export default function Composer({
         if (!mounted.current || cancelled.current) return;
         // Landed: appended to the draft, cursor at the end, nothing else on screen (issue #195).
         const next = combineDraft(draft.current, text);
-        onChange(next);
+        editDraft(next);
         setPhase("idle");
         if (sendAfterTranscribing.current && text.trim()) void currentSubmit.current(next);
         else focusField(next.length);
@@ -345,7 +467,7 @@ export default function Composer({
         if (abort.current === request) abort.current = null;
       }
     },
-    [focusField, onChange, releaseStream],
+    [editDraft, focusField, releaseStream],
   );
 
   const stop = useCallback((send = false) => {
@@ -521,6 +643,11 @@ export default function Composer({
       hintText = "L3 is mid-turn · runs next";
     }
   }
+  if (recoveryUnavailable) {
+    hintRole = "alert";
+    hintTone = "danger";
+    hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
+  }
 
   return (
     <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}>
@@ -535,10 +662,7 @@ export default function Composer({
           rows={1}
           disabled={disabled}
           autoFocus={autoFocus}
-          onChange={(event) => {
-            onChange(event.target.value);
-            if (sendFailure === "refused") setSendFailure(null);
-          }}
+          onChange={(event) => editDraft(event.target.value)}
           onKeyDown={onFieldKeyDown}
         />
         <div className="composer-row">

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, ChatViewSchema, OverviewSchema, api, isChatStreaming, streamChat } from "./api";
+import { ApiError, ChatViewSchema, OverviewSchema, api, streamChat } from "./api";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -139,7 +139,6 @@ describe("streamChat", () => {
     controller.enqueue(new TextEncoder().encode(`${JSON.stringify(receipt)}\n`));
     await expect(result).resolves.toEqual("done" in receipt ? receipt.done : receipt);
     expect(accepted).toHaveBeenCalledOnce();
-    expect(isChatStreaming()).toBe(false);
   });
 
   it.each([null, "", '{"t":"Not a receipt"}\n'])("does not infer acceptance from HTTP 200 with body %j", async (body) => {
@@ -149,6 +148,5 @@ describe("streamChat", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(ApiError);
     expect(accepted).not.toHaveBeenCalled();
-    expect(isChatStreaming()).toBe(false);
   });
 });

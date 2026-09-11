@@ -6,7 +6,7 @@ import { useOptimisticMutation } from "./useOptimisticMutation";
  * The one place the UI talks to altd. One fetch wrapper, one zod schema per endpoint
  * (lenient at the edges: unknown keys pass through, optional fields are nullish, enum-like
  * strings stay plain strings so a new server value never breaks the page), one query hook
- * per GET endpoint (20s polling, paused while a chat stream is open), and mutation hooks
+ * per GET endpoint (20s polling, faster for active conversations), and mutation hooks
  * over useOptimisticMutation for every POST.
  *
  * Paths are interpolated raw (no encodeURIComponent): the server matches path parts without
@@ -53,18 +53,7 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
 
 // ---- polling ---------------------------------------------------------------------------
 
-let chatStreaming = false;
-
-/** streamChat() sets this; exported so the chat route can pause polling around a stream. */
-export function setChatStreaming(on: boolean): void {
-  chatStreaming = on;
-}
-
-export function isChatStreaming(): boolean {
-  return chatStreaming;
-}
-
-const pollInterval = () => (chatStreaming ? false : 20_000);
+const pollInterval = () => 20_000;
 
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
@@ -587,7 +576,7 @@ export function useChat(project: string, limit = 60, enabled = true) {
     queryFn: async () => ChatViewSchema.parse(await api(`/api/chat/${project}?limit=${limit}`)),
     refetchInterval: (query) => {
       const view = query.state.data;
-      return chatStreaming ? false : view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;
+      return view?.active || view?.busy || view?.queued?.length ? 2_000 : 20_000;
     },
     enabled: Boolean(project) && enabled,
   });
@@ -830,7 +819,7 @@ export interface ChatStreamHandlers {
  * POST /api/chat and read the reply. A free L3 streams NDJSON: a first {"turn": {...}} names the
  * turn, {"t": "..."} lines feed onText and the final {"done": {...}} comes back (the caller surfaces
  * done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
- * reader takes both. Polling is paused for the duration. Non-2xx throws ApiError.
+ * reader takes both. Conversation polling continues independently. Non-2xx throws ApiError.
  */
 export async function streamChat(
   project: string,
@@ -839,64 +828,59 @@ export async function streamChat(
   /** A follow-up from a decision page names the decision's task; its rows carry the slug (SPEC.md §4.3). */
   options: { slug?: string } = {},
 ): Promise<ChatSent> {
-  setChatStreaming(true);
-  try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
-    });
-    if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
-    if (!res.body) throw new Error("no response body");
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await errorMessage(res));
+  if (!res.body) throw new Error("no response body");
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let done: ChatSent = {};
-    const handleLine = (line: string) => {
-      if (!line.trim()) return;
-      let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
-      try {
-        parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
-      } catch {
-        return; // tolerate a torn line
-      }
-      if (parsed.turn) {
-        const turn = ActiveTurnSchema.safeParse(parsed.turn);
-        if (turn.success) {
-          done = { ...done, turn: turn.data };
-          handlers.onAccepted?.();
-          handlers.onTurn?.(turn.data);
-        }
-      }
-      if (typeof parsed.t === "string") handlers.onText(parsed.t);
-      if (parsed.done) done = { ...done, ...parsed.done };
-      if (parsed.queued) done = { ...done, queued: QueuedMessageSchema.parse(parsed.queued) };
-      if (!done.turn && (done.turn_id || done.queued)) handlers.onAccepted?.();
-    };
-
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let done: ChatSent = {};
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
     try {
-      for (;;) {
-        const { value, done: eof } = await reader.read();
-        if (eof) break;
-        buffer += decoder.decode(value, { stream: true });
-        let newline = buffer.indexOf("\n");
-        while (newline >= 0) {
-          handleLine(buffer.slice(0, newline));
-          buffer = buffer.slice(newline + 1);
-          newline = buffer.indexOf("\n");
-        }
+      parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
+    } catch {
+      return; // tolerate a torn line
+    }
+    if (parsed.turn) {
+      const turn = ActiveTurnSchema.safeParse(parsed.turn);
+      if (turn.success) {
+        done = { ...done, turn: turn.data };
+        handlers.onAccepted?.();
+        handlers.onTurn?.(turn.data);
       }
-      handleLine(buffer);
-    } catch (error) {
-      if (!done.turn && !done.turn_id && !done.queued) throw error;
     }
-    if (!done.turn && !done.turn_id && !done.queued) {
-      if (done.error) throw new ApiError(409, done.error);
-      throw new Error("No delivery receipt");
+    if (typeof parsed.t === "string") handlers.onText(parsed.t);
+    if (parsed.done) done = { ...done, ...parsed.done };
+    if (parsed.queued) done = { ...done, queued: QueuedMessageSchema.parse(parsed.queued) };
+    if (!done.turn && (done.turn_id || done.queued)) handlers.onAccepted?.();
+  };
+
+  try {
+    for (;;) {
+      const { value, done: eof } = await reader.read();
+      if (eof) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
     }
-    return done;
-  } finally {
-    setChatStreaming(false);
+    handleLine(buffer);
+  } catch (error) {
+    if (!done.turn && !done.turn_id && !done.queued) throw error;
   }
+  if (!done.turn && !done.turn_id && !done.queued) {
+    if (done.error) throw new ApiError(409, done.error);
+    throw new Error("No delivery receipt");
+  }
+  return done;
 }

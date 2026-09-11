@@ -767,14 +767,15 @@ a non-Auto pin stays named in the phone header. It pins the project's L3 to one 
 within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
 lands in the history. The conversation component is keyed by project, like its query cache:
-switching projects discards the draft, pending bubble, stream and composer error state. Composer
+switching projects discards the unsent draft, pending bubble and local stream. Submitted-text recovery
+retains its original conversation identity. Composer
 unmount stops the recorder and releases its microphone tracks through the recorder's own stream;
 pending transcription is cancelled and cannot update the destination draft. Outstanding
 callbacks and cache updates retain the source project. The destination renders its own history,
 queue and active turn; switching back reconstructs those server records, including Retry for a
 failed turn, without restoring an unsent draft. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
 and trigger without copying its prompt, and it is the conversation's only authority: the page polls
-it and never infers a turn from `busy` or the last history row. A fresh mount or reconnect renders
+it independently of open response streams and never infers a turn from `busy` or the last history row. A fresh mount or reconnect renders
 the record as the typing indicator for a chat turn, or as the line "L3 is handling <what>" for a
 server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
 first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
@@ -822,8 +823,11 @@ not infer an upstream repository from ambiguous historical text.
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
 its run order and Remove until
-its turn starts, when the row becomes the turn's bubble and typing indicator. The API snapshots the queue and active record under the same
-lifecycle guard, so that handoff cannot appear as an idle gap. A control takes Burak's chat back off the queue only while it
+its turn starts, when the row becomes the turn's bubble and typing indicator. Queue claim writes the
+user history row and publishes the active record under the same lifecycle guard used by the API's
+history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
+queue. The claimed turn reuses its admission and route choice, so the text stays visible through
+handoff and is delivered once. A control takes Burak's chat back off the queue only while it
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
 file in the project directory, so a reload, another device and a restart all see the same pending
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive chat
@@ -842,6 +846,20 @@ receipt and server failures without acceptance evidence restore it with "Could n
 Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
 after the submitted text on a new line. Combined failed drafts remain unconfirmed if any send lacks a
 receipt. No text matching or automatic resend infers delivery.
+The composer keeps only submitted-text recovery in browser-tab `sessionStorage`, keyed by stable
+project or project/task identity. Live request callbacks outlast component unmount and restore a
+failure only to their original conversation. A receipt removes its request's recovery copy before
+the answer finishes; older reads are cancelled before a late receipt updates the query cache.
+A reload without a receipt restores pending text as unconfirmed, even if history now contains a
+similar message. The operator checks history before choosing to send. Recovered text and later typed
+or dictated edits remain recoverable while unconfirmed; editing a refused recovery returns it to an
+ordinary draft. Sending explicitly replaces the recovery with the submitted request. Ordinary unsent
+project-switch drafts are not persisted. Failure to save the initial recovery copy leaves the text
+unsent with an inline error. No recovery record initiates delivery or provides a second server queue.
+A failed recovery update keeps the latest text in the current browser document and displays a
+keep-tab-open warning; it cannot promise that unwritten edits survive reload. Once storage accepts
+updates again, returning to the conversation saves that recovery and clears the warning. Unread
+browser evidence is not overwritten by a failed read.
 The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the

@@ -10,6 +10,7 @@ def main():
     configure()
     gates = {name: threading.Event() for name in ("alpha", "beta")}
     disconnect = threading.Event()
+    queued_gate = threading.Event()
     calls = []
     guard = threading.Lock()
 
@@ -29,6 +30,9 @@ def main():
                 return {"error": "Disposable provider was not released"}
             if text == "Alpha accepted failure":
                 return {"error": "Disposable provider failed after acceptance"}
+        if text == "Alpha first navigation request\n\nAlpha second navigation request":
+            if not queued_gate.wait(45):
+                return {"error": "Disposable queued provider was not released"}
         reply = f"{text} answered."
         return {"text": reply, "session_id": f"fixture-{project}-session"}
 
@@ -64,6 +68,9 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/release-queued":
+                queued_gate.set()
+                return self._json({"ok": True})
             if self.path == "/fixture/disconnect":
                 disconnect.set()
                 return self._json({"ok": True})
@@ -75,7 +82,7 @@ def main():
                 return self._json({"ok": True})
             return super().do_POST()
 
-    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), disconnect]])
+    serve(Handler, release=lambda: [gate.set() for gate in [*gates.values(), disconnect, queued_gate]])
 
 
 if __name__ == "__main__":

@@ -214,7 +214,7 @@ export default function Conversation({
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, onAccepted?: () => void) => {
       following.current = true;
       const request = Symbol();
       const update = (fn: (cur: Local) => Local | null) => setLocal((cur) => cur?.request === request ? fn(cur) : cur);
@@ -222,7 +222,7 @@ export default function Conversation({
       let result;
       try {
         result = await streamChat(name, text, {
-          onAccepted: () => update((cur) => ({ ...cur, accepted: true })),
+          onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
           onTurn: (turn) => update((cur) => ({ ...cur, turnId: turn.id })),
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
@@ -234,6 +234,7 @@ export default function Conversation({
       }
       if (result.queued) {
         const queued = result.queued;
+        await queryClient.cancelQueries({ queryKey: ["chat", name] });
         update(() => null);
         queryClient.setQueryData<ChatView>(["chat", name], (cached) =>
           cached ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
@@ -376,6 +377,7 @@ export default function Conversation({
       </div>
       <div className="convo-dock">
         <Composer
+          conversation={`project/${name}`}
           value={draft}
           onChange={setDraft}
           onSubmit={send}

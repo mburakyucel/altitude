@@ -137,6 +137,88 @@ function liveReply() {
 describe.each([390, 1440])("project switching at %ipx", (width) => {
   const field = (name: string) => screen.getByRole("textbox", { name: `Message L3 about ${name}-project` });
 
+  it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
+    let receipt!: (response: Response) => void;
+    let stale!: (response: Response) => void;
+    const pendingReceipt = new Promise<Response>((resolve) => { receipt = resolve; });
+    const pendingRead = new Promise<Response>((resolve) => { stale = resolve; });
+    const { chats, fetchMock } = projectChats(() => pendingReceipt);
+    const original = fetchMock.getMockImplementation()!;
+    let reads = 0;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).startsWith("/api/chat/alpha-project") && ++reads === 2) return pendingRead;
+      return original(input, init);
+    });
+    setViewport(width);
+    const { router, user, queryClient } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.type(field("alpha"), "Queued sample request");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    void queryClient.invalidateQueries({ queryKey: ["chat", "alpha-project"] });
+    await waitFor(() => expect(reads).toBe(2));
+    const old = jsonResponse(chats["alpha-project"]);
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    const row = { id: "late-queue", at: ago(0), text: "Queued sample request", trigger: "chat" };
+    chats["alpha-project"]!.queued = [row];
+    await act(async () => receipt(jsonResponse({ queued: row })));
+    await act(async () => stale(old));
+    expect(queryClient.getQueryData<ChatView>(["chat", "alpha-project"])?.queued).toEqual([row]);
+    await act(() => router.navigate("/projects/alpha-project"));
+    await screen.findByText("Queued sample request");
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("recovers an unconfirmed submitted message in its source conversation after navigation", async () => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<Response>((_, fail) => { reject = fail; });
+    const { fetchMock } = projectChats(() => pending);
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    await user.type(field("alpha"), "Please inspect the sample project");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    await user.type(field("beta"), "Keep this new draft");
+    await act(async () => { reject(new TypeError("Controlled lost receipt")); });
+    expect(field("beta")).toHaveValue("Keep this new draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(() => router.navigate("/projects/alpha-project"));
+    await screen.findByText("alpha-project history");
+    expect(field("alpha")).toHaveValue("Please inspect the sample project");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("polls accepted text after returning before the original send receives its turn receipt", async () => {
+    const reply = liveReply();
+    const { chats } = projectChats(() => reply.response);
+    setViewport(width);
+    const { router, user } = renderApp({ route: "/projects/alpha-project" });
+    await screen.findByText("alpha-project history");
+    try {
+      await user.type(field("alpha"), "Please inspect the sample project");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await act(() => router.navigate("/projects/beta-project"));
+      await screen.findByText("beta-project history");
+      chats["alpha-project"]!.busy = true;
+      await act(() => router.navigate("/projects/alpha-project"));
+      await screen.findByText("alpha-project history");
+      await screen.findByRole("button", { name: "Queue" });
+      const turn = { id: "accepted-after-return", started_at: ago(0), trigger: "chat" };
+      chats["alpha-project"]!.active = turn;
+      chats["alpha-project"]!.history.push({ role: "user", text: "Please inspect the sample project", turn_id: turn.id });
+      await act(async () => { reply.frame({ turn }); });
+      // The response still belongs to the departed component. The mounted conversation must read
+      // its server state while that stream remains open, including after background throttling.
+      await waitFor(() => expect(screen.getByText("Please inspect the sample project")).toBeInTheDocument(), { timeout: 4_000 });
+    } finally {
+      await act(async () => reply.close());
+    }
+  });
+
   it("releases the source microphone on switching without sending or transcribing its recording", async () => {
     const { fetchMock } = projectChats(() => { throw new Error("No recording should be submitted"); });
     const { track } = installVoiceBrowser();

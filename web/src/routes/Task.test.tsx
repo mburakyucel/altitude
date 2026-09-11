@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import { installVoiceBrowser } from "../components/voiceTest";
+import type { TaskView } from "../data/api";
 
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
@@ -151,6 +152,33 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it("keeps a late saved receipt when an older task read completes after navigation", async () => {
+    let receipt!: (response: Response) => void;
+    let stale!: (response: Response) => void;
+    const pendingReceipt = new Promise<Response>((resolve) => { receipt = resolve; });
+    const pendingRead = new Promise<Response>((resolve) => { stale = resolve; });
+    const fetchMock = stub(running);
+    const original = fetchMock.getMockImplementation()!;
+    let reads = 0;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).includes("/api/l2/message")) return pendingReceipt;
+      if (String(input).includes("/api/task/altitude/fix-timer") && ++reads === 2) return pendingRead;
+      return original(input, init);
+    });
+    const { user, router, queryClient } = renderApp({ route });
+    await screen.findByText("Keep the change focused.");
+    await user.type(screen.getByRole("textbox", { name: "Message the L2" }), "Keep the queued sample");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    void queryClient.invalidateQueries({ queryKey: ["task", "altitude", "fix-timer"] });
+    await waitFor(() => expect(reads).toBe(2));
+    await act(() => router.navigate("/projects/altitude"));
+    const row = { id: "late-message", role: running.messages[0]!.role, text: "Keep the queued sample", at: ago(0) };
+    await act(async () => receipt(jsonResponse({ message: row })));
+    await act(async () => stale(jsonResponse(running)));
+    expect(queryClient.getQueryData<TaskView>(["task", "altitude", "fix-timer"])?.messages).toContainEqual(row);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"))).toHaveLength(1);
+  });
+
   it.each([390, 1440])("keeps independent block and merge reasons discoverable at %i pixels", async (width) => {
     setViewport(width);
     const holdReason = "Wait for the operator to review the complete phone and desktop evidence before merging this pull request.";
