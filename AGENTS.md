@@ -15,8 +15,9 @@ belong here, never in a persona.
 ## Standing tenet
 
 Simplicity, clarity and elegance guide everything that happens in Altitude. Use judgment to favor
-approaches that are easy to understand and maintain. When friction recurs, simplify the underlying
-approach instead of accumulating exceptions, redundant checks or unnecessary procedure.
+approaches that are easy to understand and maintain. Present decisions and explanations concisely,
+making the choice, recommendation and material consequences clear. When friction recurs, simplify
+the underlying approach instead of accumulating exceptions, redundant checks or unnecessary procedure.
 
 ## Seams
 
