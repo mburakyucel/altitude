@@ -157,7 +157,8 @@ class TestCleanClose(AltitudeCase):
                 self.assertEqual(S.load_task(self.project, task["slug"])["state"], "done" if closes else "reported")
         self.assertEqual(len(faults), 1)
         self.assertEqual(faults[0][0][0], "report-json")
-        self.assertEqual(faults[0][1], {"project": self.project, "task": "shape-corrupt-json"})
+        self.assertEqual(faults[0][1], {"project": self.project, "task": "shape-corrupt-json",
+                                      "expected_owner": T.report_owner(S.load_task(self.project, "shape-corrupt-json"))})
 
     def test_main_runs_must_be_present_well_shaped_and_successful(self):
         cases = (

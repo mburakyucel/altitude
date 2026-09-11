@@ -268,6 +268,8 @@ class ConversationDecisions(AltitudeCase):
             with self.assertRaises(OSError):
                 T.accept_question(self.project, self.slug, question["id"], 1)
         receipt = self.current()["resolution"]
+        # The owner consumes the recovered acceptance before handing its report to review.
+        self.assertEqual(len(T.take_inbox(self.project, self.slug)), 1)
         T.report(self.project, self.slug, {"verdict": "ok"})
         for lifecycle in ("reported", "done"):
             with self.subTest(lifecycle=lifecycle):

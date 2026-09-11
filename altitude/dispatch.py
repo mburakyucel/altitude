@@ -356,12 +356,14 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
             if (previous.get("result_state") is None or receipt == current) and (
                     operation != "resume" or previous.get("block_id") == task.get("block_id")):
                 return {"queued": False, "idempotent": True, "request": previous}
-        if task.get("state") not in contract["from"]:
+        if task.get("state") not in contract["from"] and not (operation == "resume" and task.get("state") == "reported"):
             raise T.TransitionError(
                 f"{slug}: cannot {operation} from {task.get('state')}; expected {' or '.join(contract['from'])}"
             )
         if operation == "handoff":
             _require_handoff(project, task, engine, expected_attempt)
+        if operation == "resume" and task.get("state") == "reported":
+            task = T.continue_report(project, task, actor=actor, reason=reason)
         request = {"id": uuid.uuid4().hex, "at": S.now(), "operation": operation, "reason": reason,
                    "actor": actor, "status": "pending", "expected_state": task.get("state"),
                    "block_id": task.get("block_id"),
@@ -1318,7 +1320,7 @@ def poll(project: str) -> list[dict]:
             started = next((e["at"] for e in reversed(S.read_events(project, t["slug"]))
                             if e.get("kind") == "state" and e.get("to") == "running"), t.get("dispatched"))
         # #308 continuation: a previous delivery's report cannot explain the current worker's exit.
-        started = max(started or "", (t.get("delivery") or {}).get("at", ""))
+        started = max(started or "", (t.get("delivery") or {}).get("at", ""), t.get("report_after") or "")
         try:
             has_report = report.stat().st_mtime >= (datetime.fromisoformat(started).timestamp() if started else 0)
         except FileNotFoundError:

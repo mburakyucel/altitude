@@ -29,11 +29,13 @@ def gh(args: list[str], cwd: Path) -> dict | list | None:
 
 
 def verify(project: str, slug: str) -> dict:
+    from . import tasks as T
+    owner = T.report_owner(S.load_task(project, slug))
     try:
-        return _verify(project, slug)
+        return {**_verify(project, slug), "owner": owner}
     except VerifierFault as e:
         from . import incidents
-        incidents.system_fault("verifier", str(e), project=project, task=slug)
+        incidents.system_fault("verifier", str(e), project=project, task=slug, expected_owner=owner)
         return {"verdict": "fault", "problems": [f"verifier fault: {e}"], "signals": [], "spend": {}, "prs": [], "report": None, "fault": str(e)}
 
 
@@ -46,6 +48,11 @@ def _verify(project: str, slug: str) -> dict:
     if not rep:
         out["problems"].append("report.json missing")
         out["verdict"] = "missing"
+        return _spend(out, project, task, d)
+    from . import tasks as T
+    if task.get("report_after") and not T.report_current(task, d / "report.json"):
+        out["problems"].append("report predates follow-up work; refresh report.json")
+        out["verdict"] = "contradicted"
         return _spend(out, project, task, d)
     for k in ("landed", "review", "blocked"):
         if k not in rep:

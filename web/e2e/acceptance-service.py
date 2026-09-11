@@ -5,7 +5,7 @@ import sys
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, l3, server, state as S, tasks as T
+from altitude import config, engines, l3, server, state as S, tasks as T, verify
 
 
 def main():
@@ -80,6 +80,18 @@ def main():
 
     class Handler(server.Handler):
         def do_POST(self):
+            if self.path == "/fixture/reported":
+                body = self._body()
+                slug = running["slug"]
+                row = S.load_task(project, slug)
+                report = {"landed": {"prs": [{"number": 103, "merged": False}], "main_runs": [],
+                                     "deploy": "not-applicable"}, "review": [], "blocked": ""}
+                S.write_json(S.task_dir(project, slug) / "report.json", report)
+                row.update(prs=[103], hold_merge="Operator review required", state="reported",
+                           verified={"verdict": "ok", "owner": T.report_owner(row)})
+                S.save_task(project, row)
+                verify.gh = lambda *_args, **_kwargs: {"state": body.get("pr_state", "OPEN")}
+                return self._json(row)
             if self.path == "/fixture/heads-up":
                 if self._body().get("history"):
                     for index in range(15):

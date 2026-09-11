@@ -152,6 +152,26 @@ const route = "/projects/altitude/tasks/fix-timer";
 afterEach(() => setViewport(1024));
 
 describe("Task on desktop", () => {
+  it("keeps the reported open-PR owner reachable without releasing its merge hold", async () => {
+    stub({ ...running, state: "reported", can_continue: true, hold_merge: "Operator review required", prs: [202] });
+    const { user } = renderApp({ route });
+    const field = await screen.findByRole("textbox", { name: "Message the L2" });
+    expect(screen.getByText("Merge held", { exact: true })).toBeInTheDocument();
+    await user.type(field, "Resolve the conflicts.");
+    await user.click(screen.getByRole("button", { name: "Send", exact: true }));
+    await screen.findByText("Resolve the conflicts.", { exact: true });
+    expect(field).toHaveValue("");
+    expect(screen.getByText("Merge held", { exact: true })).toBeInTheDocument();
+  });
+
+  it("keeps a reported task without open-PR ownership evidence read-only", async () => {
+    stub({ ...running, state: "reported", can_continue: false });
+    renderApp({ route });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.queryByRole("textbox", { name: "Message the L2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume", exact: true })).not.toBeInTheDocument();
+  });
+
   it("keeps a late saved receipt when an older task read completes after navigation", async () => {
     let receipt!: (response: Response) => void;
     let stale!: (response: Response) => void;

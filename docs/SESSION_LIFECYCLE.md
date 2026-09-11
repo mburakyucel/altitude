@@ -225,6 +225,27 @@ queues one notification with open members, revisions and required authority; re-
 stays quiet. Notification lets L3 coordinate scope or record-backed portions without approving
 operator-required proposal, security or product decisions.
 For a faulted task, L3 messages remain non-waking discussion and verified recovery uses the explicit resume.
+
+A reported task with an open PR retains its owner conversation. The ordinary composer and coordinator
+Resume path validate a currently open recorded PR, retain the previous report and verifier result in
+task events, and invalidate that report's completion authority before entering the existing pending
+resume flow. The attempt, provider session, worktree, branch, PRs, lease, holds and original source
+messages remain attached to the same task. Each distinct send keeps its own conversation/inbox row;
+the resume claim consumes one exact batch and leaves later sends for the next checkpoint. A refused
+or uncertain provider launch uses the existing claim recovery, without duplicating the conversation.
+
+Follow-ups also win against worker-exit/report-handoff races. Verification is bound to owner identity,
+worker start, block identity and the follow-up timestamp; stale verification, fault effects, archive
+callbacks and report-turn receipts cannot conclude resumed work. Resumed work writes a fresh report.
+The old report file remains readable until replacement, with its historical copy retained in events.
+Archived/done/rejected tasks remain read-only; archived restoration is not part of this lifecycle.
+
+On phone and desktop the reported composer uses the ordinary empty, draft, sending, listening,
+transcribing, denied and error states. A receipt clears the submitted draft and pending bubble;
+capacity waits retain the composer. Refused sends restore recoverable text, while an unconfirmed
+response keeps the recovery hint and never resends automatically. Merge-held status persists after
+send and reload. `reported-continuation.pw.ts` walks continuation and refusal; the shared composer
+and task lifecycle walkthroughs cover voice and accepted/unconfirmed transport recovery.
 A task's versioned dilemma remains open independently of that wake and its worker state. Blocks and
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.

@@ -573,6 +573,20 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
+`alt task message <slug> "Resolve the conflicts and retain the review hold."` continues a reported
+owner whose recorded PR is still open. `alt task resume <slug> --reason "Continue the existing PR"`
+is the equivalent coordinator/operator continuation without a new conversation message. Both use
+the daemon's existing resume path and retain the attempt, provider session, worktree, branch, PR,
+file lease and all holds. PR lookup failure or a closed PR refuses admission. A saved message or
+queued resume receipt means accepted work; inspect `alt task status <slug>` for observed running
+state or a capacity/recovery wait. Repeating the same outstanding coordinator resume request reuses
+its receipt. Separate messages remain separate, even when their text matches.
+
+The prior report and verification remain in `report-superseded` task events. The current owner must
+write a fresh report before completion; old verifier or archive callbacks cannot finish its
+continuation. Done, archived and rejected tasks cannot be resumed or messaged through this path.
+Archived restoration remains a separate product decision because execution context may be removed.
+
 An L2 block that publishes or revises questions queues one coordinator notification with the open group,
 including operator-directed blocks. The operator flag places those decisions in Needs you without waiting for L3; it does not
 hide their context from L3. The notification names open members, revisions and required authority so

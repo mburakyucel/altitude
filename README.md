@@ -64,6 +64,13 @@ follow-up changes onto current main and opens another PR, with its own checks an
 Running it without new work creates nothing. Earlier deliveries remain recorded, and the final
 report covers all of them. See [continuation after merge](docs/CLI.md#continue-after-a-pr-merges).
 
+A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
+continue that owner's session, attempt and worktree with the same PR, file scope and review holds.
+L3 can also request continuation with `alt task resume <slug> --reason "…"`. The previous report
+stays in task history; resumed work needs a fresh report. A saved message is not proof that the
+worker has restarted: capacity and recovery waits remain visible. Done, archived and rejected tasks
+remain read-only; reopening their lifecycle is a separate, unsettled product decision.
+
 Large or complex issues can move through small, reviewable increments that keep supported user journeys
 working. L3 records the breakdown and delivery evidence in the issue; each task completes its agreed
 increment, and follow-up work can come later within the operator's authorization. The parent stays open

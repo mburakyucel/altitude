@@ -618,8 +618,15 @@ def _on_l2_finished(project: str, item: dict) -> None:
     slug = t["slug"]
     with S.project_lock(project):
         live = S.load_task(project, slug)
-        snapshot = (t.get("state"), t.get("agent_id"))
-        current = (live.get("state"), live.get("agent_id"))
+        if (live.get("daemon_request") or {}).get("status") in ("pending", "executing"):
+            return  # The queued operator action owns this worker's exit.
+        snapshot = (t.get("state"), T.report_owner(t))
+        current = (live.get("state"), T.report_owner(live))
+        if (t.get("state") == live.get("state") == "running"
+                and all(t.get(key) == live.get(key) for key in ("attempt", "agent_id", "session_id", "worker_started_at"))
+                and any(row.get("wake", True) for row in T.pending(project, slug))):
+            T.continue_report(project, live, actor="altd", reason="Follow-up messages await the owner", check_pr=False)
+            return
     if current != snapshot:
         log(f"[{project}/{slug}] ignored stale finished worker snapshot {snapshot} → {current}")
         return
@@ -627,7 +634,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
 
     def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
         return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"), updates=updates,
-                       expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"))
+                       expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"),
+                       expected_block_id=t.get("block_id"), expected_owner=T.report_owner(t))
 
     if t.get("completion_requested"):
         a = item.get("agent") or {}
@@ -734,18 +742,31 @@ def _on_l2_finished(project: str, item: dict) -> None:
         return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
-    T.set_spend(project, slug, **{k: val for k, val in v.get("spend", {}).items() if val is not None})
-    if v["verdict"] == "fault":
-        T.block(project, slug, f"verifier fault (Altitude, not the L2): {v.get('fault')}")
-        log(f"[{project}/{slug}] verifier fault → blocked; fault raised")
-        return
-    if v["verdict"] == "missing":
-        T.block(project, slug, "L2 session ended without a report (report.json missing)")
-    elif v["verdict"] == "blocked":
-        T.report(project, slug, v)
-        T.block(project, slug, (v.get("report") or {}).get("blocked") or "blocked (see report)")
-    else:
-        T.report(project, slug, v)
+    with S.project_lock(project):
+        live = S.load_task(project, slug)
+        if (live.get("daemon_request") or {}).get("status") in ("pending", "executing"):
+            return
+        if (live.get("state") == t.get("state") and all(live.get(key) == t.get(key)
+                for key in ("attempt", "agent_id", "session_id", "worker_started_at")) and any(
+                row.get("wake", True) for row in T.pending(project, slug))):
+            T.continue_report(project, live, actor="altd", reason="Follow-up messages await the owner", check_pr=False)
+            return
+        if T.report_owner(live) != T.report_owner(t) or live.get("state") != t.get("state"):
+            return
+        live.setdefault("spend", {}).update({k: val for k, val in v.get("spend", {}).items() if val is not None})
+        S.save_task(project, live)
+    try:
+        if v["verdict"] == "fault":
+            block_snapshot(f"verifier fault (Altitude, not the L2): {v.get('fault')}")
+            return
+        if v["verdict"] == "missing":
+            t = block_snapshot("L2 session ended without a report (report.json missing)")
+        else:
+            t = T.report(project, slug, {**v, "owner": T.report_owner(t)}, expected_state=t.get("state"))
+            if v["verdict"] == "blocked":
+                t = block_snapshot((v.get("report") or {}).get("blocked") or "blocked (see report)")
+    except T.TransitionError:
+        return  # A follow-up won report admission; the ordinary resume timer owns it.
     report_turn(project, t, v)
 
 
@@ -781,6 +802,13 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
     `resume_stranded_reports` instead of leaving the task waiting for nobody.
     """
     slug = t["slug"]
+    owner = T.report_owner(t)
+    try:
+        current_owner = T.report_owner(S.load_task(project, slug))
+    except (KeyError, OSError, ValueError):
+        current_owner = owner  # The existing corrupt-report/status path below records the fault.
+    if owner != current_owner:
+        return
     if v.get("verdict") == "ok" and not v.get("problems") and not v.get("signals"):
         report_error = task_error = None
         try:
@@ -792,6 +820,8 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
                     live = {}
                     report = None
                 else:
+                    if T.report_owner(live) != owner:
+                        return
                     try:
                         report = S.read_json(S.task_dir(project, slug) / "report.json", {})
                     except ValueError as e:
@@ -802,7 +832,8 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
         if task_error is not None:
             incidents.system_fault("task-json", f"{project}/{slug}: {task_error}", project=project, task=slug)
         if report_error is not None:
-            incidents.system_fault("report-json", f"{project}/{slug}: {report_error}", project=project, task=slug)
+            incidents.system_fault("report-json", f"{project}/{slug}: {report_error}", project=project, task=slug,
+                                   expected_owner=owner)
         if isinstance(report, dict):
             landed = report.get("landed") or {}
             if not isinstance(landed, dict):
@@ -829,9 +860,12 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
                 clean_digest = (f"No decisions. {pr_text} merged. Main runs: {run_text}. Deploy: {deploy}. "
                                 f"Review findings: {fixed} fixed, {dismissed} dismissed.")
                 try:
-                    T.done(project, slug, actor="altd", digest=clean_digest)
+                    T.done(project, slug, actor="altd", digest=clean_digest,
+                           expected_state="reported", expected_owner=owner)
                 except T.TransitionError:
-                    log(f"[{project}/{slug}] clean close lost the state race → L3 turn")
+                    log(f"[{project}/{slug}] clean close lost the state race")
+                    if S.load_task(project, slug).get("report_after") != owner.get("report_after"):
+                        return
                 else:
                     T.fyi(project, slug, f"{slug}: closed by altd without an L3 turn — nothing to judge: verifier verdict ok; "
                           f"hold_merge unset; PRs merged: {pr_text}; "
@@ -859,7 +893,10 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
         return
     try:
         with S.project_lock(project):
-            t2 = S.load_task(project, slug); t2["l3_handled"] = S.now(); S.save_task(project, t2)
+            t2 = S.load_task(project, slug)
+            if T.report_owner(t2) == owner:
+                t2["l3_handled"] = S.now()
+                S.save_task(project, t2)
     except (KeyError, OSError, ValueError) as e:
         log(f"[{project}/{slug}] L3 turn completed but l3_handled could not be stamped: {e}")
 
@@ -871,6 +908,8 @@ def resume_stranded_reports(project: str) -> None:
             continue
         report_path = S.task_dir(project, t["slug"]) / "report.json"
         if not report_path.exists():
+            continue
+        if t.get("report_after") and not T.report_current(t, report_path):
             continue
         key = f"finished:{project}:{t['slug']}"
         with _bg_guard:
@@ -1871,12 +1910,14 @@ def task_view(project: str, slug: str) -> dict:
     questions = T.question_views(project, slug)
     t = S.load_task(project, slug)
     d = S.task_dir(project, slug)
+    report = S.read_json(d / "report.json")
     files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
-    return {**t, "question": questions[-1] if questions else None, "questions": questions,
+    return {**t, "can_continue": T.reported_continuable(t, report),
+            "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
             "files": files, "messages": T.task_messages(project, slug),
             "events": S.read_events(project, slug),
-            "report_json": S.read_json(d / "report.json"), "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
+            "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 
 def install_statusline() -> dict:
