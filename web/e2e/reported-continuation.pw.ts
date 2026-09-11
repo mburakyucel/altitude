@@ -36,7 +36,10 @@ test("reported open PR accepts follow-ups in the same held owner conversation", 
   await expect(running).toBeVisible({ timeout: 25_000 });
   await walk.state("03-resumed-receipt-with-hold", { visible: [field, running, mergeHeld, conversation.getByText("Resolve the conflicts and retain the review hold.", { exact: true })], hidden: [conversation.locator(".msg-row[data-pending]")] });
   await field.fill("Keep the phone reading-position diagnosis in scope.");
+  const secondReceipt = page.waitForResponse((response) => response.url().endsWith("/api/l2/message"));
   await send.click();
+  expect((await secondReceipt).ok()).toBe(true);
+  await expect(conversation.locator(".msg-row[data-pending]")).toBeHidden();
   await expect(field).toHaveValue("");
   const workers = await (await request.get("/fixture/workers")).json();
   expect(workers.calls).toHaveLength(1);
