@@ -1,4 +1,20 @@
-import type { Decision } from "./api";
+import type { Decision, Overview } from "./api";
+
+/** Unknown attention never looks like a known empty inbox. */
+export function attentionCount(overview: Overview | undefined, failed: boolean) {
+  if (!overview) return { text: failed ? "?" : "…", label: failed ? "Attention unavailable" : "Loading attention" };
+  const count = overview.queue.length;
+  return count || failed ? { text: `${count}${failed ? " · saved" : ""}`, label: `${count} pending${failed ? ", saved count" : ""}` } : null;
+}
+
+/** The badge counts questions individually and operational attention items separately. */
+export function attentionSummary(rows: Decision[]): string {
+  const questions = rows.filter((row) => row.id || !["fault", "stopped"].includes(row.kind ?? "")).length;
+  const stopped = rows.filter((row) => !row.id && row.kind === "stopped").length;
+  const faults = rows.length - questions - stopped;
+  return [[questions, "question"], [stopped, "stopped task"], [faults, "fault"]]
+    .filter(([count]) => count).map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(" · ");
+}
 
 /** Independent questions from one ask share a compact task card and a single batch submission. */
 export function decisionGroups(rows: Decision[]): Decision[][] {

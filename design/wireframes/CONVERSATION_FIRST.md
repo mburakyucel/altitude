@@ -15,6 +15,26 @@ L3. It never guesses that the last technical event is the question. The list and
 the same question component. User bubbles and assistant messages remain prominent; technical
 activity and evidence are available through the existing disclosure and live session.
 
+The default question shows the task's purpose and actual choice with only the context and material
+consequences needed to decide. Owners write concise plain-language questions and actionable
+options; complete titles and questions remain readable rather than clipped. Detailed reasoning,
+implementation terms and history stay in the owning conversation, with extra saved question detail
+available through **More context** when it differs from the question. The task's title has its own
+fully wrapping link above the question. Brevity never hides a consequence needed before answering.
+
+The operator approved the Work separation on 2026-09-10 Pacific. Work shows each current project
+task once as a compact status row, including tasks awaiting an answer. A waiting row opens this
+same question in context; Work repeats no question body or quick-answer controls. Running, queued,
+L3-waiting and reported tasks stay visible, with recent completed tasks under **Done this week**.
+An open question stays visible independently of worker state. Partial answers update the row's
+question count; a final answer leaves the row showing observed execution or waiting status.
+
+Only global Needs you has a numeric attention badge. Project rail and switcher rows retain state
+dots. The badge counts unanswered operator questions plus operational attention items, labelled
+separately in summaries. Unknown reads never imply zero; cached failures identify saved status as
+stale. On phone, the global badge is in bottom navigation, or its header link while keyboard use
+hides that navigation. Back returns to the originating Work or Needs you view.
+
 A single question's quick choices act immediately. For up to three independent questions, choices
 start unselected. Pick answers, then **Send N answers** once. With no manual picks, **Use
 recommendations** answers the members that have an explicit recommendation. It never overwrites a

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -166,7 +166,7 @@ describe("Project page", () => {
     renderApp({ route: "/projects/altitude" });
 
     expect(await screen.findByRole("heading", { name: "altitude" })).toBeInTheDocument();
-    await screen.findByText("L3 answered 4 min ago on Alpha · 2 tasks in flight · 1 waits for your review");
+    await screen.findByText("L3 answered 4 min ago on Alpha · 2 tasks in flight · 1 question needs you");
     expect(screen.getByRole("region", { name: "Conversation" })).toBeInTheDocument();
   });
 
@@ -209,9 +209,9 @@ describe("Project page", () => {
     const { user } = renderApp({ route: "/projects/altitude" });
 
     const panel = await openPanel(user);
-    expect(within(panel).getByText("1 active · 1 done this week")).toBeInTheDocument();
+    expect(within(panel).getByText("2 current · 1 done this week")).toBeInTheDocument();
     expect(within(panel).getByRole("link", { name: /^Fix the timer/ })).toBeInTheDocument();
-    expect(within(panel).getByRole("heading", { name: "Needs you (1)" })).toBeInTheDocument();
+    expect(within(panel).getByRole("heading", { name: "Current (2)" })).toBeInTheDocument();
     expect(within(panel).getByText("Done this week (1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Work panel" })).toHaveAttribute("aria-pressed", "true");
 
@@ -236,8 +236,8 @@ describe("Project page", () => {
     renderApp({ route: "/projects/altitude" });
 
     const panel = await screen.findByRole("region", { name: "Work" });
-    await within(panel).findByText("Nothing running. Ask L3 for something.");
-    expect(within(panel).getByText("0 active · 0 done this week")).toBeInTheDocument();
+    await within(panel).findByText("No current tasks. Ask L3 to start something.");
+    expect(within(panel).getByText("0 current · 0 done this week")).toBeInTheDocument();
   });
 
   it("shows the Work tab on the phone under the project header", async () => {
@@ -271,7 +271,7 @@ describe("Project page", () => {
     renderApp({ route: "/projects/altitude" });
 
     const panel = await screen.findByRole("region", { name: "Work" });
-    const active = within(panel).getByRole("region", { name: "Active" });
+    const active = within(panel).getByRole("region", { name: "Current" });
     const row = (name: RegExp) => within(active).getByRole("link", { name });
     expect(row(/^Fix the timer/)).toHaveAccessibleName("Fix the timer · Running · Opus on Alpha · started 2 min ago");
     expect(row(/^Ask L3/)).toHaveAccessibleName("Ask L3 · Waits for L3");
@@ -286,26 +286,62 @@ describe("Project page", () => {
     expect(within(panel).getByRole("link", { name: /^Shipped/ })).toHaveAccessibleName("Shipped · Done · PR #212 merged");
   });
 
-  // §3.7: a decision answered from the panel collapses its card; the task lands in Active on the next read.
-  it("answers a decision from the panel and moves the task to Active", async () => {
+  it("retains one current row through partial and final answers from another surface", async () => {
     const fixtures: Fixtures = {};
     const fetchMock = mockFetch(fixtures);
     setViewport(1440);
-    const { user } = renderApp({ route: "/projects/altitude" });
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
 
     const panel = await screen.findByRole("region", { name: "Work" });
-    const card = within(panel).getByRole("article", { name: "Add the badge" });
-    expect(within(card).getByText("L3 brought this to you")).toBeInTheDocument();
-    expect(within(card).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
-    expect(within(panel).getByRole("link", { name: /^Add the badge/ }).closest("article")).toBe(card);
+    const row = within(panel).getByRole("link", { name: /^Add the badge/ });
+    expect(row).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
+    expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Queued · waits for dispatch");
+    expect(within(panel).queryByRole("article")).toBeNull();
+    expect(within(panel).queryByRole("button", { name: "Resume" })).toBeNull();
+    const refresh = () => act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    fixtures.overview = { ...overview, queue: [decision, { ...decision, id: "q-second" }] };
+    await refresh();
+    await waitFor(() => expect(row).toHaveTextContent("Needs you · 2 questions"));
+    fixtures.overview = overview;
+    await refresh();
+    await waitFor(() => expect(row).toHaveTextContent("Needs you · 1 question"));
 
     fixtures.overview = { ...overview, queue: [] };
-    await user.click(within(card).getByRole("button", { name: "Resume" }));
-    await waitFor(() => expect(posted(fetchMock, "/api/decide")).toEqual({ project: "altitude", slug: "add-badge", question_id: "q-badge", revision: 1, option_key: "recommended" }));
-    await waitFor(() => expect(within(panel).queryByRole("article", { name: "Add the badge" })).toBeNull());
-    const row = await within(panel).findByRole("link", { name: /^Add the badge/ });
-    expect(row).toHaveAccessibleName("Add the badge · Queued · waits for dispatch");
-    expect(row.closest(".wp-row")).toHaveAttribute("data-moved");
+    await refresh();
+    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Queued · waits for dispatch"));
+    expect(within(panel).getAllByRole("link", { name: /^Add the badge/ })).toHaveLength(1);
+    expect(row.closest(".wp-row")).not.toHaveAttribute("data-moved");
+    expect(posted(fetchMock, "/api/decide")).toBeNull();
+  });
+
+  it("retains newly observed question tasks without duplicating current or archived tasks", async () => {
+    mockFetch({
+      overview: { ...overview, queue: [decision, { ...decision, id: "q-other" }, { ...decision, id: "q-archived", slug: "shipped" }] },
+      project: { ...project, tasks: [], archive: [{ slug: "shipped", title: "Shipped", state: "done", updated: ago(1) }] },
+    });
+    setViewport(1440);
+    renderApp({ route: "/projects/altitude" });
+    const panel = await screen.findByRole("region", { name: "Work" });
+    const current = within(panel).getByRole("region", { name: "Current" });
+    expect(within(current).getAllByRole("link")).toHaveLength(1);
+    expect(within(current).getByRole("link", { name: /^Add the badge/ })).toHaveTextContent("Needs you · 2 questions");
+    expect(within(current).queryByRole("link", { name: /^Shipped/ })).toBeNull();
+    expect(panel).toHaveTextContent("1 current · 1 done this week");
+  });
+
+  it("keeps an explicit stop and fault visible alongside the unanswered question", async () => {
+    const fixtures: Fixtures = { project: { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", block_actor: "operator" }] } };
+    mockFetch(fixtures);
+    setViewport(1440);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    const panel = await screen.findByRole("region", { name: "Work" });
+    const row = within(panel).getByRole("link", { name: /^Add the badge/ });
+    expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Stopped");
+    expect(row.querySelector(".dot")).toHaveAttribute("data-state", "danger");
+    fixtures.project = { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", fault: "host", blocked_reason: "Cannot write the checkout.", resume_after: ago(-1) }] };
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });
+    await waitFor(() => expect(row).toHaveAccessibleName("Add the badge · Needs you · 1 question · Blocked: Cannot write the checkout."));
+    expect(row).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
   });
 
   // The item is present only when the project checkout has boards: it is the server's answer, not

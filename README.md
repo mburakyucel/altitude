@@ -125,7 +125,9 @@ releases its hold. The owner then rechecks and lands normally.
   Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
   Shared-file changes still need rebasing and reconciliation by their owners.
 - **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
-  shows one question or a small group together. The model can ask a plain question, offer one
+  makes the task's purpose and actual choice clear with one question or a small group together,
+  concise actions, and the material consequences needed to answer. Detailed reasoning and history
+  stay accessible in the owning conversation. The model can ask a plain question, offer one
   recommended quick action, or offer two to three choices with a recommendation. A single quick
   choice takes one click; grouped selections send together, with nothing preselected. Open the item to
   discuss the actual question in its owning L2 conversation. A follow-up leaves it open; a clear
@@ -141,6 +143,13 @@ releases its hold. The owner then rechecks and lands normally.
   behind Show. Monitor shows engine routing, usage windows and observed sessions,
   including missing or stale readings. Each usage window appears independently: an absent window
   is explicit, zero remains a reading, and available figures stay visible when stale.
+- **Project work at a glance.** Work lists every current project task once, including tasks
+  awaiting your answer, running, queued or waiting on L3. Compact status rows open the owning
+  conversation at its question when one needs you; questions and quick answers live in Needs you
+  and that chat. Recent completed tasks stay under **Done this week**. Only global Needs you has
+  an attention badge: unanswered questions plus operational attention items, labelled separately
+  in summaries. Answering changes attention immediately; execution status changes when observed.
+  Unknown or stale reads are explicit, and Back returns to the originating Work or Needs you view.
 - **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
   owner/helper breakdowns, and retain the final observation with the archived task.
 

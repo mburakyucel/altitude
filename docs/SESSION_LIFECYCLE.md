@@ -250,6 +250,18 @@ A task's versioned dilemma remains open independently of that wake and its worke
 L3 escalations publish one question or up to three independent questions into the owning human conversation;
 the model chooses plain questions, one recommended action, or up to three explicit quick choices.
 the inbox handoff names its stable ID/revision and the IDs of the actual source messages.
+The owner or coordinator writes the actual choice in plain language with the task's user-facing
+purpose and material consequences clear before answering. Detailed reasoning and history stay
+accessible in the owning conversation; concise presentation changes no revision or authority rule.
+
+Global Needs you and the owning L2 chat show questions and quick answers. Project Work retains
+each unfinished task once in **Current**, with compact question and execution status; its waiting
+row opens the owning question. A follow-up or capacity wait leaves that attention visible.
+Partial answers reduce the question count without removing the task; the final answer removes
+its attention label while the row shows the observed running or waiting state. Only completion
+or rejection moves it to recent **Done this week** history. The global attention badge counts
+open operator questions and operational items, named separately in summaries; project navigation
+keeps state dots without another numeric attention badge. Unknown and stale reads stay explicit.
 
 Quick acceptance names the question ID, revision and chosen option. Grouped answers name the group
 ID/revision and each selected question/revision/option; the server validates the whole selection

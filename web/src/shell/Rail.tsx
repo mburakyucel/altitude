@@ -4,6 +4,7 @@ import type { EngineReadout, Overview } from "../data/api";
 import { RESERVE_PERCENT, age } from "../data/observed";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
 import { ThemeToggle } from "./theme";
+import { attentionCount } from "../data/decisions";
 
 /** "78% of week", "no reading", "52% of week · reading 3h old" (SPEC.md §3.1). */
 export function readoutText(row: EngineReadout): string {
@@ -39,7 +40,7 @@ export function Rail({
   const data = overview.data;
   const managed = managedProjects(data);
   const unmanaged = unmanagedFolders(data);
-  const waiting = data?.queue.length ?? 0;
+  const attention = attentionCount(data, overview.isError);
 
   return (
     <aside className="rail">
@@ -47,7 +48,7 @@ export function Rail({
       <nav className="rail-nav" aria-label="Rail">
         <NavLink to="/" end className="rail-item">
           Needs you
-          {waiting > 0 ? <span className="badge">{waiting}</span> : null}
+          {attention ? <span className="badge" aria-label={attention.label}>{attention.text}</span> : null}
         </NavLink>
       <div className="rail-head">
         <span className="label">Projects</span>
@@ -71,7 +72,6 @@ export function Rail({
             <NavLink key={row.name} to={`/projects/${row.name}`} className="rail-item">
               <span className="dot" data-state={dotFor(row, decisions)} aria-hidden />
               <span className="truncate">{row.name}</span>
-              {decisions.length > 0 ? <span className="badge">{decisions.length}</span> : null}
             </NavLink>
           );
         })}

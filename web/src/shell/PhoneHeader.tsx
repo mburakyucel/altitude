@@ -9,6 +9,7 @@ import FirstRun from "../routes/FirstRun";
 import { Overlay } from "./Overlay";
 import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./projects";
 import { setSelectedProject } from "./scope";
+import { attentionCount } from "../data/decisions";
 
 /** The tab a task page opened from the decision page keeps lit. */
 function activeTabState(from: unknown): "needs" | "work" {
@@ -46,7 +47,6 @@ function Switcher({
                 >
                   <span className="dot" data-state={dotFor(row, decisions)} aria-hidden />
                   <span className="truncate">{row.name}</span>
-                  {decisions.length > 0 ? <span className="badge">{decisions.length}</span> : null}
                 </Link>
               </li>
             );
@@ -82,6 +82,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick }: {
   const task = useTask(taskMatch?.params.name ?? "", taskMatch?.params.slug ?? "");
   const data = overview.data;
   const managed = managedProjects(data);
+  const attention = attentionCount(data, overview.isError);
   const isProject = Boolean(name) && managed.some((p) => p.name === name);
   // Hidden chevron and no sheet when exactly one project is managed and no folder is unmanaged.
   const switchable = isProject && (managed.length > 1 || unmanagedFolders(data).length > 0);
@@ -131,8 +132,8 @@ export function PhoneHeader({ overview, status, children, onTitleClick }: {
         </button>
       ) : titleContent}
       </h1>
-      {data?.queue.length ? <Link className="icon-btn phone-needs" to="/" aria-label={`Needs you, ${data.queue.length} pending`}>
-        <span className="badge">{data.queue.length}</span>
+      {attention ? <Link className="icon-btn phone-needs" to="/" aria-label={`Needs you, ${attention.label}`}>
+        <span className="badge">{attention.text}</span>
       </Link> : null}
       {decisionMatch ? (
         <Link className="btn btn-ghost task-action" to={`/projects/${name}/tasks/${decisionMatch.params.slug}`} state={{ tab: activeTabState(from) }}>

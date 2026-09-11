@@ -5,8 +5,7 @@ import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText, when } from "../data/observed";
-import { DecisionCard } from "../components/DecisionCard";
-import { decisionGroups } from "../data/decisions";
+import { attentionSummary } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
@@ -35,27 +34,25 @@ const WEEK_MS = 7 * 86_400_000;
 /** The section-move fade (§3.7). */
 export const MOVE_MS = 200;
 
-/** Which section a task sits in: a card under Needs you, a row under Active, or a row under Done. */
-function sectionOf(task: TaskRow, decided: Set<string>): "needs" | "active" | "done" {
-  if (decided.has(task.slug)) return "needs";
+/** Decisions never remove a task from the project's current work. */
+function sectionOf(task: TaskRow): "active" | "done" {
   return task.state === "done" || task.state === "rejected" ? "done" : "active";
 }
 
 export function WorkPanel({
   name,
   project,
-  decisions,
-  selected = null,
 }: {
   name: string;
   project: UseQueryResult<ProjectView>;
-  decisions: Decision[];
-  /** The decision whose page is open beside the panel: its card gets the accent border. */
-  selected?: string | null;
 }) {
-  const decided = new Set(decisions.map((d) => d.slug));
+  const overview = useOverview();
+  const decisions = decisionsFor(overview.data, name);
   const tasks = project.data?.tasks ?? [];
-  const active = tasks.filter((t) => sectionOf(t, decided) === "active");
+  // Overview and project reads can arrive in either order; retain newly published waiting tasks.
+  const current = [...new Map([...tasks, ...decisions.filter((d) => !tasks.some((t) => t.slug === d.slug)
+    && !project.data?.archive?.some((t) => t.slug === d.slug))]
+    .map((t) => [t.slug, t])).values()].filter((t) => sectionOf(t) === "active");
   const doneThisWeek = (project.data?.archive ?? []).filter((t) => {
     const at = when(t.updated);
     return (t.state === "done" || t.state === "rejected") && at != null && Date.now() - at < WEEK_MS;
@@ -65,7 +62,7 @@ export function WorkPanel({
   const sections = useRef(new Map<string, string>());
   const movedAt = useRef(new Map<string, number>());
   const now = new Map<string, string>();
-  for (const t of tasks) now.set(t.slug, sectionOf(t, decided));
+  for (const t of current) now.set(t.slug, "active");
   for (const t of doneThisWeek) now.set(t.slug, "done");
   for (const [slug, section] of now) {
     const before = sections.current.get(slug);
@@ -77,7 +74,7 @@ export function WorkPanel({
   const moved = { has: (slug: string) => Date.now() - (movedAt.current.get(slug) ?? 0) < MOVE_MS * 5 };
   const row = (task: TaskRow) => (
     <div key={`${name}:${task.slug}`} className="wp-row" data-moved={moved.has(task.slug) || undefined}>
-      <TaskCard project={name} task={task} variant="row" decision={decisions.find((d) => d.slug === task.slug)} />
+      <TaskCard project={name} task={task} variant="row" />
     </div>
   );
 
@@ -85,51 +82,36 @@ export function WorkPanel({
     <section className="work-panel" aria-label="Work">
       <div className="wp-head">
         <h2 className="wp-title">Work</h2>
-        <p className="wp-count text-muted">
-          {active.length} active · {doneThisWeek.length} done this week
-        </p>
+        {project.data ? <p className="wp-count text-muted">
+          {current.length} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
+        </p> : null}
       </div>
+      {project.isError ? <p className="text-meta text-danger" role="alert">
+        {project.data ? "Showing saved work." : "Could not read the project's work."}{" "}
+        <button type="button" className="link" onClick={() => project.refetch()}>Retry</button>
+      </p> : null}
+      {overview.isError ? <p className="text-meta text-danger" role="alert">
+        {overview.data ? "Attention status is saved; refresh to update." : "Attention status unavailable."}{" "}
+        <button type="button" className="link" onClick={() => overview.refetch()}>Refresh</button>
+      </p> : null}
       {project.isPending ? (
         <div className="flex flex-col gap-3" aria-label="Loading">
-          <div className="skeleton h-24" />
-          <div className="skeleton h-24" />
           <div className="skeleton h-5" />
           <div className="skeleton h-5" />
           <div className="skeleton h-5" />
         </div>
-      ) : project.isError ? (
-        <p className="text-meta text-danger">
-          Could not read the project's work.{" "}
-          <button type="button" className="link" onClick={() => project.refetch()}>
-            Retry
-          </button>
-        </p>
-      ) : (
+      ) : project.data ? (
         <>
-          {decisions.length > 0 ? (
-            <section className="wp-section" aria-label="Needs you">
+          {current.length > 0 ? (
+            <section className="wp-section" aria-label="Current">
               <h3 className="wp-section-title">
-                Needs you <span className="text-muted">({decisions.length})</span>
+                Current <span className="text-muted">({current.length})</span>
               </h3>
-              <div className="wp-cards">
-                {decisionGroups(decisions).map((group) => { const d = group[0]!; return (
-                  <div key={`${d.project}:${d.slug}`} className="wp-row" data-moved={moved.has(d.slug) || undefined}>
-                    <DecisionCard decision={d} decisions={group} selected={selected === d.slug} from="project" />
-                  </div>
-                ); })}
-              </div>
+              <div className="wp-rows">{current.map(row)}</div>
             </section>
           ) : null}
-          {active.length > 0 ? (
-            <section className="wp-section" aria-label="Active">
-              <h3 className="wp-section-title">
-                Active <span className="text-muted">({active.length})</span>
-              </h3>
-              <div className="wp-rows">{active.map(row)}</div>
-            </section>
-          ) : null}
-          {decisions.length === 0 && active.length === 0 ? (
-            <p className="text-muted">Nothing running. Ask L3 for something.</p>
+          {current.length === 0 ? (
+            <p className="text-muted">No current tasks. Ask L3 to start something.</p>
           ) : null}
           {doneThisWeek.length > 0 ? (
             <details className="wp-fold">
@@ -138,7 +120,7 @@ export function WorkPanel({
             </details>
           ) : null}
         </>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -149,7 +131,7 @@ export function WorkPanel({
 export function statusParts(
   chat: ChatView | undefined,
   project: ProjectView | undefined,
-  decisions: number,
+  decisions: Decision[],
   engines: EngineReadout[],
 ): string[] {
   const parts: string[] = [];
@@ -166,7 +148,7 @@ export function statusParts(
     const inFlight = project.tasks.filter((t) => t.state === "running" || t.state === "queued").length;
     parts.push(`${inFlight} task${inFlight === 1 ? "" : "s"} in flight`);
   }
-  if (decisions > 0) parts.push(`${decisions} wait${decisions === 1 ? "s" : ""} for your review`);
+  if (decisions.length > 0) parts.push(`${attentionSummary(decisions)} ${decisions.length === 1 ? "needs" : "need"} you`);
   return parts;
 }
 
@@ -316,7 +298,7 @@ function ProjectHeader({
   name: string;
   project: UseQueryResult<ProjectView>;
   chat: UseQueryResult<ChatView>;
-  decisions: number;
+  decisions: Decision[];
   engines: EngineReadout[];
   showName: boolean;
   panelToggle: boolean;
@@ -334,7 +316,7 @@ function ProjectHeader({
     ? project.error.message
     : neverStarted
       ? "L3 has not started"
-      : statusParts(chat.data, project.data, decisions, engines).join(" · ");
+      : statusParts(chat.data, project.data, overview.isSuccess ? decisions : [], engines).join(" · ");
   const engine = engines.find((e) => e.engine === chat.data?.engine)?.label;
   const compactStatus = project.isError ? "Could not read project" : neverStarted ? "L3 · Not started"
     : !chat.data ? "L3 · Loading…" : chat.data.active ? chat.data.active.trigger === "chat" ? "L3 · Answering" : `L3 · Handling ${handling(chat.data.active.trigger)}` : chat.data.busy ? "L3 · Busy" : "L3 · Ready";
@@ -405,7 +387,7 @@ export default function ProjectPage() {
   const decisions = decisionsFor(overview.data, name);
   const starting = useStarting();
 
-  if (overview.isPending) {
+  if (overview.isPending && project.isPending) {
     return (
       <>
       {phone ? <PhoneHeader overview={overview} status="L3 · Loading…" /> : null}
@@ -428,7 +410,7 @@ export default function ProjectPage() {
     );
   }
 
-  const panel = <WorkPanel name={name} project={project} decisions={decisions} />;
+  const panel = <WorkPanel name={name} project={project} />;
   const conversation = <Conversation key={name} name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
   return (
     <div className="project-page">
@@ -437,7 +419,7 @@ export default function ProjectPage() {
         name={name}
         project={project}
         chat={chat}
-        decisions={decisions.length}
+        decisions={decisions}
         engines={overview.data?.engines ?? []}
         showName={!phone}
         panelToggle={!phone && !panelInline}

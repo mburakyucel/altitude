@@ -168,7 +168,7 @@ describe("Needs you", () => {
     mockFetch([asks, stopped]);
     renderApp({ route: "/" });
 
-    expect(await screen.findByText("2 things wait on you across 2 projects. Everything else runs on its own.")).toBeInTheDocument();
+    expect(await screen.findByText("1 question · 1 stopped task across 2 projects")).toBeInTheDocument();
     const list = screen.getByLabelText("Decisions");
     const card = within(list).getByRole("article", { name: "Add the badge" });
     expect(within(card).getByText("L3 brought this to you")).toHaveClass("kind-label");

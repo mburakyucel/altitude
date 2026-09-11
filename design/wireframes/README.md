@@ -16,6 +16,9 @@ in one appendix per viewport.
 `conversation_first.py`, called by `gen.py`, generates these boards and styles. The conversation-first
 boards define decision behavior; the other boards below retain the broader shell and session layout studies.
 Current decision interactions are the conversation-first boards and SPEC §3.8–3.10.
+The 2026-09-10 Pacific Work separation is folded into Project and MobileWork: every current task
+appears once as a status row, while questions and quick answers stay in Needs you and chat.
+Only global Needs you has a numeric attention badge; project state dots remain.
 
 This folder is the design record Altitude's own L3 and L2 read: static boards, the generator that
 writes them, and [`SPEC.md`](SPEC.md), which states every interaction, state, and rule the boards
@@ -43,9 +46,9 @@ Phone headers, composers and tab bars stay docked while content scrolls inside t
 
 | Board | Files | What it shows |
 | --- | --- | --- |
-| Project | `Project.html`, `MobileProject.html` | The rail (Needs you, projects with state dot and count, unmanaged folders, engine readout, Monitor, operator). L3 conversation with task cards and folded system lines beside the work panel. Phone combines identity/status in one header and text/mic/send in one row; engine selection and metadata open in details. Chat, Work, Needs you, Monitor return after keyboard dismissal. |
-| Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with dot and count, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
-| Project work | `MobileWork.html` | The work panel as the phone's Work tab: same sections and cards as the desktop panel. |
+| Project | `Project.html`, `MobileProject.html` | The rail (global Needs you badge, projects with state dots, unmanaged folders, engine readout, Monitor, operator). L3 conversation with task cards and folded system lines beside compact Current rows and recent Done history. Phone combines identity/status in one header and text/mic/send in one row; engine selection and metadata open in details. Chat, Work, Needs you, Monitor return after keyboard dismissal. |
+| Project switcher | `MobileSwitcher.html` | The sheet the header name opens: projects with state dots, unmanaged folders, Add a folder. Desktop has no switcher; the rail is always visible. |
+| Project work | `MobileWork.html` | The work panel as the phone's Work tab: all current tasks, including questions awaiting an answer, as status rows opening chat; folded recent Done history. |
 | Needs you and L2 decisions | `ConversationFirst*.html`, `MobileConversationFirst*.html` | Six examples: questions upfront, immediate single choices, grouped picks, follow-up, partial/irrelevant closure, and resumed work. Shared recovery/input appendix. |
 | Task page | `Task.html`, `MobileTask.html`, `MobileTaskLive.html` | L2 conversation, labelled L3 prose, attempt/age/context metadata and PR/check chips. Phone details hold metadata and existing operational actions; concise status stays in the header above Conversation and Live session tabs. The transcript uses recorded boundaries and tool output hints. |
 | Task overlay and states | `TaskOverlay.html`, `TaskStates.html` | The live panel overlays the main pane below 1280px. Inline Stop/Reject confirmations, L3 block, held resume, connecting, streaming, paused, unavailable, finished/empty conversation, and message failure. |

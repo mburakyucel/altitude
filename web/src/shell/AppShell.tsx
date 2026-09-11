@@ -99,7 +99,7 @@ export default function AppShell() {
           </div>
         ) : <Outlet />}
       </main>
-      {phone ? <TabBar overview={overview.data} /> : null}
+      {phone ? <TabBar overview={overview.data} stale={overview.isError} /> : null}
       {addingFolder ? (
         <Overlay label="Add a folder" side="center" onClose={closeFirstRun}>
           <FirstRun overview={overview} onStarted={closeFirstRun} />

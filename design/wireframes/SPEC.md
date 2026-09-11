@@ -7,6 +7,10 @@ composer boards define their existing layout and input behavior.
 The operator approved [compact mobile chat](#8-compact-mobile-chat) on 2026-09-09: shared compact phone
 headers and composer, keyboard-dependent navigation, and disclosed task metadata and reasons.
 
+The operator approved the Needs you / Work separation on 2026-09-10 Pacific: global Needs you
+and the owning chat keep questions and quick answers; Work shows all current tasks as status rows,
+and only global Needs you carries a numeric attention badge.
+
 This document and the boards beside it are the UI's source of truth, for both visual design and
 rules. They stay aligned when the build departs from them; an unresolved rule change is a question
 for the operator (§4.6). It is written for the L3 and L2 that implement it: every component lists its states,
@@ -67,8 +71,8 @@ requirements, including accessible control names, minimum targets, and contrast 
 | `/monitor` | Monitor | unchanged |
 | `/projects`, `/chat/:name` | redirect to the first managed project, or to `/projects/:name` | the Projects list |
 
-With no managed project every project route shows First run (§3.12). A decision is identified by its
-task: today one blocked task carries one open question, and the route follows that.
+With no managed project every project route shows First run (§3.12). A task owns its question or
+small group; a question link names its durable ID and revision and focuses the owning chat.
 
 ### 2.2 Layouts
 
@@ -98,8 +102,9 @@ task: today one blocked task carries one open question, and the route follows th
 ### 2.3 Scope rule
 
 The selected project is a UI state persisted per browser (localStorage), set by the rail, the
-switcher, or a project route. Needs you cards and rail badges are the only cross-project data on
-screen. Opening a card selects its project.
+switcher, or a project route. Needs you is the cross-project attention inbox; Work belongs to the
+selected project. Opening a question selects its project. Project navigation retains state dots;
+the global Needs you badge is the only numeric attention badge.
 
 Switching projects opens that project's conversation and discards the unsent draft and transient
 composer/response state. Accepted turns and waiting messages remain owned by the source project;
@@ -114,7 +119,7 @@ repeats the read; "Empty" is a sentence in `--text-muted`, never a blank area.
 ### 3.1 Rail (desktop)
 
 Anatomy, top to bottom: brand; **Needs you** with a count badge; "Projects" section head with **+**
-(add a folder); one row per managed project with a state dot, the name, and a count badge;
+(add a folder); one row per managed project with a state dot and the name;
 "N folders not managed" line; engine readout; **Monitor**; the operator row with the configured
 name and the theme toggle.
 
@@ -126,8 +131,7 @@ hard-codes one, and one configured engine means one row.
 | --- | --- |
 | Project row | selected (tint background, `--text-primary`); unselected (`--text-secondary`); hover (tint at half) |
 | State dot | running (accent: a running L2, a task blocked waiting on L3, or a landed report L3 is handling); waits for the operator (`--data-claimed`: a decision in the queue); blocked by a fault or stopped (`--danger`); idle, nothing active (`--text-muted` at 45%) |
-| Count badge | decisions waiting in that project; hidden at zero |
-| Needs you badge | decisions across projects; hidden at zero |
+| Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
 | Unmanaged folders line | N folders found under the configured root; click opens First run for the picked folder; hidden at zero |
 | Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
@@ -139,7 +143,7 @@ open, hidden at ≥ 1280 where the panel is inline), overflow menu.
 
 Status line, composed left to right and separated by "·": "L3 answered N min ago on <engine>"
 (from the last assistant chat row's `at` and `engine`); "N tasks in flight" (running + queued);
-"N waits for your review" (decisions in this project; omitted at zero). While a turn runs the first
+"N questions need you" and "N operational items" (labelled separately; omitted at zero). While a turn runs the first
 part reads "L3 is answering" (or "L3 is handling <what>" for a system turn, §4.1).
 
 The phone combines project identity and a short **L3 Ready / Answering / Handling** status in its
@@ -280,7 +284,7 @@ yet."); error ("Could not load the report." and Retry).
 ### 3.5 Task card (inline and in the work panel)
 
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click
-opens the task page.
+opens the task conversation, at its current operator question when one is open (§3.7).
 
 States by task state: queued ("Queued · <hold>", where the hold is the queue's own reason: "waits
 for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
@@ -288,10 +292,14 @@ for resume at <time>", or plain "waits for dispatch"; never a file lease, which 
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
 on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
-operator ("Waits for your answer", amber dot, red when the task was stopped mid-task); blocked by a
+operator ("Needs you · N questions" plus independent execution status, amber dot); blocked by a
 fault ("Blocked: <one sentence>", red dot); reported ("Report landed · waits for L3", running dot);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
 week).
+
+Open operator questions remain visible while running or queued, independently of execution.
+A fault keeps its red dot and cause even when a separate question also needs an answer. An
+operational pause without a question uses its actual status, never an inferred request to decide.
 
 The same card is the row in the work panel and the card under an L3 reply that created the task
 (§5.2 note 4); a slug the project no longer lists renders as the row with the slug as its title.
@@ -337,25 +345,53 @@ walk accepted/interrupted, failed refresh, reconnect, queued, refused and unconf
 
 ### 3.7 Work panel
 
-Anatomy: "Work" and "N active · N done this week"; **Needs you** (count) with compact decision
-cards; **Active** (count) with task rows; **Done this week** folded to a count, expanding to rows.
-On the phone it is the Work tab with the same sections.
+Work answers “What is happening in this project?” Anatomy: "Work" and "N current · N done this
+week"; **Current** with every unfinished task once as a compact status row; **Done this week**
+folded to a count, expanding to rows. On phone it is the selected project's Work tab with the
+same sections. Task totals are labelled text, not attention badges. Work contains no question
+body, recommendation or answer control.
 
 Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project.
 
-States: loading (two card skeletons, three row skeletons); empty ("Nothing running. Ask L3 for
-something."); a row's task
-just changed state (the row moves sections with a 200ms fade). A task with a card under Needs you
-has no row under Active; "N active" counts the rows. Done this week holds the tasks done or
-rejected in the last seven days and is hidden when there are none.
+Each row is one link with a chevron and an accessible name including its status. An open operator
+question shows **Needs you · N questions** and opens the first current question's stable group
+anchor in the owning chat. Execution stays secondary and independent: a running or queued worker
+can still need an answer. Faults remain visible alongside any separate question. Other rows open
+their ordinary task conversation and distinguish running, queued, waiting on L3, operationally
+paused, faulted and reported tasks. Operational controls stay in the task.
+
+| State or action | Visible behavior |
+| --- | --- |
+| Initial loading | Row skeletons; no guessed counts or empty-state sentence. |
+| Empty | **No current tasks. Ask L3 to start something.** Recent completed work can still expand. |
+| Initial read fails | A specific error with Retry replaces the affected content. Independently loaded task rows remain discoverable if only attention loading fails. |
+| Cached read fails | Retain rows with a saved/stale notice and Refresh; links remain available. Destination reads govern answer controls. |
+| Partial answer or follow-up | The same row remains in the existing order. Only a recorded answer reduces its question count; discussion alone changes none. |
+| Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
+| Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides tasks finished in the last seven days, and is absent when none exist. |
+| Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
+
+Work and Needs you add no voice controls. Listening, transcribing, denied and send-failure states
+remain in the owning conversation (§3.6); sending leaves no extra transcript field.
 
 ### 3.8 Decision card
 
-Needs you and the project work panel show one compact card per unresolved dilemma: task/project,
+Needs you answers “What needs my decision?” It shows one compact card per unresolved dilemma: task/project,
 source, one question or up to three independent questions, and **Open L2 chat**. The model can ask
 a plain question, give one recommended quick action, or offer two to three quick options with one
 recommendation and concise rationale. Single-question choices act immediately. Group choices start
 unselected; only actual picks have selection styling and remain staged until **Send N answers**.
+
+The default content makes the task's user-facing purpose and actual choice clear at a glance.
+Task titles and complete questions wrap without clipping; the question uses plain language,
+options name concise actions, and the recommendation includes the material consequences needed
+before answering. Owners rewrite long technical explanations around that decision. Full reasoning,
+implementation detail, evidence and history remain accessible in the owning conversation; additional
+saved question detail opens under **More context** there when it differs from the visible question.
+The task title is its own fully wrapping link below source/project/time and above the question.
+Mechanical truncation or hiding a necessary
+consequence does not satisfy concise presentation. Long questions still remain fully readable on
+phone and desktop, with the same answer and revision semantics.
 When only one question remains, its quick choices act immediately in both list and chat.
 With no manual picks, **Use recommendations**
 answers only questions with an explicit recommendation; it never overrides a picked alternative.
@@ -400,7 +436,7 @@ worker running. An old question URL stays readable and links to the current revi
 Superseded versions fold under **Earlier question**; linking to an old version opens its history.
 An unavailable question is explicit and keeps the ordinary task conversation accessible.
 
-Opening from Needs you pushes one task entry and retains the origin tab. App Back uses the existing
+Opening from Needs you or Work pushes one task entry and retains the origin tab. App Back uses the existing
 history entry and falls back to the project for a direct link. Conversation/Live session switches
 replace that entry and preserve the same-task draft. Leaving the task clears its draft; a late send
 stays bound to its original task. A new reply does not pull the reader away from the question:
@@ -656,11 +692,21 @@ grouped selections record only the named members and one normal operator message
 use the existing wake path. Neither a discussion wake
 nor a generic resume authorizes implementation of the disputed approach or releases a merge hold.
 
-### 4.4 Counts mean decisions
+### 4.4 One global attention count
 
-Every badge in the shell counts decisions waiting on the operator: per project on the rail row and
-the Work tab, across projects on Needs you. Running tasks, FYIs, and queued messages are never
-counted in a badge.
+Only global Needs you carries a numeric attention badge, across one or several projects. On phone
+it appears in bottom navigation, or the header link while keyboard use hides that navigation; the
+two are never visible together. Its unit
+is one unanswered operator question plus each existing operational attention item. Two questions
+on one task count as two; answering one reduces the badge by one. A known zero hides it. Project
+rail/switcher rows retain their state dots, and Work has no attention badge. Task totals remain
+labelled text. Running tasks, FYIs and queued messages do not add attention.
+
+Needs you says **N questions across N projects**; operational items, when present, are named
+separately. Project summaries use the same distinction. Loading and failed reads never imply
+zero; cached counts are labelled stale until refreshed. Follow-ups retain counts, partial answers
+remove only answered members, and final answers remove that task's card. Those changes do not
+claim that its worker resumed.
 
 ### 4.5 Copy
 
@@ -688,7 +734,7 @@ retain phone/desktop state verification and accessible review evidence.
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, engine pin), `POST /api/chat/remove`, `POST /api/l3/reset` |
-| Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | `POST /api/decide` |
+| Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
 | Task page | `GET /api/task/<project>/<slug>` (questions and messages), transcript on demand | `POST /api/l2/message`, `POST /api/decide`, `POST /api/task/action` |
 | Report view | `GET /api/task/<project>/<slug>` (structured report, report notes and digest) | none |
@@ -760,7 +806,7 @@ Order matters: each slice leaves the app usable.
 | --- | --- | --- |
 | 1 | **Shell.** Tokens (§6) into `tokens.css`; rail, phone header and tab bar, breakpoints (§2.2), scope rule (§2.3), routes and redirects (§2.1), First run (§3.12), theme toggle. The old Inbox and Projects pages are deleted; Needs you is the old Inbox's decision list restyled as §3.8 cards. | Every route renders in the new shell on 390 and 1440 with real data; the Inbox and Projects routes and their components are gone; `make test` and the web suite pass. |
 | 2 | **Conversation.** §3.3, §3.4, §3.6 on the project page; fold and group (§4.1); queue (§4.2); backend notes 1, 2, 4. | A landed report shows as one line and expands to label/value rows; consecutive system turns group; Queue works mid-turn; voice lands in the draft with no transcript box; `Chat.tsx` and the old bubble meta line are gone. |
-| 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | A recommendation is accepted from the panel or Needs you; its question opens the owning L2 chat, where follow-ups and decisions remain; `digest.fyis` and the overview `fyis` field are deleted. |
+| 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | Needs you and the owning chat accept answers; Work lists all current tasks once and opens their conversations. The global badge reflects unanswered questions and operational items; `digest.fyis` and the overview `fyis` field are deleted. |
 | 4 | **Task page.** §3.10 on desktop and phone, Stop and Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
 | 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Seats, routing and sessions use the shell; Restart appears at the quiet point defined in §3.13. |
 

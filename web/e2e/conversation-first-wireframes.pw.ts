@@ -109,7 +109,7 @@ test("conversation-first design: independent questions, quick choices and one co
   await expect(page.getByText("All three questions resolved.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /confirm/i })).toHaveCount(0);
   await walk.open(route("NeedsYou"));
-  await expect(page.getByText("Nothing needs your decision.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Nothing needs you.", { exact: true })).toBeVisible();
   await expect(group).toBeHidden();
   await expect(page.getByRole("button", { name: "Use recommendations", exact: true })).toBeHidden();
   expect(errors).toEqual([]);
@@ -156,7 +156,10 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
     if (state === "archived") await expect(page.getByRole("textbox")).toBeHidden();
     if (state === "send-error") await expect(page.getByRole("textbox")).toHaveValue("Could we roll back after day seven?");
     if (state === "denied") await expect(page.getByRole("textbox")).toBeDisabled();
-    if (["list-loading", "list-error"].includes(state)) await expect(page.locator(".badge")).toHaveCount(0);
+    if (["list-loading", "list-error"].includes(state)) {
+      await expect(page.locator(".badge:visible").filter({ hasText: /^\d+$/ })).toHaveCount(0);
+      await expect(page.getByLabel("Attention unavailable").filter({ visible: true })).toBeVisible();
+    }
     if (["cached-error", "denied", "accepting"].includes(state)) await expect(page.getByRole("button", { name: /Use 7 days|Recording/ })).toBeDisabled();
     const overflow = await page.locator(".cf").evaluate(el => el.scrollWidth > el.clientWidth);
     expect(overflow, state + " must not scroll horizontally").toBe(false);

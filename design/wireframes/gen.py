@@ -108,6 +108,7 @@ svg.i.sm{width:14px;height:14px}
 .trow .tt{font-size:13px;font-weight:500;line-height:1.4;color:var(--text-primary)}
 .trow .tm{font-size:12px;color:var(--text-muted);margin-top:2px}
 .fold{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);padding:8px 4px}
+summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transform:rotate(90deg)}
 .chip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--border);color:var(--text-secondary);background:var(--card);white-space:nowrap}
 .chip.ok{background:var(--success-bg);color:var(--success-text);border-color:transparent}
 .chip.held{background:var(--chip-claimed-bg);color:var(--chip-claimed-text);border-color:var(--chip-claimed-border)}
@@ -286,7 +287,7 @@ def I(name, cls="i"):
 MARK = '<span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l6-10 4 6 2-3 4 7"/></svg></span>'
 
 # ---------- rail ----------
-def rail(selected, needs=2, first_run=False, count_alt="1", count_vt="1"):
+def rail(selected, needs=3, first_run=False):
     sel = lambda k: " sel" if selected == k else ""
     needs_badge = f'<span class="badge">{needs}</span>' if needs else ""
     if first_run:
@@ -303,8 +304,8 @@ def rail(selected, needs=2, first_run=False, count_alt="1", count_vt="1"):
     else:
         projects = (
             '<div class="rsec"><span>Projects</span><span class="plus">' + I("plus", "i sm") + '</span></div>'
-            f'<div class="ri{sel("altitude")}"><span class="dot held"></span>altitude<span class="badge quiet">{count_alt}</span></div>'
-            f'<div class="ri{sel("voice-tutor")}"><span class="dot idle"></span>voice-tutor<span class="badge quiet">{count_vt}</span></div>'
+            f'<div class="ri{sel("altitude")}"><span class="dot held"></span>altitude</div>'
+            f'<div class="ri{sel("voice-tutor")}"><span class="dot idle"></span>voice-tutor</div>'
             '<div class="ri" style="color:var(--text-muted);font-weight:400;font-size:13px">' + I("folder") + '2 folders not managed</div>'
         )
         engines = (
@@ -341,30 +342,25 @@ def tcard(title, meta, dot="dot"):
         f'<div class="tm">{meta}</div></div><span class="go">{I("chev-r","i sm")}</span></div>'
     )
 
-def work_panel(selected=None):
-    s1 = " sel" if selected == 1 else ""
-    s2 = " sel" if selected == 2 else ""
+def work_rows(mobile=False):
+    question = 'MobileConversationFirstGroup.html' if mobile else 'ConversationFirstGroup.html'
+    task = 'MobileTask.html' if mobile else 'Task.html'
+    def row(title, status, dot="dot", href=task):
+        return (f'<a class="trow" href="{href}"><span class="{dot}"></span><div style="flex:1">'
+                f'<div class="tt">{title}</div><div class="tm">{status}</div></div>{I("chev-r","i sm")}</a>')
     return (
-        '<aside class="work">'
-        '<div class="wh"><h2>Work</h2><span>3 active · 4 done this week</span></div>'
-        '<div><div class="sh">Needs you <span>2</span></div><div style="display:flex;flex-direction:column;gap:10px">'
-        f'<article class="card tight{s1}"><div class="kind"><b>L3 asks</b><span class="age">25 min</span></div>'
-        '<h3 class="q">Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?</h3>'
-        '<p class="why">L3 recommends fast-forwarding; this race blocked three dispatches this week.</p>'
-        '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>'
-        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
-        f'<article class="card tight{s2}"><div class="kind"><b class="h">Ready for review</b><span class="age">8 min</span></div>'
-        '<h3 class="q">PR #176 is green and held: the wireframe set, desktop and iPhone.</h3>'
-        '<div class="opts"><span class="btn primary">Open PR #176</span></div>'
-        f'<div class="foot" style="margin-top:10px"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
-        '</div></div>'
-        '<div><div class="sh">Active <span>3</span></div>'
-        '<div class="trow"><span class="dot held"></span><div><div class="tt">Design wireframes for the simplified product</div><div class="tm">Fable on Claude · PR #176 green · held for you</div></div></div>'
-        '<div class="trow"><span class="dot"></span><div><div class="tt">Fast-forward a self-deploy checkout at dispatch</div><div class="tm">Opus on Claude · waiting on your answer</div></div></div>'
-        '<div class="trow"><span class="dot q"></span><div><div class="tt">Persist paths when L3 resumes a task</div><div class="tm">Queued · waits for a lease</div></div></div>'
-        f'<div class="fold">{I("chev-r","i sm")}Done this week · 4</div></div>'
-        '</aside>'
+        '<div><div class="sh">Current <span>5</span></div>'
+        + row('Index rollout', 'Needs you · 3 questions · Running', 'dot held', question)
+        + row('Design wireframes for the simplified product', 'Running · PR #176 green · Merge held')
+        + row('Persist paths when L3 resumes a task', 'Queued · waits for capacity', 'dot q')
+        + row('Clarify the dispatch retry policy', 'Waits for L3')
+        + row('Update delivery notes', 'Report landed · waits for L3')
+        + f'</div><details><summary class="fold">{I("chev-r","i sm")}Done this week · 1</summary>'
+        + row('Fix the chat scrollbar', 'Done · PR #175 merged', 'dot idle') + '</details>'
     )
+
+def work_panel():
+    return '<aside class="work"><div class="wh"><h2>Work</h2><span>5 current · 1 done this week</span></div>' + work_rows() + '</aside>'
 
 def convo_altitude(mobile=False):
     return (
@@ -418,12 +414,12 @@ def desktop_project(with_panel=True):
     tabs = ""
     if not with_panel:
         tabs = ('<div style="display:flex;justify-content:center;padding:0 28px 6px;flex:none">'
-                f'<span class="seg"><span class="on">{I("chat","i sm")}Chat</span><span>{I("work","i sm")}Work <span class="badge quiet" style="height:18px;min-width:18px;font-size:10px">3</span></span><span>Done</span></span></div>')
+                f'<span class="seg"><span class="on">{I("chat","i sm")}Chat</span><span>{I("work","i sm")}Work</span><span>Done</span></span></div>')
     inner = (
         f'<div style="display:grid;grid-template-columns:{cols};height:100%">'
         + rail("altitude") +
         '<main class="pane">'
-        '<header class="ph"><div><h1>altitude</h1><div class="sub">L3 answered 12 min ago on Claude · 3 tasks in flight · 1 waits for your review</div></div>'
+        '<header class="ph"><div><h1>altitude</h1><div class="sub">L3 answered 12 min ago on Claude · 3 tasks in flight · 3 questions need you</div></div>'
         + header_right + '</header>' + tabs +
         '<div class="convo"><div class="col">' + convo_altitude() + '</div>'
         '<div style="height:22px"></div>'
@@ -505,7 +501,7 @@ def mheader_project(sub="L3 · Ready"):
         '<header class="mh"><div><span class="name">altitude' + I("chev-d","i sm") + '</span>'
         f'<div class="subl" style="padding-left:4px;margin-top:-6px">{sub}</div></div><span class="sp"></span>'
         f'<details class="phone-details"><summary aria-label="Project details">{I("more")}</summary><div class="details-panel"><h2>altitude</h2>'
-        '<p>L3 answered 12 min ago · 3 tasks in flight · 1 waits for your review</p><label>Engine <select aria-label="L3 engine"><option>Auto</option><option>Configured engine</option></select></label>'
+        '<p>L3 answered 12 min ago · 3 tasks in flight · 3 questions need you</p><label>Engine <select aria-label="L3 engine"><option>Auto</option><option>Configured engine</option></select></label>'
         '<p>Reset L3 conversation</p><p>Remove project</p><a href="index.html">Design boards</a></div></details></header>'
     )
 
@@ -520,7 +516,7 @@ def tabbar(on):
         b = f'<span class="badge">{badge}</span>' if badge else ""
         return f'<div class="tab{" on" if on == k else ""}">{I(icon,"i lg")}{label}{b}</div>'
     return ('<nav class="tabbar">' + t("chat","chat","Chat") + t("work","work","Work") +
-            t("needs","tray","Needs you", 2) + t("monitor","pulse","Monitor") + '</nav>')
+            t("needs","tray","Needs you", 3) + t("monitor","pulse","Monitor") + '</nav>')
 
 mobile_convo = (
     '<div class="me">Address issue #166. Use Fable at L2 for this one as well; design is important.</div>'
@@ -544,8 +540,8 @@ def mobile_chat(sheet=False):
             '<div class="scrim"></div>'
             '<div class="sheet"><div class="handle"></div>'
             '<div class="sh" style="padding:0 8px;margin-bottom:6px">Projects <span>2 managed</span></div>'
-            f'<div class="srow sel"><span class="dot held"></span><div><div class="tt">altitude</div><div class="tm">1 waits for your review · 3 in flight</div></div><div class="r">{I("check")}</div></div>'
-            f'<div class="srow"><span class="dot idle"></span><div><div class="tt">voice-tutor</div><div class="tm">1 question for you · L3 idle since yesterday</div></div></div>'
+            f'<div class="srow sel"><span class="dot held"></span><div><div class="tt">altitude</div><div class="tm">L3 ready</div></div><div class="r">{I("check")}</div></div>'
+            '<div class="srow"><span class="dot idle"></span><div><div class="tt">voice-tutor</div><div class="tm">L3 idle since yesterday</div></div></div>'
             '<div style="height:1px;background:var(--hairline);margin:8px 8px"></div>'
             f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">career-platform</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Start L3</span></div></div>'
             f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">job-search-assistant</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Start L3</span></div></div>'
@@ -557,23 +553,9 @@ board("MobileProject", 390, 844, mobile_chat(False))
 board("MobileSwitcher", 390, 844, mobile_chat(True))
 
 mobile_work = (
-    '<div class="m"><div></div>' + mheader_project("3 in flight · 4 done this week") +
-    '<div class="mbody top">'
-    '<div><div class="sh">Needs you <span>2</span></div>'
-    '<article class="card"><div class="kind"><b class="h">Ready for your review</b><span class="age">8 min</span></div>'
-    '<h3 class="q">PR #176 is green and held: the wireframe set, desktop and iPhone.</h3>'
-    '<div class="opts"><span class="btn primary">Open PR #176</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article>'
-    '<article class="card" style="margin-top:10px"><div class="kind"><b>L3 asks</b><span class="age">25 min</span></div>'
-    '<h3 class="q">Fast-forward Altitude’s own checkout at dispatch, or keep failing closed?</h3>'
-    '<div class="opts"><span class="btn primary">Fast-forward it</span><span class="btn">Keep failing closed</span></div>'
-    f'<div class="foot"><a href="#" style="color:var(--accent-text)">Open L2 chat{I("chev-r","i sm")}</a></div></article></div>'
-    '<div><div class="sh">Active <span>3</span></div>'
-    '<div class="trow"><span class="dot held"></span><div><div class="tt">Design wireframes for the simplified product</div><div class="tm">Fable on Claude · PR #176 green · held for you</div></div></div>'
-    '<div class="trow"><span class="dot"></span><div><div class="tt">Fast-forward a self-deploy checkout at dispatch</div><div class="tm">Opus on Claude · waiting on your answer</div></div></div>'
-    '<div class="trow"><span class="dot q"></span><div><div class="tt">Persist paths when L3 resumes a task</div><div class="tm">Queued · waits for a lease</div></div></div>'
-    f'<div class="fold">{I("chev-r","i sm")}Done this week · 4</div></div>'
-    '</div><div></div>' + tabbar("work") + '</div>'
+    '<div class="m"><div></div>' + mheader_project() +
+    '<div class="mbody top"><div class="wh"><h2>Work</h2><span>5 current · 1 done this week</span></div>'
+    + work_rows(mobile=True) + '</div><div></div>' + tabbar("work") + '</div>'
 )
 board("MobileWork", 390, 844, mobile_work)
 

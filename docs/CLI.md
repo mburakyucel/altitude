@@ -637,6 +637,15 @@ conversation with their source attribution. The model chooses a plain question, 
 quick action, or two to three explicit options with one recommendation. A fault is operational and
 uses `--fault`, without inventing a recommended choice.
 
+Write `--reason` / `--question` as the short, plain-language decision itself. The task title gives
+its user-facing purpose; `--recommendation` names the chosen action, `--label` is its concise button
+label, and `--why` gives the material consequence or tradeoff needed before answering. Keep each
+group member's `question`, option labels/text and `why` equally focused. Put full reasoning,
+implementation detail, evidence and history in ordinary replies in the owning task conversation
+(`alt task reply` for L2, `alt task message` for L3). Existing saved question detail remains readable
+there. Rewrite around the choice rather than relying on automatic shortening, and never hide a
+consequence needed for an informed answer.
+
 The model chooses the question, then invokes the CLI through its engine's execution tool. A minimal
 ordinary dilemma is:
 

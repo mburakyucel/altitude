@@ -85,7 +85,7 @@ function renderBrowserApp(route: string) {
 }
 
 describe("Rail", () => {
-  it("lists Needs you with its count, one row per managed project with dot and badge, and the rest", async () => {
+  it("puts the attention badge only on global Needs you and retains project state dots", async () => {
     mockFetch();
     renderApp({ route: "/" });
 
@@ -97,7 +97,7 @@ describe("Rail", () => {
     expect(dotOf(within(rail).getByRole("link", { name: "altitude" }))).toBe("running");
     const tutor = within(rail).getByRole("link", { name: /^tutor/ });
     expect(dotOf(tutor)).toBe("waiting");
-    expect(within(tutor).getByText("1")).toHaveClass("badge");
+    expect(tutor.querySelector(".badge")).toBeNull();
     expect(dotOf(within(rail).getByRole("link", { name: "idle" }))).toBe("idle");
     expect(dotOf(within(rail).getByRole("link", { name: "broken" }))).toBe("danger");
     expect(within(rail).queryByRole("link", { name: "spare" })).toBeNull();

@@ -1,9 +1,11 @@
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useOverview } from "../data/api";
 import type { Decision, Overview, TaskRow } from "../data/api";
 import { agoText, when } from "../data/observed";
 import { clock } from "./Bubbles";
 import type { DotState } from "../shell/projects";
+import { questionPath } from "../data/decisions";
+import { setSelectedProject } from "../shell/scope";
 
 /*
  * The task card (SPEC.md §3.5): state dot, title, meta line, chevron; the link opens the task page. The
@@ -49,8 +51,6 @@ export function l2Label(task: TaskRow, overview: Overview | undefined): string {
 export interface TaskCardFacts {
   dot: DotState;
   meta: string;
-  /** The work panel's section (§3.7): needs, active, or done. */
-  section: "needs" | "active" | "done";
 }
 
 /** Everything the card shows besides the title, from the task row and the overview. */
@@ -60,57 +60,65 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   const fault = str(task["fault"]);
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = str(task["waiting_on"]) === "l3";
+  const actor = str(task["block_actor"]);
+  const stopped = decision?.kind === "stopped" || Boolean(actor && !["l2", "l3"].includes(actor));
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
   const engine = l2Label(task, overview);
   const prs = (Array.isArray(task["prs"]) ? task["prs"] : []).filter((n): n is number => typeof n === "number");
   const pr = prs[prs.length - 1];
 
+  if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done" };
+  if (state === "rejected") return { dot: "idle", meta: "Rejected" };
+  if (fault) return { dot: "danger", meta: `Blocked: ${oneSentence(reason || `a ${fault} fault stopped the task`)}` };
   if (state === "queued" || held) {
-    return { dot: "idle", meta: `Queued · ${holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))}`, section: "active" };
+    return { dot: "idle", meta: `${held ? "Waiting to resume" : "Queued"} · ${holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))}` };
   }
   if (state === "running") {
     const started = agoText(task["dispatched"]);
-    return { dot: "running", meta: ["Running", engine, started ? `started ${started}` : ""].filter(Boolean).join(" · "), section: "active" };
+    return { dot: "running", meta: ["Running", engine, started ? `started ${started}` : ""].filter(Boolean).join(" · ") };
   }
   if (state === "blocked") {
-    if (fault) return { dot: "danger", meta: `Blocked: ${oneSentence(reason || `a ${fault} fault stopped the task`)}`, section: "active" };
     // A block waiting on L3 is Altitude's wait: the running dot, not amber (§3.5).
-    if (waitsOnL3) return { dot: "running", meta: "Waits for L3", section: "active" };
-    return { dot: decision?.kind === "stopped" ? "danger" : "waiting", meta: "Waits for your answer", section: "needs" };
+    if (waitsOnL3) return { dot: "running", meta: "Waits for L3" };
+    return { dot: stopped ? "danger" : "idle", meta: stopped ? "Stopped" : decision?.id ? "Waiting for your answer" : "Paused" };
   }
-  if (state === "reported") return { dot: "running", meta: "Report landed · waits for L3", section: "active" };
-  if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done", section: "done" };
-  if (state === "rejected") return { dot: "idle", meta: "Rejected", section: "done" };
-  return { dot: "idle", meta: state ? sentence(state) : "Created", section: "active" };
+  if (state === "reported") return { dot: "running", meta: "Report landed · waits for L3" };
+  return { dot: "idle", meta: state ? sentence(state) : "Status unavailable" };
 }
 
 export function TaskCard({
   project,
   task,
   variant = "card",
-  decision,
 }: {
   project: string;
   task: TaskRow;
   /** The bordered card under a reply, or the hairline row in the work panel. */
   variant?: "card" | "row";
-  decision?: Decision;
 }) {
   // The same cache entry every page reads: no request of the card's own.
   const overview = useOverview();
-  const facts = taskCardFacts(task, overview.data, project, decision);
+  const location = useLocation();
+  const decisions = task.state === "done" || task.state === "rejected" ? [] : (overview.data?.queue ?? [])
+    .filter((d) => d.project === project && d.slug === task.slug && d.status !== "resolved" && d.audience !== "l3");
+  const questions = decisions.filter((d) => d.id);
+  const facts = taskCardFacts(task, overview.data, project, decisions[0]);
+  const attention = questions.length ? `Needs you · ${questions.length} question${questions.length === 1 ? "" : "s"}${overview.isError ? " · saved" : ""}` : null;
+  const tab = variant === "row" || new URLSearchParams(location.search).get("tab") === "work" ? "work" : "chat";
   const title = task.title || task.slug;
   return (
     <Link
       className="task-card"
       data-variant={variant}
-      data-section={facts.section}
-      to={`/projects/${project}/tasks/${task.slug}`}
-      aria-label={`${title} · ${facts.meta}`}
+      to={questions[0] ? questionPath(questions[0]) : `/projects/${project}/tasks/${task.slug}`}
+      state={{ from: "project", tab }}
+      onClick={() => setSelectedProject(project)}
+      aria-label={[title, attention, facts.meta].filter(Boolean).join(" · ")}
     >
-      <span className="dot task-card-dot" data-state={facts.dot} aria-hidden />
+      <span className="dot task-card-dot" data-state={facts.dot === "danger" ? "danger" : attention ? "waiting" : facts.dot} aria-hidden />
       <span className="task-card-body">
         <span className="task-card-title">{title}</span>
+        {attention ? <span className="task-card-attention">{attention}</span> : null}
         <span className="task-card-meta">{facts.meta}</span>
       </span>
       <svg className="task-card-go" aria-hidden viewBox="0 0 20 20" width="16" height="16">

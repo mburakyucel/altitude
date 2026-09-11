@@ -1,14 +1,13 @@
 import { useOverview } from "../data/api";
 import type { Decision } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
-import { decisionGroups } from "../data/decisions";
+import { attentionSummary, decisionGroups } from "../data/decisions";
 
 /** The subtitle: how much waits, across how many projects. */
 export function needsSummary(queue: Decision[]): string {
   const projects = new Set(queue.map((d) => d.project));
-  const things = queue.length === 1 ? "One thing waits" : `${queue.length} things wait`;
   const where = projects.size === 1 ? `in ${[...projects][0]}` : `across ${projects.size} projects`;
-  return `${things} on you ${where}. Everything else runs on its own.`;
+  return `${attentionSummary(queue)} ${where}`;
 }
 
 /** Needs you (SPEC.md §2.1): every decision across projects as compact cards with a project chip. */

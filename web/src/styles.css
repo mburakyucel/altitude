@@ -962,8 +962,8 @@
 }
 .decision-task {
   min-width: 0;
-  flex: 1;
-  font-weight: 500;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 .decision-options {
   display: flex;
@@ -1020,31 +1020,29 @@
   white-space: nowrap;
 }
 .task-card[data-variant="row"] .task-card-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
 }
 .task-card-meta {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
+.task-card-attention { font-size: 13px; color: var(--chip-claimed-text); }
 .task-card-go {
   flex: none;
   color: var(--text-muted);
 }
 
-/* The work panel sections (§3.7): Needs you cards, Active rows, Done this week folded. */
+/* Work (§3.7): every current task once, with recent completion history folded. */
 .wp-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 .wp-title {
   margin: 0;
-  font-size: var(--text-body);
+  font-size: 20px;
   font-weight: 600;
 }
 .wp-count {
@@ -1062,11 +1060,6 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
-}
-.wp-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 .wp-rows {
   display: flex;
