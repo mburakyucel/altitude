@@ -417,7 +417,7 @@ this repository's temporary local policy, the full local suite runs on a clean m
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
-Operator authority also travels through recorded task replies and UI decisions. L3's project-bound
+Operator authority travels through recorded task replies, UI decisions and original project chat. L3's project-bound
 [`hold-merge --approval`](CLI.md#recorded-merge-approval) executes directly in altd. L3 cites the original
 operator approval, owner's single-PR presentation, latest operator message it reviewed and, when the
 approval has question context, that question and revision. The daemon reads the checkout-origin PR,
@@ -430,17 +430,27 @@ agent-authored text releases a hold.
 
 Conversational resolution and merge reconciliation share original-source authority and viewed-revision
 validation. A question answer used as merge approval requires the latest revision of that question,
-an answered operator decision citing the same task message, no remaining question, and a matching
+an answered operator decision citing the same original message and source, no remaining question, and a matching
 selected option for UI acceptance. The presentation precedes that question and approval. Task chat also
 attaches resolved questions to later messages: when a fresh PR presentation follows that resolution,
 a new conversational approval may cite the still-current revision as context only. The receipt marks
 `question_context_only` and carries no earlier option; the earlier answer or superseded recommendation
 supplies no merge authority. A later reaffirmation remains
 a separate source; it cannot turn a superseded manual-repair question into acceptance. A new operator
-message after the cited latest message refuses the request. The current hold generation and GitHub's
-PR update timestamp must precede the presentation. A renewed hold, missing evidence or any later PR
-update refuses release even when a newer message reaffirms the original decision. Explicit canonical
-PR URLs in the approval context must name only the observed PR. GitHub must report an open, non-draft,
+message after either conversation's cited latest message refuses the request. Project sources use the
+original user/chat turn ID through the shared strict source reader; assistant replies and triggered
+coordinator traffic grant no authority. Corrupt or duplicate approval evidence refuses release.
+Pending project chat also refuses release until admitted and reviewed; queue rows grant no authority.
+The current hold generation and GitHub's PR update timestamp must precede the presentation.
+A renewed hold or missing evidence refuses release. A later PR update requires a fresh integration
+presentation when the original operator decision explicitly delegates
+rebasing or overlap resolution within that PR outcome. L3 records that scope judgment in the reason;
+the owner's later message names this PR alone and its current full head, after its latest update.
+The original presentation and approval still follow the current hold. No scope expansion is authorized.
+Without this explicit integration evidence, any later update refuses release.
+Task approval URLs name only the observed PR. Project approval may name multiple PRs in the same
+repository, including the target when explicit; each release remains independently task/PR-bound.
+GitHub must report an open, non-draft,
 same-repository PR targeting main on the task's publication branch and supplied head. The last recorded
 task PR number must match when present; an adopted PR additionally binds its number, URL and original branch.
 
@@ -450,7 +460,8 @@ hold changes and their events serialize under the same lock. Each hold change st
 approval even when the reason repeats. Approval validation reads events
 strictly, so corrupt evidence cannot hide a later hold. One atomic task write clears `hold_merge`
 and stores `merge_approval`, recording the actual coordinator actor, original operator approval,
-latest operator source reviewed, question/revision and selected option when present, presentation,
+source and both conversations' latest operator messages reviewed, question/revision and selected option
+when present, original and optional integration presentations,
 prior hold generation, PR URL/head and the coordinator's interpretation reason. A `release-merge` event carries the same receipt;
 local evidence refusals record `merge-approval-refused`. The operation releases the observed hold;
 it does not resume the task or merge the PR. Head binding is checked at release, and the owner

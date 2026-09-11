@@ -12,7 +12,7 @@ from pathlib import Path
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
 from tests import test_offline_journeys as journeys
-from altitude import config, dispatch, incidents, land, server, state as S, tasks as T
+from altitude import config, dispatch, incidents, l3, land, server, state as S, tasks as T
 
 
 class TestMergeApprovalJourney(AltitudeCase):
@@ -220,6 +220,49 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((receipt["option_key"], receipt["question_context_only"], receipt["authorized_by"]),
                          (None, False, T.OPERATOR_MESSAGE_ROLE))
         self.assertEqual((receipt["pr"], receipt["head"]), (101, prepared["head"]))
+
+    def test_project_authorized_integration_preserves_questions_and_normal_landing(self):
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Integrate the approved story", "Review the story", "The approved story.\n")
+        presentation = T.message(self.project, slug, "l2", pull["url"])
+        self.tick()
+        original = l3.chat_log(self.project, "user", "You can merge it and resolve integration within this outcome.",
+                               trigger="chat", turn_id="a" * 12)
+        self.tick()
+        # A later PR update needs current owner evidence, while the original operator source remains.
+        pull["updatedAt"] = self.at
+        S.write_json(gh / "pr.json", pull)
+        self.tick()
+        integrated = T.message(self.project, slug, "l2", f"Integration reviewed: {pull['url']} head {prepared['head']}")
+        question = self.escalate(slug, "Clarify a separate remaining detail", "Discuss the detail.")
+        broker = self.broker()
+        args = ["task", "hold-merge", slug, "--source", "project", "--approval", original["turn_id"],
+                "--latest-operator", original["turn_id"], "--presentation", presentation["id"],
+                "--integration-presentation", integrated["id"], "--pr-number", "101", "--head", prepared["head"],
+                "--reason", "Original project decision delegates integration within this PR; the owner verified that scope."]
+        before = S.load_task(self.project, slug)
+        response = self.reconcile(broker, args)
+        self.assertEqual(response.get("returncode"), 0, response)
+        receipt = json.loads(response["stdout"])
+        self.assertEqual(S.load_task(self.project, slug), {**before, "hold_merge": None, "merge_approval": receipt})
+        self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["id"], question["id"])
+        self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["status"], "open")
+        self.assertEqual(receipt["source"], "project")
+        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
+        (gh / "merge_git.txt").write_text("advance the local remote\n")
+        # Resolve the unrelated question before owner continuation; release itself grants no answer.
+        self.tick()
+        answer = l3.chat_log(self.project, "user", "The separate detail is settled.", trigger="chat", turn_id="b" * 12)
+        T.resolve_question(self.project, slug, question["id"], question["revision"], answer["turn_id"],
+                           source="project", disposition="answered", expected_attempt=initial["attempt"],
+                           reason="The operator settled the detail.")
+        self.request("/api/task/action", {"project": self.project, "slug": slug, "action": "resume", "reason": "Continue approved delivery"})
+        self.wait_state(slug, "running")
+        (gh / "checks.json").write_text('[{"bucket": "fail"}]')
+        self.assertFalse(land.land("test: preserve normal checks", cwd=worktree, merge=True, wait=0)["merged"])
+        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
+        self.assertTrue(land.land("test: deliver approved integration", cwd=worktree, merge=True, wait=0)["merged"])
+        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The approved story.\n")
 
     def test_discussion_design_and_implementation_choices_do_not_release_a_hold(self):
         task = self.launch(self.queue("Discuss a held proposal"))

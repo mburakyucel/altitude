@@ -960,15 +960,24 @@ later context affects it. Meaning is model judgment, as with conversational ques
 the daemon validates original authority and binding, not arbitrary prose semantics. Never substitute
 agent-authored text for an operator source or infer merge authority merely because a question resolved.
 
-`--approval` identifies the original operator task message or saved UI-choice message.
+`--source task` (default) makes `--approval` identify the original operator task message or saved
+UI-choice message. `--source project` identifies the original user/chat turn ID in this project's
+`chat.jsonl`; assistant replies, coordinator-triggered turns and relays cannot supply approval.
+Project turn IDs have twelve hexadecimal characters; task message IDs have thirty-two.
 `--presentation` names the owner's earlier message containing this canonical GitHub PR URL alone.
-`--latest-operator` cites the latest operator message reviewed; it equals `--approval` when there is
-no later message. A later reaffirmation stays separate from the original decision, even when attached
+`--latest-operator` cites the latest operator message reviewed in the selected source; it equals
+`--approval` when there is no later message there. `--latest-other-operator` cites the latest operator
+message in the other conversation (task for project approvals, project for task approvals). Omit it
+only when that conversation has no operator messages. These are reviewed watermarks, not additional
+approvals. L3 checks all later corrections in both conversations; a changed watermark refuses release.
+Pending project chat must enter the conversation and be reviewed before release; queued text is not
+an approval source. An unidentified latest operator row is missing evidence, never an absent message.
+A later reaffirmation stays separate from the original decision, even when attached
 to a superseded question about mechanical recovery. It does not accept that question's recommendation.
 `--question` and `--revision` are required together when the approval has question context; omit both
 only for an approval without question context. For a question answer used as approval, the daemon
 requires that question's current revision, operator audience and answered resolution from the same
-original task message, with no remaining question. UI acceptance must match its recorded option.
+original message and source, with no remaining question. UI acceptance must match its recorded option.
 The presentation precedes the question and approval. For a clear typed answer to an open question,
 the owner records its decision with `alt task resolve` first. Messages in between, such as an operator
 request for a plain explanation and the owner's reply without the URL, do not break the citation:
@@ -984,14 +993,28 @@ or question resolved after the presentation cannot use this path.
 The daemon checks the current hold generation and reads the PR from the project's origin repository.
 It requires an open, non-draft, same-repository PR targeting main on the publication branch at the
 supplied head. The last recorded task PR must match when present; adopted PR identity also remains
-binding. Explicit canonical PR URLs in the approval context may name only this PR. GitHub's `updatedAt`
+binding. Task approval context may name only this PR. Project approvals can cover multiple PRs in the
+same repository; explicit approval URLs must include the target. Later project discussion may concern
+another PR in that project. L3 interprets contextual references such as “both” against the original
+conversation and records that binding in `--reason`; each task receives a separate release.
+GitHub's `updatedAt`
 must be strictly before the presentation, and the presentation after the hold. Missing/corrupt evidence,
 a revised approval question, an operator message after the cited latest message, a renewed hold or any
-later PR update refuses release. Even a later PR comment or description edit invalidates the evidence;
-a reaffirmation does not refresh an older presentation or hold generation.
+later PR update refuses release without authorized integration evidence. A reaffirmation does not
+refresh an older presentation or hold generation.
 
-Success returns a receipt with original approval and latest operator message ids/times, question/revision
-and option when present, presentation id, prior hold/event, PR URL/head, interpretation reason and actual
+When the original decision explicitly delegates rebasing or overlap resolution within this PR's
+approved outcome, add `--integration-presentation <owner-message-id>`. This later owner message names
+the same canonical PR URL alone and its current full head SHA as a separate word, after the original
+approval and latest PR update. Keep `--presentation` pointing to the original pre-approval presentation.
+Explain in `--reason` how the original operator source delegates integration and how review confirms
+the resulting diff stays within that named outcome. This is coordinator judgment, not a prose classifier
+or permission for scope expansion. A renewed hold still requires its own approval. Mechanical tip
+movement requires fresh owner evidence and exact-candidate landing checks, not repeated operator approval.
+
+Success returns a receipt with original source, approval and both reviewed latest operator ids/times,
+question/revision and option when present, original and optional integration presentation ids,
+prior hold/event, PR URL/head, interpretation reason and actual
 actor `l3`. The receipt is stored as `merge_approval` on the task and in a
 `release-merge` event. Inspect `alt task show <slug>` and `alt task events <slug> --json` to confirm
 the release before resuming a blocked owner. The operation neither resumes nor merges; the owner
