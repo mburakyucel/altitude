@@ -1,6 +1,6 @@
 """Real decision API/storage with a deliberately stepped, deterministic L2 engine."""
 from service_support import configure, serve
-from tests.support import add_worktree, make_repo
+from tests.support import add_worktree, git, make_repo
 from tests.fakes import FakeL2
 from altitude import config, engines, server, state as S, tasks as T
 
@@ -125,6 +125,33 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/long-context":
+                detail = ("Should we keep the old index for fourteen days? "
+                          "Option A: Keep fourteen days. Option B: Keep seven days. "
+                          "I recommend A.\n\n"
+                          "Migration evidence: the candidate index contains every fixture record and all validation checks pass.\n\n"
+                          "Rollback procedure: retain the old alias until the agreed window expires, then remove it in the existing cleanup job.\n\n"
+                          "Storage review: keeping both index generations uses twice the temporary disk space. Capacity is reserved for the full window.\n\n"
+                          "Recovery rehearsal: restoring the previous alias preserves reads; writes continue through the current ingestion path.\n\n"
+                          "Final verification: cleanup waits for the last retained backup and records its result in the task conversation.")
+                slug = task("Choose retention window", detail)
+                T.escalate("atlas", slug, detail, recommendation="Keep the old index for fourteen days.",
+                           recommendation_label="Keep 14 days", recommendation_why="Longer instant rollback uses twice the temporary storage.")
+                return self._json({"slug": slug, "detail": detail})
+            if self.path == "/fixture/second-project":
+                other_repo = make_repo(config.PROJECT_ROOTS[0] / "second-project" / "beacon")
+                assert git("remote", "get-url", "origin", cwd=other_repo) != git("remote", "get-url", "origin", cwd=repo)
+                with config.add_project("beacon", path=other_repo):
+                    pass
+                row = T.new("beacon", "Choose backup retention", "Fictional second-project question.")
+                slug = row["slug"]
+                worktree = add_worktree(other_repo, slug)
+                T.dispatch("beacon", slug, attempt=1, session_id=f"fixture-{slug}", agent_id=f"fixture-{slug}",
+                           worktree=str(worktree), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
+                T.block("beacon", slug, RETENTION["question"], actor="l2", updates={"waiting_on": "l3"},
+                        questions={"questions": [RETENTION]})
+                T.escalate("beacon", slug, RETENTION["question"], questions={"questions": [RETENTION]})
+                return self._json({"slug": slug})
             if self.path == "/fixture/delegated-questions":
                 slug = task("Lease and policy", "Two independent implementation questions.", paths=["tests/"],
                             questions={"questions": [{"question": "May I edit the tests?"},

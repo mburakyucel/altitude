@@ -90,9 +90,6 @@ function stopped(name: string, task: Row) {
     question: "the recording upload fails at 10 minutes",
     detail: "the recording upload fails at 10 minutes",
     asked: minutesAgo(60 * 30),
-    id: "walk-stopped",
-    revision: 1,
-    anchor_id: "walk-stopped-anchor",
     status: "open",
     audience: "operator",
     state: "blocked",
@@ -109,6 +106,7 @@ interface Overlay {
   overviewFail?: boolean;
   project?: (project: Record<string, unknown>) => Record<string, unknown>;
   projectDelay?: number;
+  projectFail?: boolean;
   task?: Record<string, Row | null>;
   taskFail?: boolean;
   chat?: (view: Record<string, unknown>) => Record<string, unknown>;
@@ -136,6 +134,7 @@ async function overlay(page: Page, name: string, state: Overlay) {
     return serve(route, (json) => ({ ...json, ...(state.queue ? { queue: state.queue } : {}), ...(state.wip ? { wip: state.wip } : {}) }));
   });
   await page.route((url) => url.pathname === `/api/project/${name}`, async (route) => {
+    if (state.projectFail) return route.fulfill({ status: 503, json: { error: "Project read unavailable." } });
     if (state.projectDelay) await new Promise((resolve) => setTimeout(resolve, state.projectDelay));
     return serve(route, (json) => (state.project ? state.project(json) : json));
   });
@@ -200,25 +199,11 @@ test.describe.configure({ timeout: 180_000 });
 test.afterEach(async ({ page }) => page.unrouteAll({ behavior: "ignoreErrors" }));
 const settles = (locator: Locator) => () => expect(locator).toBeVisible({ timeout: 30_000 });
 
-test("the work panel: live sections, the queued hold, Waits for L3, the fold, deciding, decided, failed, empty, loading", async ({ page, request }, info) => {
+test("Work keeps waiting tasks once without answer controls, retains recent history, and recovers reads", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
-  const { tasks, archive } = await liveRows(request, project.name);
-  const running = tasks.find((t) => t.state === "running");
-  expect(running, "The walkthrough needs one running task").toBeTruthy();
-  const base = await record(request, project.name, (running as Row).slug);
-  const walk = walkthrough(page, info);
-  const v = views(page, info);
-
-  await walk.open(projectRoute(project.path, v.phone));
-  await v.openPanel();
-  await walk.state("01-panel-live", {
-    visible: [v.panel, v.panel.getByRole("heading", { name: "Work", exact: true }), v.panel.getByText(/^\d+ active · \d+ done this week$/), v.panel.getByRole("link", { name: startsWith((base.title as string) || base.slug) })],
-    hidden: [v.panel.getByLabel("Loading", { exact: true })],
-  });
-  info.annotations.push({ type: "live rows", description: `${tasks.length} active, ${archive.length} archived` });
-
-  // The overlay: one decision on the running task, one queued task held by the WIP limit, one task
-  // waiting on L3, and one task done this week with a merged PR.
+  const { tasks } = await liveRows(request, project.name);
+  const running = tasks.find((t) => t.state === "running")!;
+  const base = await record(request, project.name, running.slug);
   const { decision, blocked } = dilemma(project.name, base);
   const queued: Row = { slug: "walk-queued", state: "queued", title: "Add the beta stage", updated: minutesAgo(5) };
   const waitsL3: Row = { slug: "walk-l3", state: "blocked", title: "Score pronunciation per phoneme", updated: minutesAgo(3), waiting_on: "l3", blocked_reason: "which suite?" };
@@ -226,86 +211,85 @@ test("the work panel: live sections, the queued hold, Waits for L3, the fold, de
   const state: Overlay = {
     queue: [decision],
     wip: { per_project: {}, machine: 1, waiting: [{ project: project.name, slug: queued.slug, why: "dispatch", hold: `WIP limit 1 reached for ${project.name} (1 running)` }] },
-    project: (json) => ({ ...json, tasks: [...(json.tasks as Row[]).map((t) => (t.slug === base.slug ? { ...t, state: "blocked", waiting_on: "burak" } : t)), queued, waitsL3], archive: [done] }),
+    project: (json) => ({ ...json, tasks: [...(json.tasks as Row[]).map((t) => t.slug === base.slug ? blocked : t), queued, waitsL3], archive: [done] }),
     task: { [base.slug]: blocked },
   };
-  await clearRoutes(page);
   await overlay(page, project.name, state);
-  let decided = 0;
-  await interceptWrites(page, {
-    decide: async () => {
-      decided += 1;
-      await new Promise((resolve) => setTimeout(resolve, 1_200));
-      state.queue = [];
-      state.project = (json) => ({ ...json, tasks: [...(json.tasks as Row[]), queued, waitsL3], archive: [done] });
-    },
-  });
+  let writes = 0;
+  page.on("request", (req) => { if (req.method() === "POST") writes += 1; });
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
   await walk.open(projectRoute(project.path, v.phone));
   await v.openPanel();
-  const title = (base.title as string) || base.slug;
-  const card = v.card(title, v.panel);
-  const active = v.panel.getByRole("region", { name: "Active", exact: true });
+  const current = v.panel.getByRole("region", { name: "Current", exact: true });
+  const waiting = current.getByRole("link", { name: startsWith(base.title as string) });
   const fold = v.panel.getByText(/^Done this week \(\d+\)$/);
-  await walk.state("02-panel-sections-overlay", {
-    visible: [
-      v.panel.getByRole("heading", { name: /^Needs you/ }),
-      card,
-      card.getByText("L3 brought this to you", { exact: true }),
-      card.getByRole("button", { name: "Fast-forward it", exact: true }),
-      active.getByRole("link", { name: `${queued.title} · Queued · waits for a slot · WIP limit 1 reached for ${project.name} (1 running)`, exact: true }),
-      active.getByRole("link", { name: `${waitsL3.title} · Waits for L3`, exact: true }),
-      fold,
-    ],
-    hidden: [active.getByRole("link", { name: startsWith(title) }), v.panel.getByRole("link", { name: /^Link task PR chips/ })],
+  await expect(waiting).toHaveCount(1);
+  await expect(waiting).toHaveAttribute("href", new RegExp(`question=${decision.id}&revision=1`));
+  await expect(v.panel.getByRole("article")).toHaveCount(0);
+  await expect(v.panel.getByRole("button", { name: "Fast-forward it", exact: true })).toHaveCount(0);
+  await walk.state("01-current-waiting-queued-and-l3", {
+    visible: [waiting.getByText(/Needs you/), current.getByRole("link", { name: startsWith(queued.title as string) }), current.getByRole("link", { name: `${waitsL3.title} · Waits for L3`, exact: true }), fold],
+    hidden: [v.panel.getByText(decision.question, { exact: true }), v.panel.getByRole("link", { name: /^Link task PR chips/ })],
   });
-  await walk.state("03-done-fold-open-overlay", {
-    action: () => fold.click(),
-    visible: [v.panel.getByRole("link", { name: "Link task PR chips · Done · PR #208 merged", exact: true })],
-    hidden: [],
+  await walk.state("02-recent-completion-expanded", {
+    action: () => fold.click(), visible: [v.panel.getByRole("link", { name: "Link task PR chips · Done · PR #208 merged", exact: true })], hidden: [],
   });
-  await walk.state("04-deciding-overlay", {
-    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
-    visible: [card.getByRole("button", { name: "Recording…", disabled: true })],
-    hidden: [],
+  await walk.state("03-recent-completion-collapsed", {
+    action: () => fold.click(), visible: [waiting], hidden: [v.panel.getByRole("link", { name: /^Link task PR chips/ })],
   });
-  const movedRow = active.getByRole("link", { name: startsWith(`${title} · `) });
-  await walk.state("05-decided-task-moved-overlay", {
-    action: settles(movedRow),
-    visible: [movedRow],
-    hidden: [card, v.panel.getByRole("heading", { name: /^Needs you/ })],
+  state.projectFail = true;
+  state.overviewFail = true;
+  const savedWork = v.panel.getByRole("alert").filter({ hasText: "Showing saved work." });
+  const savedAttention = v.panel.getByRole("alert").filter({ hasText: "Attention status is saved" });
+  await expect(savedWork).toBeVisible({ timeout: 40_000 });
+  await expect(savedAttention).toBeVisible({ timeout: 40_000 });
+  await walk.state("03b-cached-failure-retains-linked-rows", {
+    visible: [waiting, savedWork, savedAttention, v.panel.getByText(/done this week · saved$/)],
+    hidden: [v.panel.getByText("No current tasks. Ask L3 to start something.", { exact: true })],
   });
-  expect(decided, "one decide call, intercepted").toBe(1);
-
+  state.projectFail = false;
+  state.overviewFail = false;
+  await savedWork.getByRole("button", { name: "Retry", exact: true }).click();
+  await savedAttention.getByRole("button", { name: "Refresh", exact: true }).click();
+  await walk.state("03c-cached-reads-recover", { visible: [waiting], hidden: [savedWork, savedAttention] });
   await clearRoutes(page);
-  state.queue = [decision];
-  state.project = (json) => ({ ...json, tasks: (json.tasks as Row[]).map((t) => (t.slug === base.slug ? { ...t, state: "blocked", waiting_on: "burak" } : t)) });
-  await overlay(page, project.name, state);
-  await interceptWrites(page, { decideStatus: 503 });
+  await overlay(page, project.name, { queue: [], project: (json) => ({ ...json, tasks: [], archive: [done] }) });
   await walk.open(projectRoute(project.path, v.phone));
   await v.openPanel();
-  await walk.state("06-decide-failed-overlay", {
-    action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
-    visible: [card.getByRole("alert"), card.getByRole("button", { name: "Fast-forward it", exact: true })],
-    hidden: [card.locator(".spinner")],
+  await walk.state("04-empty-current-retains-history", {
+    visible: [v.panel.getByText("No current tasks. Ask L3 to start something.", { exact: true }), v.panel.getByText("0 current · 1 done this week", { exact: true }), fold], hidden: [current],
   });
-
-  await clearRoutes(page);
-  await overlay(page, project.name, { queue: [], project: (json) => ({ ...json, tasks: [], archive: [] }) });
-  await walk.open(projectRoute(project.path, v.phone));
-  await v.openPanel();
-  await walk.state("07-empty-overlay", {
-    visible: [v.panel.getByText("Nothing running. Ask L3 for something.", { exact: true }), v.panel.getByText("0 active · 0 done this week", { exact: true })],
-    hidden: [fold],
-  });
-
   await clearRoutes(page);
   await overlay(page, project.name, { projectDelay: 4_000 });
   await walk.open(projectRoute(project.path, v.phone));
   await v.openPanel();
-  await walk.state("08-loading-overlay", {
-    visible: [v.panel.getByLabel("Loading", { exact: true })],
-    hidden: [v.panel.getByRole("region", { name: "Active", exact: true })],
+  await walk.state("05-loading-unknown-counts", {
+    visible: [v.panel.getByLabel("Loading", { exact: true })], hidden: [current, v.panel.getByText(/^0 current/), page.getByText("Nothing needs you.", { exact: true })],
   });
+  await clearRoutes(page);
+  const failed: Overlay = { projectFail: true };
+  await overlay(page, project.name, failed);
+  await walk.open(projectRoute(project.path, v.phone));
+  await v.openPanel();
+  const error = v.panel.getByText(/Could not read the project's work/);
+  await walk.state("06-initial-read-failed", {
+    action: settles(error), visible: [error, v.panel.getByRole("button", { name: "Retry", exact: true })], hidden: [current, v.panel.getByText(/^0 current/)],
+  });
+  failed.projectFail = false;
+  await walk.state("07-read-recovered", {
+    action: () => v.panel.getByRole("button", { name: "Retry", exact: true }).click(), visible: [current.getByRole("link", { name: startsWith(base.title as string) })], hidden: [error],
+  });
+  await clearRoutes(page);
+  await overlay(page, project.name, { overviewFail: true });
+  await walk.open(projectRoute(project.path, v.phone));
+  await v.openPanel();
+  const attentionUnavailable = v.panel.getByRole("alert").filter({ hasText: "Attention status unavailable." });
+  await walk.state("08-independent-tasks-survive-attention-read-failure", {
+    action: settles(attentionUnavailable), visible: [attentionUnavailable, current.getByRole("link", { name: startsWith(base.title as string) }), page.locator('.badge[aria-label="Attention unavailable"]:visible')],
+    hidden: [v.panel.getByText("No current tasks. Ask L3 to start something.", { exact: true })],
+  });
+  expect(writes, "Work is a read-only task overview").toBe(0);
 });
 
 test("Needs you: empty, recommendation and chat entry, deciding, decided, failed, error, loading", async ({ page, request }, info) => {
@@ -348,7 +332,7 @@ test("Needs you: empty, recommendation and chat entry, deciding, decided, failed
   const card = v.card(title);
   await walk.state("02-cards-overlay", {
     visible: [
-      v.main.getByText(/^2 things wait on you/),
+      v.main.getByText(/^1 question · 1 stopped task/),
       card,
       card.getByText("L3 brought this to you", { exact: true }),
       card.locator(".chip", { hasText: project.name }),
@@ -364,12 +348,20 @@ test("Needs you: empty, recommendation and chat entry, deciding, decided, failed
   await expect(card.getByLabel("Follow-ups", { exact: true })).toHaveCount(0);
   await expect(card.getByText("Why not keep failing closed for everything?")).toHaveCount(0);
   await expect(v.card(second.title).getByRole("button")).toHaveCount(0);
+  state.overviewFail = true;
+  const saved = v.main.getByRole("alert").filter({ hasText: "Showing saved questions." });
+  await expect(saved).toBeVisible({ timeout: 40_000 });
+  await expect(card.getByRole("button", { name: "Fast-forward it", exact: true })).toBeDisabled();
+  await walk.state("03-saved-inbox-readonly", { visible: [saved, card], hidden: [v.main.getByText("Nothing needs you.", { exact: true })] });
+  state.overviewFail = false;
+  await saved.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(card.getByRole("button", { name: "Fast-forward it", exact: true })).toBeEnabled();
   await walk.state("04-deciding-overlay", {
     action: () => card.getByRole("button", { name: "Fast-forward it", exact: true }).click(),
     visible: [card.getByRole("button", { name: "Recording…", disabled: true })],
     hidden: [],
   });
-  const oneLeft = v.main.getByText(/^One thing waits on you/);
+  const oneLeft = v.main.getByText(/^1 stopped task/);
   await walk.state("05-decided-card-gone-overlay", {
     action: settles(oneLeft),
     visible: [v.card(second.title), oneLeft],

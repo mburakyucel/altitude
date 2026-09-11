@@ -94,6 +94,7 @@ svg.i.sm{width:14px;height:14px}
 .trow .tt{font-size:13px;font-weight:500;line-height:1.4;color:var(--text-primary)}
 .trow .tm{font-size:12px;color:var(--text-muted);margin-top:2px}
 .fold{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);padding:8px 4px}
+summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transform:rotate(90deg)}
 .chip{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--border);color:var(--text-secondary);background:var(--card);white-space:nowrap}
 .chip.ok{background:var(--success-bg);color:var(--success-text);border-color:transparent}
 .chip.held{background:var(--chip-claimed-bg);color:var(--chip-claimed-text);border-color:var(--chip-claimed-border)}

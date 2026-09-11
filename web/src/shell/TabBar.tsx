@@ -2,6 +2,7 @@ import { Link, useLocation, useMatch } from "react-router";
 import type { Overview } from "../data/api";
 import { scopedProject } from "./projects";
 import { useSelectedProject } from "./scope";
+import { attentionCount } from "../data/decisions";
 
 type Tab = "chat" | "work" | "needs" | "monitor";
 
@@ -27,19 +28,19 @@ export function activeTab(pathname: string, state: unknown, search: string): Tab
 }
 
 /** The phone's four tabs (SPEC.md §2.2): Chat and Work follow the selected project. */
-export function TabBar({ overview }: { overview: Overview | undefined }) {
+export function TabBar({ overview, stale = false }: { overview: Overview | undefined; stale?: boolean }) {
   const location = useLocation();
   const selected = useSelectedProject();
   const projectMatch = useMatch("/projects/:name/*");
   const project = scopedProject(overview, projectMatch?.params.name ?? selected);
   const projectPath = project ? `/projects/${project}` : "/projects";
-  const waiting = overview?.queue.length ?? 0;
+  const attention = attentionCount(overview, stale);
   const current = activeTab(location.pathname, location.state, location.search);
 
-  const tabs: Array<{ tab: Tab; label: string; to: string; badge?: number }> = [
+  const tabs: Array<{ tab: Tab; label: string; to: string }> = [
     { tab: "chat", label: "Chat", to: projectPath },
     { tab: "work", label: "Work", to: `${projectPath}?tab=work` },
-    { tab: "needs", label: "Needs you", to: "/", badge: waiting },
+    { tab: "needs", label: "Needs you", to: "/" },
     { tab: "monitor", label: "Monitor", to: "/monitor" },
   ];
 
@@ -52,13 +53,14 @@ export function TabBar({ overview }: { overview: Overview | undefined }) {
           key={item.tab}
           to={item.to}
           className="tab-item"
+          aria-label={item.tab === "needs" && attention ? `Needs you, ${attention.label}` : item.label}
           aria-current={current === item.tab ? "page" : undefined}
         >
           <span className="tab-icon">
             <svg aria-hidden viewBox="0 0 20 20" width="22" height="22">
               <path d={ICONS[item.tab]} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" />
             </svg>
-            {item.badge ? <span className="badge tab-badge">{item.badge}</span> : null}
+            {item.tab === "needs" && attention ? <span className="badge tab-badge" aria-label={attention.label}>{attention.text}</span> : null}
           </span>
           {item.label}
         </Link>

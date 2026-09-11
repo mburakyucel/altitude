@@ -107,10 +107,171 @@ test("owner records delegated L3 authority while operator decisions and independ
   expect(finalOverview.projects[0].counts).toEqual(initialOverview.projects[0].counts);
   await walk.open(info.project.name === "phone" ? "/projects/atlas?tab=work" : "/projects/atlas");
   const work = page.getByRole("region", { name: "Work", exact: true });
-  const projectCard = work.getByRole("article", { name: "Lease and policy", exact: true });
+  const projectRow = work.getByRole("link", { name: /^Lease and policy · Needs you · 1 question/ });
   await walk.state("05-project-retains-operator-choice-and-blocked-task", {
-    visible: [projectCard.getByText(policy.question, { exact: true })],
-    hidden: [projectCard.getByText(lease.question, { exact: true })],
+    visible: [projectRow],
+    hidden: [work.getByRole("article"), work.getByText(policy.question, { exact: true }), work.getByText(lease.question, { exact: true })],
+  });
+});
+
+test("Work rows retain running questions and partial answers, then keep the task after the final decision", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const { slug, initial } = await createGroup(request);
+  const [retention, region, owner] = initial.question_group.questions as [Question, Question, Question];
+  const workPath = "/projects/atlas?tab=work";
+  const work = page.getByRole("region", { name: "Work", exact: true });
+  const row = work.getByRole("link", { name: /^Rollout decisions ·/ });
+  const list = page.getByRole("article", { name: "Rollout decisions", exact: true });
+  const primary = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  const badge = (count: number) => primary.getByRole("link", { name: /Needs you/ }).locator(".badge").filter({ hasText: new RegExp(`^${count}$`) });
+  const back = info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : page.locator(".task-crumb");
+  await walk.open(workPath);
+  await expect(row).toHaveCount(1);
+  await walk.state("01-work-single-row-three-questions", {
+    visible: [row.getByText(/Needs you · 3 questions/), badge(5)],
+    hidden: [work.getByRole("article"), work.getByText(retention.question, { exact: true })],
+  });
+  await expect(primary.locator(".badge")).toHaveCount(1);
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`question=${retention.id}&revision=${retention.revision}$`));
+  await expect(groupCard(page, initial.question_group)).toBeInViewport();
+  await walk.state("02-work-opens-owning-question", {
+    visible: [questionCard(page, retention), back], hidden: [work, page.getByRole("region", { name: "Live session", exact: true })],
+  });
+  await send(page, "Could we roll back after day seven?");
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await modelCheckpoint(request, slug);
+  await back.click();
+  await expect(page).toHaveURL(workPath);
+  await walk.state("03-running-followup-keeps-attention", {
+    visible: [row.getByText(/Needs you · 3 questions/), row.getByText(/^Running/), badge(5)], hidden: [work.getByRole("article")],
+  });
+  await page.goForward();
+  await expect(questionCard(page, retention)).toBeInViewport();
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("blocked");
+  expect((await readTask(request, slug)).question_group.questions.filter((q) => q.status === "open")).toHaveLength(3);
+  if (info.project.name === "phone") await page.getByRole("button", { name: "Close task details", exact: true }).click();
+  await back.click();
+  await expect(page).toHaveURL(workPath);
+  await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
+    visible: [row.getByText(/Needs you · 3 questions/), row.getByText(/^Stopped/), badge(5)], hidden: [work.getByRole("article")],
+  });
+  await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
+  await primary.getByRole("link", { name: /Needs you/ }).click();
+  await list.getByRole("button", { name: "14 days", exact: true }).click();
+  await list.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await expect(list.getByText(retention.question, { exact: true })).toBeHidden();
+  await walk.state("04-inbox-partial-answer", {
+    visible: [list.getByText(region.question, { exact: true }), list.getByText(owner.question, { exact: true }), badge(4)],
+    hidden: [list.getByText(retention.question, { exact: true })],
+  });
+  await walk.open(workPath);
+  await walk.state("05-same-row-two-questions", {
+    visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Running/), badge(4)], hidden: [work.getByRole("article")],
+  });
+  await primary.getByRole("link", { name: /Needs you/ }).click();
+  await list.getByRole("button", { name: "Use recommendations", exact: true }).click();
+  await expect(list.getByText(region.question, { exact: true })).toBeHidden();
+  await walk.open(workPath);
+  await walk.state("06-same-row-last-question", {
+    visible: [row.getByText(/Needs you · 1 question/), row.getByText(/^Running/), badge(3)], hidden: [work.getByRole("article")],
+  });
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`question=${owner.id}&revision=${owner.revision}$`));
+  await send(page, "Release team");
+  await modelCheckpoint(request, slug);
+  expect((await readTask(request, slug)).question_group.questions.every((q) => q.status === "resolved")).toBe(true);
+  await back.click();
+  await expect(page).toHaveURL(workPath);
+  await walk.state("07-answered-task-still-current", {
+    visible: [row.getByText(/^Running/), badge(2)], hidden: [row.getByText(/Needs you/), work.getByRole("article")],
+  });
+  await expect(row).toHaveCount(1);
+  await expect(row).toHaveAttribute("href", taskPath(slug));
+});
+
+test("a concise decision retains its material consequence and reveals complete technical context in chat", async ({ page, request }, info) => {
+  const response = await request.post("/fixture/long-context");
+  expect(response.ok()).toBe(true);
+  const { slug, detail } = await response.json() as { slug: string; detail: string };
+  const initial = await readTask(request, slug);
+  const question = initial.question!;
+  const walk = walkthrough(page, info);
+  const list = page.getByRole("article", { name: "Choose retention window", exact: true });
+  const evidence = "Final verification: cleanup waits for the last retained backup and records its result in the task conversation.";
+  await walk.open("/");
+  await list.scrollIntoViewIfNeeded();
+  await expect(list.getByText("Longer instant rollback uses twice the temporary storage.", { exact: true })).toBeInViewport();
+  await expect(list.getByRole("button", { name: "Keep 14 days", exact: true })).toBeInViewport();
+  await walk.state("01-concise-decision-and-material-consequence", {
+    visible: [list.getByText("Choose retention window", { exact: true }), list.getByText(question.question, { exact: true }), list.getByText("Longer instant rollback uses twice the temporary storage.", { exact: true }), list.getByRole("button", { name: "Keep 14 days", exact: true })],
+    hidden: [list.getByText(evidence, { exact: false }), list.getByText("More context", { exact: true })],
+  });
+  await list.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  const card = questionCard(page, question);
+  const context = card.locator("details").filter({ has: page.getByText("More context", { exact: true }) });
+  await walk.state("02-owning-chat-context-collapsed", {
+    visible: [card.getByText(question.question, { exact: true }), context.locator("summary")],
+    hidden: [card.getByText(evidence, { exact: false })],
+  });
+  await walk.state("03-complete-context-expanded", {
+    action: () => context.locator("summary").click(), visible: [context.getByText(evidence, { exact: false })], hidden: [],
+  });
+  for (const paragraph of detail.split("\n\n")) await expect(context.getByText(paragraph, { exact: true })).toBeVisible();
+  await walk.state("04-context-collapsed-again", {
+    action: () => context.locator("summary").click(), visible: [card.getByRole("button", { name: "Keep 14 days", exact: true })],
+    hidden: [context.getByText(evidence, { exact: false })],
+  });
+  expect((await readTask(request, slug)).question?.status).toBe("open");
+});
+
+test("one global inbox spans projects while Work and question context retain their owner", async ({ page, request }, info) => {
+  const created = await request.post("/fixture/second-project");
+  expect(created.ok()).toBe(true);
+  const { slug } = await created.json() as { slug: string };
+  const walk = walkthrough(page, info);
+  const work = page.getByRole("region", { name: "Work", exact: true });
+  const primary = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  await walk.open("/projects/atlas?tab=work");
+  await walk.state("01-work-is-selected-project-only", {
+    visible: [work.getByRole("link", { name: /^Index rollout · Needs you/ })],
+    hidden: [work.getByRole("link", { name: /^Choose backup retention/ })],
+  });
+  await expect(page.locator(".badge:visible")).toHaveCount(1);
+  if (info.project.name === "phone") {
+    await page.getByRole("button", { name: "atlas", exact: true }).click();
+    const switcher = page.getByRole("dialog", { name: "Switch project", exact: true });
+    await walk.state("01b-project-switcher-without-competing-counts", {
+      visible: [switcher.getByRole("link", { name: "atlas", exact: true }), switcher.getByRole("link", { name: "beacon", exact: true })],
+      hidden: [switcher.locator(".badge")],
+    });
+    await page.keyboard.press("Escape");
+  }
+  await primary.getByRole("link", { name: /Needs you/ }).click();
+  const card = page.getByRole("article", { name: "Choose backup retention", exact: true });
+  await walk.state("02-cross-project-inbox", {
+    visible: [page.getByText(/^3 questions across 2 projects/), card, page.getByRole("article", { name: "Index rollout", exact: true })],
+    hidden: [work],
+  });
+  await expect(page.locator(".badge:visible")).toHaveCount(1);
+  await card.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/beacon/tasks/${slug}\\?question=`));
+  await walk.state("03-owning-project-chat", {
+    visible: [page.getByRole("region", { name: "Task conversation", exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
+    hidden: [work],
+  });
+  const back = info.project.name === "phone" ? page.getByRole("button", { name: "Back", exact: true }) : page.locator(".task-crumb");
+  await back.click();
+  await expect(page).toHaveURL("/");
+  await walk.state("04-back-to-global-inbox", { visible: [card], hidden: [page.getByRole("region", { name: "Task conversation", exact: true })] });
+  await walk.open("/projects/beacon?tab=work");
+  await walk.state("05-other-project-work", {
+    visible: [work.getByRole("link", { name: /^Choose backup retention · Needs you · 1 question/ })],
+    hidden: [work.getByRole("link", { name: /^Index rollout/ })],
   });
 });
 
@@ -308,6 +469,11 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
   expect(waiting.agent_id).toBeNull();
   expect(waiting.question).toMatchObject({ id: question.id, revision: question.revision, status: "open" });
   expect((await queue(request)).some((row) => row.slug === slug)).toBe(true);
+  await walk.open("/projects/atlas?tab=work");
+  await walk.state("00-requeued-question-discoverable-in-work", {
+    visible: [page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Index rollout · Needs you · 1 question · Queued/ })],
+    hidden: [page.getByRole("region", { name: "Work", exact: true }).getByRole("article")],
+  });
   await walk.open(atQuestion(slug, question));
   const card = questionCard(page, question);
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
@@ -360,6 +526,12 @@ test("a requeued dilemma accepts discussion and a durable decision while its nex
   await page.reload();
   await recorded(card);
   await walk.state("04-queued-receipt-and-composer-survive-reload", { visible: [card, field], hidden: [accept] });
+  await walk.open("/projects/atlas?tab=work");
+  const work = page.getByRole("region", { name: "Work", exact: true });
+  await walk.state("05-answered-task-remains-queued-in-work", {
+    visible: [work.getByRole("link", { name: /^Index rollout · Queued/ })],
+    hidden: [work.getByText(/Needs you ·/).filter({ hasText: "Index rollout" }), work.getByRole("article")],
+  });
 });
 
 test("one question offers immediate explicit alternatives without a separate confirmation", async ({ page, request }, info) => {

@@ -125,7 +125,9 @@ releases its hold. The owner then rechecks and lands normally.
   Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
   Shared-file changes still need rebasing and reconciliation by their owners.
 - **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
-  shows one question or a small group together. The model can ask a plain question, offer one
+  makes the task's purpose and actual choice clear with one question or a small group together,
+  concise actions, and the material consequences needed to answer. Detailed reasoning and history
+  stay accessible in the owning conversation. The model can ask a plain question, offer one
   recommended quick action, or offer two to three choices with a recommendation. A single quick
   choice takes one click; grouped selections send together, with nothing preselected. Open the item to
   discuss the actual question in its owning L2 conversation. A follow-up leaves it open; a clear
@@ -141,6 +143,13 @@ releases its hold. The owner then rechecks and lands normally.
   behind Show. Monitor shows engine routing, usage windows and observed sessions,
   including missing or stale readings. Each usage window appears independently: an absent window
   is explicit, zero remains a reading, and available figures stay visible when stale.
+- **Project work at a glance.** Work lists every current project task once, including tasks
+  awaiting your answer, running, queued or waiting on L3. Compact status rows open the owning
+  conversation at its question when one needs you; questions and quick answers live in Needs you
+  and that chat. Recent completed tasks stay under **Done this week**. Only global Needs you has
+  an attention badge: unanswered questions plus operational attention items, labelled separately
+  in summaries. Answering changes attention immediately; execution status changes when observed.
+  Unknown or stale reads are explicit, and Back returns to the originating Work or Needs you view.
 - **Task tokens.** Follow cumulative locally observed input/output tokens, expand engine and
   owner/helper breakdowns, and retain the final observation with the archived task.
 
@@ -272,9 +281,12 @@ browser history entries. Browser Back and the task's Back control return to the 
 on direct entry, the app Back control opens the owning project's L3 conversation. A `/live` link
 opens the live session, including after reload.
 
-An L2 design question can include **View proposal · vN**. It opens saved screenshots and the
-proposal text in a browser tab over the normal app connection, on phone or desktop, before the
-design is merged. **Back to question** returns to the same discussion and decision controls.
+An L2 question with attached evidence shows **View preview · vN** in Needs you and its owning
+conversation. When the open question scrolls out of view, the chat's question navigation keeps
+its preview reachable. Work opens that same question from the task row. The preview opens saved
+screenshots and text in another browser tab, leaving the original view and draft in place;
+closing that tab returns there. **Back to question** opens the exact discussion and decision controls.
+The captured title identifies a design proposal or implementation review without relabelling old evidence.
 Each version keeps its captured content; a replacement advances the question revision and earlier
 links remain identifiable. Interactive wireframes are represented by screenshots of their states;
 submitted HTML does not execute. Viewing or discussing a proposal leaves its question open, and

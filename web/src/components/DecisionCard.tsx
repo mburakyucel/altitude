@@ -7,7 +7,7 @@ import { useToast } from "../data/Toast";
 import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
-import { InlineProse, ProseRepository } from "./Prose";
+import { InlineProse, Prose, ProseRepository } from "./Prose";
 
 type Option = { key: string; label: string; text: string };
 type Answer = { question_id: string; revision: number; option_key: string };
@@ -84,9 +84,13 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
         const options = optionsFor(question);
         return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
           <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
-          {chat && question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View proposal · v{question.revision}</a> : null}
+          {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
           {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
+          {chat && question.detail && question.detail !== question.question ? <details className="question-context">
+            <summary>More context</summary>
+            <Prose text={question.detail} />
+          </details> : null}
           {resolved ? <div className="decision-receipt" role="status">
             <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b>
             {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
@@ -137,9 +141,9 @@ export function DecisionCard({ decision, decisions = [decision], chip = false, s
       <div className="decision-kind" data-tone={kind.tone}>
         <span className="kind-label">{kind.label}</span>
         {chip ? <span className="chip">{decision.project}</span> : null}
-        <Link className="decision-task truncate" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
         <span className="ml-auto text-muted" title={exactTime(decision.asked)}>{ageText(decision.asked)}</span>
       </div>
+      <Link className="decision-task" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
       <QuestionSet decisions={decisions} disabled={disabled} from={from} />
       {decision.status === "open" && decision.state === "running" ? <p className="text-meta text-muted">Discussion in progress · decision still open</p> : null}
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>

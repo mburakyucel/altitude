@@ -637,6 +637,15 @@ conversation with their source attribution. The model chooses a plain question, 
 quick action, or two to three explicit options with one recommendation. A fault is operational and
 uses `--fault`, without inventing a recommended choice.
 
+Write `--reason` / `--question` as the short, plain-language decision itself. The task title gives
+its user-facing purpose; `--recommendation` names the chosen action, `--label` is its concise button
+label, and `--why` gives the material consequence or tradeoff needed before answering. Keep each
+group member's `question`, option labels/text and `why` equally focused. Put full reasoning,
+implementation detail, evidence and history in ordinary replies in the owning task conversation
+(`alt task reply` for L2, `alt task message` for L3). Existing saved question detail remains readable
+there. Rewrite around the choice rather than relying on automatic shortening, and never hide a
+consequence needed for an informed answer.
+
 The model chooses the question, then invokes the CLI through its engine's execution tool. A minimal
 ordinary dilemma is:
 
@@ -785,8 +794,9 @@ does not require a new task or complete the current one.
 ### Task design previews
 
 Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
-explanation with its ordinary question. The resulting **View proposal · vN** link in the task
-conversation opens a browser tab over Altitude's normal connection. Phone and desktop readers can
+explanation with its ordinary question. The resulting **View preview · vN** link in Needs you and the task
+conversation opens a browser tab over Altitude's normal connection. Use a title that identifies
+whether the captures show a proposal or an implementation review. Phone and desktop readers can
 inspect the screenshots at full size and use **Back to question** for feedback or the existing quick
 answer. A local filesystem link is not a review entry.
 
@@ -827,7 +837,8 @@ publish them before any repository commit. Follow the [capture guidance](../AGEN
 The response includes `design_url`, for example
 `/projects/example/tasks/chat-layout/design/<question-id>/1`. This is a path on the current Altitude
 connection, not a filesystem path or an external upload. Use the returned reference; the same
-**View proposal · v1** entry is rendered beside the question in its conversation. Publication follows
+**View preview · v1** entry is rendered in Needs you, beside the question in its conversation and
+in the open question's navigation when it is offscreen. Publication follows
 the ordinary L3-first audience rules unless explicitly directed to the operator.
 
 The question contains the captured text and titles, and the task retains the selected image bytes.

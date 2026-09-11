@@ -44,7 +44,7 @@ CSS = r"""
 .cf-phone .cf-compose-wrap{padding:8px 12px}.cf-phone .cf-compose{padding:4px;display:flex;align-items:flex-end;gap:2px;border-radius:26px}.cf-phone .cf-compose textarea{font-size:16px;flex:1;min-height:44px;max-height:120px;padding:10px 8px;line-height:24px}.cf-phone .cf-compose-row{display:contents}.cf-phone .cf-icon{flex:none}.cf-phone .cf-hint{font-size:12px;margin-top:6px}.cf-phone .cf-hint.routine{display:none}
 .cf-phone .cf-tabbar{height:84px;flex-shrink:0;border-top:1px solid var(--hairline);background:var(--page);display:flex;justify-content:space-around;padding:6px 0 26px}
 .cf-phone .cf-compact-title{flex:1;font-size:17px;font-weight:600;line-height:1.3;margin:0;letter-spacing:0}.cf-compact-title small{display:block;font-size:12px;font-weight:400;color:var(--text-muted)}.cf-local-tabs{display:flex;gap:20px;height:44px;flex-shrink:0;padding:0 16px;border-bottom:1px solid var(--hairline);font-size:14px;align-items:center}.cf-local-tabs a{min-height:44px;display:flex;align-items:center}.cf-local-tabs .on{border-bottom:2px solid var(--accent)}
-.cf-tabbar a{min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);gap:2px;min-width:64px}.cf-tabbar a.on{color:var(--accent-text)}
+.cf-tabbar a{position:relative;min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);gap:2px;min-width:64px}.cf-tabbar a.on{color:var(--accent-text)}.cf-tabbar .badge{position:absolute;top:0;left:calc(50% + 8px);height:18px;min-width:18px;font-size:10px}
 .cf-phone .cf-keyboard{display:block;background:var(--bubble);height:230px;padding:14px 8px 24px;flex-shrink:0}.cf-keyboard .keys{display:flex;justify-content:center;gap:5px;margin-bottom:9px}.cf-keyboard span{border-radius:5px;background:var(--card);box-shadow:0 1px 1px var(--text-muted);font-size:18px;text-align:center;padding:7px 9px}.cf-keyboard .space{width:170px;font-size:14px}
 .cf-keyboard-open .cf-phone .cf-tabbar{display:none}.cf-phone .cf-empty{padding:64px 10px}.cf-phone .cf-prototype{margin-left:auto;font-size:10px}
 """
@@ -105,9 +105,11 @@ def generate(out, board, icon):
         action = choices if immediate else f'<button class="cf-button primary" data-single="7" {"disabled" if disabled else ""}>Use 7 days &amp; resume</button>'
         return f'<article class="cf-question" aria-label="Open question" id="question-retention" tabindex="-1"><div class="cf-author">L2 · your decision</div><h2>How long should we keep the old index?</h2>{"<p>No recommendation yet. Discuss the tradeoff with the L2 here.</p>" if plain else "<p class=cf-recommendation><strong>I recommend 7 days.</strong> It covers the rollout without another month of storage.</p><div class=cf-choices>" + action + "</div>"}</article>'
     def group(mobile, listing=False):
+        context = '' if listing else '<details class="cf-details"><summary>More context</summary><p>The old index remains available for instant rollback during retention. After deletion, restoring search from the daily snapshot takes about two hours. Longer retention keeps both indexes in storage for longer.</p></details>'
         return f"""<article class="cf-question cf-group" aria-label="Index rollout questions" id="questions" tabindex="-1">
-<div class="cf-meta">{'Atlas · Index rollout' if listing else 'L3 brought these questions to the L2'}<span class="cf-open-count">3 questions need you</span></div>
-<div class="cf-group-item" data-item="retention"><h2>How long should we keep the old index?</h2><p>Recommended: 7 days for a quick rollback.</p><div class="cf-choices" role="group" aria-label="Retention answer">{''.join(f'<button class="cf-button" aria-pressed="false" data-pick="retention" data-value="{d} days">{d} days</button>' for d in (7,14,30))}</div></div>
+<div class="cf-meta">{'Atlas · L3 asks' if listing else 'L3 brought these questions to the L2'}<span class="cf-open-count">3 questions need you</span></div>
+{'<h2>' + link('Index rollout', 'Group', mobile) + '</h2>' if listing else ''}
+<div class="cf-group-item" data-item="retention"><h2>How long should we keep the old index?</h2><p>Recommended: 7 days of instant rollback. After deletion, recovery takes two hours.</p>{context}<div class="cf-choices" role="group" aria-label="Retention answer">{''.join(f'<button class="cf-button" aria-pressed="false" data-pick="retention" data-value="{d} days">{d} days</button>' for d in (7,14,30))}</div></div>
 <div class="cf-group-item" data-item="region"><h2>Where should the backup live?</h2><p>Recommended: West, beside the primary.</p><div class="cf-choices" role="group" aria-label="Backup region answer">{''.join(f'<button class="cf-button" aria-pressed="false" data-pick="region" data-value="{region}">{region}</button>' for region in ('West','East'))}</div></div>
 <div class="cf-group-item" data-item="owner"><h2>Who should receive the rollout report?</h2><p>Reply in the L2 chat with a name or team.</p></div>
 <div class="cf-group-footer"><button class="cf-button" data-send-answers disabled>Send answers</button><button class="cf-button primary" data-recommendations>Use recommendations</button></div>
@@ -142,7 +144,9 @@ def generate(out, board, icon):
         listing = scene == 'NeedsYou' or state.startswith('list-') or state == 'discussion'
         top = 'Altitude' if listing else link(icon('chev-l') + ' Needs you', 'NeedsYou', mobile, '', extra='data-back')
         title = 'Needs you' if listing else 'Index rollout'
-        status = '3 questions across your projects' if listing else 'Decisions recorded · work resumed' if scene == 'Accepted' else 'Questions and discussion with the L2'
+        status = '3 questions across 1 project' if listing else 'Decisions recorded · work resumed' if scene == 'Accepted' else 'Questions and discussion with the L2'
+        if listing and state.startswith('list-'):
+            status = 'Saved attention · refresh needed' if state == 'list-offline' else 'Attention unavailable' if state == 'list-error' else 'Loading attention…'
         if scene == 'NeedsYou': content = group(mobile, True)
         elif scene == 'Question': content = assistant('The new index is ready. The old one is only needed if we roll back.') + single(mobile, immediate=True) + evidence()
         elif scene == 'Group': content = group(mobile) + '<p class="cf-note">All three questions are here. Pick any quick answers and send once, or reply normally below.</p>' + evidence()
@@ -161,8 +165,13 @@ def generate(out, board, icon):
             elif state == 'new-reply': content += single(mobile) + link('Open the reply', 'Followup', mobile)
             elif state != 'no-recommendation': content += single(mobile, disabled=state in ('cached-error','denied','accepting','list-offline','sending'))
             else: content = single(mobile, plain=True)
-        rail = f'<aside class="rail"><div class="brand">{icon("chat")}Altitude</div>{link("Needs you", "NeedsYou", mobile, "ri" + (" sel" if listing else ""))}<div class="rsec">Projects</div><div class="ri sel">Atlas</div><div class="ri">Meadow</div><div class="cf-rail-bottom">Engine · connected<br><br>Monitor<br><br>Operator</div></aside>'
-        tabs = f'<nav class="cf-tabbar" aria-label="Main"><a href="MobileProject.html">{icon("chat")}Chat</a><a href="MobileWork.html">{icon("panel")}Work</a>{link(icon("tray") + "Needs you", "NeedsYou", mobile, "on")}<a href="MobileMonitor.html">{icon("pulse")}Monitor</a></nav>'
+        count = 0 if scene == 'Accepted' or state in ('accepted-waiting', 'archived') else 1 if scene in ('Question', 'Partial') or scene == 'States' else 3
+        badge = f'<span class="badge" data-attention {"hidden" if not count else ""}>{count}</span>'
+        if state in ('list-loading', 'list-error', 'list-offline'):
+            label, value = {'list-loading': ('Attention loading', '…'), 'list-error': ('Attention unavailable', '?'), 'list-offline': ('Saved attention · 1 question', '1')}[state]
+            badge = f'<span class="badge" aria-label="{label}" title="{label}">{value}</span>'
+        rail = f'<aside class="rail"><div class="brand">{icon("chat")}Altitude</div>{link("Needs you" + badge, "NeedsYou", mobile, "ri" + (" sel" if listing else ""))}<div class="rsec">Projects</div><div class="ri sel"><span class="dot held"></span>Atlas</div><div class="ri"><span class="dot idle"></span>Meadow</div><div class="cf-rail-bottom">Engine · connected<br><br>Monitor<br><br>Operator</div></aside>'
+        tabs = f'<nav class="cf-tabbar" aria-label="Main"><a href="MobileProject.html">{icon("chat")}Chat</a><a href="MobileWork.html">{icon("panel")}Work</a>{link(icon("tray") + "Needs you" + badge, "NeedsYou", mobile, "on")}<a href="MobileMonitor.html">{icon("pulse")}Monitor</a></nav>'
         head = f'<header class="cf-top">{top}<span class="cf-prototype">Fictional design</span></header><div class="cf-head"><h1>{title}</h1><div class="cf-meta" data-summary>{status}</div></div>'
         if mobile and not listing:
             short_status = 'L2 · Done' if state == 'archived' else 'L2 · Running' if scene == 'Accepted' else 'L2 · Needs your answer'
@@ -181,7 +190,8 @@ function render(){
  if(read('single')&&(scene==='Question'||scene==='States'&&!['archived','revised','missing','accepted-waiting'].includes(state))){location.replace(dest('Accepted'));return}
  document.querySelectorAll('[data-item]').forEach(row=>row.hidden=Boolean(answers[row.dataset.item]));
  const left=['retention','region','owner'].filter(id=>!answers[id]);
- if(scene==='NeedsYou'){document.querySelector('[data-summary]').textContent=left.length?left.length+' question'+(left.length===1?'':'s')+' across your projects':'All caught up';if(!left.length){document.querySelector('.cf-column').innerHTML='<div class="cf-empty"><h2>Nothing needs your decision.</h2><p>The recorded answers stay in the L2 conversation.</p><a class="cf-link" href="'+dest('Accepted')+'">View conversation</a></div>';return}}
+ if(['NeedsYou','Group','Partial','Followup'].includes(scene))document.querySelectorAll('[data-attention]').forEach(e=>{e.textContent=left.length;e.hidden=!left.length});
+ if(scene==='NeedsYou'){document.querySelector('[data-summary]').textContent=left.length?left.length+' question'+(left.length===1?'':'s')+' across 1 project':'All caught up';if(!left.length){document.querySelector('.cf-column').innerHTML='<div class="cf-empty"><h2>Nothing needs you.</h2><p>The recorded answers stay in the L2 conversation.</p><a class="cf-link" href="'+dest('Accepted')+'">View conversation</a></div>';return}}
  document.querySelectorAll('.cf-open-count').forEach(e=>e.textContent=left.length+' question'+(left.length===1?'':'s')+' need'+(left.length===1?'s':'')+' you');
  const count=Object.keys(picks).length;
  const rec=document.querySelector('[data-recommendations]');if(rec)rec.hidden=Boolean(count||answers.retention&&answers.region);

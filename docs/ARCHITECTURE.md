@@ -918,9 +918,20 @@ the queue's own reason (the WIP limit, an engine hold, a restart in progress, a 
 or plain dispatch), so the card never names a file lease. A task blocked waiting on L3 reads "Waits
 for L3" with the running dot, and the rail's project dot counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. The work panel (spec §3.7) reads the project's
-tasks and the overview queue filtered to the project: the queue's decisions as compact cards under
-Needs you, every other active task as a row under Active, and the tasks done or rejected in the last
-seven days folded under Done this week; a task that changes section fades in where it now belongs.
+tasks and the overview queue filtered to the project. **Current** contains every unfinished task
+once as a compact status row; tasks done or rejected in the last seven days fold under **Done this
+week**. A row with an open operator question shows **Needs you** and its question count alongside
+independent execution or fault status, and opens the owning question's conversation anchor. Other
+rows open the ordinary task conversation. Questions and answer controls live in global Needs you
+and the owning chat. Partial or final answers update the same row; only completion or rejection
+moves it out of Current. Saving an answer does not assert that the worker resumed.
+
+Only global Needs you carries a numeric attention badge. Project rail and switcher rows retain
+their state dots. The badge counts unresolved operator questions plus existing operational
+attention items; Needs you and project summaries label questions and operational items separately.
+Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
+status as stale; Work links stay available, while Needs you disables answers until a fresh read.
+App Back and browser history preserve the originating Work or Needs you view.
 
 ### From model judgment to a task question or preview
 
@@ -1034,6 +1045,12 @@ their recommendations; report review can raise its own dilemma. Merge holds reta
 The shared question component appears on Needs you and at its conversation anchor. Single choices
 act immediately. Group choices remain staged until **Send N answers**; **Use recommendations** is
 available when no manual picks exist and answers only members with explicit recommendations.
+Needs you keeps the task's purpose, complete question, concise recommendation and material
+consequences visible before an answer. Owners write these for an operator deciding at a glance;
+clipping long technical prose is not a substitute. Additional saved question detail opens in a
+**More context** disclosure in the owning chat when it differs from the question, alongside its
+surrounding reasoning, evidence and history. This
+uses the existing question and conversation records without a second summary or decision store.
 `/projects/<name>/tasks/<slug>?question=<id>&revision=<n>` focuses that question's group
 and surrounding prose, suppressing the initial scroll to latest. Historical revisions remain
 readable under **Earlier question**, opened automatically by an old-version link; stale controls
@@ -1094,7 +1111,12 @@ question revision; changing any selected content or label advances it, preservin
 and design. A normal block without design inputs retains the attached capture. There is no separate
 review conversation, approval state or artifact registry.
 
-`question_view` exposes `design_url` for the conversation's compact **View proposal · vN** link.
+`question_view` exposes `design_url` for **View preview · vN** in Needs you and the owning question.
+The conversation's offscreen-question navigation also exposes the open question's attachment.
+Within a group it follows an open member with a preview, then another open member, including after
+partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
+question through its task row. Preview headings use the captured title to distinguish a proposal
+from an implementation review. Opening a separate tab preserves the originating route and draft.
 `/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
 screenshots, full-size image links, explanation and **Back to question**. The page reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
