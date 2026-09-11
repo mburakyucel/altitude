@@ -148,12 +148,11 @@ test("Work rows retain running questions and partial answers, then keep the task
   });
   await page.goForward();
   await expect(questionCard(page, retention)).toBeInViewport();
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Task details", exact: true }).click();
   await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await page.getByRole("group", { name: "Stop this task?", exact: true }).getByRole("button", { name: "Stop", exact: true }).click();
-  await expect.poll(async () => (await readTask(request, slug)).state).toBe("blocked");
+  await expect(page.getByRole("group", { name: "Stop this task?", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Continue session", exact: true })).toBeVisible();
+  await expect.poll(async () => (await readTask(request, slug)).steering.state).toBe("stopped");
   expect((await readTask(request, slug)).question_group.questions.filter((q) => q.status === "open")).toHaveLength(3);
-  if (info.project.name === "phone") await page.getByRole("button", { name: "Close task details", exact: true }).click();
   await back.click();
   await expect(page).toHaveURL(workPath);
   await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
@@ -163,7 +162,8 @@ test("Work rows retain running questions and partial answers, then keep the task
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();
   await list.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  // Answering records the choice, while explicit Stop still holds session delivery.
+  await expect.poll(async () => (await readTask(request, slug)).steering.state).toBe("stopped");
   await expect(list.getByText(retention.question, { exact: true })).toBeHidden();
   await walk.state("04-inbox-partial-answer", {
     visible: [list.getByText(region.question, { exact: true }), list.getByText(owner.question, { exact: true }), badge(4)],
@@ -171,6 +171,13 @@ test("Work rows retain running questions and partial answers, then keep the task
   });
   await walk.open(workPath);
   await walk.state("05-same-row-two-questions", {
+    visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Stopped/), badge(4)], hidden: [work.getByRole("article")],
+  });
+  await row.click();
+  await page.getByRole("button", { name: "Continue session", exact: true }).click();
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await back.click();
+  await walk.state("05b-explicit-continuation-keeps-question-row", {
     visible: [row.getByText(/Needs you · 2 questions/), row.getByText(/^Running/), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
