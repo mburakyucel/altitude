@@ -1514,6 +1514,23 @@
   margin: 0 auto;
   padding: 4px 28px 16px;
 }
+.task-activity { padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 6px; }
+.task-activity-heading, .task-dock-controls, .task-steering { display: flex; align-items: center; gap: 10px; }
+.task-activity-heading, .task-dock-controls { justify-content: space-between; }
+.task-activity-heading { font-size: 12px; }
+.task-activity p { margin: 3px 0 0; }
+.task-activity-words { font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.task-activity[data-expanded] .task-activity-words { display: block; max-height: 25vh; overflow-y: auto; }
+.task-activity-observation { display: flex; align-items: center; gap: 6px; }
+.task-dock-controls { min-height: 42px; font-size: 12px; margin-bottom: 3px; }
+.task-steering { flex-wrap: wrap; justify-content: flex-end; font-size: 12px; }
+.task-stop { border: 1px solid var(--border); gap: 8px; }
+.task-stop kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
+.live-steering { padding: 0 14px 8px; }
+.message-delivery { max-width: 90%; text-align: right; }
+@media (max-height: 650px) {
+  .task-activity:not([data-expanded]) .task-activity-words, .task-activity:not([data-expanded]) .task-activity-age { display: none; }
+}
 .shell[data-phone] .convo-scroll {
   padding: 12px 16px 8px;
 }

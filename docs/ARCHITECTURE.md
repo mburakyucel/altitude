@@ -54,18 +54,29 @@ or memory store and no expansion of project-local or upstream reporting authorit
 L2 receives the request, repository context, lease, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop aborts a worker. Appending a message to a blocked
+worker at its next checkpoint; an explicit Stop ends a worker. Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
-faulted task. An L3 CLI process stops there: altd coalesces that
+faulted task and messages held by Stop. Stop records its identity when accepted, before termination,
+so old or racing sends cannot restart the session. A correction must name the confirmed Stop it
+observed; explicit Continue releases the same held inbox. An L3 CLI process stops there: altd coalesces that
 request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
+A claimed message is still queued. Successful input handoff and matching session initialization
+record delivery for the exact bound batch; native hook attachments can independently prove delivery.
+Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
+empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
+session, while engine failures and explicit question blocks retain their existing recovery paths.
+No-code completion checks for accepted steering under the same task lock as archival. A pending
+message keeps the saved owner session available for continuation instead of finalizing its earlier result.
 An explicit question block needs a later message or resume request; pre-block inbox messages stay
 available but cannot wake it. Each block or escalation supersedes earlier wake requests and stamps
 the block identity checked by resume claims. A stale launch cannot clear a newer block: dispatch
 binds only a queued task, and a superseded resume stops its unowned replacement and restores its
 message batch while retaining the question.
-Late launch faults retain incident evidence but cannot retag a newer question as a fault. Resume
+Late worker faults retain incident evidence but cannot retag a newer question, accepted message wake,
+explicit Stop or replacement worker. The fault handler checks the observed block, wake and worker
+identities under the task lock. Resume
 receipts consume only their own block and request, leaving a newer answer due.
 Explicit `alt task resume`, `stop`, and `reject` calls also stop in the CLI after persisting one
 `daemon-request` event with the task, actor, operation, and required reason. Altd checks the recorded
@@ -1156,8 +1167,8 @@ and report reads. No session is one muted sentence. Loading is a
 skeleton in the page's shape, and a failed read is one sentence with Retry.
 
 The task page is the operator's conversation with the L2 beside the worker's live session
-(design spec §3.10). Its header carries the crumb back to the project, the quiet Stop and Reject
-actions with an inline confirm in place of any browser dialog, the title with its state dot, a muted
+(design spec §3.10). Its desktop header carries the crumb back to the project, Reject with an inline confirm,
+the title with its state dot, a muted
 line (attempt, when the task started or finished, context used), and chips: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
@@ -1166,23 +1177,34 @@ day-divider, and composer components: the operator's rows as bubbles and the L2'
 prose under day dividers, the question component at its recorded message anchor, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with
-"L3 has been told". The live
+"L3 has been told". One replacing two-line public update sits above the composer, expands on
+request, and separates prose age from
+recorded activity. After 60 seconds without observed output it says no new activity; unavailable or
+untimed evidence never becomes apparent progress. Stop is one click beside the composer and in
+Live session at both viewports. It remains Stopping until termination is evidenced; failed or unknown
+termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
+Continue preserves the unsent draft; sending a correction explicitly resumes the saved session.
+Desktop Escape applies only outside inputs, dialogs, recording, menus and overlays. The live
 session panel is closed when entering a question. When opened, it is 480px inline at 1280px and
-wider and an overlay from the header's panel button below that; it reads the worker's own session log (Claude's session JSONL, or every turn of the
-Codex thread) together with Altitude's task events as one transcript: tinted prompt blocks, the
+wider and an overlay from the header's panel button below that; it reads the worker's native session
+and task-owned turn records together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
 as thin separators with subtle timestamps, hidden reasoning never shown, and Raw events behind a
 toggle for the complete redacted records, the task's other operational events among them. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
 missing session file says so. On a phone one header carries Back, title, L2 state and independent
-Merge held status. Its title and details button open metadata, tokens, full reasons and existing
-Stop/Reject/Resume controls with their confirmations. Desktop keeps direct header actions. Two tabs,
-Conversation and Live session, switch the content (`/live` selects the second); they stay visible
+Merge held status. Its title and details button open metadata, tokens, full reasons, Reject with
+confirmation and operational Resume. Stop and Continue stay directly accessible in both views.
+Desktop keeps direct header actions. Two tabs, Conversation and Live session, switch the content
+(`/live` selects the second); they stay visible
 when software keyboard use hides bottom navigation. The composer sits above that navigation or
 the keyboard. Details closes back to its opener without changing the draft or reading position.
 Open questions retain their chat anchor and View question action, with no generic Resume; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
-read-only with the composer gone.
+read-only with the composer and activity preview gone. View switches preserve draft text and selection.
+The read-only activity projection uses only the selected worker generation, existing redaction and
+public output. Provider parsing stays in the engine seam; no summarizer, extra model instructions,
+new archive or copied conversation replies supply the preview.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks

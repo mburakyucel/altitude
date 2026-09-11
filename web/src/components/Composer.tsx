@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { ApiError, transcribeVoice } from "../data/api";
 
 /*
@@ -83,6 +83,10 @@ export interface ComposerProps {
   /** The desktop pill: the engine pin on L3 chat; phone uses project details. */
   pill?: ReactNode;
   disabled?: boolean;
+  /** A worker stop can hold sending while the operator continues editing or dictating. */
+  sendDisabled?: boolean;
+  selection?: RefObject<{ start: number; end: number } | null>;
+  onEscapeOwnership?: (owned: boolean) => void;
   autoFocus?: boolean;
 }
 
@@ -233,6 +237,9 @@ export default function Composer({
   hint,
   pill,
   disabled = false,
+  sendDisabled = false,
+  selection,
+  onEscapeOwnership,
   autoFocus = false,
 }: ComposerProps) {
   const hintId = useId();
@@ -282,6 +289,14 @@ export default function Composer({
       window.removeEventListener("resize", sizeField);
     };
   }, [value, phase]);
+
+  useEffect(() => {
+    onEscapeOwnership?.(phase !== "idle");
+    return () => onEscapeOwnership?.(false);
+  }, [phase, onEscapeOwnership]);
+  useEffect(() => {
+    if (selection?.current) field.current?.setSelectionRange(selection.current.start, selection.current.end);
+  }, [selection]);
 
   useEffect(() => {
     mounted.current = true;
@@ -380,7 +395,7 @@ export default function Composer({
   const submit = useCallback(
     async (text: string) => {
       const ready = text.trim();
-      if (!ready || disabled) return;
+      if (!ready || disabled || sendDisabled) return;
       const id = crypto.randomUUID();
       try {
         const saved = readSubmitted(conversation);
@@ -413,7 +428,7 @@ export default function Composer({
           error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
       }
     },
-    [conversation, disabled, focusField, onChange, onSubmit],
+    [conversation, disabled, sendDisabled, focusField, onChange, onSubmit],
   );
   // A recording can outlive the render that supplied its submit callback or disabled state.
   const currentSubmit = useRef(submit);
@@ -567,6 +582,18 @@ export default function Composer({
     focusField();
   }, [focusField, releaseStream, stream]);
 
+  useEffect(() => {
+    if (phase === "idle") return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented ||
+          document.querySelector('[role="dialog"], [role="menu"], [aria-haspopup][aria-expanded="true"], .overlay')) return;
+      event.preventDefault();
+      cancel();
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, [phase, cancel]);
+
   const toggleMic = useCallback(() => {
     if (phase === "listening") stop();
     else if (phase === "idle") void start();
@@ -597,7 +624,7 @@ export default function Composer({
   const listening = phase === "listening" || phase === "starting";
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
-  const canSend = !disabled && (phase === "listening" || (phase === "idle" && value.trim().length > 0));
+  const canSend = !disabled && !sendDisabled && (phase === "listening" || (phase === "idle" && value.trim().length > 0));
   const micShown = !unavailable;
   const micDisabled = denied || disabled || transcribing;
 
@@ -664,6 +691,8 @@ export default function Composer({
           autoFocus={autoFocus}
           onChange={(event) => editDraft(event.target.value)}
           onKeyDown={onFieldKeyDown}
+          onSelect={(event) => { if (selection) selection.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }}
+          onBlur={(event) => { if (selection) selection.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }}
         />
         <div className="composer-row">
           {pill ? <div className="composer-pill">{pill}</div> : null}

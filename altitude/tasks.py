@@ -309,10 +309,12 @@ def _save_claim_task(project: str, task: dict) -> None:
 
 def _rows(path: Path, what: str) -> list[dict]:
     """Read one JSONL file of messages, failing loudly on a corrupt record."""
-    if not path.exists():
+    try:
+        contents = path.read_text()
+    except FileNotFoundError:
         return []
     rows = []
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    for number, line in enumerate(contents.splitlines(), 1):
         if not line.strip():
             continue
         try:
@@ -381,7 +383,8 @@ def continue_report(project: str, task: dict, *, actor: str, reason: str, check_
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
             expected_attempt: int | None = None, wake_blocked: bool = True,
             question_id: str | None = None, revision: int | None = None,
-            group_id: str | None = None, group_revision: int | None = None) -> dict:
+            group_id: str | None = None, group_revision: int | None = None,
+            stop_id: str | None = None) -> dict:
     """Append one message to the task conversation. Burak's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
     the current one."""
@@ -392,6 +395,8 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError("task message is empty")
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if stop_id is not None and stop_id != task.get("stop_id"):
+            raise TransitionError("The stopped session changed. Refresh before sending this correction.")
         allowed = ("running", "blocked", "reported")
         if role != "l2" and task.get("questions"):
             allowed += ("queued",)  # a known dilemma remains discussable while its next attempt waits
@@ -444,7 +449,11 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
                 S.save_task(project, task)
             # I-20260904-062512: the durable inbox is also altd's handoff. The coordinator must not run the
             # provenance gate itself because its deployment-checkout Git metadata is deliberately read-only.
-            if task.get("state") == "blocked" and wake_blocked:
+            # #302: a send already in flight, or from a stale running tab, cannot undo Stop.
+            continue_stopped = (task.get("stop_id") == stop_id and stop_id is not None
+                                and steering_view(task, S.read_events(project, slug),
+                                                  job_root=d / "l2-engine")["state"] == "stopped")
+            if task.get("state") == "blocked" and wake_blocked and (not task.get("stop_id") or continue_stopped):
                 task["resume_request"] = row["id"]
                 task["resume_after"] = task.get("resume_after") or S.now()
                 task.pop("resume_failed", None)
@@ -480,6 +489,48 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
     if limit is not None:
         count = max(0, int(limit))
         rows = rows[-count:] if count else []
+    return rows
+
+
+def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
+    """UI wording derives from the existing worker operation and its termination receipt."""
+    request = task.get("daemon_request") or {}
+    stop_id = task.get("stop_id")
+    current_stop = request.get("operation") == "stop" and request.get("id") == stop_id
+    active_request = request.get("status") in ("pending", "executing")
+    confirmed = stop_id and any(e.get("kind") == "stopped" and e.get("stop_id") == stop_id for e in events)
+    if stop_id and not confirmed and not active_request and job_root is not None:
+        from . import engines
+        confirmed = engines.worker_termination(task, job_root=job_root) is True
+    state = "running" if task.get("state") == "running" else "idle"
+    if stop_id and task.get("state") in ("running", "blocked"):
+        if current_stop and active_request:
+            state = "stopping"
+        elif task.get("resume_after") or (request.get("operation") == "resume" and active_request):
+            state = "resuming"
+        elif confirmed:
+            state = "stopped"
+        else:
+            state = "stop_unconfirmed"
+    elif task.get("state") == "blocked" and task.get("resume_after"):
+        state = "resuming"
+    return {"state": state, "stop_id": stop_id, "generation": task.get("agent_id"),
+            "error": "The worker may still be running." if state == "stop_unconfirmed" else None}
+
+
+def message_views(project: str, slug: str, task: dict, delivered: list[dict]) -> list[dict]:
+    """An inbox claim is still queued; only an evidenced session handoff is delivered."""
+    receipts = {row["message_id"]: {"at": row.get("at")} for row in delivered}
+    receipts.update(task.get("message_deliveries") or {})
+    queued = {row["id"] for row in pending(project, slug)}
+    queued.update(row["id"] for row in (task.get("resume_claim") or {}).get("messages", []))
+    rows = task_messages(project, slug)
+    for row in rows:
+        if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
+            continue
+        receipt = receipts.get(row["id"])
+        row["delivery"] = {"state": "delivered" if receipt else "queued" if row["id"] in queued else "unconfirmed",
+                           "at": receipt.get("at") if receipt else None}
     return rows
 
 
@@ -619,6 +670,8 @@ def take_inbox(project: str, slug: str, ids: set[str] | None = None) -> list[dic
     path = S.task_dir(project, slug) / "inbox.jsonl"
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if task.get("stop_id"):
+            return []  # #302: Stop holds hook delivery too, until a replacement worker binds.
         rows = _pending_rows(task, path)
         taken = [row for row in rows if ids is None or row["id"] in ids]
         left = [row for row in rows if row not in taken]
@@ -641,7 +694,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id"):
         task.pop(key, None)
 
 
@@ -788,10 +841,12 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
 
 def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
            expected_state: str | None = None, expected_attempt: int | None = None,
-           expected_block_from: str | None = None) -> dict:
+           expected_block_from: str | None = None, expected_agent_id: object = _UNSET,
+           expected_session_id: object = _UNSET, expected_block_id: object = _UNSET) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        _require_daemon_fence(task, slug)
+        _require_daemon_fence(task, slug, expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id, expected_block_id=expected_block_id)
         if expected_state is not None and task["state"] != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task['state']}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -823,7 +878,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_owner: dict | None = None,
           recommendation: str | None = None,
           recommendation_label: str | None = None, recommendation_why: str | None = None,
-          questions: dict | None = None, design: dict | None = None) -> dict:
+          questions: dict | None = None, design: dict | None = None, resume_pending: bool = False) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
@@ -844,6 +899,13 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
+        if resume_pending:
+            # #302: select the final-turn inbox under the same lock as the block; a later Send
+            # sees a blocked task and schedules its own wake without losing an earlier message.
+            messages = [row for row in pending(project, slug) if row.get("wake", True)]
+            if messages:
+                reason = "Message queued for the next session turn."
+                task.update(resume_after=S.now(), resume_request=messages[-1]["id"])
         task["blocked_reason"] = reason
         task["block_actor"] = actor
         if questions is not None and (actor not in ("l2", "l3") or task.get("fault")):
@@ -859,7 +921,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
 def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None = None,
            session_id: str | None = None, expected_claim: str | None = None,
            expected_daemon_request: str | None = None, expected_agent_id: object = _UNSET,
-           expected_session_id: object = _UNSET, **ev) -> dict:
+           expected_session_id: object = _UNSET, input_delivered: bool = False, **ev) -> dict:
     """blocked → running. With a worker, the task is bound to it; a resumed Claude session may carry a new id."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
@@ -873,6 +935,11 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
         if agent_id:
             usage.remember(task)
             task.update({"agent_id": agent_id, "session_id": session_id or task.get("session_id")})
+        if expected_claim is not None and input_delivered:
+            receipts = task.setdefault("message_deliveries", {})
+            for row in claim.get("messages", []):
+                receipts[row["id"]] = {"at": S.now(), "agent_id": agent_id, "session_id": task.get("session_id")}
+        task.pop("completion_requested", None)  # #302: a continued turn must supply its own final result.
         _clear_block(project, task)
         return _move(project, task, "running", actor, **ev)
 
@@ -959,13 +1026,20 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
         return task
 
 
-def finalize_completion(project: str, slug: str, actor: str = "altd") -> dict:
+def finalize_completion(project: str, slug: str, actor: str = "altd", *,
+                        expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
+                        expected_block_id: object = _UNSET) -> dict:
     """Archive a no-code L2 completion once its worker has exited."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        _require_daemon_fence(task, slug, expected_agent_id=expected_agent_id,
+                              expected_session_id=expected_session_id, expected_block_id=expected_block_id)
         request = task.pop("completion_requested", None)
         if task.get("state") != "running" or not request:
             raise TransitionError(f"{slug}: no completion to finalize")
+        if any(row.get("wake", True) for row in pending(project, slug)):
+            continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
+            raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(task)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
@@ -1627,7 +1701,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}
         group.setdefault("submissions", []).append(saved)
         # Receipt and human message share one atomic status write. Inbox delivery is recovered by pending().
-        if task["state"] == "blocked":
+        if task["state"] == "blocked" and not task.get("stop_id"):
             task["resume_request"] = message_id
             task["resume_after"] = task.get("resume_after") or S.now()
             task.pop("resume_failed", None)

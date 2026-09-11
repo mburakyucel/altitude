@@ -90,10 +90,11 @@ export function MessageRow({
 }
 
 /** The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px). */
-export function Bubble({ text, at, pending = false }: { text: string; at?: string | null; pending?: boolean }) {
+export function Bubble({ text, at, pending = false, receipt }: { text: string; at?: string | null; pending?: boolean; receipt?: string }) {
   return (
     <MessageRow at={at} mine pending={pending}>
       <div className="bubble">{text}</div>
+      {receipt ? <span className="message-delivery text-meta text-muted">{receipt}</span> : null}
     </MessageRow>
   );
 }

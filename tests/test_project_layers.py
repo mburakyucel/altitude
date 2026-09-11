@@ -36,9 +36,8 @@ PROVIDER_BASELINE = {
     "altitude/l3.py": 32,
     "altitude/monitor.py": 6,
     "altitude/quota_codex.py": 18,
-    "altitude/server.py": 7,
+    "altitude/server.py": 6,
     "altitude/tasks.py": 3,
-    "altitude/transcript.py": 47,
 }
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
@@ -53,12 +52,11 @@ OPERATOR_BASELINE = {
     "altitude/land.py": 4,
     "altitude/server.py": 16,
     "altitude/tasks.py": 9,
-    "altitude/transcript.py": 1,
     "bin/alt": 12,
     "docs/ARCHITECTURE.md": 5,
     "docs/CLI.md": 3,
     "docs/ROADMAP.md": 2,
-    "docs/SESSION_LIFECYCLE.md": 5,
+    "docs/SESSION_LIFECYCLE.md": 4,
     "personas/l2.md": 6,
     "personas/l3.md": 9,
     "web/src/data/api.ts": 1,

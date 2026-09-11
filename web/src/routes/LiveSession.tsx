@@ -3,14 +3,15 @@ import type { ReactNode } from "react";
 import { Prose } from "../components/Prose";
 import { ApiError, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
+import { SteeringControls } from "../components/TaskSteering";
+import type { Steering } from "../components/TaskSteering";
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 /** One line of the conversation: a prompt, a reply, a boundary, an error, or a tool call with its output
- *  nested under it. A Claude result joins the call that shares its tool_use_id. Codex reports a command
- *  twice (started, then completed with its output); the later report replaces the earlier one in place. */
+ *  nested under it. Results join calls by tool_use_id; repeated command records replace earlier ones. */
 interface Item {
   event: TranscriptEvent;
   results: TranscriptEvent[];
@@ -208,16 +209,18 @@ export interface LiveSessionProps {
   engineLabel: string;
   /** What a queued task waits for; the line replaces the session (SPEC.md §3.10). */
   waiting?: string | null;
+  steering?: Steering;
+  readOnly?: boolean;
 }
 
 /**
- * The live session panel (SPEC.md §3.10): the worker's own session (Claude's session JSONL, every turn of
- * the Codex thread) plus Altitude's task events, read as a transcript. Tinted prompt blocks, the worker's
+ * The live session panel (SPEC.md §3.10): the worker's own session plus task events, read as a
+ * transcript. Tinted prompt blocks, the worker's
  * prose, one compact row per tool call with its output folded, separators at task boundaries, subtle
  * timestamps, Raw events behind a toggle. States: waiting (queued), connecting, streaming, ended,
  * unavailable. The server derives the files from the task record; the page sends no paths.
  */
-export default function LiveSession({ project, task, engineLabel, waiting }: LiveSessionProps) {
+export default function LiveSession({ project, task, engineLabel, waiting, steering, readOnly }: LiveSessionProps) {
   const [raw, setRaw] = useState(false);
   const [paused, setPaused] = useState(false);
   const body = useRef<HTMLDivElement>(null);
@@ -316,6 +319,7 @@ export default function LiveSession({ project, task, engineLabel, waiting }: Liv
           </div>
         ) : null}
       </header>
+      {steering && steering.state !== "idle" ? <div className="live-steering"><SteeringControls steering={steering} disabled={readOnly} /></div> : null}
       <div className="live-body" ref={body}>
         {content}
       </div>

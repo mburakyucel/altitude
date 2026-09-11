@@ -46,7 +46,8 @@ const apiTask = (name: string, slug: string) => `/api/task/${name}/${slug}`;
 
 /** Serve one task record in place of the live one, and patch the overview around it. */
 async function overlay(page: Page, name: string, record: Row, overview?: Record<string, unknown>) {
-  await page.route((url) => url.pathname === apiTask(name, record.slug), (route) => route.fulfill({ json: record }));
+  const presentation = { ...record, steering: { state: record.state === "running" ? "running" : record.resume_after ? "resuming" : "idle", generation: record.agent_id ?? null, stop_id: null, error: null } };
+  await page.route((url) => url.pathname === apiTask(name, record.slug), (route) => route.fulfill({ json: presentation }));
   if (overview) {
     await page.route((url) => url.pathname === "/api/overview", async (route) => {
       const response = await route.fetch();
@@ -71,7 +72,7 @@ function views(page: Page, info: TestInfo) {
     composer: main.getByRole("textbox", { name: "Message the L2", exact: true }),
     conversation: main.getByRole("region", { name: "Task conversation", exact: true }),
     live: main.getByRole("region", { name: "Live session", exact: true }),
-    stop: main.getByRole("button", { name: "Stop", exact: true }),
+    stop: main.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Stop", exact: true }),
     reject: main.getByRole("button", { name: "Reject", exact: true }),
     stopConfirm: main.getByRole("group", { name: "Stop this task?", exact: true }),
     rejectConfirm: main.getByRole("group", { name: "Reject this task?", exact: true }),
@@ -93,7 +94,7 @@ function views(page: Page, info: TestInfo) {
   };
 }
 
-test("a running task: conversation, live session, Raw events, Stop and Reject confirms", async ({ page, request }, info) => {
+test("a running task: conversation, live session, Raw events, accessible Stop and Reject confirmation", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const task = await runningTask(request, project.name);
   const walk = walkthrough(page, info);
@@ -105,8 +106,8 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
 
   await walk.open(taskPath(project.name, task.slug));
   await walk.state("01-running-conversation", {
-    visible: [v.heading(title), v.main.getByText("Running", { exact: true }).first(), v.conversation, v.composer, ...(v.phone ? [] : [v.stop, v.reject])],
-    hidden: [v.stopConfirm, v.rejectConfirm, v.main.getByLabel("Loading", { exact: true }), ...(v.phone ? [v.stop, v.reject] : [])],
+    visible: [v.heading(title), v.main.getByText("Running", { exact: true }).first(), v.conversation, v.composer, v.stop, ...(v.phone ? [] : [v.reject])],
+    hidden: [v.stopConfirm, v.rejectConfirm, v.main.getByLabel("Loading", { exact: true }), ...(v.phone ? [v.reject] : [])],
   });
   await walk.state("02-live-session-streaming", {
     action: () => v.showLive(),
@@ -120,18 +121,17 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
     await walk.state("05-panel-closed", { action: () => toggle.click(), visible: [v.conversation], hidden: [v.live] });
     await walk.state("06-panel-open", { action: () => toggle.click(), visible: [v.live, transcript], hidden: [] });
   }
-  await walk.state("07-stop-confirm", {
-    action: async () => { await v.showDetails(); await v.stop.click(); },
-    visible: [v.stopConfirm, v.stopConfirm.getByText("Stop this task? Its worker ends; the branch stays.")],
-    hidden: [v.rejectConfirm],
+  await walk.state("07-live-stop-accessible", {
+    visible: [v.live.getByRole("button", { name: "Stop", exact: true })],
+    hidden: [v.stopConfirm, v.rejectConfirm],
   });
-  await walk.state("08-stop-cancelled", {
-    action: () => v.stopConfirm.getByRole("button", { name: "Cancel", exact: true }).click(),
-    visible: [v.stop, v.reject],
+  await walk.state("08-composer-stop-accessible", {
+    action: () => v.showConversation(),
+    visible: [v.stop],
     hidden: [v.stopConfirm],
   });
   await walk.state("09-reject-confirm", {
-    action: () => v.reject.click(),
+    action: async () => { await v.showDetails(); await v.reject.click(); },
     visible: [
       v.rejectConfirm,
       v.rejectConfirm.getByText("Reject this task? Its worker ends and the task is archived."),
@@ -141,9 +141,11 @@ test("a running task: conversation, live session, Raw events, Stop and Reject co
   });
   await walk.state("10-reject-cancelled", {
     action: () => v.rejectConfirm.getByRole("button", { name: "Cancel", exact: true }).click(),
-    visible: [v.stop, v.reject],
+    visible: [v.reject],
     hidden: [v.rejectConfirm],
   });
+  await v.closeDetails();
+  await expect(v.stop).toBeVisible();
 });
 
 test("a queued task says what it waits for; a held task reads as queued", async ({ page, request }, info) => {
@@ -181,7 +183,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   await walk.open(taskPath(project.name, held.slug));
   await walk.state("02-held-reads-as-queued", {
     action: () => v.showLive(),
-    visible: [v.main.getByText("Queued", { exact: true }).first(), v.live.getByText("Waits for resume · usage limit: the window resets at 02:00")],
+    visible: [v.main.getByText("Waiting to resume", { exact: true }).first(), v.live.getByText("Waits for resume · usage limit: the window resets at 02:00")],
     hidden: [v.main.getByText("Blocked", { exact: true }), v.stop],
   });
   await walk.state("03-held-composer", {
@@ -363,6 +365,7 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
     hidden: [v.conversation.locator(".bubble", { hasText: text })],
   });
   await expect(v.composer).toHaveValue(text);
+  await expect(v.composer).toBeFocused();
   refuse = false;
   await walk.state("03-sent", {
     action: () => retry.click(),

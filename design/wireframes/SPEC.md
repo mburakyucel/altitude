@@ -475,6 +475,10 @@ decision states are reused; the viewer has no microphone, composer or empty publ
 
 ### 3.10 Task page
 
+The [L2 activity and steering agreement](l2-progress/PROPOSAL.md), with its
+[maintained task states](TaskStates.html), is approved for #302 on 2026-09-09.
+Its directly accessible Stop supersedes hiding Stop in the mobile header disclosure.
+
 The task header includes **Observed tokens** in phone task details and directly on desktop,
 also present in the report view. The folded token row shows the cumulative observed total (unknown when
 unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
@@ -511,22 +515,47 @@ and check states, in danger tone when main checks failed. It links to the PR whe
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
 
-Actions **Stop** and **Reject** are quiet text buttons with inline confirmation; no browser dialogs.
-Stop asks "Stop this task? Its worker ends; the branch stays." with Stop and Cancel. Reject asks
+**Stop** is directly accessible beside the composer and in Live session, on phone and desktop.
+One click requests termination immediately. **Reject** is in phone task details and the desktop header,
+with inline confirmation:
 "Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
 Cancel. Stop appears while running; Reject appears while queued, running, blocked or reported.
 An operationally blocked task without an open question also offers **Resume**, using the existing
 daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
 A failed request leaves Resume available and places its error on a separate line under the actions,
-including on the phone. Resuming an operational pause records no decision.
+including on the phone. Resuming an operational pause records no decision. A confirmed Stop instead
+offers **Continue session** in the same place as Stop. It resumes without sending the unsent draft.
+Sending a correction from this stopped view appends it after earlier held messages and resumes the
+same saved session. A stale running view can only queue a message. Both continuation actions preserve
+existing file edits, the session, attempt and model; capacity waits say **Waiting to resume**.
+
+Stop replaces its button with **Stopping…** until termination is evidenced. The draft stays editable;
+Send and Continue are unavailable while stopping or unconfirmed. Unknown or failed termination says
+**Stop unconfirmed · The worker may still be running**, with **Check status** to read evidence.
+Rechecking does not issue another Stop. An actual termination receipt or a conclusive current worker
+status enables **Stopped** and Continue. Desktop Stop advertises **Esc**; the key stops only when no
+input, composition, dialog, recording, menu or overlay owns it. Recording cancels and overlays close
+before Escape can reach the worker. Phone always has the visible button.
+
+One compact **Latest from L2** area above the composer shows the current worker's public text verbatim
+after redaction, clamped to two lines. **Expand** reveals it; **Collapse** folds it. Each newer update
+replaces the preview without moving or duplicating Conversation. Prose has its source age or **Time
+unavailable**; a separate row shows recorded output and its age. After 60 seconds without output it
+reads **Last update** and **No new activity for …**, with a neutral dot. Activity never proves useful
+progress. **No public update yet.** covers empty commentary; **Activity unavailable** labels a retained
+last known update and offers **Retry activity**. Generation changes clear previous words. Short
+viewports fold the words and age until expanded, keeping activity and controls reachable. **View live
+session** opens older output under existing retention. Questions, decisions and results stay durable;
+there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
 
 Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
 too. Phone anatomy: one 54px header with Back, title, concise L2 state and independent **Merge held**
 status; a two-tab row **Conversation | Live session** (the `live` route selects the second); content;
-the shared compact composer on Conversation. The title and details button open a scrollable sheet
+activity, Stop and the shared compact composer on Conversation. Live session has the same
+Stop/Continue controls. The title and details button open a scrollable sheet
 with full title, attempt/context/tokens, PR/checks, complete block/hold reasons, and existing
-Stop/Reject/Resume actions and confirmations. Desktop retains its direct operational actions and
+Reject confirmation and operational Resume. Desktop retains its direct operational actions and
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
 selection and reading position. A failure remains visible, not only inside details.
 
@@ -544,7 +573,9 @@ phone and open the desktop panel. Back in the phone header and the desktop crumb
 the actual preceding in-app page, including its query string. With no in-app predecessor they
 replace the task entry with the owning project's L3 conversation. Browser/system Back remains
 native; Forward restores the task's latest URL, and other pages/tasks keep ordinary history.
-On phone, Live session removes the conversation and composer; Conversation removes the live
+On phone, Live session removes the conversation and composer; their draft and selection remain
+when returning. A refused or uncertain send arriving while Live session is open restores its text
+alongside newer draft edits; an accepted send remains sent. Conversation removes the live
 panel. On desktop, closing the panel leaves the conversation visible. Navigation itself has no
 loading, listening, denied or error state; destination reads and composers retain their states
 specified here and in §3.6. `web/e2e/task-navigation.pw.ts` walks entry from L3 and Work, repeated
@@ -553,9 +584,14 @@ toggles, reload, Back, Forward and direct-live fallback on phone and desktop.
 The conversation includes L3 messages as prose with a small "L3" label. Its composer says "Message
 the L2"; the hint reads "Reaches the L2 at its next checkpoint." while running, "Delivered when
 Altitude resumes the L2." while held for resume, and "Sending resumes the L2 with your message."
-for another blocked task. Explicit refusal and unconfirmed delivery use the shared composer states
-in §3.6. Accepted messages stay sent through wake or refresh errors. The composer appears for
-running and blocked tasks; finished conversations stay readable.
+for another blocked task. Confirmed Stop reads **Send a correction to continue this session.** A
+refused or unconfirmed send uses the shared composer states in §3.6, preserving newer draft edits.
+Accepted messages stay sent through wake or refresh errors. The composer appears for running and
+blocked tasks.
+The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
+continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
+evidence is missing. Delivery does not claim understanding or action. Finished conversations remain
+readable with the activity area, composer and Stop gone.
 
 The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded
 output, subtle timestamps, and the lifecycle boundaries the record supplies (state transitions,
@@ -581,6 +617,13 @@ a finished one. The live session is connecting (skeleton and "Connecting to the 
 recorded lifecycle boundaries stay visible), streaming, paused, ended, or unavailable ("No session
 file for this attempt").
 
+`web/e2e/l2-progress.pw.ts` walks phone and desktop with deterministic fixtures for both engines:
+loading; replacing/expanded/quiet/untimed/unavailable activity; queued/unconfirmed/delivered steering;
+direct Live session Stop; stopping with editable draft and racing messages held; stopped; correction
+and capacity wait; continued session with preserved work; blocked question; finished; denied Stop;
+short viewport; voice listening/cancel/dictation/denial/unavailable; input and overlay Escape ownership.
+Each named state has a screenshot under `web/ui-artifacts/results/l2-progress*`.
+
 ### 3.11 Project switcher (phone)
 
 A sheet from the header name: managed projects with dot and count, unmanaged folders, **Add a
@@ -592,7 +635,8 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 Shown on any project route when no project is managed: a centred card, "Altitude found N folders
 under <root>", one row per folder with **Start L3**, and a path field for a folder elsewhere.
 States: scanning; none found (the path field alone); starting ("L3 is starting…", then the project
-page opens on its first reply); failed (one sentence and Retry).
+page opens on its first reply); failed (one sentence and Retry, shown the moment registration is
+refused rather than after the next folder rescan).
 For a removed project with retained history, `POST /api/project/add` reports `restored: true`.
 First run waits for the registration response, then opens the saved conversation; historical
 replies or errors do not determine the new start's outcome. Its saved queue resumes normally.
@@ -813,7 +857,7 @@ Order matters: each slice leaves the app usable.
 | 1 | **Shell.** Tokens (§6) into `tokens.css`; rail, phone header and tab bar, breakpoints (§2.2), scope rule (§2.3), routes and redirects (§2.1), First run (§3.12), theme toggle. The old Inbox and Projects pages are deleted; Needs you is the old Inbox's decision list restyled as §3.8 cards. | Every route renders in the new shell on 390 and 1440 with real data; the Inbox and Projects routes and their components are gone; `make test` and the web suite pass. |
 | 2 | **Conversation.** §3.3, §3.4, §3.6 on the project page; fold and group (§4.1); queue (§4.2); backend notes 1, 2, 4. | A landed report shows as one line and expands to label/value rows; consecutive system turns group; Queue works mid-turn; voice lands in the draft with no transcript box; `Chat.tsx` and the old bubble meta line are gone. |
 | 3 | **Work and decisions.** §3.5, §3.7, §3.8, §3.9; backend notes 3, 5, 6; FYIs fold into the chat and `inbox.jsonl` goes. | Needs you and the owning chat accept answers; Work lists all current tasks once and opens their conversations. The global badge reflects unanswered questions and operational items; `digest.fyis` and the overview `fyis` field are deleted. |
-| 4 | **Task page.** §3.10 on desktop and phone, Stop and Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
+| 4 | **Task page.** §3.10 on desktop and phone, direct Stop, Reject with inline confirm, live session panel toggle. | Both tabs work on the phone; a blocked task shows its card inline; Raw events stays behind its toggle. |
 | 5 | **Monitor and banner** in the new shell (§3.13, §3.14). | Seats, routing and sessions use the shell; Restart appears at the quiet point defined in §3.13. |
 
 Not drawn and not scheduled: settings and a Done view beyond the folded list. They are questions
@@ -831,8 +875,9 @@ anchoring survive changes in available height. Browser-managed safe areas remain
 
 Activity and nonzero decision counts remain reachable; actionable failures, question controls,
 queue removal, voice guidance and available Restart remain explicit. A compact update summary
-discloses detail. Task metadata and Stop/Reject/Resume move into task details with their existing
-confirmations. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics remain authoritative.
+discloses detail. Task metadata, Reject with confirmation and operational Resume open in task
+details. Stop and Continue stay directly accessible beside the composer and in Live session,
+as specified in §3.10. §3.8–3.9 and CONVERSATION_FIRST.md decision semantics remain authoritative.
 
 Task states include running+held, waits-for-L3, waits-for-L3+held, operator-question+held,
 fault+held and operational pause. One compact status names waiting and merge state

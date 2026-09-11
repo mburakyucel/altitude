@@ -236,11 +236,16 @@ def request_task_resume(project: str, slug: str, *, due: bool = True) -> bool:
     return spawn(f"resume:{project}:{slug}", dispatch.resume, project, slug)
 
 
-def request_daemon_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str) -> dict:
+def request_daemon_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
+                                  generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
     """Persist an operator request before scheduling its one daemon-side runner."""
-    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor)
+    observed = {key: value for key, value in (("generation", generation), ("stop_id", stop_id)) if value is not T._UNSET}
+    result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, **observed)
     if result.get("queued"):
-        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+        try:
+            spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+        except Exception as exc:
+            log(f"[{project}/{slug}] task operation saved; immediate wake failed: {exc}")
     return result
 
 
@@ -628,6 +633,9 @@ def on_l2_finished(project: str, item: dict) -> None:
 def _on_l2_finished(project: str, item: dict) -> None:
     t = item["task"]
     slug = t["slug"]
+    agent = item.get("agent") or {}
+    clean_exit = agent.get("state") == "done" and not agent.get("detail")
+    worker_outcome = any(item.get(key) for key in ("died", "capacity", "limited", "rejection", "needs_input"))
     with S.project_lock(project):
         live = S.load_task(project, slug)
         if (live.get("daemon_request") or {}).get("status") in ("pending", "executing"):
@@ -635,6 +643,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
         snapshot = (t.get("state"), T.report_owner(t))
         current = (live.get("state"), T.report_owner(live))
         if (t.get("state") == live.get("state") == "running"
+                and not worker_outcome
                 and all(t.get(key) == live.get(key) for key in ("attempt", "agent_id", "session_id", "worker_started_at"))
                 and any(row.get("wake", True) for row in T.pending(project, slug))):
             T.continue_report(project, live, actor="altd", reason="Follow-up messages await the owner", check_pr=False)
@@ -643,17 +652,32 @@ def _on_l2_finished(project: str, item: dict) -> None:
         log(f"[{project}/{slug}] ignored stale finished worker snapshot {snapshot} → {current}")
         return
     t = live  # include completion/action fields that may have landed after poll took its worker snapshot
+    if t.get("stop_id"):
+        return  # #302: the explicit Stop owns this worker, including its concurrent final result.
 
-    def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None) -> dict:
+    def block_snapshot(reason: str, *, actor: str = "altd", updates: dict | None = None,
+                       resume_pending: bool = False) -> dict:
         return T.block(project, slug, reason, actor=actor, expected_state=t.get("state"), updates=updates,
+                       resume_pending=resume_pending,
                        expected_agent_id=t.get("agent_id"), expected_session_id=t.get("session_id"),
-                       expected_block_id=t.get("block_id"), expected_owner=T.report_owner(t))
+                       expected_block_id=t.get("block_id"),
+                       expected_owner=None if worker_outcome else T.report_owner(t))
 
-    if t.get("completion_requested"):
+    if t.get("completion_requested") and (not worker_outcome or (item.get("died") and clean_exit)):
         a = item.get("agent") or {}
         if a.get("state") == "working" or a.get("status") in ("busy", "idle"):
             raise RuntimeError(f"{project}/{slug}: completion reached finished handling while its L2 is still live")
-        T.finalize_completion(project, slug)
+        try:
+            T.finalize_completion(project, slug, expected_agent_id=t.get("agent_id"),
+                                  expected_session_id=t.get("session_id"), expected_block_id=t.get("block_id"))
+        except T.TransitionError:
+            current = S.load_task(project, slug)
+            if (all(current.get(key) == t.get(key) for key in ("state", "agent_id", "session_id", "block_id"))
+                    and not current.get("stop_id")
+                    and (current.get("daemon_request") or {}).get("status") not in ("pending", "executing")):
+                raise  # An unchanged owner failed completion validation, rather than losing a race.
+            log(f"[{project}/{slug}] completion lost a concurrent lifecycle race; ignored")
+            return
         log(f"[{project}/{slug}] no-code completion finalized after the L2 worker exited")
         return
     if item.get("rejection"):
@@ -740,17 +764,20 @@ def _on_l2_finished(project: str, item: dict) -> None:
         return
     if item.get("died"):
         a = item.get("agent") or {}
-        engine = t.get("l2_engine") or "claude"
+        detail = (f"L2 worker {a.get('id', '')} (attempt {t.get('attempt')}) ended without a fresh report: "
+                  f"worker state={a.get('state', 'absent')}; {item.get('detail') or a.get('detail') or ''}")
         try:
-            blocked = block_snapshot(f"L2 session ended without a fresh report (Altitude fault, not the L2's) — Resume from the card "
-                           f"re-attaches its transcript (agent {a.get('id', '')})")
+            blocked = block_snapshot(f"system fault [l2-died]: {detail}",
+                                     resume_pending=clean_exit)
         except T.TransitionError:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return
-        incidents.system_fault("l2-died", f"L2 worker {a.get('id', '')} (attempt {t.get('attempt')}) ended without a fresh report: "
-                               f"{engine} worker state={a.get('state', 'absent')}; {item.get('detail') or a.get('detail') or ''}",
-                               project=project, task=slug, expected_block_id=blocked.get("block_id"))
-        log(f"[{project}/{slug}] L2 died → blocked; fault raised")
+        if blocked.get("resume_after"):
+            request_task_resume(project, slug)
+        else:
+            incidents.system_fault("l2-died", detail, project=project, task=slug,
+                                   expected_block_id=blocked.get("block_id"), expected_task=blocked)
+            log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
@@ -1399,18 +1426,23 @@ class Handler(BaseHTTPRequestHandler):
             if api == "task" and len(parts) > 2 and parts[2] == "action":
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by Burak"
-                if action == "reject":
-                    request_daemon_task_operation(project, slug, "reject", reason, actor="burak")
-                elif action == "resume":
-                    request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE)
-                elif action == "done":
-                    T.done(project, slug, actor="burak")
-                elif action == "stop":
-                    request_daemon_task_operation(project, slug, "stop", reason, actor="burak")
-                elif action == "dispatch":
-                    spawn(f"dispatch:{project}", dispatch_waiting, project)
-                else:
-                    return self._json({"error": f"unknown task action {action}"}, 400)
+                try:
+                    if action == "reject":
+                        request_daemon_task_operation(project, slug, "reject", reason, actor="burak")
+                    elif action == "resume":
+                        request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE,
+                                                      stop_id=o.get("stop_id"))
+                    elif action == "done":
+                        T.done(project, slug, actor="burak")
+                    elif action == "stop":
+                        request_daemon_task_operation(project, slug, "stop", reason, actor="burak",
+                                                      generation=o.get("generation"))
+                    elif action == "dispatch":
+                        spawn(f"dispatch:{project}", dispatch_waiting, project)
+                    else:
+                        return self._json({"error": f"unknown task action {action}"}, 400)
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
                 project, slug = o["project"], o["slug"]
@@ -1420,7 +1452,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     message = T.message(project, slug, "burak", text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),
-                                        group_id=o.get("group_id"), group_revision=o.get("group_revision"))
+                                        group_id=o.get("group_id"), group_revision=o.get("group_revision"),
+                                        stop_id=o.get("stop_id"))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 try:
@@ -1428,6 +1461,7 @@ class Handler(BaseHTTPRequestHandler):
                         request_task_resume(project, slug)
                 except Exception as exc:  # #298: acceptance is durable; the timer retries its saved resume request.
                     log(f"[{project}/{slug}] message wake deferred: {exc}")
+                message["delivery"] = {"state": "queued", "at": None}
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
@@ -1924,11 +1958,20 @@ def task_view(project: str, slug: str) -> dict:
     d = S.task_dir(project, slug)
     report = S.read_json(d / "report.json")
     files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
+    try:
+        activity = transcript.activity(project, slug)
+    except transcript.TranscriptAccessError:
+        activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
+                    "observation": None, "delivered": [], "error": "Activity is unavailable for this task."}
+    if activity["generation"] != t.get("agent_id"):
+        activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
+                    "observation": None, "delivered": [], "error": "The worker changed. Refresh this task."}
+    events = S.read_events(project, slug)
     return {**t, "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
-            "files": files, "messages": T.task_messages(project, slug),
-            "events": S.read_events(project, slug),
+            "files": files, "messages": T.message_views(project, slug, t, activity["delivered"]),
+            "events": events, "activity": activity, "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 

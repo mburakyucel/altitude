@@ -50,6 +50,9 @@ test("removal detaches L3: confirm, cancel, denied, error, pending, navigation",
     expect(removed.status()).toBe(500);
     expect((await removed.json()).error).toContain("unknown project 'sample-project'; register it first");
   }
+  const savedTask = await request.get(`${service}/api/task/sample-project/existing-work`);
+  expect(savedTask.status()).toBe(200);
+  expect((await savedTask.json()).activity).toMatchObject({ state: "unavailable", commentary: null });
   for (const suffix of ["", "/tasks/existing-work", "/tasks/existing-work/report"]) {
     await walk.open(`${service}/projects/sample-project${suffix}`);
     await walk.state(`10-old-route-${suffix.replaceAll("/", "-") || "project"}`, { visible: [page.getByRole("heading", { name: "Project not managed", exact: true })], hidden: [more, page.getByRole("textbox", { name: "Message L3 about sample-project" })] });
@@ -71,8 +74,15 @@ test.describe("last project", () => {
     const overview = await (await request.get(`${service}/api/overview`)).json();
     expect(overview.projects[0].managed).toBe(false);
     await page.route("**/api/project/add", (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Registration unavailable. Try again." }) }), { times: 1 });
+    // A refused registration reads at once: the overview stays unanswered until the error is on screen.
+    let releaseOverview!: () => void;
+    const overviewHeld = new Promise<void>((resolve) => { releaseOverview = resolve; });
+    const holdOverview = async (route: import("@playwright/test").Route) => { await overviewHeld; await route.continue(); };
+    await page.route("**/api/overview", holdOverview);
     await row.getByRole("button", { name: "Start L3", exact: true }).click();
     await walk.state("02-attach-error", { visible: [firstRun.getByRole("alert").filter({ hasText: "Registration unavailable" }), row.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
+    await page.unroute("**/api/overview", holdOverview);
+    releaseOverview();
     let release!: () => void;
     const wait = new Promise<void>((resolve) => { release = resolve; });
     await page.route("**/api/project/add", async (route) => { await wait; await route.continue(); }, { times: 1 });

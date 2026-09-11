@@ -16,7 +16,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Task page: L2 conversation and live session', desktop: 'Task.html', mobile: 'MobileTask.html' },
   { label: 'Task live session (phone)', mobile: 'MobileTaskLive.html' },
   { label: 'Task live panel overlay below 1280px', desktop: 'TaskOverlay.html', desktopSize: { w: 1100, h: 900, name: 'Sheet' } },
-  { label: 'Task page states', desktop: 'TaskStates.html', desktopSize: { w: 1200, h: 1480, name: 'Sheet' } },
+  { label: 'Task page states', desktop: 'TaskStates.html', desktopSize: { w: 1200, h: 2260, name: 'Sheet' } },
   { label: 'Report and digest', desktop: 'Report.html', mobile: 'MobileReport.html' },
   { label: 'Monitor', desktop: 'Monitor.html', mobile: 'MobileMonitor.html' },
   { label: 'Monitor states', desktop: 'MonitorStates.html', desktopSize: { w: 1200, h: 1180, name: 'Sheet' } },
