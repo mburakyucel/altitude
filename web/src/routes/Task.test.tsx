@@ -158,7 +158,7 @@ describe("Task on desktop", () => {
     const field = await screen.findByRole("textbox", { name: "Message the L2" });
     expect(screen.getByText("Merge held", { exact: true })).toBeInTheDocument();
     await user.type(field, "Resolve the conflicts.");
-    await user.click(screen.getByRole("button", { name: "Send", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Resolve the conflicts.", { exact: true });
     expect(field).toHaveValue("");
     expect(screen.getByText("Merge held", { exact: true })).toBeInTheDocument();
@@ -169,7 +169,7 @@ describe("Task on desktop", () => {
     renderApp({ route });
     await screen.findByRole("heading", { name: "Fix the timer" });
     expect(screen.queryByRole("textbox", { name: "Message the L2" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Resume", exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
   it("keeps a late saved receipt when an older task read completes after navigation", async () => {
