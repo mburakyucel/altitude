@@ -90,6 +90,7 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
         worktree = Path(task["worktree"])
         (worktree / "README.md").write_text("Delivered and validated.\n")
+        git("add", "README.md", cwd=worktree)
         gh = self.fake_gh()
         (gh / "merge_git.txt").write_text("advance the local remote\n")
         for key, value in dispatch.l2_env(self.project, slug, 1).items():

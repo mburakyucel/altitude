@@ -44,7 +44,7 @@ A set persists a reason-bearing request that altd applies on its next tick,
 without a PR, restart, or free task slot. The first registry load removes stored legacy caps of 3
 once and logs the migration; approval and engine pins are preserved, and subsequent explicit
 caps of 3 persist. Lowering a cap preserves running work and project overrides; new launches wait
-until both caps have room. Parallel leases declare staging scope: overlapping files do not hold dispatch.
+until both caps have room. Planned file lists guide coordination; overlapping files do not hold dispatch.
 Owners rebase before landing and keep edits in shared documents to their own sections.
 
 L3 and the operator file requested backlog through altd with `alt issue new --title "…" -`
@@ -72,7 +72,7 @@ Inspect `alt task status <slug>` for the request result, branch and SHA before s
 its reconciliation instructions. The owner inspects the two archive commits and applies the net
 binary diff from `<SHA>~2` to `<SHA>` inside its isolated worktree, as the CLI procedure describes.
 This flattens staging intent; staged content remains inspectable in `<SHA>^`. Review the contents
-against the lease and publication rules and deliver through a PR. Resume other tasks separately
+against the authorized objective and publication rules and deliver through a PR. Resume other tasks separately
 once the checkout is clean. Archives remain local until explicit operator removal; Altitude never
 pushes or deletes them. An interrupted request is not replayed: inspect
 `archive/checkout-<request-id>` and task events first, even if no task snapshot receipt exists.

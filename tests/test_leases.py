@@ -1,4 +1,4 @@
-"""Declared staging scope parsing in `dispatch`."""
+"""Advisory expected-file parsing in `dispatch`."""
 import unittest
 
 from tests.support import AltitudeCase

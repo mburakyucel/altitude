@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, make_repo
+from tests.support import ALT, AltitudeCase, git, make_repo
 from altitude import config, digest, engines, incidents, l3, state as S
 
 
@@ -184,6 +184,15 @@ class TestInspectionCLI(AltitudeCase):
         self.assertEqual(record["dirty_files"], 2)
         self.assertNotIn("detail", record["faults"]["restart"])
         self.assertEqual(record["service"], service)
+
+    def test_repo_counts_a_rename_and_quoted_filename_once_each(self):
+        git("mv", "README.md", "renamed\nreadme.md", cwd=self.repo)
+        (self.repo / "new\nfile.txt").write_text("unselected\n")
+        service = {"state": "active", "substate": "running", "pid": 321, "error": None}
+        with mock.patch.object(engines, "service_status", return_value=service):
+            record = json.loads(cli("repo", "--json"))
+        self.assertEqual(record["dirty_files"], 2)
+        self.assertEqual(record["errors"], [])
 
     def test_pr_uses_one_gh_call_and_has_stable_text_and_json(self):
         paths = [f"src/file-{i}.py" for i in range(12)]

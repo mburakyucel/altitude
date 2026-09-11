@@ -135,8 +135,9 @@ def repo(project: str) -> dict:
         _error(errors, "checkout", checkout["error"])
     dirty_files = None
     try:
-        from . import land
-        dirty_files = len(land._changes(root))
+        changes = git_policy._output(git_policy._run(root, "status", "--porcelain=v1", "--untracked-files=all"),
+                                     "git status")
+        dirty_files = len(changes.splitlines())
     except Exception as exc:  # the rest of repo inspection remains useful
         _error(errors, "dirty_files", exc)
     try:
@@ -180,7 +181,7 @@ def _pr_numbers(task: dict, report: object, errors: list[str]) -> list[int]:
 def status(project: str, slug: str) -> dict:
     """Return read-only orientation signals; faults never escape.
 
-    ``wip_hold`` reports capacity; leases describe staging scope and informational overlaps.
+    ``wip_hold`` reports capacity; planned files describe expected work and informational overlaps.
     """
     errors: list[str] = []
     out = {

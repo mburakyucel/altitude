@@ -60,10 +60,11 @@ development/admin exposure grants no new privilege model, generic flag framework
 
 - Keep one active task in one isolated worktree and branch. Never develop in the deployment
   checkout, reuse another task's branch, or bypass the PR path.
-- Preserve unrelated and in-progress work. Stay inside the request and declared lease.
+- Preserve unrelated and in-progress work. Stay inside the authorized objective and explicit exclusions;
+  planned file lists guide coordination, not permission. Stage and review only the changes to publish.
 - Ship the docs with the change: a PR that changes behavior updates `README.md`,
   `docs/ARCHITECTURE.md`, and `docs/SESSION_LIFECYCLE.md` wherever they describe that behavior, in
-  the same PR and in present tense. Include those files in the lease.
+  the same PR and in present tense.
 - Merge when applicable checks and appropriate review pass, unless a recorded hold applies. Major
   UX changes, cost-accruing infrastructure, identity, or security changes hold for operator review.
   A hold report explains the strategy and decisions made. Explicit task authorization governs the hold.

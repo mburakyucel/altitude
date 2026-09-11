@@ -28,7 +28,7 @@ working, backfills must resume safely, and search latency must stay within budge
 
 In the project conversation, agree the API contract and rollout constraints with L3. Then ask it
 to dispatch the independent work: **client compatibility**, **resumable backfill**, and a
-**performance baseline**. Each gets its own L2, brief, file scope and worktree. The performance
+**performance baseline**. Each gets its own L2, brief, expected files and worktree. The performance
 owner can measure the current system while the other two implement against the agreed contract.
 L3 uses the results to coordinate the next rollout task.
 
@@ -65,7 +65,7 @@ Running it without new work creates nothing. Earlier deliveries remain recorded,
 report covers all of them. See [continuation after merge](docs/CLI.md#continue-after-a-pr-merges).
 
 A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
-continue that owner's session, attempt and worktree with the same PR, file scope and review holds.
+continue that owner's session, attempt and worktree with the same PR, objective and review holds.
 L3 can also request continuation with `alt task resume <slug> --reason "…"`. The previous report
 stays in task history; resumed work needs a fresh report. A saved message is not proof that the
 worker has restarted: capacity and recovery waits remain visible. Done, archived and rejected tasks
@@ -128,7 +128,8 @@ releases its hold. The owner then rechecks and lands normally.
   An explicit question block survives worker exit and restart; older queued messages do not
   resume it. A later message or explicit Resume brings the session back.
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.
-  Worktrees isolate changes; file leases bound staging; checks and PRs make delivery reviewable.
+  Worktrees isolate changes; planned files guide coordination. Owners select and review the staged
+  changes that `alt land` commits; checks and PRs make delivery reviewable.
   Shared-file changes still need rebasing and reconciliation by their owners.
 - **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,
@@ -353,10 +354,8 @@ When uncommitted changes block task dispatch, L3 or the operator can use
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
 changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
 snapshot's parent retains staged content; applying the complete snapshot flattens staging intent.
-The task owner inspects and applies the changes within its recorded lease in its isolated worktree
-and delivers through a PR. Missing scope goes through an ordinary L2 block to L3. L3 assigns the
-complete lease with `alt task paths`, verifies it in task status, and messages the same owner to
-resume; L2 checks the recorded scope before applying work. See [file leases](docs/CLI.md#task-file-leases).
+The task owner inspects and applies authorized changes in its isolated worktree, selects what to
+stage, and delivers through a PR. Expected files are [coordination guidance](docs/CLI.md#task-file-lists).
 Archives remain local until explicit operator removal; Altitude never pushes or deletes them.
 Existing stash records and stashes remain readable and recoverable. Ordinary dispatch still
 requires clean main at `origin/main`; a restart does not clear an unresolved checkout fault.

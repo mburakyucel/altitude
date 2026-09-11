@@ -25,6 +25,7 @@ class TestLandContinuation(AltitudeCase):
         (self.ghdir / "merge_git.txt").touch()
         (self.repo / "src").mkdir()
         (self.repo / "src/value").write_text("first\n")
+        self.git("add", "src/value")
         self.first = land.land("first", cwd=self.repo, merge=True, wait=0)
         self.old_head = self.first["head"]
         self.merge = self.git("rev-parse", "origin/main").strip()
@@ -34,6 +35,7 @@ class TestLandContinuation(AltitudeCase):
 
     def followup(self):
         (self.repo / "src/followup").write_text("second\n")
+        self.git("add", "src/followup")
 
     def land(self, **kwargs):
         return land.land("second", cwd=self.repo, wait=0, **kwargs)
@@ -46,7 +48,6 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual(self.land()["checks"], "merged")
         self.assertEqual(self.task()["delivery"], before["delivery"])
         self.followup()
-        self.git("add", "src/followup")
         self.git("commit", "-m", "followup", "-m", "Altitude-Task: demo/fix-x")
         result = self.land(merge=True)
         self.assertEqual((result["pr"], result["merged"]), (102, True))
@@ -79,6 +80,7 @@ class TestLandContinuation(AltitudeCase):
         git("commit", "-m", "other change", cwd=self.project_repo)
         git("push", "origin", "main", cwd=self.project_repo)
         (self.repo / "src/value").write_text("followup\n")
+        self.git("add", "src/value")
         self.followup()
         with self.assertRaisesRegex(land.LandError, "continuation could not reconcile.*retained"):
             self.land()
@@ -96,6 +98,7 @@ class TestLandContinuation(AltitudeCase):
         git("commit", "-m", "main changed", cwd=self.project_repo)
         git("push", "origin", "main", cwd=self.project_repo)
         (self.repo / "src/value").write_text("my change\n")
+        self.git("add", "src/value")
         real = land._git
         def interrupted(root, *args, **kwargs):
             result = real(root, *args, **kwargs)
@@ -130,25 +133,68 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual(self.land()["checks"], "merged")
         self.assertEqual(self.task()["delivery"], receipt)
 
-    def test_followup_cannot_hide_committed_out_of_lease_or_unowned_work(self):
-        (self.repo / "outside").write_text("outside\n")
-        self.git("add", "outside")
-        self.git("commit", "-m", "outside lease", "-m", "Altitude-Task: demo/fix-x")
-        head = self.git("rev-parse", "HEAD")
-        with self.assertRaisesRegex(land.LandError, "outside the lease"):
-            self.land()
-        self.assertEqual(self.git("rev-parse", "HEAD"), head)
-        self.assertEqual(self.task()["prs"], [101])
+    def test_followup_keeps_provenance_boundary_without_predicted_paths(self):
+        (self.repo / "needed").write_text("needed\n")
+        self.git("add", "needed")
+        self.git("commit", "-m", "needed file", "-m", "Altitude-Task: demo/fix-x")
         self.followup()
-        self.git("add", "src/followup")
         self.git("commit", "-m", "missing provenance")
+        head, index = self.git("rev-parse", "HEAD"), self.git("write-tree")
+        calls = len(self.gh_log())
         with self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
             self.land()
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(self.git("write-tree"), index)
+        self.assertEqual(self.task()["prs"], [101])
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.gh_log()[calls:]))
+
+    def test_unstaged_only_retry_keeps_private_work_and_creates_nothing(self):
+        before = copy.deepcopy(self.task())
+        head = self.git("rev-parse", "HEAD")
+        (self.repo / "src/value").write_text("unfinished work\n")
+        private = self.repo / "private.txt"
+        private.write_text("private notes\n")
+        calls = len(self.gh_log())
+        with mock.patch.object(land, "_push", wraps=land._push) as push:
+            result = self.land()
+        self.assertEqual(result["checks"], "merged")
+        self.assertEqual(self.git("rev-parse", "HEAD"), head)
+        self.assertEqual(self.task()["delivery"], before["delivery"])
+        self.assertEqual((self.repo / "src/value").read_text(), "unfinished work\n")
+        self.assertEqual(private.read_text(), "private notes\n")
+        push.assert_not_called()
+        self.assertFalse(any(call[:2] in (["pr", "create"], ["pr", "checks"], ["pr", "merge"])
+                             for call in self.gh_log()[calls:]))
+
+    def test_staged_followup_with_dirty_work_preserves_both_and_retries_after_reconciliation(self):
+        self.followup()
+        target = self.repo / "src/value"
+        target.write_text("unfinished work\n")
+        working = target.read_bytes()
+        calls = len(self.gh_log())
+        with mock.patch.object(land, "_push", wraps=land._push) as push:
+            with self.assertRaisesRegex(land.LandError, "continuation could not reconcile.*retained"):
+                self.land()
+        push.assert_not_called()
+        self.assertEqual(target.read_bytes(), working)
+        self.assertEqual(self.git("show", "HEAD:src/followup"), "second\n")
+        self.assertEqual(self.git("show", "HEAD:src/value"), "first\n")
+        self.assertEqual(self.git("diff", "--cached"), "")
+        self.assertEqual(self.task()["prs"], [101])
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.gh_log()[calls:]))
+        # The owner explicitly preserves the unfinished work before reconciling the branch.
+        self.git("stash", "push", "-m", "unfinished work")
+        result = self.land()
+        self.assertEqual(result["pr"], 102)
+        self.assertEqual(self.git("show", "HEAD:src/followup"), "second\n")
+        self.assertEqual(self.git("show", "HEAD:src/value"), "first\n")
+        self.git("stash", "pop")
+        self.assertEqual(target.read_bytes(), working)
+        self.assertEqual(git("show", "worktree-fix-x:src/value", cwd=self.remote), "first\n")
 
     def test_merge_resolution_edits_are_preserved_by_refusing_automatic_replay(self):
         self.git("checkout", "-b", "owned-side")
         self.followup()
-        self.git("add", "src/followup")
         self.git("commit", "-m", "side", "-m", "Altitude-Task: demo/fix-x")
         self.git("checkout", "worktree-fix-x")
         (self.repo / "src/main-side").write_text("main side\n")

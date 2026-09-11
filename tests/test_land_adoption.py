@@ -12,7 +12,7 @@ from altitude import dispatch, engines, git_policy, land, state as S, tasks as T
 
 class TestAdoption(AltitudeCase):
     git = ordinary.TestLand.git
-    leased_change = ordinary.TestLand.leased_change
+    staged_change = ordinary.TestLand.staged_change
     fake_runner = ordinary.TestLand.fake_runner
     record_commands = ordinary.TestLand.record_commands
 
@@ -42,8 +42,7 @@ class TestAdoption(AltitudeCase):
         self.write_pr()
 
     def commit(self, path, message, trailer=None):
-        self.leased_change(path)
-        self.git("add", path)
+        self.staged_change(path)
         args = ["commit", "-q", "-m", message]
         if trailer:
             args += ["-m", f"Altitude-Task: {trailer}"]
@@ -122,14 +121,9 @@ class TestAdoption(AltitudeCase):
                 self.assertEqual(self.receipt(), first)
                 self.assertNotIn("adoption_history", S.load_task("demo", "fix-x"))
 
-    def test_failed_next_adoption_and_concurrent_transition_keep_receipts(self):
+    def test_concurrent_next_adoption_keeps_receipts(self):
         next_pr = self.next_pr()
         first = self.receipt()
-        self.leased_change("outside.txt")
-        with self.assertRaisesRegex(land.LandError, "outside the lease"):
-            land.land("next", cwd=self.repo, wait=0, **next_pr)
-        self.assertEqual(self.receipt(), first)
-        (self.repo / "outside.txt").unlink()
         real = land._record_adoption
         def race(*args, **kwargs):
             task = S.load_task("demo", "fix-x")
@@ -204,16 +198,16 @@ class TestAdoption(AltitudeCase):
         self.assertTrue(result["merged"])
         self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{new_base} {head}")
 
-    def assert_unpublished(self):
+    def assert_unpublished(self, selected_index=None):
         self.assertIsNone(self.receipt())
-        self.assertEqual(self.git("diff", "--cached", "--name-only").strip(), "")
+        self.assertEqual(self.git("write-tree"), selected_index or self.git("rev-parse", "HEAD^{tree}"))
         self.assertFalse(any(a[:2] in (["pr", "merge"], ["pr", "create"], ["pr", "edit"])
                              for a in self.gh_log()))
         self.assertEqual(git("rev-parse", "proposal/external", cwd=self.remote).strip(), self.original)
 
     def test_cli_dry_run_then_task_additions_resume_and_history_preserving_merge(self):
         self.commit("src/already.py", "Existing task addition", "demo/fix-x")
-        self.leased_change()
+        self.staged_change()
         run = subprocess.run([sys.executable, str(ALT), "land", "--message", "reconcile", "--adopt-pr", "101",
                               "--expected-head", self.original, "--reason", "Assigned existing PR", "--dry-run"],
                              cwd=self.repo, capture_output=True, text=True)
@@ -221,7 +215,7 @@ class TestAdoption(AltitudeCase):
         preview = json.loads(run.stdout)
         self.assertEqual(preview["adopted_pr"]["head"], self.original)
         self.assertEqual(preview["staged"], ["src/thing.py"])
-        self.assert_unpublished()
+        self.assert_unpublished(self.selected_index)
         commands = self.record_commands()
         result = self.adopt()
         receipt = self.receipt()
@@ -257,7 +251,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(again["checks"], "merged")
         self.assertTrue(again["merged"])
         self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), pushes_before)
-        self.leased_change("src/late.py")
+        self.staged_change("src/late.py")
         next_delivery = land.land("late edit", cwd=self.repo, wait=0)
         self.assertEqual(next_delivery["pr"], 102)
         current = S.load_task("demo", "fix-x")
@@ -334,12 +328,16 @@ class TestAdoption(AltitudeCase):
             dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
                                             git_policy.capture_origin_sha(self.repo), require_clean=True)
 
-    def test_scope_covers_original_history_and_task_additions(self):
-        for paths in ("src", "docs/NOTES.md"):
-            self.leased_change()
-            with self.subTest(paths=paths), self.assertRaisesRegex(land.LandError, "outside the lease"):
-                self.adopt(paths=paths)
-        self.assert_unpublished()
+    def test_adoption_and_selected_additions_do_not_require_predicted_paths(self):
+        task = S.load_task("demo", "fix-x")
+        task["paths"] = []
+        S.save_task("demo", task)
+        self.staged_change("needed.txt")
+        result = self.adopt()
+        self.assertEqual(result["pr"], 101)
+        self.assertEqual(result["staged"], ["needed.txt"])
+        self.git("merge-base", "--is-ancestor", self.original, "HEAD")
+        self.assertEqual(self.git("show", "HEAD:needed.txt"), "changed\n")
 
     def test_another_task_cannot_adopt_the_same_pr(self):
         S.save_task("demo", {"slug": "other", "state": "running", "adopted_pr":
@@ -369,7 +367,7 @@ class TestAdoption(AltitudeCase):
             if args[:2] == ["git", "push"]:
                 git("push", "-q", "origin", "proposal/external", cwd=other)
         commands = self.record_commands(race)
-        self.leased_change()
+        self.staged_change()
         with self.assertRaisesRegex(land.LandError, "only fast-forward"):
             self.adopt()
         self.assertEqual(git("rev-parse", "proposal/external", cwd=self.remote).strip(), remote_head)
@@ -396,7 +394,7 @@ class TestAdoption(AltitudeCase):
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
     def test_no_ci_suite_gets_two_parent_candidate_with_original_ancestry(self):
-        self.leased_change()
+        self.staged_change()
         S.write_json(self.ghdir / "checks.json", [])
         self.fake_runner("adoption-suite", script=f"""
 import subprocess
@@ -451,31 +449,6 @@ print('3 passed')
         self.write_pr(url="https://github.com/Team/Demo/pull/101")
         self.adopt()
         self.assertEqual(self.receipt()["url"], "https://github.com/Team/Demo/pull/101")
-
-    def test_scope_covers_reverted_merge_resolution_and_task_owned_history(self):
-        original = self.original
-        self.commit("src/side.py", "External side")
-        side = self.git("rev-parse", "HEAD").strip()
-        self.leased_change("outside-lease.txt")
-        self.git("add", "outside-lease.txt")
-        tree = self.git("write-tree").strip()
-        merged = self.git("commit-tree", tree, "-p", original, "-p", side, "-m", "External merge resolution").strip()
-        self.git("reset", "--hard", merged)
-        self.git("push", "-q", "origin", "HEAD:proposal/external")
-        self.original = merged
-        self.git("rm", "outside-lease.txt")
-        self.git("commit", "-q", "-m", "Remove merge addition", "-m", "Altitude-Task: demo/fix-x")
-        with self.assertRaisesRegex(land.LandError, "outside-lease.txt"):
-            self.adopt(dry_run=True)
-        self.assert_unpublished()
-
-    def test_later_task_owned_revert_does_not_hide_scope(self):
-        self.adopt()
-        self.commit("outside-lease.txt", "Wrong scope", "demo/fix-x")
-        self.git("rm", "outside-lease.txt")
-        self.git("commit", "-q", "-m", "Revert wrong scope", "-m", "Altitude-Task: demo/fix-x")
-        with self.assertRaisesRegex(land.LandError, "outside-lease.txt"):
-            land.land("reconcile", cwd=self.repo, wait=0)
 
     def test_main_can_be_merged_without_adopting_unrelated_main_paths(self):
         self.adopt()

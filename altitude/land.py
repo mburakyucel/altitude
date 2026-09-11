@@ -1,6 +1,6 @@
 """The guarded land-a-PR sequence as one deterministic command.
 
-Stage only the task's lease (refuse if anything outside it changed), commit with the Altitude trailer,
+Commit the owner's staged changes with the Altitude trailer, leaving working and untracked edits intact,
 push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
 reuse the PR, wait for checks, merge only on green — or, under the project's local-check policy, on a
 full local suite that passed on the base-plus-head merge candidate — and only when asked. No
@@ -33,15 +33,10 @@ from . import config, dispatch, git_policy, github_intake, state as S
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
-EMPTY_LEASE_MESSAGE = "lease is empty: pass --paths or set the task paths"
 
 
 class LandError(RuntimeError):
     """A refusal or a dead end the caller must see; bin/alt prints it on stderr and exits non-zero."""
-
-
-class EmptyLeaseError(LandError):
-    """The task resolved correctly, but it grants no files for this landing."""
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -110,33 +105,6 @@ def _require_current_publisher(project: str, slug: str, task: dict, authority: d
     attempt = authority.get("attempt") if authority is not None else os.environ.get("ALTITUDE_ATTEMPT")
     if not attempt or str(task.get("attempt")) != str(attempt):
         raise LandError(f"current L2 cannot land {project}/{slug}: attempt {attempt} is no longer current")
-
-
-def _changes(root: Path) -> list[tuple[str, list[str]]]:
-    """Working-tree changes as (XY, paths) groups — a rename is one group carrying both ends. `-z` so
-    spaced and quoted paths never bite; untracked files listed one by one, never as a directory."""
-    p = _git(root, "status", "--porcelain", "-z", "--untracked-files=all")
-    if p.returncode != 0:
-        raise LandError(f"git status: {(p.stderr or '').strip()[-200:]}")
-    items = (p.stdout or "").split("\0")
-    groups, i = [], 0
-    while i < len(items):
-        it = items[i]
-        i += 1
-        if not it:
-            continue
-        xy, grp = it[:2], [it[3:]]
-        if "R" in xy or "C" in xy:  # the origin path follows as its own NUL-separated item
-            grp.append(items[i])
-            i += 1
-        groups.append((xy, grp))
-    return groups
-
-
-def _inside(path: str, lease: list[str]) -> bool:
-    """A directory lease covers everything beneath it. Entries are
-    repo-root-relative; a malformed absolute entry like `/src` is read as `src` rather than matching nothing."""
-    return dispatch.inside_lease(path, lease)
 
 
 def _fetch_remote_tip(root: Path, branch: str) -> str | None:
@@ -335,23 +303,6 @@ def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base
         if previous_merge:
             receipt["previous_merge"] = previous_merge
     return receipt, pr
-
-
-def _adoption_scope(root: Path, base: str, lease: list[str], *, since: str | None = None) -> None:
-    # #252: adopting ancestors must not smuggle out-of-lease changes, including reverted files.
-    start = since or f"origin/{base}"
-    commits = _need(_git(root, "rev-list", f"{start}..HEAD"), "publication commits").splitlines()
-    changed = set()
-    for sha in commits:
-        paths = _need(_git(root, "diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames",
-                           "--cc", "-r", "-z", sha), "adopted commit paths")
-        changed.update(p for p in paths.split("\0") if p)
-    paths = _need(_git(root, "diff", "--name-only", "--no-renames", "-z", f"{start}...HEAD"),
-                  "PR paths")
-    changed.update(p for p in paths.split("\0") if p)
-    outside = sorted(p for p in changed if not _inside(p, lease))
-    if outside:
-        raise LandError(f"PR changes outside the lease: {', '.join(outside)}")
 
 
 def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | None, *,
@@ -1036,7 +987,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
 
 
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
-         merge: bool = False, wait: int = 600, paths: str | None = None, base: str = "main",
+         merge: bool = False, wait: int = 600, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
          authority: dict | None = None, adopt_pr: int | None = None,
          expected_head: str | None = None, reason: str | None = None,
@@ -1084,14 +1035,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             "re-run `alt land` without `--merge` — open the PR, report ok with the PR number, stop")
         _note(f"task {project}/{slug} carries a merge hold: {hold_merge}; "
               "the PR will be opened but not merged")
-    # This is deliberately before fetch, staging, or any GitHub call.  Put the
+    # This is deliberately before fetch, committing, or any GitHub call. Put the
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
     _require_current_publisher(project, slug, task, authority=authority)
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
-    # Record the branch tip before anything is staged or committed: a later force may replace only this exact
+    # Record the branch tip before committing: a later force may replace only this exact
     # remote history, and a push from another worker after this point must make the lease fail.
     adoption, pr = _adoption(root, project, slug, task, branch, base, adopt_pr, expected_head, reason)
     publish_branch = adoption["branch"] if adoption else branch
@@ -1106,32 +1057,19 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         sample = ", ".join(sha[:12] for sha in missing[:5])
         raise LandError(
             f"branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
-            "refusing before staging or pushing" + ("" if adoption else ", or contacting GitHub")
+            "refusing before committing or pushing" + ("" if adoption else ", or contacting GitHub")
         )
-    if paths is not None:
-        lease = [p.strip() for p in paths.split(",") if p.strip()]
-        if not lease:
-            raise LandError("--paths was given but names no paths")
-        lease_src = "--paths"
-    else:
-        lease = dispatch.task_paths(project, task)
-        if not lease:
-            raise EmptyLeaseError(f"alt land: task {project}/{slug} {EMPTY_LEASE_MESSAGE}")
-        lease_src = f"task {project}/{slug}"
-    groups = _changes(root)
-    changed = sorted({p for _, grp in groups for p in grp})
-    outside = sorted({p for _, grp in groups for p in grp if not _inside(p, lease)})
-    if outside:
-        raise LandError(f"changes outside the lease ({', '.join(lease)}, from {lease_src}) — "
-                        f"staging nothing: {', '.join(outside)}")
+    lease = dispatch.task_paths(project, task)
+    staged_diff = _git(root, "diff", "--cached", "--name-only", "--no-renames", "-z")
+    _need(staged_diff, "staged changes")
+    changed = [path for path in (staged_diff.stdout or "").split("\0") if path]
     if adoption:
-        _adoption_scope(root, base, lease)
         adoption, hold_merge = _record_adoption(project, slug, adoption, authority,
                                                 previous=task.get("adopted_pr"), dry_run=dry_run)
         task = {**task, "adopted_pr": adoption}
     commit, staged = None, []
-    if not groups:
-        _note("working tree clean — nothing to commit")
+    if not changed:
+        _note("nothing staged — no new commit")
     if dry_run:
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "main_run": None, "branch": branch,
                 "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
@@ -1140,10 +1078,9 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         pr = _pr_view(root, branch)
     cutoff, continued_pr = None, None
     if pr is not None and pr.get("state") == "MERGED":
-        cutoff = _continuation_base(root, project, slug, task, publish_branch, base, pr, bool(groups), recorded_tip)
+        cutoff = _continuation_base(root, project, slug, task, publish_branch, base, pr, bool(changed), recorded_tip)
         if cutoff is None:
             return _merged_retry(root, project, slug, task, authority, branch, base, pr, lease, closes_issues)
-        _adoption_scope(root, base, lease, since=cutoff)
         continued_pr = pr
         previous = {"number": pr["number"], "head": pr["headRefOid"],
                     "merge": pr["mergeCommit"]["oid"], "url": pr["url"]}
@@ -1157,27 +1094,17 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _note(f"continuing after PR #{previous['number']} in the same task")
     if pr is not None and pr.get("state") == "CLOSED":
         raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
-                        f"stage, commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
+                        f"commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
                         f"and re-run alt land, or start a new task branch")
-    if groups or not pr or (task.get("delivery") or {}).get("head") != _need(_git(root, "rev-parse", "HEAD"), "head"):
+    if changed or not pr or (task.get("delivery") or {}).get("head") != _need(_git(root, "rev-parse", "HEAD"), "head"):
         task = _record_delivery(project, slug, task, authority, branch=publish_branch,
                                 base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
-    if groups:
-        fd, spec = tempfile.mkstemp(prefix="alt-land-pathspec-")
-        try:  # NUL-separated :(literal) pathspecs: a path like `a[1].py` is a filename, never a glob
-            with os.fdopen(fd, "w") as fh:
-                fh.write("\0".join(f":(literal){p}" for p in changed))
-            _need(_git(root, "add", "-A", f"--pathspec-from-file={spec}", "--pathspec-file-nul"), "git add")
-        finally:
-            Path(spec).unlink(missing_ok=True)
-        if _git(root, "diff", "--cached", "--quiet").returncode != 0:
-            body = message.rstrip("\n") + f"\n\nAltitude-Task: {task_ref}"
-            _need(_git(root, "commit", "-m", body), "git commit")
-            commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
-            staged = changed
-            _note(f"committed {commit[:7]} ({len(staged)} path(s))")
-        else:
-            _note("staged changes match HEAD — nothing to commit")
+    if changed:
+        body = message.rstrip("\n") + f"\n\nAltitude-Task: {task_ref}"
+        _need(_git(root, "commit", "-m", body), "git commit")
+        commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
+        staged = changed
+        _note(f"committed {commit[:7]} ({len(staged)} path(s))")
     if cutoff:
         try:
             _need(_git(root, "rebase", "--onto", f"origin/{base}", cutoff, timeout=300), "continuation rebase")
