@@ -334,6 +334,20 @@ task-wide release stays effective. Adopted PR receipts remain in history when or
 continues after their merge. No-work retries preserve the current receipt and publish nothing.
 
 Starting another delivery or claiming a resume invalidates previous completion verification.
+Reported owners with recorded open-PR evidence expose the ordinary task composer and Resume action.
+Message or coordinator-resume admission confirms that a recorded PR is still open through the existing
+GitHub adapter, preserves the report and verification in a `report-superseded` event, and moves the
+same owner into the existing blocked/resume path. No new attempt, provider, worktree, PR or lease is
+created, and merge holds and original decision evidence remain intact. A failed PR lookup refuses
+the action before saving its text; after acceptance, wake failures retain the saved inbox request.
+
+`report_after` marks follow-up work, and verification carries its owner identity, worker start and
+block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
+messages return to the ordinary resume path. Report application, verifier faults, stranded-report
+recovery, automatic completion and report-turn receipts reject superseded work. The existing report
+file remains readable until replaced, but cannot verify a later continuation. Done/archived/rejected
+tasks remain outside continuation: archived worktrees may have been removed, and restoring their
+execution context and ownership requires a separate product decision.
 Report freshness includes the current delivery timestamp. Verification requires all recorded PRs,
 the current published head on GitHub and in the clean worktree, and matching reported merge SHAs;
 a clean worktree reconciled onto main after its merge also has no unpublished work. Pending work,
@@ -1117,7 +1131,7 @@ concluded, and concise Merge held status. Complete block and merge reasons open 
 wrap without truncation and remain distinct when both apply. The conversation uses the project conversation's bubble, prose,
 day-divider, and composer components: the operator's rows as bubbles and the L2's and L3's rows as
 prose under day dividers, the question component at its recorded message anchor, and the composer
-while the task is running, blocked, or queued with an existing question. Waiting on L3 stays a
+while the task is running, blocked, reported with open-PR owner evidence, or queued with an existing question. Waiting on L3 stays a
 concise status with its complete reason in details; a fault retains a visible cause in red with
 "L3 has been told". The live
 session panel is closed when entering a question. When opened, it is 480px inline at 1280px and

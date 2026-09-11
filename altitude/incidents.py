@@ -49,7 +49,8 @@ def _fault_lock():
 
 
 def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
-                         expected_block_id: object = T._UNSET) -> tuple[bool | None, bool]:
+                         expected_block_id: object = T._UNSET,
+                         expected_owner: dict | None = None) -> tuple[bool | None, bool]:
     """Return (changed blocker, is a repair task); None means no applicable task observation.
 
     The block is tagged with the fault kind and waits on L3, so the restart notice names it and Burak sees no
@@ -65,6 +66,7 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
     if task.get("state") in ("queued", "running", "reported"):
         try:
             T.block(project, slug, reason, actor="altd", expected_state=task["state"], updates=tag,
+                    expected_owner=expected_owner,
                     expected_block_id=task.get("block_id") if expected_block_id is T._UNSET else expected_block_id)
             touched = True
         except T.TransitionError:
@@ -72,7 +74,14 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
     elif task.get("state") == "blocked":
         with S.project_lock(project):
             task = S.load_task(project, slug)
+            if expected_owner is not None:
+                try:
+                    T._require_daemon_fence(task, slug)
+                except T.TransitionError:
+                    return None, task.get("source") == "recovery"
             if (task.get("state") == "blocked"
+                    and (expected_owner is None or (T.report_owner(task) == expected_owner and not any(
+                        row.get("wake", True) for row in T.pending(project, slug))))
                     and (expected_block_id is T._UNSET or task.get("block_id") == expected_block_id)):
                 touched = task.get("fault") != kind or task.get("blocked_reason") != reason
                 if touched:
@@ -83,7 +92,7 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
 
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None,
-                 expected_block_id: object = T._UNSET) -> dict | None:
+                 expected_block_id: object = T._UNSET, expected_owner: dict | None = None) -> dict | None:
     """Block the faulting task; deduplicate incidents by source project and kind for 24 hours.
 
     Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
@@ -93,8 +102,11 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     from . import l3
     from .dispatch import _seconds_since
     detail = (detail or "").strip()
-    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail}", kind, expected_block_id)
+    touched, repair = (_block_faulting_task(project, task, f"system fault [{kind}]: {detail}", kind,
+                                          expected_block_id, expected_owner)
                        if project and task else (False, False))
+    if expected_owner is not None and touched is None:
+        return None  # #323: superseded verification creates neither a fault nor coordinator work.
     target = project or ("altitude" if "altitude" in config.load_projects() else None)
     key = json.dumps([project, kind])
     with _fault_lock():

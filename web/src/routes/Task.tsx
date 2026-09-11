@@ -149,9 +149,9 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     holdReason: hold,
     engineLabel,
     finished,
-    canMessage: state === "running" || state === "blocked" || (state === "queued" && Boolean(task.question)),
+    canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && Boolean(task.question)),
     canStop: state === "running",
-    canResume: state === "blocked" && task.question?.status !== "open",
+    canResume: (state === "blocked" || task["can_continue"] === true) && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     hint:
       state === "queued"

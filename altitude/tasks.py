@@ -325,6 +325,59 @@ def _rows(path: Path, what: str) -> list[dict]:
     return rows
 
 
+def report_owner(task: dict) -> dict:
+    """Identity of the work a report may conclude, including same-attempt continuation."""
+    return {**{key: task.get(key) for key in ("attempt", "agent_id", "session_id", "worker_started_at",
+                                            "block_id", "report_after")},
+            "resume_claim": (task.get("resume_claim") or {}).get("id")}
+
+
+def report_current(task: dict, path: Path) -> bool:
+    """An earlier delivery or owner turn cannot report completion of follow-up work."""
+    after = max(task.get("report_after") or "", task.get("worker_started_at") or "",
+                (task.get("delivery") or {}).get("at", ""))
+    return path.is_file() and (not after or path.stat().st_mtime >= datetime.fromisoformat(after).timestamp())
+
+
+def reported_continuable(task: dict, report: dict | None) -> bool:
+    """Local report evidence offers continuation; admission checks the PR's current state."""
+    return bool(task.get("state") == "reported" and task.get("agent_id") and task.get("session_id")
+                and task.get("worktree") and any(
+                    pr.get("number") in task.get("prs", []) and pr.get("merged") is False
+                    for pr in ((report or {}).get("landed") or {}).get("prs", [])))
+
+
+def continue_report(project: str, task: dict, *, actor: str, reason: str, check_pr: bool = True) -> dict:
+    """Under the project lock, retire completion evidence and enter the ordinary resume path."""
+    from . import verify
+    slug = task["slug"]
+    _require_daemon_fence(task, slug)
+    report = S.read_json(S.task_dir(project, slug) / "report.json", {})
+    if check_pr:
+        if not reported_continuable(task, report):
+            raise TransitionError(f"{slug}: continuation requires a reported owner with an open PR")
+        try:
+            open_pr = any((verify.gh(["pr", "view", str(pr["number"]), "--json", "state"],
+                                    config.project_path(project)) or {}).get("state") == "OPEN"
+                          for pr in (report.get("landed") or {}).get("prs", [])
+                          if pr.get("number") in task.get("prs", []) and pr.get("merged") is False)
+        except verify.VerifierFault as exc:
+            raise TransitionError(f"{slug}: cannot confirm open PR; message not sent: {exc}") from exc
+        if not open_pr:
+            raise TransitionError(f"{slug}: the reported PR is no longer open")
+    S.append_event(project, slug, "report-superseded", report=report, verified=task.get("verified"), by=actor)
+    task.pop("verified", None)
+    task["report_after"] = datetime.now(timezone.utc).isoformat()
+    task["l3_handled"] = None
+    _supersede_resume(task)
+    task["blocked_reason"] = reason
+    if task["state"] == "blocked":
+        S.save_task(project, task)
+        S.regen_state_md(project)
+        return task
+    return _move(project, task, "blocked", actor, reason=reason)
+
+
 def message(project: str, slug: str, role: str, text: str, *, by: str | None = None,
             expected_attempt: int | None = None, wake_blocked: bool = True,
             question_id: str | None = None, revision: int | None = None,
@@ -339,7 +392,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
         raise TransitionError("task message is empty")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        allowed = ("running", "blocked", "reported") if role == "l2" else ("running", "blocked")
+        allowed = ("running", "blocked", "reported")
         if role != "l2" and task.get("questions"):
             allowed += ("queued",)  # a known dilemma remains discussable while its next attempt waits
         if task.get("state") not in allowed:
@@ -377,9 +430,18 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             if groups and group["id"] != groups[-1]["id"]:
                 row["question_context"] += "\n\nCurrent task context:\n" + group_context(task)
         d = S.task_dir(project, slug)
+        if role != "l2" and task.get("state") == "reported":
+            task = continue_report(project, task, actor=role, reason="Follow-up message")
         _append_jsonl(d / "conversation.jsonl", row)
         if role in ("burak", "l3"):  # an answer waits in the inbox until the worker reads it
             _append_jsonl(d / "inbox.jsonl", row)
+            if task.get("state") == "running" and (d / "report.json").exists():
+                if report_current(task, d / "report.json"):
+                    S.append_event(project, slug, "report-superseded", report=S.read_json(d / "report.json"),
+                                   verified=task.get("verified"), by=role)
+                task["report_after"] = datetime.now(timezone.utc).isoformat()
+                task.pop("verified", None)
+                S.save_task(project, task)
             # I-20260904-062512: the durable inbox is also altd's handoff. The coordinator must not run the
             # provenance gate itself because its deployment-checkout Git metadata is deliberately read-only.
             if task.get("state") == "blocked" and wake_blocked:
@@ -741,6 +803,11 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
                 raise TransitionError(f"{slug}: latest block did not come from {expected_block_from}")
         if task.get("delivery") != verified.get("delivery"):
             raise TransitionError(f"{slug}: delivery changed during report verification; verify current work again")
+        if verified.get("owner", None if task.get("report_after") else report_owner(task)) != report_owner(task):
+            raise TransitionError(f"{slug}: report belongs to superseded work")
+        if any(row.get("wake", True) for row in pending(project, slug)):
+            continue_report(project, task, actor="altd", reason="Follow-up messages await the owner", check_pr=False)
+            raise TransitionError(f"{slug}: pending messages require continuation before report handoff")
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
         _clear_block(project, task)
@@ -753,6 +820,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_state: str | None = None, expected_attempt: int | None = None, updates: dict | None = None,
           expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
           expected_daemon_request: str | None = None, expected_block_id: object = _UNSET,
+          expected_owner: dict | None = None,
           recommendation: str | None = None,
           recommendation_label: str | None = None, recommendation_why: str | None = None,
           questions: dict | None = None, design: dict | None = None) -> dict:
@@ -761,6 +829,9 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id,
                               expected_block_id=expected_block_id)
+        if expected_owner is not None and (report_owner(task) != expected_owner or any(
+                row.get("wake", True) for row in pending(project, slug))):
+            raise TransitionError(f"{slug}: verifier observation belongs to superseded work")
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
         if expected_attempt is not None and task.get("attempt") != expected_attempt:
@@ -851,7 +922,8 @@ def _require_no_code_change(task: dict) -> None:
 
 
 def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
-         expected_state: str | None = None, expected_attempt: int | None = None) -> dict:
+         expected_state: str | None = None, expected_attempt: int | None = None,
+         expected_owner: dict | None = None) -> dict:
     with S.project_lock(project):
         task = S.load_task(project, slug)
         _require_daemon_fence(task, slug)
@@ -871,6 +943,10 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
             raise TransitionError(f"{slug}: cannot complete a running worker; wait for its report or stop/reject it")
         delivery = task.get("delivery")
         verified = task.get("verified") or {}
+        if ((expected_owner is not None and expected_owner != report_owner(task))
+                or (task.get("report_after") and verified.get("owner") != report_owner(task))
+                or any(row.get("wake", True) for row in pending(project, slug))):
+            raise TransitionError(f"{slug}: follow-up work requires a current report before completion")
         if delivery and (not delivery.get("number") or verified.get("delivery") != delivery
                          or verified.get("verdict") != "ok"):
             raise TransitionError(f"{slug}: current delivery requires a verified report before completion")
