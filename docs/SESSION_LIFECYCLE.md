@@ -206,7 +206,8 @@ per-mention lookup occurs. Existing links and code remain intact, and missing re
 leaves unqualified references as text. Switching projects supplies the destination's repository.
 
 A message from the operator (task page, chat through L3, or `alt task message`) is appended to the task's durable
-conversation and to its inbox. Nothing is killed. The engine seam supplies the inbox at a native hook
+conversation and to its inbox. Each file is published atomically under the project writer lock;
+concurrent reads see complete messages. Nothing is killed. The engine seam supplies the inbox at a native hook
 checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
 worker retains the fault path even with pending steering. For a blocked task the same locked append
 records a due `resume_after` request, except when Stop holds the inbox. The L3
@@ -265,8 +266,8 @@ accessible in the owning conversation; concise presentation changes no revision 
 
 Global Needs you and the owning L2 chat show questions and quick answers. Project Work retains
 each unfinished task once in **Current**, with compact question and execution status; its waiting
-row opens the owning question. A follow-up or capacity wait leaves that attention visible.
-Partial answers reduce the question count without removing the task; the final answer removes
+row opens the owning question. A wake or capacity wait alone changes no question.
+Answers and withdrawals reduce the question count without removing the task; closing the last removes
 its attention label while the row shows the observed running or waiting state. Only completion
 or rejection moves it to recent **Done this week** history. The global attention badge counts
 open operator questions and operational items, named separately in summaries; project navigation
@@ -283,10 +284,16 @@ A typed group reply retains the viewed member references; the owner can cite tha
 resolve several independent questions. A follow-up alone never resolves the dilemma. A partial answer leaves the relevant remainder open;
 a changed direction can make the old question unnecessary and close it with a recorded reason.
 L3 proactively sends sourced context to affected active owners when project direction or another task's
-findings/delivery materially changes their work. The owner reassesses its plan and each question member,
-cites original authority to record obsolete members as superseded, and continues authorized work without
-asking the operator to dismiss them manually. Proposals and ongoing work are not verified delivery;
-recommendations do not supply operator authority. Remaining operator choices and proposal checkpoints stay open.
+findings/delivery materially changes their work. On receiving guidance, the owner assesses each open
+question before lengthy analysis: unaffected choices stay; doubtful ones are withdrawn with a reason
+in chat behind a compact **Question withdrawn** disclosure. Expanding it reveals the question and
+reason without answer controls. Withdrawal records owner judgment without an operator answer. The owner re-asks when the
+decision is ready, even unchanged, preserving independent open questions and closed history.
+Relevant revisions and checks precede a completed-work review; unrelated work need not finish.
+Answers settle only their stated scope and preserve required work. Queued guidance waits for the
+owner's checkpoint; an answer arriving first is considered with later guidance before action.
+Authoritative changed direction can instead supersede a question against its original source.
+Proposals and recommendations grant no authority; proposal checkpoints remain.
 L2 routes routine coordination within the authorized outcome to L3. L3 carries out supported
 assignment or continuation handoffs without another administrative approval, preserving remaining
 scope, acceptance, original evidence, holds and existing owner sessions. New scope/provider decisions
@@ -297,8 +304,8 @@ revision. The receipt attributes the answer to L3 and the authority assessment t
 source and revision checks do not replace the owner's substantive judgment. Partial resolution preserves
 the original audience and independent worker, capacity and fault state. Genuine operator choices still
 need original operator authority, and neither this resolution nor its receipt releases a merge hold.
-After replying to a follow-up, the L2 parks with the same question and retains its recommendation
-and required decision-maker. Report handoff closes the prior dilemma without accepting its approach;
+After a harmless follow-up, the L2 parks with the still-valid question, recommendation and authority.
+Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
 Neither operational resume nor closing an obsolete question approves its abandoned recommendation.
 

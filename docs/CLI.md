@@ -660,9 +660,9 @@ Options have stable keys, short button labels and explicit answer text. A questi
 multiple options require a recommendation key. Nothing becomes an operator answer by default.
 Include an existing question `id` to revise that member. Omitted unresolved members remain open;
 close obsolete questions explicitly rather than dropping them from a later publication. A group
-stays together while its members are discussed, answered or revised.
-The limit is three total members in that group; answered members retain their receipts. Start the
-next group after the current relevant questions settle. Dependent questions wait for their prerequisites.
+allows three open members and retains closed history. To re-ask a withdrawn question while others
+remain open, publish a new member without an `id`, even for identical wording; this preserves the
+independent questions. Dependent questions wait for their prerequisites.
 For an unchanged existing question, omitted options preserve its saved choices; `options: []`
 explicitly removes them. Changed question text with omitted options becomes a plain question.
 
@@ -673,15 +673,16 @@ One typed reply can answer several members. Its saved question references name w
 was viewing; cite the same message in a separate `resolve` call for each answered or obsolete member.
 Only unresolved, still-relevant questions remain in Needs you. Quick selections can also be sent
 together as one batch; a stale member prevents the whole batch from writing.
-After answering a follow-up, checkpoint and park with the same `block --reason` text. Omitting
-replacement recommendation fields keeps the saved question and approach. Parking or revising an
-unresolved operator dilemma preserves its required decision-maker.
+After a harmless follow-up, checkpoint and park with the still-valid `block --reason` text. Omitted
+recommendation fields preserve its approach; parking or revision preserves its required authority.
 
 ```text
 alt task resolve <slug> --question <id> --revision <n> --message <source-id> \
   --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
   [--l3-authority <specific-evidence-and-rationale>] \
   [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
+
+alt task resolve <slug> --question <id> --revision <n> --disposition withdrawn --reason <why>
 ```
 
 `--source task` (default) cites a durable task message ID. `--source project` cites the original
@@ -701,15 +702,19 @@ the question irrelevant; the reason names that change, without claiming acceptan
 recommendation. With `--remaining`, the operation preserves the resolved scope and publishes a new
 revision containing only the relevant unanswered parts. That remainder keeps its audience without
 changing independent worker, capacity or fault state and has no inherited default;
-provide a recommendation only when it applies to the remaining question. Follow-ups alone require
+provide a recommendation only when it applies to the remaining question. Harmless follow-ups require
 no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
 
-When L3 sends a material direction or delivery update, reassess the plan and each open member against
-its sources. Cite the original operator message for an operator decision relayed through L3; request
-missing evidence from L3. Record obsolete members as `superseded` with the specific changed direction
-and reason, retaining unanswered relevant members. Proposed or ongoing work is not verified delivery.
-Continue within authorized scope; a new operator choice or scope expansion still needs a decision.
+On receiving guidance, assess each open member before lengthy analysis or revision work. Keep
+unaffected questions answerable; promptly use `withdrawn` when guidance could change what an answer
+means, and explain in chat. It records L2 judgment, without `--message`, `--source`, `--l3-authority`,
+`--remaining` or recommendation fields. It removes that member's controls and retains its history;
+it grants no approval and discards no work. Re-ask when ready, even unchanged, without waiting for
+unrelated work. A completed-work review waits for its relevant revisions, checks and review.
+Answers apply only to their stated scope. If an answer precedes queued guidance, consider both and
+clarify any genuine conflict before acting. No message classifier or automatic withdrawal is involved.
+For sourced decisions, cite original authority; proposals and ongoing work are not verified delivery.
 
 When a provider limit queues a fresh attempt, existing question replies and quick acceptance wait
 in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
@@ -811,8 +816,10 @@ alt task block "$ALTITUDE_TASK" --reason 'Approve the compact chat proposal?' \
 ```
 
 `--design-file` requires the current L2's own project, task and attempt. It accompanies one ordinary
-question, not `--questions-file` or `--fault`. Select paths relative to the recorded task worktree,
-under `design/wireframes/`: one nonempty UTF-8 `.md`/`.txt` file up to 64 KiB and one to twelve
+question or a `--questions-file` selecting exactly one new or existing open member; other members
+stay unchanged. It cannot accompany `--fault` or an ambiguous multi-member selection. Select paths
+relative to the recorded task worktree under `design/wireframes/`: one nonempty UTF-8 `.md`/`.txt`
+file up to 64 KiB and one to twelve
 PNG/JPEG screenshots up to 8 MiB each, 32 MiB total. Titles have 1–160 characters, and the selection
 JSON is at most 64 KiB. Only named files are copied. Symlinks, traversal, special files and unsupported
 types are refused. Use the existing browser harness to capture interactive wireframe states;

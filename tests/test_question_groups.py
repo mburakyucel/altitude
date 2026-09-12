@@ -357,17 +357,28 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(T.decisions(self.project), [])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 3)
 
-    def test_fixed_group_keeps_unanswered_member_until_settled_before_starting_next_group(self):
+    def test_reasking_keeps_independent_questions_and_bounds_only_open_members(self):
         group = self.ask()
-        T.accept_questions(self.project, self.slug, group["id"], 1, self.answers(group))
-        current = self.group()
-        next_payload = {"questions": [{"question": "Which dashboard should we use?"}]}
-        with self.assertRaisesRegex(T.TransitionError, "at most three questions"):
-            T.escalate(self.project, self.slug, "Next rollout detail.", questions=next_payload)
-        self.assertEqual(self.group(), current, "a full group never forces closure or loses its remaining question")
-        message = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "The search team owns this.")
-        self.resolve(group["questions"][2], message)
-        T.escalate(self.project, self.slug, "Next rollout detail.", questions=next_payload)
-        self.assertNotEqual(self.group()["id"], group["id"])
-        self.assertEqual(len(self.group()["questions"]), 1)
+        independent = S.load_task(self.project, self.slug)["questions"][:2]
+        review = group["questions"][2]
+        for turn in range(4):
+            T.resume(self.project, self.slug)
+            before = self.group()
+            payload = {"questions": [{"question": review["question"] if turn % 2 else "Review the updated rollout?"}]}
+            with self.assertRaisesRegex(T.TransitionError, "at most three open questions"):
+                self.ask({"questions": [{"question": "A fourth independent decision?"}]})
+            self.assertEqual(self.group(), before)
+            T.resolve_question(self.project, self.slug, review["id"], review["revision"], None,
+                               disposition="withdrawn", reason="Assess new guidance first.", expected_attempt=1)
+            with self.assertRaisesRegex(T.TransitionError, "group changed"):
+                T.accept_questions(self.project, self.slug, group["id"], before["revision"], self.answers(group))
+            current = self.ask(payload)
+            self.assertEqual(S.load_task(self.project, self.slug)["questions"][:2], independent)
+            self.assertEqual(current["id"], group["id"])
+            fresh = current["questions"][-1]
+            self.assertNotEqual(fresh["id"], review["id"])
+            self.assertIsNone(fresh["resolution"])
+            review = fresh
+        self.assertEqual(len(self.group()["questions"]), 7)
+        self.assertEqual(len(T.decisions(self.project)), 3)
         self.assertIn(group["anchor_id"], [row["id"] for row in T.task_messages(self.project, self.slug)])

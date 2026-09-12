@@ -141,10 +141,11 @@ design or discussing a PR alone never releases its hold. The owner then rechecks
   stay accessible in the owning conversation. The model can ask a plain question, offer one
   recommended quick action, or offer two to three choices with a recommendation. A single quick
   choice takes one click; grouped selections send together, with nothing preselected. Open the item to
-  discuss the actual question in its owning L2 conversation. A follow-up leaves it open; a clear
-  answer is enough for the L2 to record your decision and continue. Answering part of a group leaves
-  only its unanswered, relevant questions open. A changed direction can close
-  a question that is no longer relevant, with the reason retained in chat. L3 handles
+  discuss the actual question in its owning L2 conversation. When guidance reaches the owner, it
+  checks each question before lengthy analysis: valid choices stay visible; doubtful ones are withdrawn
+  with a reason in chat and re-asked when ready, even with identical wording. Independent questions stay
+  answerable. A clear answer settles only its stated scope; requested revisions remain required.
+  Withdrawal records no decision. A compact **Question withdrawn** row expands to its history without answer controls. L3 handles
   questions the record settles and receives context when a block publishes or revises operator-directed questions,
   so it can coordinate scope or record-backed portions while operator approvals remain visible.
   Re-parking unchanged questions does not repeat the notification. The owner can close an unnecessary escalation by citing L3's answer

@@ -1128,7 +1128,7 @@
 .conversation-question { padding: 16px; border: 1px solid var(--accent-tint-border); border-radius: var(--radius-card); background: var(--card); scroll-margin-top: 80px; }
 .conversation-question > p { margin: 0 0 10px; }
 .conversation-question:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
-.conversation-question[data-historical] { padding: 8px 0; border: 0; background: transparent; }
+.conversation-question[data-historical] { padding: 8px 0; border: 0; background: transparent; outline: none; }
 .question-history summary { color: var(--text-muted); font-size: var(--text-meta); cursor: pointer; }
 .question-history[open] summary { margin-bottom: 12px; }
 .question-set { display: flex; flex-direction: column; gap: 16px; }
