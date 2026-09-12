@@ -446,7 +446,7 @@ class TestRecordedMergeApproval(AltitudeCase):
                        {"resolution": {**original["questions"][-1]["resolution"], "source": "project"}},
                        {"resolution": {**original["questions"][-1]["resolution"], "message_id": "0" * 32}},
                        {"resolution": {**original["questions"][-1]["resolution"], "option_key": "another"}},
-                       {"asked": "2026-09-07T20:02:59+00:00"}):
+                       {"asked": self.approval["at"]}):
             with self.subTest(fields=fields):
                 task = copy.deepcopy(original)
                 task["questions"][-1].update(fields)

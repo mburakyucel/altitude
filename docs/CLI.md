@@ -977,8 +977,10 @@ to a superseded question about mechanical recovery. It does not accept that ques
 only for an approval without question context. For a question answer used as approval, the daemon
 requires that question's current revision, operator audience and answered resolution from the same
 original message and source, with no remaining question. UI acceptance must match its recorded option.
-The presentation precedes the question and approval. For a clear typed answer to an open question,
-the owner records its decision with `alt task resolve` first. Messages in between, such as an operator
+The question and final presentation both precede approval; the question may precede the current
+hold or final PR update. The final presentation still follows the current hold and PR update.
+For a clear typed answer to an open question, the owner records its decision with `alt task resolve`
+first. Messages in between, such as an operator
 request for a plain explanation and the owner's reply without the URL, do not break the citation:
 L3 reads them and still cites the original presentation.
 

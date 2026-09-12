@@ -1907,8 +1907,7 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
             if not (timestamp(hold["at"]) < timestamp(presented["at"]) < timestamp(operator["at"])
                     and timestamp(pull["updatedAt"]) < timestamp((integrated or presented)["at"])
                     and timestamp(operator["at"]) <= timestamp(latest["at"])
-                    and (not resolution or timestamp(presented["at"]) <= timestamp(decision["asked"])
-                         < timestamp(operator["at"]))):
+                    and (not resolution or timestamp(decision["asked"]) < timestamp(operator["at"]))):
                 raise ValueError("approval is stale: hold or PR changed since its presentation")
             adopted = task.get("adopted_pr") or {}
             if adopted and (pull.get("number") != adopted["number"] or pull.get("url") != adopted["url"]):

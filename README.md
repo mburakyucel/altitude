@@ -101,8 +101,9 @@ revocation. Original project-chat decisions use the same path, independently for
 L3 reviews later operator messages in both conversations. Explicitly delegated rebasing or overlap
 resolution retains the original authority and adds the owner's current PR/head presentation;
 it grants no scope expansion. The daemon verifies those sources, the current hold and PR before recording
-the release. Meaning remains model judgment; accepting a design or discussing a PR alone never
-releases its hold. The owner then rechecks and lands normally.
+the release. The final presentation may follow the review question; the operator's answer follows
+both and the presentation follows the current hold. Meaning remains model judgment; accepting a
+design or discussing a PR alone never releases its hold. The owner then rechecks and lands normally.
 
 ## How the work stays coherent
 

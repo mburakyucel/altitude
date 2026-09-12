@@ -443,7 +443,8 @@ agent-authored text releases a hold.
 Conversational resolution and merge reconciliation share original-source authority and viewed-revision
 validation. A question answer used as merge approval requires the latest revision of that question,
 an answered operator decision citing the same original message and source, no remaining question, and a matching
-selected option for UI acceptance. The presentation precedes that question and approval. Task chat also
+selected option for UI acceptance. The question and final presentation both precede the approval;
+the question may precede the current hold or final presentation. Task chat also
 attaches resolved questions to later messages: when a fresh PR presentation follows that resolution,
 a new conversational approval may cite the still-current revision as context only. The receipt marks
 `question_context_only` and carries no earlier option; the earlier answer or superseded recommendation

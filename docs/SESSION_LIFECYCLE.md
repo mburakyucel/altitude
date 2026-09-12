@@ -350,7 +350,9 @@ message reviewed. L3 judges merge permission and later corrections from those or
 interpretation is not a daemon classifier. Design acceptance, implementation permission, ordinary
 discussion, unresolved conditions and revocations cannot authorize release. Altd checks original source
 authority, the answered question's current revision and selected option, current hold generation and
-PR. Original project user/chat turns use `--source project`, with later operator messages reviewed
+PR. The final presentation may follow the question, including a question asked before the current
+hold; the operator's answer follows both, and the presentation follows that hold.
+Original project user/chat turns use `--source project`, with later operator messages reviewed
 in both project and task conversations. Each named PR receives its own bound release. Explicit
 operator delegation of integration permits a later owner presentation of that same PR and current
 head; the original approval and hold generation remain binding, and expanded scope is not authorized.
