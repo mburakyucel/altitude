@@ -1816,11 +1816,10 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
-                         reason: str, actor: str, presentation: str, latest_operator: str,
+                         reason: str, actor: str,
                          question: str | None = None, revision: int | None = None,
-                         source: str = "task", latest_other_operator: str | None = None,
-                         integration_presentation: str | None = None) -> dict:
-    """L3 judges merge permission; altd proves original authority, context and exact scope.
+                         source: str = "task") -> dict:
+    """L3 judges scope and later corrections; altd binds original authority to this hold and PR.
 
     I-20260909-074919: UI decisions and contextual reaffirmations use the common decision contract.
     No prose classifier: L3 must reject ambiguity, revocation and implementation-only permission.
@@ -1835,26 +1834,16 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
             from . import l3
             if any(r.get("trigger") == "chat" for r in l3._queue_rows(l3.queue_path(project))):
                 raise ValueError("review pending project chat before applying approval")
-            rows = task_messages(project, slug)
             sources = _decision_messages(project, slug, source)
             approvals = [r for r in sources if r["id"] == approval]
             operator = approvals[0] if len(approvals) == 1 else {}
-            latest = next((r for r in reversed(sources) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
-            if (operator.get("role") != OPERATOR_MESSAGE_ROLE or operator.get("by") != OPERATOR_MESSAGE_ROLE
-                    or latest.get("id") != latest_operator or latest.get("by") != OPERATOR_MESSAGE_ROLE):
-                raise ValueError("cite the original operator approval and latest operator message reviewed")
-            other = _decision_messages(project, slug, "task" if source == "project" else "project")
-            other_latest = next((r for r in reversed(other) if r["role"] == OPERATOR_MESSAGE_ROLE), {})
-            if (other_latest.get("id") != latest_other_operator
-                    or other_latest and (not other_latest.get("id")
-                                         or other_latest.get("by") != OPERATOR_MESSAGE_ROLE)):
-                raise ValueError("cite the latest operator message reviewed in the other conversation")
-            def named(text):
-                return set(re.findall(r"https://github\.com/[\w.-]+/[\w.-]+/pull/[1-9][0-9]*\b", text))
-            presented = next((r for r in rows if r["id"] == presentation), {})
-            if (presented.get("role") != "l2" or presented.get("by") != "l2"
-                    or named(presented.get("text", "")) != {pull["url"]}):
-                raise ValueError("cite the owner's presentation of this PR alone")
+            if operator.get("role") != OPERATOR_MESSAGE_ROLE or operator.get("by") != OPERATOR_MESSAGE_ROLE:
+                raise ValueError("cite the original operator approval")
+            def timestamp(value):
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("approval evidence needs timezone-aware timestamps")
+                return parsed
             decision, resolution = None, {}
             if question is not None:
                 decision = _question_target(task, question, revision)
@@ -1867,49 +1856,29 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                             or (resolution.get("source"), resolution.get("by")) != (source, OPERATOR_MESSAGE_ROLE))):
                     raise ValueError("approval needs the current answered operator question revision")
                 _decision_source(project, slug, decision, approval, source)
+                if not resolution and not timestamp(saved["at"]) < timestamp(operator["at"]):
+                    raise ValueError("context-only approval must follow the earlier question resolution")
                 if resolution and decision.get("acceptance_message") and not any(
                         o["key"] == resolution.get("option_key") and o["text"] == resolution.get("text")
                         for o in question_choices(decision)):
                     raise ValueError("approval choice does not match its recorded option")
             elif revision is not None or operator.get("question_refs") or operator.get("question_id"):
                 raise ValueError("cite the approval's question and revision")
-            context = [operator["text"], latest["text"]]
-            if resolution:
-                context += [decision["detail"], resolution["text"]]
-            urls = named("\n".join(context))
-            allowed = {pull["url"]} if source == "task" else {
-                url for url in urls if url.rsplit("/", 1)[0] == pull["url"].rsplit("/", 1)[0]}
-            if (urls - allowed or source == "project" and named(operator["text"])
-                    and pull["url"] not in named(operator["text"])):
-                raise ValueError("approval context names a different PR")
             events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
                       if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
-            generation = next((i for i in range(len(events) - 1, -1, -1)
-                               if events[i]["kind"] in ("new", "hold-merge", "release-merge")), None)
-            hold = events[generation] if generation is not None else {}
+            hold = next((event for event in reversed(events)
+                         if event["kind"] in ("new", "hold-merge", "release-merge")), {})
             if (hold.get("kind") not in ("new", "hold-merge")
                     or task.get("hold_merge_id") != hold.get("hold_id")
                     or hold["kind"] == "hold-merge" and hold.get("why") != task["hold_merge"]):
                 raise ValueError("current hold has no matching recorded generation")
-            def timestamp(value):
-                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    raise ValueError("approval evidence needs timezone-aware timestamps")
-                return parsed
-            if decision and not resolution and not timestamp(saved["at"]) < timestamp(presented["at"]):
-                raise ValueError("inherited question context must be resolved before the PR presentation")
-            integrated = next((r for r in rows if r["id"] == integration_presentation), {})
-            if integration_presentation and (integrated.get("role") != "l2" or integrated.get("by") != "l2"
-                    or named(integrated.get("text", "")) != {pull["url"]}
-                    or head not in integrated["text"].split()
-                    or timestamp(integrated["at"]) <= timestamp(operator["at"])):
-                raise ValueError("integration needs the owner's later presentation of this PR and exact head")
-            if not (timestamp(hold["at"]) < timestamp(presented["at"]) < timestamp(operator["at"])
-                    and timestamp(pull["updatedAt"]) < timestamp((integrated or presented)["at"])
-                    and timestamp(operator["at"]) <= timestamp(latest["at"])
-                    and (not resolution or timestamp(presented["at"]) <= timestamp(decision["asked"])
-                         < timestamp(operator["at"]))):
-                raise ValueError("approval is stale: hold or PR changed since its presentation")
+            # Restoration repeats this requirement; only an explicit hold change creates a new ID.
+            generation = next(i for i, event in enumerate(events)
+                              if event["kind"] in ("new", "hold-merge")
+                              and event.get("hold_id") == hold.get("hold_id"))
+            hold = events[generation]
+            if not timestamp(hold["at"]) < timestamp(operator["at"]):
+                raise ValueError("approval is stale: it predates the current merge hold")
             adopted = task.get("adopted_pr") or {}
             if adopted and (pull.get("number") != adopted["number"] or pull.get("url") != adopted["url"]):
                 raise ValueError("approval PR must match the adopted PR")
@@ -1922,24 +1891,17 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 raise ValueError("approval PR must be open, ready, and match the task branch and observed head")
         except (ValueError, KeyError, TypeError, AttributeError, OSError, TransitionError) as exc:
             S.append_event(project, slug, "merge-approval-refused", actor=actor, approval=approval,
-                           presentation=presentation, latest_operator=latest_operator, question=question,
-                           revision=revision, reason=reason, source=source,
-                           latest_other_operator=latest_other_operator,
-                           integration_presentation=integration_presentation, error=str(exc))
+                           question=question, revision=revision, reason=reason, source=source, error=str(exc))
             raise TransitionError(f"recorded merge approval refused: {exc}") from exc
         receipt = {"actor": actor, "authorized_by": operator["role"], "reason": reason,
-                   "source": source, "latest_other_operator": latest_other_operator,
-                   "latest_other_operator_at": other_latest.get("at"),
-                   "integration_presentation": integration_presentation,
+                   "source": source,
                    "approval": approval, "approved_at": operator["at"],
-                   "latest_operator": latest_operator, "latest_operator_at": latest["at"],
                    "question": question, "revision": revision,
                    "question_context_only": decision is not None and not resolution,
                    "option_key": resolution.get("option_key"),
                    "hold": task["hold_merge"], "hold_event": generation, "hold_at": hold["at"],
                    "hold_id": task.get("hold_merge_id"),
-                   "presentation": presentation, "pr": pull["number"], "url": pull["url"],
-                   "head": head, "pr_updated_at": pull["updatedAt"], "at": S.now()}
+                   "pr": pull["number"], "url": pull["url"], "head": head, "at": S.now()}
         task.update(hold_merge=None, merge_approval=receipt)
         S.save_task(project, task)
         S.append_event(project, slug, "release-merge", **receipt)

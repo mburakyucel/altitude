@@ -24,7 +24,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -331,7 +330,7 @@ def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | N
         S.save_task(project, current)
         if restore_hold:
             S.append_event(project, slug, "hold-merge", why=restore_hold, actor=receipt["actor"],
-                           hold_id=current["hold_merge_id"])
+                           hold_id=current.get("hold_merge_id"))
         S.append_event(project, slug, "pr-adopted", **receipt)
         return receipt, current.get("hold_merge")
 
@@ -340,8 +339,8 @@ def _restore_delivery_hold(task: dict, previous: int | None) -> str | None:
     approval = task.get("merge_approval") or {}
     hold = (previous and not task.get("hold_merge") and approval.get("pr") == previous
             and approval.get("hold_id") == task.get("hold_merge_id") and approval.get("hold"))
-    if hold:  # #308 continuation: a PR-specific release cannot approve a subsequent delivery.
-        task.update(hold_merge=hold, hold_merge_id=uuid.uuid4().hex)
+    if hold:  # Each PR needs its own scope judgment, within the original review requirement.
+        task["hold_merge"] = hold
     return hold or None
 
 
@@ -370,7 +369,7 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
             current.pop(key, None)
         S.save_task(project, current)
         if hold:
-            S.append_event(project, slug, "hold-merge", why=hold, actor="l2", hold_id=current["hold_merge_id"])
+            S.append_event(project, slug, "hold-merge", why=hold, actor="l2", hold_id=current.get("hold_merge_id"))
         S.append_event(project, slug, "delivery", **current["delivery"], previous=previous)
         return current
 

@@ -343,8 +343,9 @@ The task's `delivery` records the current PR number/head, base SHA, publication 
 timestamp; a publication in progress has no number/head. `prs` retains every delivery number, and
 `delivery` events retain publication receipts and the preceding PR/head/merge evidence. PR creation
 is recorded before check polling. Each new PR runs the existing candidate checks and review/hold
-gate; a PR-specific hold release restores its hold for the next PR, while a later explicit
-task-wide release stays effective. Adopted PR receipts remain in history when ordinary task work
+gate; a PR-specific release restores the original hold requirement for the next PR. L3 judges
+whether the original decision covers that PR before applying its own bound release. An explicit
+renewed hold changes its generation; a later task-wide release stays effective. Adopted PR receipts remain in history when ordinary task work
 continues after their merge. No-work retries preserve the current receipt and publish nothing.
 
 Starting another delivery or claiming a resume invalidates previous completion verification.
@@ -405,8 +406,9 @@ records the verified previous merge in the new receipt, and atomically selects t
 Retries preserve receipts; incomplete deliveries, reactivation of earlier receipts and concurrent
 target changes refuse. Landing, resume provenance and recorded hold approval use the active receipt.
 The history grants no additional provenance exceptions or authority over unrelated PRs.
-If recorded approval released the previous PR's hold, the next adoption restores it with a fresh
-hold generation. A later explicit task-wide release remains effective.
+If recorded approval released the previous PR's hold, the next adoption restores the original
+requirement for a separate PR-bound scope judgment and release. A later explicit task-wide release
+remains effective.
 
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
 Only unowned ancestors of that original head are exempt from task trailers; foreign task trailers
@@ -428,55 +430,46 @@ this repository's temporary local policy, the full local suite runs on a clean m
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
-Operator authority travels through recorded task replies, UI decisions and original project chat. L3's project-bound
-[`hold-merge --approval`](CLI.md#recorded-merge-approval) executes directly in altd. L3 cites the original
-operator approval, owner's single-PR presentation, latest operator message it reviewed and, when the
-approval has question context, that question and revision. The daemon reads the checkout-origin PR,
-then validates and releases the hold under the project lock. L3 interprets the original sources and
-every later operator correction: permission must concern this merge, with no unresolved condition,
-ambiguity or revocation. Design acceptance, implementation approval, discussion and superseded
-recommendations cannot authorize merge. This semantic judgment is explicit model responsibility;
-the daemon checks provenance and scope, not arbitrary prose meaning. Neither a resolution alone nor
-agent-authored text releases a hold.
+Operator merge decisions travel through task chat, UI choices and original project chat. L3 uses
+[`hold-merge --approval`](CLI.md#recorded-merge-approval) through its project-bound daemon connection,
+citing the original operator message, current PR/head, interpretation reason and applicable question
+revision. L3 reads the original decision and later corrections in both conversations, judges the
+actual scope and conditions, and records why this PR remains authorized. Design feedback,
+implementation-only permission, relays and revoked decisions supply no merge authority. Meaning
+is model judgment; altd does not classify prose, URLs or message adjacency.
 
-Conversational resolution and merge reconciliation share original-source authority and viewed-revision
-validation. A question answer used as merge approval requires the latest revision of that question,
-an answered operator decision citing the same original message and source, no remaining question, and a matching
-selected option for UI acceptance. The presentation precedes that question and approval. Task chat also
-attaches resolved questions to later messages: when a fresh PR presentation follows that resolution,
-a new conversational approval may cite the still-current revision as context only. The receipt marks
-`question_context_only` and carries no earlier option; the earlier answer or superseded recommendation
-supplies no merge authority. A later reaffirmation remains
-a separate source; it cannot turn a superseded manual-repair question into acceptance. A new operator
-message after either conversation's cited latest message refuses the request. Project sources use the
-original user/chat turn ID through the shared strict source reader; assistant replies and triggered
-coordinator traffic grant no authority. Corrupt or duplicate approval evidence refuses release.
-Pending project chat also refuses release until admitted and reviewed; queue rows grant no authority.
-The current hold generation and GitHub's PR update timestamp must precede the presentation.
-A renewed hold or missing evidence refuses release. A later PR update requires a fresh integration
-presentation when the original operator decision explicitly delegates
-rebasing or overlap resolution within that PR outcome. L3 records that scope judgment in the reason;
-the owner's later message names this PR alone and its current full head, after its latest update.
-The original presentation and approval still follow the current hold. No scope expansion is authorized.
-Without this explicit integration evidence, any later update refuses release.
-Task approval URLs name only the observed PR. Project approval may name multiple PRs in the same
-repository, including the target when explicit; each release remains independently task/PR-bound.
-GitHub must report an open, non-draft,
-same-repository PR targeting main on the task's publication branch and supplied head. The last recorded
-task PR number must match when present; an adopted PR additionally binds its number, URL and original branch.
+The existing source reader verifies original operator authorship and unique source identity.
+Project sources use original user/chat turn IDs; triggered coordinator traffic cannot authorize a
+release. Corrupt or missing source evidence refuses. Pending project chat must reach the conversation
+and L3's review before release; queued text is not yet authority. A later unrelated message does
+not expire an approval, and no latest-message citations or presentation artifacts are required.
 
-The hold generation is its latest `hold-merge` event, or the creation event for an initial hold;
-hold changes and their events serialize under the same lock. Each hold change stores a fresh
-`hold_merge_id` with its state and event; a write interrupted before its matching event refuses
-approval even when the reason repeats. Approval validation reads events
-strictly, so corrupt evidence cannot hide a later hold. One atomic task write clears `hold_merge`
-and stores `merge_approval`, recording the actual coordinator actor, original operator approval,
-source and both conversations' latest operator messages reviewed, question/revision and selected option
-when present, original and optional integration presentations,
-prior hold generation, PR URL/head and the coordinator's interpretation reason. A `release-merge` event carries the same receipt;
-local evidence refusals record `merge-approval-refused`. The operation releases the observed hold;
-it does not resume the task or merge the PR. Head binding is checked at release, and the owner
-continues through the ordinary landing checks. Direct `--off` remains operator-only.
+Question answers retain the shared original-source and viewed-revision validation. An answer used
+as merge authority requires the current resolved operator question, an answered resolution from that
+same source, no remainder, and the recorded option for a UI choice. A later conversational approval
+may carry an already resolved question as context only; its source must follow that resolution.
+The receipt marks `question_context_only` and imports no previous option. Earlier design acceptance
+or a superseded recommendation therefore supplies no authority to the later source.
+
+Under the project lock, altd matches the current hold ID to its original recorded generation and
+requires approval after that requirement arose. Explicit hold changes store a fresh ID with their
+event; interrupted or renewed holds cannot reuse earlier approval. Automatic restoration for a
+follow-up retains the original ID: L3 must independently judge and release that active PR, but can
+cite the same operator decision when it actually covers the follow-up. This is not blanket approval.
+Hold evidence is read strictly, so corruption cannot hide a renewed restriction.
+
+The daemon reads the PR from the project's origin. It must be open, non-draft, same-repository,
+target main and match the task publication branch and supplied head. The last recorded task PR
+must match when present; adoption also binds the number, URL and original branch. Routine rebasing
+or conflict resolution within the approved outcome preserves authority; PR update timestamps do
+not expire it. Changed objectives, unresolved conditions and revoked permission still prevent merge.
+The owner reviews the integrated result and runs ordinary exact-current-candidate landing checks.
+
+One task write clears `hold_merge` and saves `merge_approval`: original source and author/time,
+applicable question/revision and option, original hold ID/event/time, current PR URL/head and L3's
+interpretation reason. A `release-merge` event carries that receipt; local refusals record
+`merge-approval-refused`. This releases only the observed hold for this PR; it does not resume or
+merge. Direct `--off` remains operator-only.
 
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
 daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged

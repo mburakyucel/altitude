@@ -92,16 +92,15 @@ workflow evidence proves it inapplicable and it is not required. Supported condi
 [main-push conjunction](docs/CLI.md#adopt-an-existing-pr) and `github.event_name != 'pull_request'`,
 the latter only for a `pull_request` run. Task scope and merge holds still apply.
 
-The coordinator can reconcile an operator's recorded merge decision, including a task UI choice
-and a later conversational reaffirmation, through the daemon's
-[`hold-merge --approval` command](docs/CLI.md#recorded-merge-approval). L3 cites the original messages
-and question revision and judges that they authorize this merge without unresolved conditions or
-revocation. Original project-chat decisions use the same path, independently for each named task PR.
-L3 reviews later operator messages in both conversations. Explicitly delegated rebasing or overlap
-resolution retains the original authority and adds the owner's current PR/head presentation;
-it grants no scope expansion. The daemon verifies those sources, the current hold and PR before recording
-the release. Meaning remains model judgment; accepting a design or discussing a PR alone never
-releases its hold. The owner then rechecks and lands normally.
+Clear task-chat, project-chat and UI merge decisions carry through authorized delivery using
+[`hold-merge --approval`](docs/CLI.md#recorded-merge-approval). L3 cites the original operator source
+and judges its scope against later corrections in both conversations. Unrelated discussion and
+routine rebasing or conflict resolution do not require another approval or a prescribed presentation.
+Each held PR receives its own release: a follow-up can use the same decision only when its work is
+within that decision's actual scope. A renewed hold needs approval of that renewed requirement.
+The daemon verifies original authority, applicable question evidence, the hold and current PR;
+the owner completes review and exact-candidate checks. Design feedback, unresolved conditions and
+revoked permission do not authorize merge.
 
 ## How the work stays coherent
 
