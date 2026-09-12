@@ -58,6 +58,170 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.assertEqual(S.load_task(self.project, self.slug)["resume_request"], human["id"])
         self.assertEqual(T.pending(self.project, self.slug), [*messages, human])
 
+    def message_delivery(self, row):
+        return next(message["delivery"] for message in T.message_views(self.project, self.slug, [])
+                    if message["id"] == row["id"])
+
+    def test_remove_middle_message_preserves_batch_order_and_later_arrivals(self):
+        first, removed, last = [T.message(self.project, self.slug, "burak", text)
+                                for text in ("first", "remove this", "last")]
+        T.remove_message(self.project, self.slug, removed["id"])
+        claim = T.claim_resume(self.project, self.slug)
+        self.assertEqual([row["id"] for row in claim["messages"]], [first["id"], last["id"]])
+        prompt = T.render_inbox(claim["messages"])
+        self.assertNotIn(removed["text"], prompt)
+        self.assertLess(prompt.index(first["id"]), prompt.index(last["id"]))
+        late = T.message(self.project, self.slug, "burak", "later arrival")
+        self.assertEqual(T.pending(self.project, self.slug), [late])
+        self.assertTrue(self.message_delivery(late)["removable"])
+        for row in (first, last):
+            self.assertEqual(self.message_delivery(row)["state"], "sending")
+            self.assertFalse(self.message_delivery(row)["removable"])
+            with self.assertRaises(T.TransitionError):
+                T.remove_message(self.project, self.slug, row["id"])
+        T.update_resume_claim(self.project, self.slug, claim["id"], phase="launching")
+        T.resume(self.project, self.slug, agent_id="replacement", session_id="thread-old",
+                 expected_claim=claim["id"], input_delivered=True)
+        self.assertEqual(T.take_inbox(self.project, self.slug), [late])
+        self.assertEqual(T.take_inbox(self.project, self.slug), [])
+        original = next(row for row in T.task_messages(self.project, self.slug) if row["id"] == removed["id"])
+        self.assertEqual(original["text"], removed["text"])
+        self.assertTrue(original["removed_at"])
+        self.assertEqual(self.message_delivery(removed)["state"], "removed")
+
+    def test_hook_and_remove_serialize_in_both_orders_without_losing_siblings(self):
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "running"
+        S.save_task(self.project, task)
+        for first_operation in ("hook", "remove"):
+            with self.subTest(first=first_operation):
+                selected, sibling = [T.message(self.project, self.slug, "burak", text)
+                                     for text in ("selected", "sibling")]
+                locked, release, second_started = threading.Event(), threading.Event(), threading.Event()
+                outcomes = {}
+                original_pending = T._pending_rows
+
+                def pause_with_lock(*args):
+                    if threading.current_thread().name == "first-operation" and not locked.is_set():
+                        locked.set()
+                        release.wait(5)
+                    return original_pending(*args)
+
+                def run(operation, second=False):
+                    if second:
+                        second_started.set()
+                    try:
+                        outcomes[operation] = (T.take_inbox(self.project, self.slug) if operation == "hook"
+                                               else T.remove_message(self.project, self.slug, selected["id"]))
+                    except Exception as exc:
+                        outcomes[operation] = exc
+
+                second_operation = "remove" if first_operation == "hook" else "hook"
+                with mock.patch.object(T, "_pending_rows", side_effect=pause_with_lock):
+                    first = threading.Thread(target=run, args=(first_operation,), name="first-operation")
+                    second = threading.Thread(target=run, args=(second_operation, True))
+                    first.start()
+                    try:
+                        self.assertTrue(locked.wait(5))
+                        second.start()
+                        self.assertTrue(second_started.wait(5))
+                    finally:
+                        release.set()
+                        first.join(5)
+                        if second.ident:
+                            second.join(5)
+                self.assertFalse(first.is_alive() or second.is_alive())
+                expected = [selected, sibling] if first_operation == "hook" else [sibling]
+                self.assertEqual(outcomes["hook"], expected)
+                if first_operation == "hook":
+                    self.assertIsInstance(outcomes["remove"], T.TransitionError)
+                else:
+                    self.assertIsNone(outcomes["remove"])
+                self.assertEqual(T.pending(self.project, self.slug), [])
+
+    def test_failed_claim_removal_depends_on_whether_handoff_started(self):
+        for phase in ("claimed", "launching", "launched"):
+            with self.subTest(phase=phase):
+                row = T.message(self.project, self.slug, "burak", phase)
+                claim = T.claim_resume(self.project, self.slug)
+                T.update_resume_claim(self.project, self.slug, claim["id"], phase=phase)
+                with self.assertRaises(T.TransitionError):
+                    T.remove_message(self.project, self.slug, row["id"])
+                T.release_resume_claim(self.project, self.slug, claim["id"], consume_request=False)
+                delivery = self.message_delivery(row)
+                self.assertEqual(delivery["state"], "queued" if phase == "claimed" else "unconfirmed")
+                self.assertEqual(delivery["removable"], phase == "claimed")
+                if phase == "claimed":
+                    T.remove_message(self.project, self.slug, row["id"])
+                else:
+                    with self.assertRaises(T.TransitionError):
+                        T.remove_message(self.project, self.slug, row["id"])
+                late = T.message(self.project, self.slug, "burak", "new after failure")
+                self.assertTrue(self.message_delivery(late)["removable"])
+                T.remove_message(self.project, self.slug, late["id"])
+                T.take_inbox(self.project, self.slug)
+
+    def test_stop_held_removal_preserves_worker_and_stop_authority(self):
+        task = S.load_task(self.project, self.slug)
+        task["stop_id"] = "stop-generation"
+        S.save_task(self.project, task)
+        selected, sibling = [T.message(self.project, self.slug, "burak", text) for text in ("selected", "sibling")]
+        before = S.load_task(self.project, self.slug)
+        T.remove_message(self.project, self.slug, selected["id"])
+        after = S.load_task(self.project, self.slug)
+        for key in ("stop_id", "state", "agent_id", "session_id", "resume_after", "resume_request"):
+            self.assertEqual(after.get(key), before.get(key), key)
+        self.assertEqual(T.take_inbox(self.project, self.slug), [])
+        self.assertEqual(T.pending(self.project, self.slug), [sibling])
+        self.assertEqual(dispatch.resume_due(self.project), [])
+
+    def test_only_ordinary_operator_messages_are_removable_and_authority_is_retained(self):
+        task = S.load_task(self.project, self.slug)
+        task["state"] = "running"
+        S.save_task(self.project, task)
+        question = T.block(self.project, self.slug, "Which approach?", actor="l2", updates={"waiting_on": "burak"},
+                           recommendation="Use the existing path", recommendation_label="Use existing")["questions"][-1]
+        original = T.message(self.project, self.slug, "burak", "Use the existing path")
+        T.resolve_question(self.project, self.slug, question["id"], question["revision"], original["id"],
+                           expected_attempt=1, disposition="answered", reason="The operator selected the existing path")
+        coordinator = T.message(self.project, self.slug, "l3", "Keep this coordination record")
+        control = T.enqueue(self.project, self.slug, "Keep this control record")
+        forged = T.message(self.project, self.slug, "burak", "Not an original operator message", by="l3")
+        for row in (original, coordinator, control, forged):
+            with self.subTest(row=row["text"]), self.assertRaises(T.TransitionError):
+                T.remove_message(self.project, self.slug, row["id"])
+        T.resume(self.project, self.slug)
+        question = T.block(self.project, self.slug, "Continue?", actor="l2", updates={"waiting_on": "burak"},
+                           recommendation="Continue", recommendation_label="Continue")["questions"][-1]
+        T.accept_question(self.project, self.slug, question["id"], question["revision"])
+        acceptance = S.load_task(self.project, self.slug)["questions"][-1]["acceptance_message"]
+        with self.assertRaises(T.TransitionError):
+            T.remove_message(self.project, self.slug, acceptance["id"])
+        self.assertIn(acceptance["id"], [row["id"] for row in T.pending(self.project, self.slug)])
+
+    def test_removed_original_message_cannot_resolve_question_or_cross_task_boundary(self):
+        row = T.message(self.project, self.slug, "burak", "Withdraw this suggestion")
+        question = T.question_views(self.project, self.slug)[-1]
+        other = T.new(self.project, "Other owner", "Independent conversation")
+        with self.assertRaises(T.TransitionError):
+            T.remove_message(self.project, other["slug"], row["id"])
+        self.assertIn(row["id"], [message["id"] for message in T.pending(self.project, self.slug)])
+        T.remove_message(self.project, self.slug, row["id"])
+        with self.assertRaisesRegex(T.TransitionError, "original message"):
+            T.resolve_question(self.project, self.slug, question["id"], question["revision"], row["id"],
+                               expected_attempt=1, disposition="answered", reason="Should not be authorized")
+        self.assertEqual(T.question_views(self.project, self.slug)[-1]["status"], "open")
+        self.assertEqual(next(message["text"] for message in T.task_messages(self.project, self.slug)
+                              if message["id"] == row["id"]), row["text"])
+        formatters = runpy.run_path(str(ALT))
+        rendered = formatters["_messages_text"](T.task_messages(self.project, self.slug))
+        self.assertIn("[Removed before delivery] " + row["text"], rendered)
+        result = l3.search(self.project, row["text"])
+        found = next(context for match in result["results"] for context in match["context"]
+                     if context["text"] == row["text"])
+        self.assertTrue(found["removed_at"])
+        self.assertIn("[Removed before delivery]\n" + row["text"], formatters["_search_text"](result))
+
     def test_nonwaking_message_stays_quiet_after_a_later_operational_block(self):
         task = S.load_task(self.project, self.slug)
         task.update(state="running", blocked_reason=None)
@@ -1044,6 +1208,44 @@ class TestChatQueue(AltitudeCase):
             server.drain_l3_queue(self.project)
         self.assertEqual([(c.args[1], c.kwargs["trigger"]) for c in turn.call_args_list],
                          [("first\n\nsecond", "chat"), ("a fault", "incident"), ("third", "chat")])
+        self.assertEqual(self.queue_rows(), [])
+
+    def test_remove_between_selection_and_claim_preserves_siblings_and_conversation_boundaries(self):
+        first, removed, last = [l3.queue_message(self.project, text, trigger="chat", role="burak", slug="owner-a")
+                                for text in ("first", "remove this", "last")]
+        l3.queue_message(self.project, "other owner", trigger="chat", role="burak", slug="owner-b")
+        l3.queue_message(self.project, "system authority", trigger="incident", role="server")
+        original_active = l3._active_turn
+
+        @contextlib.contextmanager
+        def remove_before_claim(*args, **kwargs):
+            self.assertTrue(l3.drop_queued(self.project, removed["id"]))
+            with original_active(*args, **kwargs) as active:
+                yield active
+
+        with self.deliverable(), mock.patch.object(l3, "_active_turn", side_effect=remove_before_claim), \
+             mock.patch.object(l3, "turn") as turn:
+            self.assertIsNone(l3.deliver_queued(self.project))
+        turn.assert_not_called()
+        self.assertEqual([row["text"] for row in self.queue_rows()],
+                         ["first", "last", "other owner", "system authority"])
+
+        def during_turn(_project, prompt, **_kwargs):
+            if prompt == "first\n\nlast":
+                self.assertFalse(l3.drop_queued(self.project, first["id"]))
+                self.assertFalse(l3.drop_queued(self.project, last["id"]))
+                l3.queue_message(self.project, "later arrival", trigger="chat", role="burak", slug="owner-a")
+            return {"completed": True}
+
+        with self.deliverable(), mock.patch.object(l3, "turn", side_effect=during_turn) as turn:
+            l3.deliver_queued(self.project)
+            self.assertEqual([row["text"] for row in self.queue_rows()],
+                             ["other owner", "system authority", "later arrival"])
+            server.drain_l3_queue(self.project)
+        self.assertEqual([(call.args[1], call.kwargs["trigger"], call.kwargs.get("slug"))
+                          for call in turn.call_args_list],
+                         [("first\n\nlast", "chat", "owner-a"), ("other owner", "chat", "owner-b"),
+                          ("system authority", "incident", None), ("later arrival", "chat", "owner-a")])
         self.assertEqual(self.queue_rows(), [])
 
     def test_the_queue_drains_at_the_turn_boundary_not_at_the_next_tick(self):

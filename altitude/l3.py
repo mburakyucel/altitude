@@ -291,7 +291,8 @@ def search(project: str, query: str, limit: int = 5) -> dict:
 
     def message_row(row, source):
         return {"source": source, "at": row.get("at"), "date_kind": "message",
-                "role": row.get("role"), "by": row.get("by"), "turn_id": row.get("turn_id"), "text": row["text"]}
+                "role": row.get("role"), "by": row.get("by"), "turn_id": row.get("turn_id"),
+                "removed_at": row.get("removed_at"), "text": row["text"]}
 
     chat = local(root / "chat.jsonl")
     rows = []

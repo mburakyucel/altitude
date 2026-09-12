@@ -115,6 +115,14 @@ def main():
                     stream.write("{partial\n")
             elif mode == "unconfirmed-delivery":
                 T.take_inbox(project, row["slug"])
+            elif mode in ("prelaunch-recovery", "uncertain-recovery"):
+                with S.project_lock(project):
+                    row["state"] = "blocked"
+                    S.save_task(project, row)
+                claim = T.claim_resume(project, row["slug"])
+                if mode == "uncertain-recovery":
+                    T.update_resume_claim(project, row["slug"], claim["id"], phase="launching")
+                T.release_resume_claim(project, row["slug"], claim["id"], consume_request=True)
             elif mode == "blocked":
                 T.block(project, row["slug"], "Keep the original page size?", actor="l2")
                 T.escalate(project, row["slug"], "Keep the original page size?")

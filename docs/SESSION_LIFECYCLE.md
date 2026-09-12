@@ -213,7 +213,15 @@ records a due `resume_after` request, except when Stop holds the inbox. The L3
 CLI returns without fetching or writing the deployment checkout; altd sees the durable request on its next tick
 and its keyed resume runner coalesces a simultaneous API wake, retry, or available WIP slot. Before provider launch it
 persists a cross-process claim and moves that claim's exact message batch out of the hook-visible inbox.
-Claimed messages remain labeled Queued. A successful stdin handoff, matching session initialization
+Each ordinary operator message offers Remove while the inbox still owns it. Removal and pickup share
+the project lock: only the selected ID leaves pending input, and later arrivals remain separate for
+the next checkpoint. The existing delivery metadata records removal while original conversation text
+remains evidence; the bubble becomes Message removed. Removed text cannot authorize a new decision.
+Quick-choice receipts and messages already used by recorded decisions cannot be removed. Cancellation
+does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
+cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
+retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
+A successful stdin handoff, matching session initialization
 and bound replacement record delivery for that exact batch. A correlated native hook attachment also
 proves handoff; inbox absence or new assistant output does not. Missing evidence says Delivery
 unconfirmed, without recommending a duplicate send. The conversation keeps each message, and a message appended after that snapshot remains
@@ -663,8 +671,10 @@ an outstanding microphone permission or transcription result cannot populate the
 L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
-arrival order; a message queued but not started is not a turn in flight, so it neither holds the
-quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
+arrival order, batching consecutive chat rows for the same conversation while keeping system turns
+and other conversations separate. Each waiting chat row remains individually removable until claim;
+messages arriving after that snapshot wait for the next turn. A message queued but not started is not
+a turn in flight, so it neither holds the quiet-point restart nor is lost by one. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,

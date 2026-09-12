@@ -123,8 +123,10 @@ design or discussing a PR alone never releases its hold. The owner then rechecks
   project or role source; see the [L3 persona](personas/l3.md).
 - **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
   session, and follow its PR and report. A replacing public update and recorded activity show what
-  is visible from the current worker. Messages queue for the engine's next checkpoint, with delivery
-  labeled only when evidenced. Stop holds queued messages until an explicit correction or Continue
+  is visible from the current worker. Messages stay separate and individually removable while waiting
+  for the engine's next checkpoint, which takes the remaining batch in arrival order. Sending and
+  uncertain handoffs cannot be removed; delivery is labeled only when evidenced. Stop holds queued
+  messages until an explicit correction or Continue
   resumes the saved session; file edits and the draft remain intact.
   Steering accepted before a clean completion is finalized keeps the owner reachable for the next turn.
   An explicit question block survives worker exit and restart; older queued messages do not

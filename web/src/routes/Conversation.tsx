@@ -365,8 +365,8 @@ export default function Conversation({
                 <li key={row.id} className="queued-row">
                   <span className="queued-text"><span>{row.text}</span><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></span>
                   {!row.trigger || row.trigger === "chat" ? (
-                    <button type="button" className="link" onClick={() => dequeue.mutate(row.id)}>
-                      Remove
+                    <button type="button" className="link" disabled={dequeue.isPending} onClick={() => dequeue.mutate(row.id)}>
+                      {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
                     </button>
                   ) : null}
                 </li>

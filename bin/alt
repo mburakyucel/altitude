@@ -95,7 +95,8 @@ def _report_text(record: dict) -> str:
 
 def _messages_text(rows: list[dict]) -> str:
     return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {row.get('role') or '?'}"
-                     f" ({row.get('by') or '?'}, message {row.get('id') or '?'}): {_one_line(row.get('text') or '')}" for row in rows) or "No messages."
+                     f" ({row.get('by') or '?'}, message {row.get('id') or '?'}): "
+                     f"{'[Removed before delivery] ' if row.get('removed_at') else ''}{_one_line(row.get('text') or '')}" for row in rows) or "No messages."
 
 
 def _events_text(rows: list[dict]) -> str:
@@ -124,6 +125,8 @@ def _search_text(record: dict) -> str:
         for row in result["context"]:
             lines.append(f"[{row['at'] or 'date unknown'}; {row['date_kind']}] "
                          f"{row['role']} ({row['by'] or 'author not stored'}) {row['source']}")
+            if row.get("removed_at"):
+                lines.append("[Removed before delivery]")
             lines.append(row["text"])
             if row["truncated"]:
                 lines.append(f"[excerpt characters {row['start']}:{row['end']} of {row['text_chars']}; truncated]")

@@ -168,7 +168,7 @@ class TestStopResults(AltitudeCase):
                     self.assertEqual(resumed["worktree"], task["worktree"])
                     self.assertNotIn("completion_requested", resumed)
                     self.assertEqual(T.pending(self.project, slug), [])
-                    self.assertEqual(T.message_views(self.project, slug, resumed, [])[0]["delivery"]["state"],
+                    self.assertEqual(T.message_views(self.project, slug, [])[0]["delivery"]["state"],
                                      "delivered")
 
     def test_completion_request_and_old_inbox_cannot_hide_engine_failure(self):
