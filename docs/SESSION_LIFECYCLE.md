@@ -285,7 +285,8 @@ a changed direction can make the old question unnecessary and close it with a re
 L3 proactively sends sourced context to affected active owners when project direction or another task's
 findings/delivery materially changes their work. On receiving guidance, the owner assesses each open
 question before lengthy analysis: unaffected choices stay; doubtful ones are withdrawn with a reason
-in chat. Withdrawal records owner judgment without an operator answer. The owner re-asks when the
+in chat behind a compact **Question withdrawn** disclosure. Expanding it reveals the question and
+reason without answer controls. Withdrawal records owner judgment without an operator answer. The owner re-asks when the
 decision is ready, even unchanged, preserving independent open questions and closed history.
 Relevant revisions and checks precede a completed-work review; unrelated work need not finish.
 Answers settle only their stated scope and preserve required work. Queued guidance waits for the

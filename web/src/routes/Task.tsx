@@ -216,7 +216,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const node = anchors.current.get(`${question.id}:${question.revision}`);
     const container = scroller.current;
     if (!node || !container) return false;
-    const history = node.querySelector<HTMLDetailsElement>("details.question-history");
+    const history = node.querySelector<HTMLDetailsElement>(":scope > details.question-history");
     if (history) history.open = true;
     following.current = false;
     // Leave a little of the preceding explanation visible; never jump to the latest tool event.
@@ -289,28 +289,30 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const key = message.id || `${message.at ?? "message"}-${index}`;
     if (question && (!atGroup || !inGroup(question))) {
       const historical = Boolean(group && !inGroup(question));
+      const withdrawn = question.resolution?.disposition === "withdrawn";
       const content = <>
-        <p className="text-meta text-muted">{question.asked_by === "l3" ? "L3 brought this question to the L2" : "L2"}</p>
+        {!withdrawn ? <p className="text-meta text-muted">{question.asked_by === "l3" ? "L3 brought this question to the L2" : "L2"}</p> : null}
         <Question key={`${question.id}:${question.revision}:${accessRefresh}`} decision={question} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </>;
       rows.push(<div key={`${key}-question`} className="conversation-question" data-historical={historical || undefined} tabIndex={-1} ref={(node) => {
         const id = `${question.id}:${question.revision}`;
         if (node) anchors.current.set(id, node); else anchors.current.delete(id);
       }}>
-        {historical ? <details className="question-history" open={target?.id === question.id && target?.revision === question.revision}>
+        {historical && !withdrawn ? <details className="question-history" open={target?.id === question.id && target?.revision === question.revision}>
           <summary>Earlier question · {question.resolution?.disposition === "answered" ? "decision recorded" : "closed"}</summary>
           {content}
         </details> : content}
       </div>);
     }
     if (atGroup && group) {
-      rows.push(<div key={`${key}-group`} className="conversation-question" tabIndex={-1} ref={(node) => {
+      const withdrawn = group.questions.every((q) => q.resolution?.disposition === "withdrawn");
+      rows.push(<div key={`${key}-group`} className="conversation-question" data-historical={withdrawn || undefined} tabIndex={-1} ref={(node) => {
         group.questions.forEach((q) => {
           const id = `${q.id}:${q.revision}`;
           if (node) anchors.current.set(id, node); else anchors.current.delete(id);
         });
       }}>
-        <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p>
+        {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
         <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question) {

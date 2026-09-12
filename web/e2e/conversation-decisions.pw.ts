@@ -88,13 +88,20 @@ test("early owner withdrawal preserves independent answers and work, then reasks
   const old = questionCard(page, review);
   const reason = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful.";
   await old.scrollIntoViewIfNeeded();
-  await walk.state("03-early-withdrawal-explains-why-in-chat", {
-    visible: [old.getByText("Question withdrawn", { exact: true }), old.getByText(reason, { exact: true }), old.getByText("Earlier recommendation", { exact: true })],
-    hidden: [old.getByRole("button"), old.getByText("Recommended:", { exact: true })],
+  await walk.state("03-withdrawn-question-is-a-compact-audit-row", {
+    visible: [old.getByText("Question withdrawn", { exact: true }), questionCard(page, retention).getByRole("button", { name: "14 days", exact: true })],
+    hidden: [old.getByText(review.question, { exact: true }), old.getByText(reason, { exact: true }), old.getByRole("button"), old.getByText("Recommended:", { exact: true })],
   });
-  await old.getByText("Earlier recommendation", { exact: true }).click();
-  await walk.state("04-earlier-recommendation-readable-without-action", {
-    visible: [old.getByText("Recommended:", { exact: true })], hidden: [old.getByRole("button")],
+  expect((await old.boundingBox())!.height).toBeLessThan(48);
+  await old.getByText("Question withdrawn", { exact: true }).click();
+  await walk.state("04-expand-withdrawn-question-to-read-history", {
+    visible: [old.getByText(review.question, { exact: true }), old.getByText(reason, { exact: true }), old.getByText("Recommended:", { exact: true })],
+    hidden: [old.getByRole("button"), old.getByText("Earlier recommendation", { exact: true })],
+  });
+  await old.getByText("Question withdrawn", { exact: true }).click();
+  await walk.state("04b-collapse-history-leaves-independent-answer-visible", {
+    visible: [old.getByText("Question withdrawn", { exact: true }), questionCard(page, retention).getByRole("button", { name: "14 days", exact: true })],
+    hidden: [old.getByText(reason, { exact: true })],
   });
   const stale = await request.post("/api/decide", { data: { project: "atlas", slug, question_id: review.id, revision: review.revision, option_key: "merge" } });
   expect(stale.status()).toBe(409);
@@ -124,6 +131,14 @@ test("early owner withdrawal preserves independent answers and work, then reasks
     visible: [questionCard(page, unchanged).getByRole("button", { name: "Merge rollout", exact: true })], hidden: [old.getByRole("button")],
   });
   await withdraw();
+  await page.reload();
+  const withdrawnAgain = questionCard(page, unchanged);
+  const closedGroup = withdrawnAgain.locator("xpath=ancestor::div[contains(@class, 'conversation-question')]");
+  await expect(closedGroup).toHaveAttribute("data-historical", "true");
+  await walk.state("07b-withdrawn-only-group-leaves-a-quiet-audit-row", {
+    visible: [withdrawnAgain.getByText("Question withdrawn", { exact: true })],
+    hidden: [withdrawnAgain.getByText(unchanged.question, { exact: true }), closedGroup.getByText("L2", { exact: true }), withdrawnAgain.getByRole("button")],
+  });
   const revised = await ready(true);
   expect(revised.id).not.toBe(unchanged.id);
   expect(revised.question).toBe("Merge the revised rollout?");
@@ -132,7 +147,17 @@ test("early owner withdrawal preserves independent answers and work, then reasks
     visible: [list.getByText(revised.question, { exact: true }), list.getByRole("button", { name: "Merge rollout", exact: true })],
     hidden: [list.getByText(review.question, { exact: true }), list.getByRole("button", { name: "14 days", exact: true })],
   });
+  await walk.open(taskPath(slug));
+  await old.scrollIntoViewIfNeeded();
+  await walk.state("08b-withdrawn-history-stays-compact-after-reasking", {
+    visible: [old.getByText("Question withdrawn", { exact: true })],
+    hidden: [old.getByText(reason, { exact: true }), old.getByText(review.question, { exact: true })],
+  });
+  await old.getByText("Question withdrawn", { exact: true }).click();
+  await expect(old.getByText(reason, { exact: true })).toBeVisible();
   await walk.open(atQuestion(slug, review));
+  await expect(old.getByText(reason, { exact: true })).toBeHidden();
+  await old.getByText("Question withdrawn", { exact: true }).click();
   await walk.state("09-old-link-keeps-withdrawn-history", {
     visible: [old.getByText("Question withdrawn", { exact: true }), old.getByText(reason, { exact: true })], hidden: [old.getByRole("button")],
   });

@@ -1091,8 +1091,8 @@ uses the existing question and conversation records without a second summary or 
 `/projects/<name>/tasks/<slug>?question=<id>&revision=<n>` focuses that question's group
 and surrounding prose, suppressing the initial scroll to latest. Historical revisions remain
 readable under **Earlier question**, opened automatically by an old-version link; stale controls
-cannot act on a replacement. **Question withdrawn** retains the owner's reason in chat, with its
-former recommendation folded under **Earlier recommendation** and no answer controls. Following the bottom resumes ordinary chat
+cannot act on a replacement. A compact, muted **Question withdrawn** row expands to the original
+question, owner's reason and former recommendation without answer controls. Following the bottom resumes ordinary chat
 scrolling. Pending questions poll every two seconds, and new replies offer **Latest messages**
 without moving a reader away from the question. Technical activity and reference links stay behind
 **Activity & evidence** and the existing live session view. A saved decision URL redirects into this

@@ -81,19 +81,20 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
       {decisions.length > 1 ? <p className="text-meta text-muted">{open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer` : decisions.every((q) => q.resolution?.disposition === "answered") ? "Answers recorded" : "Questions closed"}</p> : null}
       {shown.map((question) => {
         const resolved = question.status === "resolved";
+        const withdrawn = question.resolution?.disposition === "withdrawn";
         const options = optionsFor(question);
         const recommendation = <>
           {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
         </>;
-        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
+        const content = <>
           <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
           {resolved ? <div className="decision-receipt" role="status">
-            <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : question.resolution?.disposition === "withdrawn" ? "Question withdrawn" : "Question closed"}</b>
+            {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
             {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
           </div> : null}
           {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
-          {resolved && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
+          {resolved && !withdrawn && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
           {chat && question.detail && question.detail !== question.question ? <details className="question-context">
             <summary>More context</summary>
             <Prose text={question.detail} />
@@ -108,6 +109,12 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
               {recording ? "Recording…" : option.label}
             </button>; })}
           </div> : null}
+        </>;
+        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
+          {withdrawn ? <details className="question-history">
+            <summary>Question withdrawn</summary>
+            <div className="question-body">{content}</div>
+          </details> : content}
         </div>;
       })}
       {grouped && open.length ? <div className="question-batch">

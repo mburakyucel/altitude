@@ -439,9 +439,11 @@ retains its remaining scope in a new revision. A single typed reply can answer t
 If the chosen direction makes the
 remainder unnecessary, close it with a short reason instead of leaving stale questions open.
 
-A closed question retains its reason with **Decision recorded**, **Question closed** or
-**Question withdrawn**. Withdrawal attributes judgment to the owner; the former recommendation folds
-under **Earlier recommendation**, without answer controls. It records no operator decision or merge authority.
+A closed question retains its reason with **Decision recorded** or **Question closed**.
+A withdrawn question occupies one muted **Question withdrawn** disclosure row, collapsed by default.
+Expanding it reveals the question, owner's reason and former recommendation together, without answer
+controls or a second recommendation disclosure. Collapsing it restores the compact audit trail;
+independent open questions remain visible. Withdrawal records no operator decision or merge authority.
 Recorded acceptance and execution are separate observations:
 show **Waiting to resume** while waiting for capacity, and **Work resumed** only after observing the
 worker running. An old question URL stays readable and links to the current revision when one exists.

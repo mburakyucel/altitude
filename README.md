@@ -145,7 +145,7 @@ design or discussing a PR alone never releases its hold. The owner then rechecks
   checks each question before lengthy analysis: valid choices stay visible; doubtful ones are withdrawn
   with a reason in chat and re-asked when ready, even with identical wording. Independent questions stay
   answerable. A clear answer settles only its stated scope; requested revisions remain required.
-  Withdrawal records no decision, and earlier questions remain readable without answer controls. L3 handles
+  Withdrawal records no decision. A compact **Question withdrawn** row expands to its history without answer controls. L3 handles
   questions the record settles and receives context when a block publishes or revises operator-directed questions,
   so it can coordinate scope or record-backed portions while operator approvals remain visible.
   Re-parking unchanged questions does not repeat the notification. The owner can close an unnecessary escalation by citing L3's answer
