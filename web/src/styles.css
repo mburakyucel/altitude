@@ -794,6 +794,7 @@
 .project-details .composer-pill-select { min-height: 44px; }
 .queued-status { display: block; font-size: var(--text-meta); }
 .shell[data-phone] .queued-row > .link { min-width: 44px; min-height: 44px; }
+.shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }
 
 /* First run (§3.12). */
 .first-run-page {
@@ -1527,7 +1528,7 @@
 .task-stop { border: 1px solid var(--border); gap: 8px; }
 .task-stop kbd { font: inherit; color: var(--text-muted); font-size: 10px; }
 .live-steering { padding: 0 14px 8px; }
-.message-delivery { max-width: 90%; text-align: right; }
+.message-delivery { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; max-width: 90%; text-align: right; }
 @media (max-height: 650px) {
   .task-activity:not([data-expanded]) .task-activity-words, .task-activity:not([data-expanded]) .task-activity-age { display: none; }
 }

@@ -1444,6 +1444,12 @@ class Handler(BaseHTTPRequestHandler):
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+            if api == "l2" and len(parts) > 2 and parts[2] == "remove":
+                try:
+                    T.remove_message(o["project"], o["slug"], str(o.get("id") or ""))
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                return self._json({"ok": True})
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
                 project, slug = o["project"], o["slug"]
                 text = str(o.get("text") or "").strip()
@@ -1461,7 +1467,7 @@ class Handler(BaseHTTPRequestHandler):
                         request_task_resume(project, slug)
                 except Exception as exc:  # #298: acceptance is durable; the timer retries its saved resume request.
                     log(f"[{project}/{slug}] message wake deferred: {exc}")
-                message["delivery"] = {"state": "queued", "at": None}
+                message["delivery"] = {"state": "queued", "at": None, "removable": False}
                 return self._json({"ok": True, "message": message})
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":
                 l3.reset(o["project"], "reset from the page"); return self._json({"ok": True})
@@ -1970,7 +1976,7 @@ def task_view(project: str, slug: str) -> dict:
     return {**t, "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
-            "files": files, "messages": T.message_views(project, slug, t, activity["delivered"]),
+            "files": files, "messages": T.message_views(project, slug, activity["delivered"]),
             "events": events, "activity": activity, "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 

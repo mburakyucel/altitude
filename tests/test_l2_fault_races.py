@@ -72,7 +72,7 @@ class TestL2FaultRaces(AltitudeCase):
                 current = S.load_task(self.project, task["slug"])
                 self.assertEqual(current["session_id"], task["session_id"])
                 self.assertEqual(current["state"], "running")
-                self.assertEqual(T.message_views(self.project, task["slug"], current, [])[0]["delivery"]["state"],
+                self.assertEqual(T.message_views(self.project, task["slug"], [])[0]["delivery"]["state"],
                                  "delivered")
 
     def test_fault_cannot_block_resumed_replacement_after_its_request_was_consumed(self):

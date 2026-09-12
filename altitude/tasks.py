@@ -478,11 +478,16 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
     rows = _rows(S.task_dir(project, slug) / "conversation.jsonl", "task conversation")
     # Question anchors and quick-accept messages are saved atomically with their question record.
     # Project them into the ordinary human thread without a second multi-file commit protocol.
-    for question in S.load_task(project, slug).get("questions", []):
+    task = S.load_task(project, slug)
+    for question in task.get("questions", []):
         rows.append(question["message"])
         if question.get("acceptance_message"):
             rows.append(question["acceptance_message"])
     rows = list({row["id"]: row for row in rows}.values())
+    for row in rows:
+        receipt = (task.get("message_deliveries") or {}).get(row["id"], {})
+        if receipt.get("state") == "removed":
+            row["removed_at"] = receipt["at"]
     rows.sort(key=lambda row: row["at"])
     if any(row.get("role") not in TASK_MESSAGE_ROLES for row in rows):
         raise ValueError(f"corrupt task conversation of {project}/{slug}: invalid role")
@@ -518,19 +523,58 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
             "error": "The worker may still be running." if state == "stop_unconfirmed" else None}
 
 
-def message_views(project: str, slug: str, task: dict, delivered: list[dict]) -> list[dict]:
-    """An inbox claim is still queued; only an evidenced session handoff is delivered."""
+def removable_messages(project: str, slug: str, task: dict) -> set[str]:
+    """Only unclaimed operator text can be withdrawn; recorded decisions keep their evidence."""
+    if task.get("state") not in ("running", "blocked", "queued"):
+        return set()
+    protected = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    protected.update(task.get("message_deliveries") or {})
+    for question in task.get("questions", []):
+        protected.add((question.get("acceptance_message") or {}).get("id"))
+        resolution = question.get("resolution") or {}
+        if resolution.get("source") == "task":
+            protected.add(resolution.get("message_id"))
+    for receipt in [task.get("merge_approval") or {},
+                    *(event for event in S.read_events(project, slug) if event["kind"] == "release-merge")]:
+        if receipt.get("source", "task") == "task":
+            protected.update((receipt.get("approval"), receipt.get("latest_operator")))
+        else:
+            protected.add(receipt.get("latest_other_operator"))
+    return {row["id"] for row in pending(project, slug)
+            if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and row["id"] not in protected}
+
+
+def remove_message(project: str, slug: str, message_id: str) -> None:
+    """Withdraw one inbox message without erasing original text or changing lifecycle requests."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if message_id not in removable_messages(project, slug, task):
+            raise TransitionError("This message can no longer be removed. Refresh its delivery status.")
+        task.setdefault("message_deliveries", {})[message_id] = {"state": "removed", "at": S.now()}
+        S.save_task(project, task)
+
+
+def message_views(project: str, slug: str, delivered: list[dict]) -> list[dict]:
+    with S.project_lock(project):
+        return _message_views(project, slug, S.load_task(project, slug), delivered)
+
+
+def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -> list[dict]:
+    """Claimed and uncertain handoffs never promise cancellation or confirmed delivery."""
     receipts = {row["message_id"]: {"at": row.get("at")} for row in delivered}
-    receipts.update(task.get("message_deliveries") or {})
+    receipts = {**(task.get("message_deliveries") or {}), **receipts}
     queued = {row["id"] for row in pending(project, slug)}
-    queued.update(row["id"] for row in (task.get("resume_claim") or {}).get("messages", []))
+    claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    removable = removable_messages(project, slug, task) - receipts.keys()
     rows = task_messages(project, slug)
     for row in rows:
         if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
             continue
         receipt = receipts.get(row["id"])
-        row["delivery"] = {"state": "delivered" if receipt else "queued" if row["id"] in queued else "unconfirmed",
-                           "at": receipt.get("at") if receipt else None}
+        state = ("removed" if row.get("removed_at") else "sending" if row["id"] in claimed
+                 else receipt.get("state", "delivered") if receipt else "queued" if row["id"] in queued else "unconfirmed")
+        row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
+                           "removable": row["id"] in removable}
     return rows
 
 
@@ -540,7 +584,8 @@ def pending(project: str, slug: str) -> list[dict]:
 
 
 def _pending_rows(task: dict, path: Path) -> list[dict]:
-    rows = _rows(path, "task inbox")
+    receipts = task.get("message_deliveries") or {}
+    rows = [row for row in _rows(path, "task inbox") if receipts.get(row["id"], {}).get("state") != "removed"]
     if task.get("state") not in ("running", "blocked", "queued"):
         return rows  # historical receipts do not create new delivery work after the owner hands off
     seen = {row["id"] for row in rows}
@@ -623,6 +668,9 @@ def update_resume_claim(project: str, slug: str, claim_id: str, **updates) -> di
                 or claim.get("block_id") != task.get("block_id")):
             raise TransitionError(f"{slug}: resume claim {claim_id} is no longer current")
         claim.update(updates)
+        if updates.get("phase") in ("launching", "launched"):
+            for row in claim["messages"]:
+                task.setdefault("message_deliveries", {}).setdefault(row["id"], {"state": "unconfirmed", "at": None})
         task["resume_claim"] = claim
         _save_claim_task(project, task)
         return claim
@@ -638,6 +686,10 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         if claim.get("id") != claim_id:
             return False
         claimed = claim.get("messages") or []
+        if claim.get("phase") != "claimed":
+            for row in claimed:
+                task.setdefault("message_deliveries", {}).setdefault(row["id"], {"state": "unconfirmed", "at": None})
+            _save_claim_task(project, task)
         current = _rows(path, "task inbox")
         seen = {row["id"] for row in claimed}
         rows = claimed + [row for row in current if row["id"] not in seen]
@@ -1520,7 +1572,7 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
 
 def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
     if source == "task":
-        return task_messages(project, slug)
+        return [row for row in task_messages(project, slug) if not row.get("removed_at")]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
