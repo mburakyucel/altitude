@@ -738,7 +738,7 @@ def build_brief(project: str, slug: str) -> str:
     request = (d / "request.md").read_text()
     policy = proj.get("approval", "default")
     if task.get("hold_merge"):  # a recorded hold is the explicit exception to merge-by-default
-        merge_policy = f"**Held for Burak** — open the PR, make it ready for any required review, get its checks green, and stop; Burak merges it himself. Why: {task['hold_merge']}"
+        merge_policy = f"**Held for operator review** — prepare a reviewed, green PR. After approval, L3 records release with `hold-merge --approval`; the owner completes current-candidate checks and `alt land --merge`. Respect the live hold until release. Why: {task['hold_merge']}"
     else:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete. Only a brief marked *held* stops at the open PR.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)

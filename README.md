@@ -54,7 +54,8 @@ follow-up, so the next discussion can address rollout readiness with the work in
 
 This repository temporarily uses verified local `make check` runs for PR delivery under the
 operator's 2026-09-09 Pacific decision. Landing tests the current merge candidate, retains its
-evidence and adds the passing candidate SHA to the PR. Hosted CI is suspended; review and merge
+evidence, including captured output on timeout, and adds the passing candidate SHA to the PR.
+Timed-out validation keeps the gate failed. Hosted CI is suspended; review and merge
 holds still apply. Other projects keep their own gates. See
 [local validation and CI restoration](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
@@ -258,6 +259,8 @@ license has been selected; public release is a separate milestone.
 Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
 to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
 deletions remain blocked.
+The real-Git automatic-GC regression also runs with open stdin and captured output, so validation
+does not depend on the caller closing its input stream.
 
 ## Project conversations
 

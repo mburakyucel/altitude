@@ -318,7 +318,8 @@ exception. Its landing runs `make check` on the existing synthetic merge candida
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
 its verdict. Active required hosted checks must be removed by the operator before this route can
 run; identity, provenance, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
-retains logs, browser artifacts and a result binding command, base, head, candidate and tree. A
+retains logs, browser artifacts and a result binding command, base, head, candidate and tree.
+Suite timeouts retain captured stdout and stderr with the timeout diagnostic and a failed result. A
 successful current run writes a concise PR test line through the ordinary landing boundary.
 See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
@@ -475,6 +476,9 @@ before removing a loose copy; these remain blocked. Packing, repacking and fetch
 collection therefore preserve a lagging main and permit its subsequent guarded fast-forward.
 Real-Git regressions exercise these transaction forms and deletion refusals in loose, packed and
 mixed storage, including linked worktrees.
+The automatic-GC fixture creates its two packs with `repack -a`, which owns its revision input;
+the regression also runs with an open caller stdin and captured output as in local landing,
+alongside real issue-close CLI/API validation. The shared CLI fixture supplies explicit empty input.
 
 Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the

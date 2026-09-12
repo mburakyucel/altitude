@@ -100,6 +100,73 @@ class TestMergeApprovalJourney(AltitudeCase):
             client.sendall((json.dumps({"kind": "alt", "args": arguments}) + "\n").encode())
             return json.loads(client.makefile().readline())
 
+    def late_presentation_journey(self, *, renew_hold, quick):
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Review the final story", "Review the story before merging", "The final story.\n")
+        question = self.escalate(slug, "May the owner merge the final story?",
+                                 f"Merge {pull['url']} after review.", "Approve merge")
+        if renew_hold:
+            self.tick()
+            T.set_hold_merge(self.project, slug, "Security review of the final story")
+        self.tick()
+        pull["updatedAt"] = self.at
+        S.write_json(gh / "pr.json", pull)
+        self.tick()
+        presentation = T.message(self.project, slug, "l2", f"Ready for review: {pull['url']} at {prepared['head']}")
+        if quick:
+            approval_id = self.choose(slug, question)["decision"]["message_id"]
+        else:
+            self.tick()
+            approval = self.request("/api/l2/message", {"project": self.project, "slug": slug,
+                "question_id": question["id"], "revision": question["revision"],
+                "text": "You can merge the final reviewed PR."})["message"]
+            self.wait_state(slug, "running")
+            approval_id = approval["id"]
+            self.tick()
+            T.resolve_question(self.project, slug, question["id"], question["revision"], approval_id,
+                               disposition="answered", reason="Merge the final reviewed PR", expected_attempt=1)
+        before = S.load_task(self.project, slug)
+        conversation = (S.task_dir(self.project, slug) / "conversation.jsonl").read_bytes()
+        broker = self.broker()
+        args = ["task", "hold-merge", slug, "--approval", approval_id, "--question", question["id"],
+                "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
+                "--reason", "The original operator answer approves the final presentation of this PR."]
+        for flag, value in (("--approval", "0" * 32), ("--question", "0" * 32),
+                            ("--revision", str(question["revision"] + 1)), ("--head", "e" * 40),
+                            ("--pr-number", "102")):
+            invalid = list(args)
+            invalid[invalid.index(flag) + 1] = value
+            with self.subTest(flag=flag):
+                self.assertNotEqual(self.reconcile(broker, invalid).get("returncode"), 0)
+                self.assertEqual(S.load_task(self.project, slug), before)
+        response = self.reconcile(broker, args)
+        self.assertEqual(response.get("returncode"), 0, response)
+        receipt = json.loads(response["stdout"])
+        self.assertEqual(S.load_task(self.project, slug), {**before, "hold_merge": None, "merge_approval": receipt})
+        self.assertEqual((S.task_dir(self.project, slug) / "conversation.jsonl").read_bytes(), conversation)
+        self.assertEqual((receipt["approval"], receipt["question"], receipt["revision"], receipt["hold_id"]),
+                         (approval_id, question["id"], question["revision"], before["hold_merge_id"]))
+        self.assertEqual((receipt["head"], receipt["option_key"], receipt["question_context_only"]),
+                         (prepared["head"], "recommended" if quick else None, False))
+        self.assertLess(question["asked"], presentation["at"])
+        if renew_hold:
+            self.assertLess(question["asked"], receipt["hold_at"])
+        else:
+            self.assertLess(receipt["hold_at"], question["asked"])
+        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
+        (gh / "merge_git.txt").write_text("advance the local remote\n")
+        (gh / "checks.json").write_text('[{"bucket": "fail"}]')
+        self.assertFalse(land.land("test: retain current checks", cwd=worktree, merge=True, wait=0)["merged"])
+        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
+        self.assertTrue(land.land("test: land final reviewed story", cwd=worktree, merge=True, wait=0)["merged"])
+        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The final story.\n")
+
+    def test_question_before_hold_and_final_presentation_accepts_original_ui_consent(self):
+        self.late_presentation_journey(renew_hold=True, quick=True)
+
+    def test_question_after_hold_before_final_presentation_accepts_original_typed_consent(self):
+        self.late_presentation_journey(renew_hold=False, quick=False)
+
     def test_ui_escalation_reaffirmation_fault_recovery_and_normal_land(self):
         # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(

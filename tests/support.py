@@ -357,6 +357,6 @@ class AltitudeCase(unittest.TestCase):
         return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
 
     def alt(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-        """Run `bin/alt` as a subprocess against this runtime home."""
+        """Run `bin/alt` with empty input against this runtime home."""
         merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), **(env or {})}
-        return subprocess.run([sys.executable, str(ALT), *args], capture_output=True, text=True, env=merged)
+        return subprocess.run([sys.executable, str(ALT), *args], input="", capture_output=True, text=True, env=merged)

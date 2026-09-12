@@ -11,17 +11,19 @@ class TestMergePolicy(AltitudeCase):
         b = dispatch.build_brief(self.project, "merge-l")
         self.assertIn("Merge when the applicable checks and any appropriate review are complete", b)
         self.assertIn("Review is optional", b)
-        self.assertNotIn("Held for Burak", b)
+        self.assertNotIn("Held for operator review", b)
 
     def test_hold_is_the_exception_and_says_why(self):
         T.new(self.project, "merge-hold", "req", hold_merge="rewrites the deploy workflow")
         b = dispatch.build_brief(self.project, "merge-hold")
-        self.assertIn("Held for Burak", b); self.assertIn("rewrites the deploy workflow", b)
+        self.assertIn("Held for operator review", b); self.assertIn("rewrites the deploy workflow", b)
+        self.assertIn("L3 records release with `hold-merge --approval`", b)
+        self.assertIn("the owner completes current-candidate checks and `alt land --merge`", b)
         with self.assertRaisesRegex(T.TransitionError, "only Burak"):
             T.set_hold_merge(self.project, "merge-hold", None, actor="l3")
         T.set_hold_merge(self.project, "merge-hold", None, actor="burak")
         self.assertIsNone(S.load_task(self.project, "merge-hold")["hold_merge"])
-        self.assertNotIn("Held for Burak", dispatch.build_brief(self.project, "merge-hold"))
+        self.assertNotIn("Held for operator review", dispatch.build_brief(self.project, "merge-hold"))
         T.set_hold_merge(self.project, "merge-hold", "  spends money  ", actor="l3")
         self.assertEqual(S.load_task(self.project, "merge-hold")["hold_merge"], "spends money")
 

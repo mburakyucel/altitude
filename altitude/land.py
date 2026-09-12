@@ -799,7 +799,11 @@ def _local_suite(cwd: Path, test_cmd: str, *, log: Path | None = None) -> dict:
         _note(f"the local suite did not run to completion — not merging: {exc}")
         result["error"] = str(exc)
         if log:
-            log.write_text(str(exc) + "\n")
+            cause = exc.__cause__
+            captured = (cause.stdout, cause.stderr) if isinstance(cause, subprocess.TimeoutExpired) else ()
+            output = "\n".join(part.decode(errors="replace") if isinstance(part, bytes) else part or ""
+                               for part in captured)
+            log.write_text(output + "\n" + str(exc) + "\n")
         return result
     if log:
         log.write_text((run.stdout or "") + "\n" + (run.stderr or ""))
