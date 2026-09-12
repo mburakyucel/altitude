@@ -162,7 +162,7 @@ class TestAdoption(AltitudeCase):
         current = S.load_task("demo", "fix-x")
         self.assertEqual(current["adopted_pr"]["number"], 102)
         self.assertEqual(current["hold_merge"], "Review each PR")
-        self.assertNotEqual(current["hold_merge_id"], "first-hold")
+        self.assertEqual(current["hold_merge_id"], "first-hold")
         hold = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "hold-merge"][-1]
         self.assertEqual(hold["hold_id"], current["hold_merge_id"])
         T.set_hold_merge("demo", "fix-x", None, actor="burak")

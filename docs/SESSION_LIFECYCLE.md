@@ -357,30 +357,16 @@ Changed evidence reaches only the originating L3; unchanged observations remain 
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
 stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
 
-Task messages retain their source role: a coordinator's relay is an L3 message, not operator approval.
-Sending a message or resolving a question does not automatically clear a merge hold. L3 reconciles an
-actual operator merge decision through [`hold-merge --approval`](CLI.md#recorded-merge-approval), citing
-the original approval, owner's single-PR presentation, question/revision when present and latest operator
-message reviewed. L3 judges merge permission and later corrections from those originals; arbitrary prose
-interpretation is not a daemon classifier. Design acceptance, implementation permission, ordinary
-discussion, unresolved conditions and revocations cannot authorize release. Altd checks original source
-authority, the answered question's current revision and selected option, current hold generation and
-PR. The final presentation may follow the question, including a question asked before the current
-hold; the operator's answer follows both, and the presentation follows that hold.
-Original project user/chat turns use `--source project`, with later operator messages reviewed
-in both project and task conversations. Each named PR receives its own bound release. Explicit
-operator delegation of integration permits a later owner presentation of that same PR and current
-head; the original approval and hold generation remain binding, and expanded scope is not authorized.
-Fresh exact-candidate checks still run through ordinary landing.
-A new conversational merge approval can inherit a question resolved before its fresh
-PR presentation; the receipt marks that current revision as context only, without accepting its old
-option. A later reaffirmation can refer to a different superseded recovery question without
-accepting its recommendation or refreshing stale approval. The receipt records both sources and the
-coordinator's interpretation without changing worker or block state. An unseen later operator message,
-renewed hold, PR change without authorized integration evidence, or missing evidence preserves the hold. L3 checks the release receipt before
-resuming a blocked owner; the owner rechecks and uses `alt land --merge`. A repeated application with
-no active hold is refused without another release. Failed reconciliation is machinery recovery for L3;
-the operator does not repeat an already recorded decision or perform manual hold repair.
+L3 applies an original operator merge decision to each held PR through
+[`hold-merge --approval`](CLI.md#recorded-merge-approval), preserving the source, applicable question,
+current PR/head and scope judgment in its receipt. It reviews corrections in both task and project
+chat. Altd validates authority, question evidence, the current hold and assigned/adopted PR identity;
+[the architecture](ARCHITECTURE.md#isolation-and-landing) specifies those boundaries.
+
+Release changes the hold while preserving worker and question state. L3 verifies the receipt before
+resuming a blocked owner, who completes review and current-candidate checks through `alt land --merge`.
+A follow-up restores the original review requirement for its own scoped release; an explicit renewed
+hold requires approval of that renewed requirement. Failed reconciliation follows L3's recovery path.
 
 Voice capture does not add a lifecycle state. **Stop** transcribes the bounded recording into
 the editable draft; the send arrow transcribes, appends and sends at once. Both sending paths use
@@ -537,8 +523,10 @@ After a verified history-preserving merge on main, the same task can explicitly 
 assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
 unchanged in `adoption_history`; `adopted_pr` selects the active landing, provenance and approval
 target. Failed or repeated transitions do not overwrite earlier receipts or expand their authority.
-A prior PR's recorded hold approval restores that hold for the next adoption unless the operator
-subsequently released it for the task as a whole.
+A prior PR's recorded hold approval restores the original requirement for the next adoption unless
+the operator subsequently released it for the task as a whole. L3 checks the original decision's
+scope before releasing the new active PR; a restored hold retains its generation, while an explicit
+renewed hold changes it and requires approval of that renewed requirement.
 The original unowned ancestors are accepted during landing and resumed-session provenance checks;
 later commits still need the exact task trailer, and foreign task trailers remain refused.
 The local task branch stays unchanged in identity while fast-forward pushes update the original

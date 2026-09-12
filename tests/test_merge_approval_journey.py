@@ -5,13 +5,14 @@ operator's words is coordinator judgment; these tests prove persistence and auth
 """
 import json
 import socket
+import subprocess
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from tests import test_offline_journeys as journeys
+from tests import test_land, test_offline_journeys as journeys
 from altitude import config, dispatch, incidents, l3, land, server, state as S, tasks as T
 
 
@@ -22,6 +23,9 @@ class TestMergeApprovalJourney(AltitudeCase):
     queue = journeys.TestOfflineJourneys.queue
     launch = journeys.TestOfflineJourneys.launch
     join_background = journeys.TestOfflineJourneys.join_background
+    fake_runner = test_land.TestLand.fake_runner
+    record_commands = test_land.TestLand.record_commands
+    local_policy = test_land.TestLand.local_policy
 
     def setUp(self):
         super().setUp()
@@ -77,7 +81,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.tick()
         pull = S.read_json(gh / "pr.json")
         pull.update(url="https://github.com/team/demo/pull/101", isDraft=False, isCrossRepository=False,
-                    headRefOid=prepared["head"], updatedAt=self.at)
+                    headRefOid=prepared["head"])
         S.write_json(gh / "pr.json", pull)
         self.tick()
         return initial, slug, worktree, gh, prepared, pull
@@ -124,8 +128,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         before = S.load_task(self.project, slug)
         conversation = (S.task_dir(self.project, slug) / "conversation.jsonl").read_bytes()
         broker = self.broker()
-        args = ["task", "hold-merge", slug, "--approval", approval_id, "--presentation", presentation["id"],
-                "--latest-operator", approval_id, "--question", question["id"],
+        args = ["task", "hold-merge", slug, "--approval", approval_id, "--question", question["id"],
                 "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
                 "--reason", "The original operator answer approves the final presentation of this PR."]
         for flag, value in (("--approval", "0" * 32), ("--question", "0" * 32),
@@ -168,7 +171,6 @@ class TestMergeApprovalJourney(AltitudeCase):
         # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
             "Review the story", "Review the story before merging", "The reviewed story.\n")
-        presentation = T.message(self.project, slug, "l2", f"Reviewed and green: {pull['url']} at {prepared['head']}.")
         question = self.escalate(slug, "May the owner merge the reviewed story?", f"Merge {pull['url']}.", "Approve merge")
         self.assertEqual(question["asked_by"], "l3")
         approved = self.choose(slug, question)
@@ -199,24 +201,18 @@ class TestMergeApprovalJourney(AltitudeCase):
                          ["resolution"]["disposition"], "superseded")
         engine_calls = len(self.engine.calls)
         broker = self.broker()
-        args = ["task", "hold-merge", slug, "--approval", approval, "--presentation", presentation["id"],
-                "--latest-operator", reaffirmation["id"], "--question", question["id"],
+        args = ["task", "hold-merge", slug, "--approval", approval, "--question", question["id"],
                 "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
                 "--reason", "Original UI merge approval remains valid; the latest operator message reaffirms it."]
-        stale = list(args)
-        stale[stale.index("--latest-operator") + 1] = approval
-        self.assertIn("latest operator", self.reconcile(broker, stale).get("error", ""),
-                      "reconciliation must inspect later operator corrections")
-        self.assertEqual(S.load_task(self.project, slug), before)
         response = self.reconcile(broker, args)
         self.assertEqual(response.get("returncode"), 0, (response, self.logs))
         receipt = json.loads(response["stdout"])
         released = S.load_task(self.project, slug)
         self.assertEqual(released, {**before, "hold_merge": None, "merge_approval": receipt})
-        self.assertEqual((receipt["approval"], receipt["presentation"], receipt["pr"], receipt["head"]),
-                         (approval, presentation["id"], 101, prepared["head"]))
-        self.assertEqual((receipt["latest_operator"], receipt["question"], receipt["revision"], receipt["option_key"]),
-                         (reaffirmation["id"], question["id"], question["revision"], approved["decision"]["option_key"]))
+        self.assertEqual((receipt["approval"], receipt["pr"], receipt["head"]),
+                         (approval, 101, prepared["head"]))
+        self.assertEqual((receipt["question"], receipt["revision"], receipt["option_key"]),
+                         (question["id"], question["revision"], approved["decision"]["option_key"]))
         self.assertEqual(receipt["authorized_by"], T.OPERATOR_MESSAGE_ROLE)
         self.assertEqual(T.task_messages(self.project, slug), before_messages)
         self.assertEqual(len(self.engine.calls), engine_calls, "release neither resumes the faulted owner nor changes its session")
@@ -246,13 +242,10 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
 
     def test_typed_answer_after_a_plain_explanation_releases_the_exact_pr(self):
-        # PR #304 sequence: between the owner's presentation and the operator's typed decision the
-        # operator asked for a plain explanation and the owner answered without the PR URL. No phrase
-        # or adjacency rule breaks that citation; L3 reads the exchange and cites the original presentation.
+        # The explanation request and the subsequent answer carry distinct authority.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
             "Clarify the instruction", "Changes authority; operator security review is required",
             "The clarified instruction.\n")
-        presentation = T.message(self.project, slug, "l2", f"Ready for security review: {pull['url']} at {prepared['head']}.")
         question = self.escalate(slug, f"Will you complete the held security review and merge {pull['url']}?",
                                  "Review the authority boundary and merge the prepared PR if satisfied.",
                                  "Security review and merge")
@@ -271,43 +264,34 @@ class TestMergeApprovalJourney(AltitudeCase):
         before = S.load_task(self.project, slug)
         self.assertTrue(before["hold_merge"], "the owner's resolution records the decision without releasing the hold")
         broker = self.broker()
-        args = ["task", "hold-merge", slug, "--approval", approval["id"], "--presentation", presentation["id"],
-                "--latest-operator", approval["id"], "--question", question["id"],
+        args = ["task", "hold-merge", slug, "--approval", approval["id"], "--question", question["id"],
                 "--revision", str(question["revision"]), "--pr-number", "101", "--head", prepared["head"],
                 "--reason", "The typed answer authorizes this reviewed PR; the earlier message only asked for an explanation."]
         mistaken = list(args)
         mistaken[mistaken.index("--approval") + 1] = asked["id"]
-        self.assertIn("resolved before the PR presentation", self.reconcile(broker, mistaken).get("error", ""),
+        self.assertIn("follow the earlier question resolution", self.reconcile(broker, mistaken).get("error", ""),
                       "the explanation request carries the question context but is not its answer")
         self.assertEqual(S.load_task(self.project, slug), before)
         response = self.reconcile(broker, args)
         self.assertEqual(response.get("returncode"), 0, (response, self.logs))
         receipt = json.loads(response["stdout"])
         self.assertEqual(S.load_task(self.project, slug), {**before, "hold_merge": None, "merge_approval": receipt})
-        self.assertEqual((receipt["approval"], receipt["presentation"], receipt["question"], receipt["revision"]),
-                         (approval["id"], presentation["id"], question["id"], question["revision"]))
+        self.assertEqual((receipt["approval"], receipt["question"], receipt["revision"]),
+                         (approval["id"], question["id"], question["revision"]))
         self.assertEqual((receipt["option_key"], receipt["question_context_only"], receipt["authorized_by"]),
                          (None, False, T.OPERATOR_MESSAGE_ROLE))
         self.assertEqual((receipt["pr"], receipt["head"]), (101, prepared["head"]))
 
-    def test_project_authorized_integration_preserves_questions_and_normal_landing(self):
-        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+    def test_project_approval_preserves_an_independent_question(self):
+        _, slug, _, _, prepared, _ = self.prepare_held_pr(
             "Integrate the approved story", "Review the story", "The approved story.\n")
-        presentation = T.message(self.project, slug, "l2", pull["url"])
         self.tick()
         original = l3.chat_log(self.project, "user", "You can merge it and resolve integration within this outcome.",
                                trigger="chat", turn_id="a" * 12)
-        self.tick()
-        # A later PR update needs current owner evidence, while the original operator source remains.
-        pull["updatedAt"] = self.at
-        S.write_json(gh / "pr.json", pull)
-        self.tick()
-        integrated = T.message(self.project, slug, "l2", f"Integration reviewed: {pull['url']} head {prepared['head']}")
         question = self.escalate(slug, "Clarify a separate remaining detail", "Discuss the detail.")
         broker = self.broker()
         args = ["task", "hold-merge", slug, "--source", "project", "--approval", original["turn_id"],
-                "--latest-operator", original["turn_id"], "--presentation", presentation["id"],
-                "--integration-presentation", integrated["id"], "--pr-number", "101", "--head", prepared["head"],
+                "--pr-number", "101", "--head", prepared["head"],
                 "--reason", "Original project decision delegates integration within this PR; the owner verified that scope."]
         before = S.load_task(self.project, slug)
         response = self.reconcile(broker, args)
@@ -317,21 +301,130 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["id"], question["id"])
         self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["status"], "open")
         self.assertEqual(receipt["source"], "project")
-        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
-        (gh / "merge_git.txt").write_text("advance the local remote\n")
-        # Resolve the unrelated question before owner continuation; release itself grants no answer.
+
+    def test_approval_survives_conflict_resolution_and_scoped_same_owner_followup(self):
+        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+            "Deliver the complete story", "Review the story", "The approved story.\n")
         self.tick()
-        answer = l3.chat_log(self.project, "user", "The separate detail is settled.", trigger="chat", turn_id="b" * 12)
-        T.resolve_question(self.project, slug, question["id"], question["revision"], answer["turn_id"],
-                           source="project", disposition="answered", expected_attempt=initial["attempt"],
-                           reason="The operator settled the detail.")
-        self.request("/api/task/action", {"project": self.project, "slug": slug, "action": "resume", "reason": "Continue approved delivery"})
-        self.wait_state(slug, "running")
-        (gh / "checks.json").write_text('[{"bucket": "fail"}]')
-        self.assertFalse(land.land("test: preserve normal checks", cwd=worktree, merge=True, wait=0)["merged"])
-        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
-        self.assertTrue(land.land("test: deliver approved integration", cwd=worktree, merge=True, wait=0)["merged"])
-        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The approved story.\n")
+        original = l3.chat_log(self.project, "user",
+            "Merge the reviewed story and its agreed conclusion; resolve overlaps within this outcome.",
+            trigger="chat", turn_id="c" * 12)
+        broker = self.broker()
+        args = ["task", "hold-merge", slug, "--source", "project", "--approval", original["turn_id"],
+                "--pr-number", "101", "--head", prepared["head"], "--reason",
+                "Original decision approves the story and its conclusion; this PR delivers the reviewed story."]
+        response = self.reconcile(broker, args)
+        self.assertEqual(response.get("returncode"), 0, response)
+        receipt = json.loads(response["stdout"])
+        self.tick()
+        l3.chat_log(self.project, "user", "Explain next week's unrelated roadmap later.",
+                    trigger="chat", turn_id="d" * 12)
+        T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Thanks for the update.", wake_blocked=False)
+        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
+
+        # Real concurrent main edit produces a conflict; rebasing preserves the task's provenance.
+        (self.repo / "README.md").write_text("The shared introduction.\n")
+        git("add", "README.md", cwd=self.repo)
+        git("commit", "-qm", "fixture: concurrent introduction", cwd=self.repo)
+        git("push", "origin", "main", cwd=self.repo)
+        git("fetch", "origin", cwd=worktree)
+        conflict = subprocess.run(["git", "rebase", "origin/main"], cwd=worktree, capture_output=True, text=True)
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn("README.md", git("diff", "--name-only", "--diff-filter=U", cwd=worktree))
+        combined = "The shared introduction.\nThe approved story.\n"
+        (worktree / "README.md").write_text(combined)
+        git("add", "README.md", cwd=worktree)
+        git("-c", "core.editor=true", "rebase", "--continue", cwd=worktree)
+        rebased = git("rev-parse", "HEAD", cwd=worktree).strip()
+        self.assertNotEqual(rebased, receipt["head"])
+        pull.pop("headRefOid")  # The GitHub fixture observes the actual remote head after each push.
+        S.write_json(gh / "pr.json", pull)
+        (gh / "merge_git.txt").write_text("advance the local remote\n")
+        self.local_policy(exit_code=1, output="Ran 1 test in 0.1s\n\nFAILED (failures=1)\n")
+        failed = land.land("test: verify rebased story", cwd=worktree, merge=True, wait=0)
+        self.assertFalse(failed["merged"])
+        self.assertEqual(failed["local_tests"]["head"], rebased)
+        self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
+        self.fake_runner("make", script=(
+            "import subprocess\n"
+            "assert sys.argv[1:] == ['check']\n"
+            "assert open('README.md').read() == " + repr(combined) + "\n"
+            "assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()\n"
+            "print('Ran 1 test in 0.1s\\n\\nOK')\n"))
+        first = land.land("test: merge rebased story", cwd=worktree, merge=True, wait=0)
+        self.assertTrue(first["merged"])
+        self.assertEqual(first["checks"], "local-pass")
+        self.assertEqual(first["local_tests"]["head"], rebased)
+        self.assertEqual(S.load_task(self.project, slug)["merge_approval"], receipt)
+        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), combined)
+
+        # Follow-up retains this owner and original requirement, but release remains specific to a PR.
+        (worktree / "README.md").write_text(combined + "The agreed conclusion.\n")
+        git("add", "README.md", cwd=worktree)
+        self.fake_runner("make", 0, "Ran 1 test in 0.1s\n\nOK\n")
+        second = land.land("test: deliver the agreed conclusion", cwd=worktree, wait=0)
+        self.assertEqual((second["pr"], second["merged"]), (102, False))
+        held = S.load_task(self.project, slug)
+        self.assertEqual((held["hold_merge"], held["hold_merge_id"]), (receipt["hold"], receipt["hold_id"]))
+        for key in ("session_id", "attempt", "worktree", "branch", "l2_engine"):
+            self.assertEqual(held[key], initial[key], key)
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("test: previous release is not blanket approval", cwd=worktree, merge=True, wait=0)
+        pull = S.read_json(gh / "pr.json")
+        pull["url"] = "https://github.com/team/demo/pull/102"
+        pull["headRefOid"] = second["head"]
+        S.write_json(gh / "pr.json", pull)
+        git("remote", "set-url", "origin", "git@github.com:team/demo.git", cwd=self.repo)
+        self.assertIn("active PR", self.reconcile(broker, args).get("error", ""))
+        args[args.index("--pr-number") + 1] = "102"
+        args[args.index("--head") + 1] = second["head"]
+        args[args.index("--reason") + 1] = "The original decision also approves the agreed conclusion; this diff stays within it."
+        response = self.reconcile(broker, args)
+        self.assertEqual(response.get("returncode"), 0, response)
+        followup = json.loads(response["stdout"])
+        self.assertEqual((followup["approval"], followup["pr"], followup["hold_id"]),
+                         (original["turn_id"], 102, receipt["hold_id"]))
+        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
+        final = land.land("test: merge the scoped conclusion", cwd=worktree, merge=True, wait=0)
+        self.assertTrue(final["merged"])
+        self.assertEqual(final["local_tests"]["head"], second["head"])
+        self.assertNotEqual(first["local_tests"]["candidate"], final["local_tests"]["candidate"])
+        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), combined + "The agreed conclusion.\n")
+        self.assertEqual([e["pr"] for e in S.read_events(self.project, slug) if e["kind"] == "release-merge"], [101, 102])
+
+    def test_nonoperator_out_of_scope_and_revoked_sources_cannot_land(self):
+        _, slug, worktree, _, prepared, _ = self.prepare_held_pr(
+            "Deliver the reviewed narrative", "Review the narrative", "The reviewed narrative.\n")
+        relay = T.message(self.project, slug, "l3", "The operator approved the narrative.")
+        broker = self.broker()
+        args = ["task", "hold-merge", slug, "--approval", relay["id"], "--pr-number", "101",
+                "--head", prepared["head"], "--reason", "The relay claims permission."]
+        self.assertIn("original operator", self.reconcile(broker, args).get("error", ""))
+        self.tick()
+        unrelated = l3.chat_log(self.project, "user", "You may merge the separate billing fix.",
+                                trigger="chat", turn_id="e" * 12)
+        # This is an explicit fixture L3 judgment, not a tested prose classifier.
+        T.message(self.project, slug, "l3",
+                  f"{unrelated['turn_id']} only approves billing. The narrative review remains outstanding.")
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("test: unrelated approval cannot land narrative", cwd=worktree, merge=True, wait=0)
+        self.tick()
+        approval = l3.chat_log(self.project, "user", "The narrative review is complete; merge it.",
+                               trigger="chat", turn_id="f" * 12)
+        args[args.index("--approval") + 1] = approval["turn_id"]
+        args[args.index("--reason") + 1] = "The original operator decision now approves the narrative PR."
+        args += ["--source", "project"]
+        self.assertEqual(self.reconcile(broker, args).get("returncode"), 0)
+        self.tick()
+        correction = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Stop; keep the narrative held.",
+                               wake_blocked=False)
+        # L3 reads the correction and records renewed review instead of asserting stale permission.
+        T.message(self.project, slug, "l3", f"{correction['id']} revokes the narrative merge decision.")
+        T.set_hold_merge(self.project, slug, "Operator revoked narrative approval")
+        self.assertIn("stale", self.reconcile(broker, args).get("error", ""))
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("test: revoked approval cannot land narrative", cwd=worktree, merge=True, wait=0)
+        self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
 
     def test_discussion_design_and_implementation_choices_do_not_release_a_hold(self):
         task = self.launch(self.queue("Discuss a held proposal"))

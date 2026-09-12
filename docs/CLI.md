@@ -345,16 +345,14 @@ require a separate operator decision and are not supported by this operation.
 
 ## Task file lists
 
-Task `paths` lists expected files for coordination. An empty list or a newly needed file never
-blocks authorized work. The task's objective and explicit exclusions still bind the owner.
+Task `paths` lists expected files for coordination; the objective and explicit exclusions define
+the owner's authorized scope, including newly needed files.
 `alt task paths <slug> <comma-separated-paths>` lets L3 or the operator replace this advisory list;
-status and the `paths` event retain it. Updating the list grants no authority and starts no worker.
-An owner does not need to update it before editing, recovering or landing authorized changes.
+status and the `paths` event retain the plan.
 
 Select files or hunks with `git add`, inspect `git diff --cached`, then run `alt land`. Landing
-commits exactly the selected index; it does not stage files or take a `--paths` option. Unrelated
-unstaged and untracked edits stay in the worktree. If staged and working versions differ, the
-staged version is published and the working version is preserved.
+commits exactly the selected index. Unstaged and untracked edits stay in the worktree, including
+working versions that differ from staged content.
 
 ## Dirty-checkout recovery
 
@@ -765,8 +763,10 @@ remote branch. Previously published changes are not duplicated. An unchanged ret
 already contains the follow-up, no extra PR is needed and the current receipt is reconciled.
 
 Every PR requires its own current checks and appropriate review. A recorded approval releasing
-one PR's hold restores that hold for the next PR; a later explicit task-wide release remains
-effective. Other unanswered questions, scope and ownership remain intact. Existing external PR
+one PR's hold restores the original requirement for the next PR. L3 applies a separate release
+after judging whether the original decision covers that PR; an actual renewed hold needs its own
+approval. A later explicit task-wide release remains effective. Other unanswered questions, scope
+and ownership remain intact. Existing external PR
 adoption remains supported, and further ordinary work after an adopted merge uses the task branch
 while preserving its adoption receipt in history.
 
@@ -907,7 +907,8 @@ be reactivated.
 Ordinary subsequent landing and recorded hold approval target the active PR. Each PR still requires
 explicit task authorization, applicable checks and review; holds remain in force.
 A recorded approval of the previous PR restores that review hold for the next adoption. An explicit
-later task-wide `hold-merge --off` remains effective; earlier PR approval cannot release the new hold.
+later task-wide `hold-merge --off` remains effective. L3 can apply the original decision to the new
+active PR only when that decision covers its work; restoration does not invent a renewed restriction.
 
 Complete the repository's applicable review before `--merge`. Drafts, requested changes and
 outstanding required reviews block adopted merges. Checks must belong to the pinned base/head
@@ -951,83 +952,41 @@ land, and coordinators cannot invoke landing. Activation alone does not adopt ex
 
 ### Recorded merge approval
 
-L3 can apply an existing operator authorization through its project-bound daemon connection:
+L3 applies original operator authority to a held PR through its project-bound daemon connection:
 
 ```text
-alt task hold-merge <slug> --approval <message-id> --presentation <owner-message-id> --latest-operator <message-id> --question <question-id> --revision <n> --pr-number <number> --head <full-sha> --reason <interpretation>
+alt task hold-merge <slug> --approval <message-id> --source task --pr-number <number> --head <full-sha> --reason <interpretation>
 ```
 
-Read `alt task messages <slug> --json` (increase `--last` to include the original sources),
-`alt task status <slug>` and `alt pr <number> --json`. L3 interprets the original operator decision
-and all later operator messages, including reaffirmations or corrections. The source must authorize
-this merge: design or implementation acceptance, ordinary discussion, ambiguity, unresolved conditions
-and revocation do not qualify. `--reason` records why the sources authorize this exact merge and how
-later context affects it. Meaning is model judgment, as with conversational question resolution;
-the daemon validates original authority and binding, not arbitrary prose semantics. Never substitute
-agent-authored text for an operator source or infer merge authority merely because a question resolved.
+Read `alt task messages <slug> --json`, `alt task status <slug>` and `alt pr <number> --json`,
+plus the original project conversation and later corrections in both chats. Increase `--last` or use
+historical lookup as needed. L3 records why the source authorizes this PR's outcome in `--reason`.
+It judges scope, conditions and revocation; design feedback, implementation-only permission and
+coordinator relays cannot authorize merge. Relevant corrections require action, including a renewed
+hold when appropriate. Routine integration stays within the original decision's scope.
 
-`--source task` (default) makes `--approval` identify the original operator task message or saved
-UI-choice message. `--source project` identifies the original user/chat turn ID in this project's
-`chat.jsonl`; assistant replies, coordinator-triggered turns and relays cannot supply approval.
-Project turn IDs have twelve hexadecimal characters; task message IDs have thirty-two.
-`--presentation` names the owner's earlier message containing this canonical GitHub PR URL alone.
-`--latest-operator` cites the latest operator message reviewed in the selected source; it equals
-`--approval` when there is no later message there. `--latest-other-operator` cites the latest operator
-message in the other conversation (task for project approvals, project for task approvals). Omit it
-only when that conversation has no operator messages. These are reviewed watermarks, not additional
-approvals. L3 checks all later corrections in both conversations; a changed watermark refuses release.
-Pending project chat must enter the conversation and be reviewed before release; queued text is not
-an approval source. An unidentified latest operator row is missing evidence, never an absent message.
-A later reaffirmation stays separate from the original decision, even when attached
-to a superseded question about mechanical recovery. It does not accept that question's recommendation.
-`--question` and `--revision` are required together when the approval has question context; omit both
-only for an approval without question context. For a question answer used as approval, the daemon
-requires that question's current revision, operator audience and answered resolution from the same
-original message and source, with no remaining question. UI acceptance must match its recorded option.
-The question and final presentation both precede approval; the question may precede the current
-hold or final PR update. The final presentation still follows the current hold and PR update.
-For a clear typed answer to an open question, the owner records its decision with `alt task resolve`
-first. Messages in between, such as an operator
-request for a plain explanation and the owner's reply without the URL, do not break the citation:
-L3 reads them and still cites the original presentation.
+`--source task` (default) cites the original operator message or saved UI choice with its 32-character
+ID. `--source project` cites an original user/chat turn's 12-character ID in this project. Pending
+project chat must enter the conversation and L3's review before release. Missing, corrupt, duplicate
+or non-operator sources refuse.
 
-Task chat automatically attaches previously resolved questions to later messages too. If the cited
-question resolved before a fresh PR presentation, a subsequent conversational merge approval can
-use that still-current revision as context only. Its earlier answer, whether answered or superseded,
-is preserved and grants no merge permission. The new operator message supplies the authority;
-the receipt records `question_context_only: true` and no selected option. A stale viewed revision
-or question resolved after the presentation cannot use this path.
+Add paired `--question <id> --revision <n>` when the approval carries question context. An answer
+used as merge authority requires the current answered operator resolution from that same source,
+with no remainder and the recorded UI option when applicable. The owner records a typed answer
+through `alt task resolve`. A later conversational approval can carry a resolved question as context
+only; its source follows that resolution and supplies its own authority. Stale viewed revisions refuse.
 
-The daemon checks the current hold generation and reads the PR from the project's origin repository.
-It requires an open, non-draft, same-repository PR targeting main on the publication branch at the
-supplied head. The last recorded task PR must match when present; adopted PR identity also remains
-binding. Task approval context may name only this PR. Project approvals can cover multiple PRs in the
-same repository; explicit approval URLs must include the target. Later project discussion may concern
-another PR in that project. L3 interprets contextual references such as “both” against the original
-conversation and records that binding in `--reason`; each task receives a separate release.
-GitHub's `updatedAt`
-must be strictly before the presentation, and the presentation after the hold. Missing/corrupt evidence,
-a revised approval question, an operator message after the cited latest message, a renewed hold or any
-later PR update refuses release without authorized integration evidence. A reaffirmation does not
-refresh an older presentation or hold generation.
+Altd verifies the current hold and the project's open, non-draft PR targeting main at the supplied
+head. Task publication branch and recorded active/adopted PR identity must match. Explicit hold changes
+create a new generation and require approval after that requirement arose. Each held follow-up needs
+its own release; L3 can cite the original decision when its actual scope covers that PR.
 
-When the original decision explicitly delegates rebasing or overlap resolution within this PR's
-approved outcome, add `--integration-presentation <owner-message-id>`. This later owner message names
-the same canonical PR URL alone and its current full head SHA as a separate word, after the original
-approval and latest PR update. Keep `--presentation` pointing to the original pre-approval presentation.
-Explain in `--reason` how the original operator source delegates integration and how review confirms
-the resulting diff stays within that named outcome. This is coordinator judgment, not a prose classifier
-or permission for scope expansion. A renewed hold still requires its own approval. Mechanical tip
-movement requires fresh owner evidence and exact-candidate landing checks, not repeated operator approval.
+Success stores `merge_approval` and a `release-merge` event with source/author/time, applicable
+question/revision/option, hold ID/event/time, PR URL/head, scope reason and actor `l3`. Local validation
+refusals retain the hold and record `merge-approval-refused`. Inspect `alt task show <slug>` and
+`alt task events <slug> --json` before resuming a blocked owner. The owner completes review and
+current-candidate checks through `alt land --merge`; release itself preserves worker and question state.
+Failed reconciliation follows L3's recovery path.
 
-Success returns a receipt with original source, approval and both reviewed latest operator ids/times,
-question/revision and option when present, original and optional integration presentation ids,
-prior hold/event, PR URL/head, interpretation reason and actual
-actor `l3`. The receipt is stored as `merge_approval` on the task and in a
-`release-merge` event. Inspect `alt task show <slug>` and `alt task events <slug> --json` to confirm
-the release before resuming a blocked owner. The operation neither resumes nor merges; the owner
-rechecks and runs `alt land --merge`. With no active hold a repeated call refuses without another
-release. A failure to apply already recorded approval follows the fault-recovery path; L3 repairs the
-machinery without requesting repeated operator approval or manual hold repair.
-Ordinary `--off` remains operator-only, and `--approval` cannot be combined with it or
-`--why`. Standalone CLI execution of approval mode is refused; L3 uses its existing daemon transport.
+Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
+operator-only; approval mode cannot combine with it or `--why`.

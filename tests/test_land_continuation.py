@@ -231,7 +231,7 @@ class TestLandContinuation(AltitudeCase):
             self.land(merge=True)
         current = self.task()
         self.assertEqual(current["hold_merge"], "Review each PR")
-        self.assertNotEqual(current["hold_merge_id"], "first-hold")
+        self.assertEqual(current["hold_merge_id"], "first-hold")
         self.assertEqual(current["questions"][-1], question)
         self.assertEqual(current["prs"], [101, 102])
         self.assertEqual(land._pr_view(self.repo, "102")["state"], "OPEN")

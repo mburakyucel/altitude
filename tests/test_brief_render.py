@@ -86,15 +86,15 @@ class TestBriefRender(AltitudeCase):
         self.assertEqual(dispatch.shared_paths(["docs/"], ["docs-extra/file.md"]), [])
 
     def test_both_merge_policy_branches_render(self):
-        self.assertNotIn("Held for Burak", self.default_rendered)
-        self.assertIn("Held for Burak", self.held_rendered)
+        self.assertNotIn("Held for operator review", self.default_rendered)
+        self.assertIn("Held for operator review", self.held_rendered)
         self.assertIn("requires a maintainer release", self.held_rendered)
         self.assert_no_unformatted_field(self.default_rendered)
         self.assert_no_unformatted_field(self.held_rendered)
 
     def test_merge_guarantees_survive_rendering(self):
         for rendered in (self.default_rendered, self.held_rendered):
-            with self.subTest(held="Held for Burak" in rendered):
+            with self.subTest(held="Held for operator review" in rendered):
                 self.assertIn("never merge around it", rendered)
                 self.assertIn("full local test suite on the exact merge candidate", rendered)
 
