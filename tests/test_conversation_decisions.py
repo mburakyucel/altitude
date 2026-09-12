@@ -1,4 +1,6 @@
 """Owners assess freshness; withdrawal never supplies an operator answer or cancels required work."""
+import builtins
+import os
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
@@ -26,6 +28,60 @@ class ConversationDecisions(AltitudeCase):
 
     def current(self):
         return T.question_views(self.project, self.slug)[-1]
+
+    def test_message_readers_see_complete_records_during_publication(self):
+        for name in ("conversation.jsonl", "inbox.jsonl"):
+            with self.subTest(name=name):
+                path = S.task_dir(self.project, self.slug) / name
+                T._append_jsonl(path, {"id": "earlier", "text": "Keep the requested work."})
+                before = T._rows(path, name)
+                row = {"id": "new-guidance", "text": "Required revision. " * 1000}
+                reads = []
+
+                def split_write(stream):
+                    write = stream.write
+
+                    def interrupted(text):
+                        middle = len(text) // 2
+                        write(text[:middle])
+                        stream.flush()
+                        reads.append(T._rows(path, name))
+                        return middle + write(text[middle:])
+
+                    stream.write = interrupted
+                    return stream
+
+                real_open, real_fdopen = builtins.open, os.fdopen
+                with S.project_lock(self.project), \
+                     mock.patch.object(T, "open", side_effect=lambda *a, **k: split_write(real_open(*a, **k)),
+                                       create=True), \
+                     mock.patch.object(S.os, "fdopen", side_effect=lambda *a, **k: split_write(real_fdopen(*a, **k))):
+                    T._append_jsonl(path, row)
+                self.assertEqual(reads, [before])
+                self.assertEqual(T._rows(path, name), before + [row])
+
+    def test_acceptance_recovers_after_inbox_publication_fails(self):
+        guidance = T.message(self.project, self.slug, "burak", "Keep the requested revisions.")
+        question = self.current()
+        path = S.task_dir(self.project, self.slug) / "inbox.jsonl"
+        prefix = path.read_bytes()
+        replace = os.replace
+
+        def fail_inbox(source, destination):
+            if destination == path:
+                raise OSError("inbox publication interrupted")
+            return replace(source, destination)
+
+        with mock.patch.object(S.os, "replace", side_effect=fail_inbox), self.assertRaises(OSError):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertEqual(path.read_bytes(), prefix)
+        receipt = self.current()["resolution"]
+        for _ in range(2):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertEqual(self.current()["resolution"], receipt)
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)],
+                         [guidance["id"], receipt["message_id"]])
+        self.assertTrue(path.read_bytes().startswith(prefix))
 
     def resolve(self, row, *, question=None, **kwargs):
         question = question or self.current()

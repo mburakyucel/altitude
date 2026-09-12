@@ -206,7 +206,8 @@ per-mention lookup occurs. Existing links and code remain intact, and missing re
 leaves unqualified references as text. Switching projects supplies the destination's repository.
 
 A message from the operator (task page, chat through L3, or `alt task message`) is appended to the task's durable
-conversation and to its inbox. Nothing is killed. The engine seam supplies the inbox at a native hook
+conversation and to its inbox. Each file is published atomically under the project writer lock;
+concurrent reads see complete messages. Nothing is killed. The engine seam supplies the inbox at a native hook
 checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
 worker retains the fault path even with pending steering. For a blocked task the same locked append
 records a due `resume_after` request, except when Stop holds the inbox. The L3

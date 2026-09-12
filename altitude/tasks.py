@@ -294,11 +294,11 @@ def _require_daemon_fence(task: dict, slug: str, *, expected_daemon_request: str
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a") as stream:
-        stream.write(json.dumps(row, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    try:
+        contents = path.read_text()
+    except FileNotFoundError:
+        contents = ""
+    S.atomic_write(path, contents + json.dumps(row, sort_keys=True) + "\n")
 
 
 def _save_claim_task(project: str, task: dict) -> None:

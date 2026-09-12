@@ -54,7 +54,9 @@ or memory store and no expansion of project-local or upstream reporting authorit
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. Appending a message to a blocked
+worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
+lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
+Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
 faulted task and messages held by Stop. Stop records its identity when accepted, before termination,
 so old or racing sends cannot restart the session. A correction must name the confirmed Stop it
