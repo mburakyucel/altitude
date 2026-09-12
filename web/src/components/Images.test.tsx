@@ -244,7 +244,7 @@ describe("image draft admission", () => {
     expect(revoke).toHaveBeenCalledWith("blob:image-2");
   });
 
-  it("an older text refusal cannot unlock or restore over a newer image admission", async () => {
+  it.each([false, true])("an older text refusal survives newer image admission (recovery write fails: %s)", async (writeFails) => {
     browser();
     let refuseText: (error: Error) => void = () => undefined;
     let acceptImage: () => void = () => undefined;
@@ -263,11 +263,13 @@ describe("image draft admission", () => {
     expect(screen.getByRole("textbox")).toHaveValue("");
     expect(screen.getByText("Sending images…")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
+    if (writeFails) vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
     await act(async () => { acceptImage(); });
     expect(screen.getByRole("textbox")).toBeEnabled();
     expect(screen.queryByLabelText("Selected images")).toBeNull();
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
+    if (writeFails) expect(screen.getByRole("alert")).toHaveTextContent("Recovery could not be updated.");
   });
 });
 
