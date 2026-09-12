@@ -366,7 +366,7 @@ paused, faulted and reported tasks. Operational controls stay in the task.
 | Empty | **No current tasks. Ask L3 to start something.** Recent completed work can still expand. |
 | Initial read fails | A specific error with Retry replaces the affected content. Independently loaded task rows remain discoverable if only attention loading fails. |
 | Cached read fails | Retain rows with a saved/stale notice and Refresh; links remain available. Destination reads govern answer controls. |
-| Partial answer or follow-up | The same row remains in the existing order. Only a recorded answer reduces its question count; discussion alone changes none. |
+| Answer, withdrawal or follow-up | The row keeps its order. Answers and withdrawals reduce its question count; a wake alone changes none. |
 | Final answer | Attention leaves; the row shows observed execution or waiting status. Saving an answer cannot claim Running. |
 | Done or rejected | The row leaves Current and enters Done this week once, with a 200ms fade. The disclosure shows or hides tasks finished in the last seven days, and is absent when none exist. |
 | Open and Back | Waiting rows focus the owning question with live activity closed. App Back and browser Back/Forward preserve the originating Work or Needs you view (§3.9). |
@@ -402,6 +402,14 @@ A dilemma remains answerable while a provider limit queues a fresh attempt: acce
 choice, and the same chat queues replies with **Delivered when Altitude starts the L2.** The saved
 question or receipt travels into the fresh brief. Queuing alone never closes a relevant question.
 
+On receiving guidance, the owner checks each question before lengthy analysis. Harmless follow-ups
+leave valid choices visible; a doubtful question is withdrawn promptly with a reason in chat. Other
+questions stay answerable. When ready, the owner re-asks even unchanged wording, without waiting for
+unrelated work. A review of completed work waits for the relevant revisions, checks and review.
+Freshness is owner judgment, independent of worker status.
+An answer settles only the stated choice; requested work remains required. Guidance may queue before
+the owner's checkpoint; the owner considers an earlier answer with later guidance before acting.
+
 The recommendation body and acceptance action are the same component as the one at the question's
 message anchor in chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
@@ -410,6 +418,8 @@ cannot be repeated. Saved answers disappear from the card and update counts; unr
 remain together. The card disappears when none remain. A brief
 **Decision recorded** receipt links to chat. Failure keeps the question with Retry. Denied writes
 require a refreshed read; a changed question requires reviewing its current revision.
+Withdrawal likewise removes only affected controls and updates counts; stale submissions fail.
+Re-asking supplies fresh controls, retaining earlier history without carrying approval forward.
 
 ### 3.9 Open the owning L2 question
 
@@ -421,20 +431,27 @@ anchor. The live session starts closed when entering a question; **Activity & ev
 technical event summaries and the link to the existing live view.
 
 The normal composer accepts a follow-up, a simple answer such as “14 days”, or a nuanced decision.
-There is no recipient selector, note form or extra confirmation. A follow-up can wake the owner to
-answer while the dilemma remains open. The L2 records a clear decision against its source message;
+There is no recipient selector, note form or extra confirmation. A follow-up wakes the owner to assess
+the question (§3.8). The L2 records a clear decision against its source message;
 the UI never treats sending as approval. Ambiguity is clarified in conversation. A partial answer
 closes answered members and keeps only relevant unanswered members. A partially answered member
 retains its remaining scope in a new revision. A single typed reply can answer the whole group.
 If the chosen direction makes the
 remainder unnecessary, close it with a short reason instead of leaving stale questions open.
 
-A resolved question retains its history and reason with **Decision recorded** or **Question closed**;
-its obsolete acceptance disappears. Recorded acceptance and execution are separate observations:
+A closed question retains its reason with **Decision recorded**, **Question closed** or
+**Question withdrawn**. Withdrawal attributes judgment to the owner; the former recommendation folds
+under **Earlier recommendation**, without answer controls. It records no operator decision or merge authority.
+Recorded acceptance and execution are separate observations:
 show **Waiting to resume** while waiting for capacity, and **Work resumed** only after observing the
 worker running. An old question URL stays readable and links to the current revision when one exists.
 Superseded versions fold under **Earlier question**; linking to an old version opens its history.
 An unavailable question is explicit and keeps the ordinary task conversation accessible.
+
+Phone and desktop walkthroughs cover fresh waiting, harmless follow-up, early withdrawal during
+work, independent acceptance, unchanged and revised re-asking, repeated withdrawal, old links and
+stale submissions. Empty/loading, recording, read/write error and denied states retain §3.8 behavior.
+The composer keeps its existing listening/transcribing states; withdrawal adds no input or transcript.
 
 Opening from Needs you or Work pushes one task entry and retains the origin tab. App Back uses the existing
 history entry and falls back to the project for a direct link. Conversation/Live session switches
@@ -822,13 +839,14 @@ the working rules (the design decision of 2026-09-05).
    carries `tasks: [slug]`, written by the server when the turn's task creation lands.
 5. **Dilemmas have durable identity.** Task `questions` contains ID/revision, message anchor,
    question/options/recommendation, source/audience and resolution. `question_group` projects up to
-   three current members, its revision and stable anchor. Task `question`, history and Needs you
+   three open members plus closed history, its revision and stable anchor. Task `question`, history and Needs you
    project the same source independently of worker state. Blocks and escalations publish attributable
    human context; the owner handoff names question and source-message IDs.
 6. **Resolution cites actual authority.** `POST /api/decide` accepts the exact current question/revision
    and explicit option, or a group revision and selected member/option references. The whole batch
-   is validated before writing. `alt task resolve` cites an original operator message and records
-   the chosen scope or why a question is obsolete. Stale/conflicting writes fail; identical retries
+   is validated before writing. `alt task resolve` cites original authority for an answer or supersession;
+   `withdrawn` records only the owning L2's reason. Re-asking creates a new member without replacing
+   independent questions. Stale/conflicting writes fail; identical retries
    reuse the receipt and repair interrupted delivery. A remainder publishes a new revision without
    an inherited default. L3-authored prose cannot impersonate operator approval. The existing task
    lock, inbox/resume and provider conversation remain the supporting machinery.

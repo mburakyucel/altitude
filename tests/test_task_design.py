@@ -463,11 +463,11 @@ class TestTaskDesign(AltitudeCase):
         return {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
                 "ALTITUDE_ATTEMPT": "1", **overrides}
 
-    def test_cli_refuses_nonowner_stale_attempt_fault_and_group_combinations(self):
+    def test_cli_refuses_nonowner_stale_attempt_fault_and_ambiguous_design_group(self):
         manifest = self.tmp / "selection.json"
         manifest.write_text(json.dumps(self.selection))
         group = self.tmp / "questions.json"
-        group.write_text(json.dumps({"questions": [{"question": "Which one?"}]}))
+        group.write_text(json.dumps({"questions": [{"question": "Which one?"}, {"question": "When?"}]}))
         base = ("task", "block", self.slug, "--reason", "Review?", "--design-file", str(manifest))
         for env, extra in ((self.owner_env(ALTITUDE_TASK="another-owner"), ()),
                            (self.owner_env(ALTITUDE_ATTEMPT="2"), ()),
@@ -480,6 +480,36 @@ class TestTaskDesign(AltitudeCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertEqual(S.load_task(self.project, self.slug)["state"], "running")
                 self.assertFalse(S.load_task(self.project, self.slug).get("questions"))
+
+    def test_reasked_design_cli_preserves_independent_choice_and_old_capture(self):
+        first = self.publish(recommendation="Implement the shown layout")
+        T.resume(self.project, self.slug)
+        task = T.block(self.project, self.slug, "Which rollback window?", actor="l2", expected_attempt=1,
+                       questions={"questions": [{"question": "Which rollback window?"}]})
+        independent = task["questions"][-1]
+        T.resume(self.project, self.slug)
+        T.resolve_question(self.project, self.slug, first["id"], 1, None, disposition="withdrawn",
+                           reason="Assess the layout guidance first.", expected_attempt=1)
+        self.screen.write_bytes(png(90))
+        manifest, questions = self.tmp / "selection.json", self.tmp / "questions.json"
+        manifest.write_text(json.dumps(self.selection))
+        questions.write_text(json.dumps({"questions": [{"question": first["question"]}]}))
+        result = self.alt("task", "block", self.slug, "--reason", "The revised layout is ready.",
+                          "--questions-file", str(questions), "--design-file", str(manifest),
+                          "--for-burak", env=self.owner_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        current = S.load_task(self.project, self.slug)
+        fresh = current["questions"][-1]
+        self.assertEqual(current["questions"][1], independent)
+        self.assertNotEqual(fresh["id"], first["id"])
+        self.assertEqual(json.loads(result.stdout)["design_url"], T.design_url(self.project, self.slug, fresh))
+        self.assertEqual(self.capture_path(first).read_bytes(), png())
+        self.assertEqual(self.capture_path(fresh).read_bytes(), png(90))
+        self.assertEqual(self.request("GET", self.api(first))[0], 200)
+        self.assertEqual(self.request("GET", self.api(fresh))[0], 200)
+        with self.assertRaises(T.TransitionError):
+            T.accept_question(self.project, self.slug, first["id"], 1)
+        self.assertEqual(current["hold_merge"], "Operator reviews the finished PR")
 
     def test_cli_project_override_cannot_publish_a_matching_slug_in_another_project(self):
         other_project = "separate-review-project"

@@ -78,23 +78,27 @@ export function QuestionSet({ decisions, group, disabled = false, onDenied, onRe
   };
   return (
     <div className="question-set" data-group-id={group?.id ?? first.group_id} data-grouped={grouped || undefined}>
-      {decisions.length > 1 ? <p className="text-meta text-muted">{open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer` : "Answers recorded"}</p> : null}
+      {decisions.length > 1 ? <p className="text-meta text-muted">{open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer` : decisions.every((q) => q.resolution?.disposition === "answered") ? "Answers recorded" : "Questions closed"}</p> : null}
       {shown.map((question) => {
         const resolved = question.status === "resolved";
         const options = optionsFor(question);
-        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
-          <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
-          {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
+        const recommendation = <>
           {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
           {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
+        </>;
+        return <div key={`${question.id}:${question.revision}`} className="question-body" data-question-id={question.id ?? undefined} data-question-revision={question.revision ?? undefined} data-status={question.status}>
+          <p className="decision-question"><InlineProse text={question.question || question.title || question.slug} /></p>
+          {resolved ? <div className="decision-receipt" role="status">
+            <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : question.resolution?.disposition === "withdrawn" ? "Question withdrawn" : "Question closed"}</b>
+            {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
+          </div> : null}
+          {question.design_url ? <a className="text-meta" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · v{question.revision}</a> : null}
+          {resolved && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
           {chat && question.detail && question.detail !== question.question ? <details className="question-context">
             <summary>More context</summary>
             <Prose text={question.detail} />
           </details> : null}
-          {resolved ? <div className="decision-receipt" role="status">
-            <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b>
-            {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
-          </div> : question.audience !== "l3" && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
+          {!resolved && question.audience !== "l3" && options.length ? <div className="decision-options" role="group" aria-label={question.question || "Quick answers"}>
             {options.map((option) => {
               const recording = decide.isPending && !grouped && decide.variables && "option_key" in decide.variables && decide.variables.option_key === option.key;
               return <button key={option.key} className={`btn ${!grouped && option.key === recommendedKey(question) ? "btn-primary" : "btn-ghost"}`} type="button"
@@ -145,7 +149,6 @@ export function DecisionCard({ decision, decisions = [decision], chip = false, s
       </div>
       <Link className="decision-task" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
       <QuestionSet decisions={decisions} disabled={disabled} from={from} />
-      {decision.status === "open" && decision.state === "running" ? <p className="text-meta text-muted">Discussion in progress · decision still open</p> : null}
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
   </ProseRepository>;

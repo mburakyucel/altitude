@@ -34,7 +34,7 @@ async function send(page: Page, text: string) {
   const saved = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/l2/message" && response.request().method() === "POST");
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   expect((await saved).ok(), "The pending bubble is not evidence of a saved message").toBe(true);
-  await expect(conversation.locator(".bubble").filter({ hasText: text })).toBeVisible();
+  await expect(conversation.locator(".bubble").filter({ hasText: text }).last()).toBeVisible();
 }
 async function modelCheckpoint(request: APIRequestContext, slug: string) {
   const response = await request.post("/fixture/checkpoint", { data: { slug } });
@@ -48,6 +48,101 @@ async function recorded(card: Locator, disposition = "answered") {
 }
 
 // No route overlays: browser → real Handler/storage/wake → deterministic owner response.
+test("early owner withdrawal preserves independent answers and work, then reasks unchanged and revised decisions", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const created = await request.post("/fixture/freshness");
+  expect(created.ok()).toBe(true);
+  const { slug } = await created.json() as { slug: string };
+  const initial = await readTask(request, slug);
+  const [review, retention] = initial.question_group.questions as [Question, Question];
+  const list = page.getByRole("article", { name: "Review revised rollout", exact: true });
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const withdraw = async () => {
+    await send(page, "Audit the rollout wording before merge.");
+    await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+    await modelCheckpoint(request, slug);
+  };
+  const ready = async (changed = false) => {
+    const response = await request.post("/fixture/freshness-ready", { data: { slug, changed } });
+    expect(response.ok()).toBe(true);
+    return (await readTask(request, slug)).question_group.questions.find((q) => q.status === "open" && q.question.startsWith("Merge"))!;
+  };
+  await walk.open("/");
+  await walk.state("01-fresh-review-and-independent-question", {
+    visible: [list.getByRole("button", { name: "Merge rollout", exact: true }), list.getByRole("button", { name: "14 days", exact: true })], hidden: [],
+  });
+  await list.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  await send(page, "What does the rollback choice cover?");
+  await expect.poll(async () => (await readTask(request, slug)).state).toBe("running");
+  await modelCheckpoint(request, slug);
+  expect((await readTask(request, slug)).question_group.questions.map((q) => [q.id, q.revision, q.status]))
+    .toEqual(initial.question_group.questions.map((q) => [q.id, q.revision, q.status]));
+  await walk.open("/");
+  await walk.state("02-harmless-followup-keeps-fresh-actions", {
+    visible: [list.getByRole("button", { name: "Merge rollout", exact: true }), list.getByRole("button", { name: "14 days", exact: true })],
+    hidden: [list.getByText("Discussion in progress · decision still open", { exact: true })],
+  });
+  await list.getByRole("link", { name: "Open L2 chat", exact: true }).click();
+  await withdraw();
+  await page.reload();
+  const old = questionCard(page, review);
+  const reason = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful.";
+  await old.scrollIntoViewIfNeeded();
+  await walk.state("03-early-withdrawal-explains-why-in-chat", {
+    visible: [old.getByText("Question withdrawn", { exact: true }), old.getByText(reason, { exact: true }), old.getByText("Earlier recommendation", { exact: true })],
+    hidden: [old.getByRole("button"), old.getByText("Recommended:", { exact: true })],
+  });
+  await old.getByText("Earlier recommendation", { exact: true }).click();
+  await walk.state("04-earlier-recommendation-readable-without-action", {
+    visible: [old.getByText("Recommended:", { exact: true })], hidden: [old.getByRole("button")],
+  });
+  const stale = await request.post("/api/decide", { data: { project: "atlas", slug, question_id: review.id, revision: review.revision, option_key: "merge" } });
+  expect(stale.status()).toBe(409);
+  await walk.open("/");
+  await walk.state("05-needs-you-keeps-only-independent-question", {
+    visible: [list.getByRole("button", { name: "14 days", exact: true })],
+    hidden: [list.getByRole("button", { name: "Merge rollout", exact: true }), list.getByText(review.question, { exact: true })],
+  });
+  await list.getByRole("button", { name: "14 days", exact: true }).click();
+  await expect(list).toBeHidden();
+  const chosen = await readTask(request, slug);
+  expect(chosen.questions.find((q) => q.id === retention.id && q.revision === retention.revision)?.resolution).toMatchObject({ disposition: "answered", text: "Keep the old index for fourteen days." });
+  expect(chosen.hold_merge).toBe(initial.hold_merge);
+  expect(chosen.session_id).toBe(initial.session_id);
+  const work = await request.post("/fixture/freshness-work", { data: { slug } });
+  expect((await work.json()).notes).toBe("Requested wording audit remains required.\n");
+  await walk.open(atQuestion(slug, retention));
+  await walk.state("06-answer-applies-only-to-rollback-window", {
+    visible: [conversation.getByText("Questions closed", { exact: true }), questionCard(page, retention).getByText("Decision recorded", { exact: true }), questionCard(page, retention).getByText("Keep the old index for fourteen days.", { exact: true })],
+    hidden: [conversation.getByText("Answers recorded", { exact: true }), conversation.getByRole("button", { name: "Merge rollout", exact: true })],
+  });
+  const unchanged = await ready();
+  expect(unchanged.question).toBe(review.question);
+  expect(unchanged.id).not.toBe(review.id);
+  await walk.open(atQuestion(slug, unchanged));
+  await walk.state("07-same-question-ready-again-with-fresh-action", {
+    visible: [questionCard(page, unchanged).getByRole("button", { name: "Merge rollout", exact: true })], hidden: [old.getByRole("button")],
+  });
+  await withdraw();
+  const revised = await ready(true);
+  expect(revised.id).not.toBe(unchanged.id);
+  expect(revised.question).toBe("Merge the revised rollout?");
+  await walk.open("/");
+  await walk.state("08-revised-work-ready-for-decision", {
+    visible: [list.getByText(revised.question, { exact: true }), list.getByRole("button", { name: "Merge rollout", exact: true })],
+    hidden: [list.getByText(review.question, { exact: true }), list.getByRole("button", { name: "14 days", exact: true })],
+  });
+  await walk.open(atQuestion(slug, review));
+  await walk.state("09-old-link-keeps-withdrawn-history", {
+    visible: [old.getByText("Question withdrawn", { exact: true }), old.getByText(reason, { exact: true })], hidden: [old.getByRole("button")],
+  });
+  const final = await readTask(request, slug);
+  expect(final.hold_merge).toBe(initial.hold_merge);
+  expect(final.questions.filter((q) => q.resolution?.disposition === "withdrawn")).toHaveLength(2);
+  expect(final.question_group.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([revised.id]);
+  expect(final.messages.filter((row) => row.text === "Audit the rollout wording before merge.")).toHaveLength(2);
+});
+
 test("owner records delegated L3 authority while operator decisions and independent blocked work remain", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const created = await request.post("/fixture/delegated-questions");

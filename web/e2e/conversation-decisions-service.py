@@ -1,4 +1,5 @@
 """Real decision API/storage with a deliberately stepped, deterministic L2 engine."""
+from pathlib import Path
 from service_support import configure, serve
 from tests.support import add_worktree, git, make_repo
 from tests.fakes import FakeL2
@@ -23,6 +24,12 @@ REGION = {
     "recommended_key": "west", "why": "West is nearest to the service.",
 }
 OWNER = {"question": "Who should receive the rollout report?"}
+REVIEW = {
+    "question": "Merge the reviewed rollout?",
+    "options": [{"key": "merge", "label": "Merge rollout", "text": "Merge the reviewed rollout."}],
+    "recommended_key": "merge", "why": "The presented rollout has passed its checks and review.",
+}
+WITHDRAWAL = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful."
 
 
 class ConversationOwner(FakeL2):
@@ -31,11 +38,21 @@ class ConversationOwner(FakeL2):
     def checkpoint(self, slug):
         T.take_inbox("atlas", slug)
         task = S.load_task("atlas", slug)
-        question = next(q for q in reversed(task["questions"]) if q["status"] == "open")
         message = next(row for row in reversed(T.task_messages("atlas", slug))
                        if row["role"] == T.OPERATOR_MESSAGE_ROLE)
         text = message["text"]
-        if slug == "rollout-decisions" and text != "Could we roll back after day seven?":
+        if slug == "review-revised-rollout":
+            if text == "What does the rollback choice cover?":
+                answer = "Only the rollback window. The reviewed rollout and merge choice are unchanged."
+            elif text == "Audit the rollout wording before merge.":
+                question = next(q for q in reversed(task["questions"]) if q["status"] == "open" and q["question"].startswith("Merge"))
+                T.resolve_question("atlas", slug, question["id"], question["revision"], None,
+                                   disposition="withdrawn", reason=WITHDRAWAL, expected_attempt=task["attempt"])
+                Path(task["worktree"], "rollout-notes.md").write_text("Requested wording audit remains required.\n")
+                answer = WITHDRAWAL
+            else:
+                raise AssertionError(f"No deterministic freshness response for {text!r}")
+        elif slug == "rollout-decisions" and text != "Could we roll back after day seven?":
             # The fixture model interprets the sentence, then invokes the same cited-message verb
             # as a real owner. One source can answer several independent questions.
             cases = {
@@ -67,6 +84,7 @@ class ConversationOwner(FakeL2):
         elif text == "Maybe two weeks, but I am unsure about cost.":
             answer = "Fourteen days doubles the temporary storage. Should I use fourteen days, or keep seven?"
         else:
+            question = next(q for q in reversed(task["questions"]) if q["status"] == "open")
             cases = {
                 "14 days": ("answered", "Keep the old index for fourteen days.", None),
                 "Use snapshots instead; the old index is no longer needed.":
@@ -125,6 +143,28 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/freshness":
+                slug = task("Review revised rollout", "Review the rollout and choose its rollback window.",
+                            questions={"questions": [REVIEW, RETENTION]})
+                T.set_hold_merge("atlas", slug, "Operator review of the completed rollout")
+                return self._json({"slug": slug})
+            if self.path == "/fixture/freshness-ready":
+                body = self._body()
+                slug = body["slug"]
+                row = S.load_task("atlas", slug)
+                notes = Path(row["worktree"], "rollout-notes.md")
+                assert notes.read_text() == "Requested wording audit remains required.\n"
+                changed = body.get("changed", False)
+                notes.write_text("Wording revised; requested audit and fixture checks complete.\n" if changed else
+                                 "Requested audit complete; the reviewed wording remains valid.\n")
+                T.message("atlas", slug, "l2", notes.read_text().strip())
+                question = {**REVIEW, "question": "Merge the revised rollout?"} if changed else REVIEW
+                T.block("atlas", slug, "The rollout is ready for your decision.", actor="l2",
+                        updates={"waiting_on": "burak"}, questions={"questions": [question]})
+                return self._json({"notes": notes.read_text()})
+            if self.path == "/fixture/freshness-work":
+                row = S.load_task("atlas", self._body()["slug"])
+                return self._json({"notes": Path(row["worktree"], "rollout-notes.md").read_text()})
             if self.path == "/fixture/long-context":
                 detail = ("Should we keep the old index for fourteen days? "
                           "Option A: Keep fourteen days. Option B: Keep seven days. "

@@ -946,8 +946,9 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         captured, files = None, {}
         if design is not None:
             if (actor != "l2" or expected_attempt is None or task.get("state") != "running"
-                    or questions is not None or (updates or {}).get("fault") or task.get("fault")):
-                raise TransitionError("design publication requires the current L2 and one ordinary question")
+                    or (questions is not None and len(_validate_questions(questions)) != 1)
+                    or (updates or {}).get("fault") or task.get("fault")):
+                raise TransitionError("design publication requires the current L2 and one question")
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
@@ -1357,7 +1358,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     return question
 
 
-def _publish_questions(task: dict, payload: dict, actor: str, reason: str) -> list[dict]:
+def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, design: dict | None = None) -> list[dict]:
     inputs = _validate_questions(payload)
     groups = _store_groups(task)
     group = groups[-1] if groups else None
@@ -1376,8 +1377,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str) -> li
         if previous:
             used.add(previous["id"])
         targets.append((item, previous))
-    if len(members) + sum(previous is None for _, previous in targets) > 3:
-        raise TransitionError("a group has at most three questions; resolve existing questions before asking a new group")
+    if sum(q["status"] == "open" for q in members) + sum(previous is None for _, previous in targets) > 3:
+        raise TransitionError("a group has at most three open questions; resolve existing questions before adding another")
     before = len(task.get("questions", []))
     for item, previous in targets:
         if previous and previous["audience"] == "operator":
@@ -1388,7 +1389,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str) -> li
         why = ((previous.get("recommendation") or {}).get("why", "")
                if keep_options and not item["why_supplied"] else item["why"])
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
-                          options=options, recommended_key=recommended, why=why)
+                          options=options, recommended_key=recommended, why=why,
+                          design=design if design is not None else _UNSET)
     group["reason"] = reason
     if len(task["questions"]) != before:
         group["revision"] += 1
@@ -1407,7 +1409,7 @@ def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict 
     if payload is not None:
         if any(value is not None for value in (recommendation, label, why)):
             raise TransitionError("questions JSON supplies its own options and recommendation")
-        return _publish_questions(task, payload, actor, reason)
+        return _publish_questions(task, payload, actor, reason, design=design)
     previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
     no_replacement = all(value is None for value in (recommendation, label, why))
     audience = "l3" if task.get("waiting_on") == "l3" else "operator"
@@ -1481,7 +1483,7 @@ def question_context(question: dict) -> str:
                 + (f"L3 authority assessed by {resolution['recorded_by']} (attempt {resolution['recorded_attempt']}): "
                    f"{resolution['l3_authority']}\n" if resolution.get("l3_authority") else "")
                 + f"Question: {question['detail']}\n"
-                "This closes that question only. Superseded questions do not accept their old recommendation. "
+                "This closes that question only. Withdrawal and supersession do not accept the old recommendation. "
                 "Existing task scope and merge holds remain unchanged.")
     recommendation = question.get("recommendation")
     return (f"Pending task question {question['id']} revision {question['revision']} "
@@ -1490,10 +1492,12 @@ def question_context(question: dict) -> str:
             + ("Quick choices: " + "; ".join(f"{o['key']}: {o['text']}" for o in question_choices(question)) + "\n"
                if question_choices(question) else "")
             + "Discussing this question or waking the worker does not authorize the disputed implementation. "
-            "Answer follow-ups; clarify ambiguity conversationally. After answering a follow-up with "
-            "`alt task reply`, checkpoint progress.md and park using `alt task block \"$ALTITUDE_TASK\" "
-            "--reason '<same pending question text>'`. Omit recommendation fields to keep the saved question, "
-            "recommendation and required authority; parking leaves it unanswered. When the actual source message settles the "
+            "On receiving guidance, assess this question before lengthy analysis. Keep it visible if still valid; "
+            "if doubtful, withdraw it now: alt task resolve \"$ALTITUDE_TASK\" "
+            f"--question {question['id']} --revision {question['revision']} "
+            "--disposition withdrawn --reason '<why it needs reassessment>'. Explain in chat, then investigate. "
+            "Re-ask when the decision is ready, even unchanged; use --questions-file to preserve independent members. "
+            "An answer does not cancel required revisions. When the actual source message settles the "
             "choice, record it before proceeding: alt task resolve \"$ALTITUDE_TASK\" "
             f"--question {question['id']} --revision {question['revision']} --message <message-id> "
             "--source task --disposition answered --reason '<chosen approach>'. A simple contextual answer "
@@ -1516,7 +1520,7 @@ def group_context(task: dict, group: dict | None = None) -> str:
             f"Saved group reason: {group['reason']}\n"
             "Each question is independent. A single source message may answer several; use alt task resolve "
             "for each actually answered or irrelevant question and leave other questions open. "
-            "After a follow-up, park the whole group using alt task block with its saved group reason. "
+            "Park with the saved group reason only while its remaining questions are still valid. "
             "To revise a member, use --questions-file and its id; omitted members remain unchanged.\n\n"
             + "\n\n".join(question_context(q) for q in _group_members(task, group)))
 
@@ -1611,14 +1615,20 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
     return row
 
 
-def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str, *,
+def resolve_question(project: str, slug: str, identity: str, revision: int, message_id: str | None, *,
                      disposition: str, reason: str, expected_attempt: int, source: str = "task",
                      remaining: str | None = None, recommendation: str | None = None,
                      recommendation_label: str | None = None, recommendation_why: str | None = None,
                      l3_authority: str | None = None) -> dict:
-    """The owning L2 records semantic judgment with durable, original authority; no prose classifier."""
-    if disposition not in ("answered", "superseded") or not reason.strip():
-        raise TransitionError("resolution needs answered/superseded and a concrete reason")
+    """The owner records a sourced decision or withdraws its question without granting authority."""
+    if disposition not in ("answered", "superseded", "withdrawn") or not reason.strip():
+        raise TransitionError("resolution needs answered/superseded/withdrawn and a concrete reason")
+    withdrawn = disposition == "withdrawn"
+    if not withdrawn and not message_id:
+        raise TransitionError("answered/superseded resolution requires an original source message id")
+    if withdrawn and (source != "task" or any(value is not None for value in (
+            message_id, remaining, recommendation, recommendation_label, recommendation_why, l3_authority))):
+        raise TransitionError("withdrawal records only the owner's reason, not a sourced decision or remaining question")
     if remaining is not None and not remaining.strip():
         raise TransitionError("remaining question must name the still-relevant unanswered parts")
     if l3_authority is not None:
@@ -1633,7 +1643,8 @@ def resolve_question(project: str, slug: str, identity: str, revision: int, mess
             raise TransitionError("only the active task owner may resolve its question")
         _require_daemon_fence(task, slug)
         question = _question_target(task, identity, revision)
-        row = _decision_source(project, slug, question, message_id, source, l3_authority=l3_authority)
+        row = ({"role": "l2", "by": "l2"} if withdrawn else
+               _decision_source(project, slug, question, message_id, source, l3_authority=l3_authority))
         receipt = question.get("resolution") or {}
         if question["status"] != "open":
             if (receipt.get("message_id"), receipt.get("source"), receipt.get("disposition"), receipt.get("text"),
