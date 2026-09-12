@@ -92,15 +92,12 @@ workflow evidence proves it inapplicable and it is not required. Supported condi
 [main-push conjunction](docs/CLI.md#adopt-an-existing-pr) and `github.event_name != 'pull_request'`,
 the latter only for a `pull_request` run. Task scope and merge holds still apply.
 
-Clear task-chat, project-chat and UI merge decisions carry through authorized delivery using
-[`hold-merge --approval`](docs/CLI.md#recorded-merge-approval). L3 cites the original operator source
-and judges its scope against later corrections in both conversations. Unrelated discussion and
-routine rebasing or conflict resolution do not require another approval or a prescribed presentation.
-Each held PR receives its own release: a follow-up can use the same decision only when its work is
-within that decision's actual scope. A renewed hold needs approval of that renewed requirement.
-The daemon verifies original authority, applicable question evidence, the hold and current PR;
-the owner completes review and exact-candidate checks. Design feedback, unresolved conditions and
-revoked permission do not authorize merge.
+Operator decisions in task chat, project chat and the UI authorize delivery within their actual scope,
+including routine integration. L3 applies [recorded merge approval](docs/CLI.md#recorded-merge-approval)
+to each held PR after reviewing the original source and later corrections. The daemon verifies
+authority, question evidence, the hold and PR identity; the owner completes review and current-candidate
+checks. Each held follow-up needs its own scoped release, and a renewed hold requires approval of that
+renewed requirement. Design feedback, unresolved conditions and revoked permission cannot authorize merge.
 
 ## How the work stays coherent
 

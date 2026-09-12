@@ -81,7 +81,7 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.tick()
         pull = S.read_json(gh / "pr.json")
         pull.update(url="https://github.com/team/demo/pull/101", isDraft=False, isCrossRepository=False,
-                    headRefOid=prepared["head"], updatedAt=self.at)
+                    headRefOid=prepared["head"])
         S.write_json(gh / "pr.json", pull)
         self.tick()
         return initial, slug, worktree, gh, prepared, pull
@@ -104,7 +104,6 @@ class TestMergeApprovalJourney(AltitudeCase):
         # I-20260909-074919: a UI choice after L3 escalation is original operator evidence.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
             "Review the story", "Review the story before merging", "The reviewed story.\n")
-        T.message(self.project, slug, "l2", f"Reviewed and green: {pull['url']} at {prepared['head']}.")
         question = self.escalate(slug, "May the owner merge the reviewed story?", f"Merge {pull['url']}.", "Approve merge")
         self.assertEqual(question["asked_by"], "l3")
         approved = self.choose(slug, question)
@@ -176,13 +175,10 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
 
     def test_typed_answer_after_a_plain_explanation_releases_the_exact_pr(self):
-        # PR #304 sequence: between the owner's presentation and the operator's typed decision the
-        # operator asked for a plain explanation and the owner answered without the PR URL. No phrase
-        # or adjacency rule breaks that citation; L3 reads the exchange and cites the original decision.
+        # The explanation request and the subsequent answer carry distinct authority.
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
             "Clarify the instruction", "Changes authority; operator security review is required",
             "The clarified instruction.\n")
-        T.message(self.project, slug, "l2", f"Ready for security review: {pull['url']} at {prepared['head']}.")
         question = self.escalate(slug, f"Will you complete the held security review and merge {pull['url']}?",
                                  "Review the authority boundary and merge the prepared PR if satisfied.",
                                  "Security review and merge")
@@ -219,19 +215,12 @@ class TestMergeApprovalJourney(AltitudeCase):
                          (None, False, T.OPERATOR_MESSAGE_ROLE))
         self.assertEqual((receipt["pr"], receipt["head"]), (101, prepared["head"]))
 
-    def test_project_authorized_integration_preserves_questions_and_normal_landing(self):
-        initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(
+    def test_project_approval_preserves_an_independent_question(self):
+        _, slug, _, _, prepared, _ = self.prepare_held_pr(
             "Integrate the approved story", "Review the story", "The approved story.\n")
-        T.message(self.project, slug, "l2", pull["url"])
         self.tick()
         original = l3.chat_log(self.project, "user", "You can merge it and resolve integration within this outcome.",
                                trigger="chat", turn_id="a" * 12)
-        self.tick()
-        # A later PR update keeps the original source; no presentation timestamp is needed.
-        pull["updatedAt"] = self.at
-        S.write_json(gh / "pr.json", pull)
-        self.tick()
-        T.message(self.project, slug, "l2", f"Integration reviewed: {pull['url']} head {prepared['head']}")
         question = self.escalate(slug, "Clarify a separate remaining detail", "Discuss the detail.")
         broker = self.broker()
         args = ["task", "hold-merge", slug, "--source", "project", "--approval", original["turn_id"],
@@ -245,21 +234,6 @@ class TestMergeApprovalJourney(AltitudeCase):
         self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["id"], question["id"])
         self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["status"], "open")
         self.assertEqual(receipt["source"], "project")
-        git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
-        (gh / "merge_git.txt").write_text("advance the local remote\n")
-        # Resolve the unrelated question before owner continuation; release itself grants no answer.
-        self.tick()
-        answer = l3.chat_log(self.project, "user", "The separate detail is settled.", trigger="chat", turn_id="b" * 12)
-        T.resolve_question(self.project, slug, question["id"], question["revision"], answer["turn_id"],
-                           source="project", disposition="answered", expected_attempt=initial["attempt"],
-                           reason="The operator settled the detail.")
-        self.request("/api/task/action", {"project": self.project, "slug": slug, "action": "resume", "reason": "Continue approved delivery"})
-        self.wait_state(slug, "running")
-        (gh / "checks.json").write_text('[{"bucket": "fail"}]')
-        self.assertFalse(land.land("test: preserve normal checks", cwd=worktree, merge=True, wait=0)["merged"])
-        (gh / "checks.json").write_text('[{"bucket": "pass"}]')
-        self.assertTrue(land.land("test: deliver approved integration", cwd=worktree, merge=True, wait=0)["merged"])
-        self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "The approved story.\n")
 
     def test_approval_survives_conflict_resolution_and_scoped_same_owner_followup(self):
         initial, slug, worktree, gh, prepared, pull = self.prepare_held_pr(

@@ -52,7 +52,7 @@ OPERATOR_BASELINE = {
     "altitude/land.py": 4,
     "altitude/server.py": 16,
     "altitude/tasks.py": 9,
-    "bin/alt": 12,
+    "bin/alt": 11,
     "docs/ARCHITECTURE.md": 5,
     "docs/CLI.md": 3,
     "docs/ROADMAP.md": 2,

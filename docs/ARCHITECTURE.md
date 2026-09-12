@@ -430,46 +430,34 @@ this repository's temporary local policy, the full local suite runs on a clean m
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 
-Operator merge decisions travel through task chat, UI choices and original project chat. L3 uses
-[`hold-merge --approval`](CLI.md#recorded-merge-approval) through its project-bound daemon connection,
-citing the original operator message, current PR/head, interpretation reason and applicable question
-revision. L3 reads the original decision and later corrections in both conversations, judges the
-actual scope and conditions, and records why this PR remains authorized. Design feedback,
-implementation-only permission, relays and revoked decisions supply no merge authority. Meaning
-is model judgment; altd does not classify prose, URLs or message adjacency.
+Operator merge decisions originate in task chat, UI choices or project chat. L3 applies them through
+[`hold-merge --approval`](CLI.md#recorded-merge-approval), citing the original source, current PR/head,
+applicable question revision and its scope judgment. L3 reviews later corrections in both conversations.
+It interprets permission, conditions and revocation; altd validates provenance and recorded boundaries.
+Design feedback, implementation-only permission and coordinator relays cannot authorize merge.
 
-The existing source reader verifies original operator authorship and unique source identity.
-Project sources use original user/chat turn IDs; triggered coordinator traffic cannot authorize a
-release. Corrupt or missing source evidence refuses. Pending project chat must reach the conversation
-and L3's review before release; queued text is not yet authority. A later unrelated message does
-not expire an approval, and no latest-message citations or presentation artifacts are required.
+The shared source reader verifies original operator authorship and unique identity. Project sources
+use original user/chat turn IDs. Missing, corrupt or duplicate evidence refuses release. Pending
+project chat must enter the conversation and L3's review before it can supply authority.
+Question answers require the current resolved operator revision, an answered resolution from that
+source, no remainder and the recorded option for a UI choice. A later approval can carry an already
+resolved question as context; `question_context_only` preserves that distinction and imports no old
+option. Its source must follow the earlier resolution.
 
-Question answers retain the shared original-source and viewed-revision validation. An answer used
-as merge authority requires the current resolved operator question, an answered resolution from that
-same source, no remainder, and the recorded option for a UI choice. A later conversational approval
-may carry an already resolved question as context only; its source must follow that resolution.
-The receipt marks `question_context_only` and imports no previous option. Earlier design acceptance
-or a superseded recommendation therefore supplies no authority to the later source.
+Under the project lock, altd verifies the latest hold event against task state and binds the current
+hold ID to its original recorded requirement. Approval must follow that requirement. Explicit hold
+changes create a fresh ID and matching event; interrupted writes and inconsistent evidence refuse.
+A follow-up restores the original ID and needs its own release. L3 can apply the same source when
+its scope covers that PR. Routine integration preserves authority within the approved outcome.
 
-Under the project lock, altd matches the current hold ID to its original recorded generation and
-requires approval after that requirement arose. Explicit hold changes store a fresh ID with their
-event; interrupted or renewed holds cannot reuse earlier approval. Automatic restoration for a
-follow-up retains the original ID: L3 must independently judge and release that active PR, but can
-cite the same operator decision when it actually covers the follow-up. This is not blanket approval.
-Hold evidence is read strictly, so corruption cannot hide a renewed restriction.
+Altd reads an open, non-draft, same-repository PR targeting main from the project's origin. The
+publication branch and supplied head must match; recorded active/adopted PR identity also binds the
+number, URL and branch. The owner reviews the integrated result and completes current-candidate checks.
 
-The daemon reads the PR from the project's origin. It must be open, non-draft, same-repository,
-target main and match the task publication branch and supplied head. The last recorded task PR
-must match when present; adoption also binds the number, URL and original branch. Routine rebasing
-or conflict resolution within the approved outcome preserves authority; PR update timestamps do
-not expire it. Changed objectives, unresolved conditions and revoked permission still prevent merge.
-The owner reviews the integrated result and runs ordinary exact-current-candidate landing checks.
-
-One task write clears `hold_merge` and saves `merge_approval`: original source and author/time,
-applicable question/revision and option, original hold ID/event/time, current PR URL/head and L3's
-interpretation reason. A `release-merge` event carries that receipt; local refusals record
-`merge-approval-refused`. This releases only the observed hold for this PR; it does not resume or
-merge. Direct `--off` remains operator-only.
+One task write clears `hold_merge` and saves `merge_approval`: original source/author/time,
+question/revision/option, hold ID/event/time, PR URL/head and scope reason. A `release-merge` event
+carries that receipt; local refusals record `merge-approval-refused`. Release leaves worker and
+question state intact. Direct `--off` is operator-only.
 
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
 daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged

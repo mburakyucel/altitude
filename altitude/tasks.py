@@ -1822,7 +1822,7 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
     """L3 judges scope and later corrections; altd binds original authority to this hold and PR.
 
     I-20260909-074919: UI decisions and contextual reaffirmations use the common decision contract.
-    No prose classifier: L3 must reject ambiguity, revocation and implementation-only permission.
+    L3 rejects ambiguity, revocation and implementation-only permission.
     """
     if actor != "l3" or not reason.strip():
         raise TransitionError("recorded approval requires the coordinator daemon and a reason")

@@ -109,13 +109,13 @@ validation task, or release prerequisite.
    the stated exception.
 2. Every defensive check that is added names the incident it prevents in the PR body. A check that
    defends against Altitude's own design is removed with the design.
-3. The PR body answers, in at most fifteen lines: what user-visible or safety behaviour the module
-   provides; which callers, records, external effects, and tests depend on it; whether the behaviour
-   is still wanted; whether it can be expressed with fewer owners, states, artifacts, or compatibility
-   paths; what is removed; what test or end-to-end observation proves parity; and what in the change
-   works only for this operator, this subscription mix, or this machine, and which seam holds it —
-   could an engine be dropped tomorrow by touching only the seam? "Simpler" is not evidence on its
-   own, and an existing test is not evidence that a mechanism is still wanted.
+3. Describe finished behavior directly in concise present tense, without old-versus-new narrative.
+   Keep the PR body short (at most fifteen lines): behavior, material boundaries or tradeoffs,
+   deletion evidence and validation. Link detailed review evidence instead of pasting boilerplate.
+   Review asks: is the behavior wanted; which callers, records, external effects and tests depend on it;
+   can fewer owners, states, artifacts or compatibility paths express it; what is removed and what
+   proves parity; which operator/provider/machine assumptions remain, behind which seam, and could
+   an engine be dropped by changing only that seam? Existing tests alone do not justify behavior.
 4. Full Python and web suites, typecheck/build and isolated phone/desktop browser checks on every
    PR (`make check`). Changes to dispatch, engines or landing include deterministic integration
    evidence for affected task, message/resume, failure and delivery paths. The operator's

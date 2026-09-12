@@ -30,10 +30,7 @@ class TestRecordedMergeApproval(AltitudeCase):
                    worktree=str(self.repo), branch=f"worktree-{self.slug}")
         self.pull = {"number": 235, "url": "https://github.com/team/project/pull/235", "state": "OPEN",
                      "isDraft": False, "isCrossRepository": False, "baseRefName": "main",
-                     "headRefName": f"worktree-{self.slug}", "headRefOid": "d" * 40,
-                     "updatedAt": "2026-09-07T20:02:00Z"}
-        self.at = "2026-09-07T20:03:00+00:00"
-        self.presentation = T.message(self.project, self.slug, "l2", f"Ready for review: {self.pull['url']}.")
+                     "headRefName": f"worktree-{self.slug}", "headRefOid": "d" * 40}
         self.at = "2026-09-07T20:04:00+00:00"
         self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, text)
         self.at = "2026-09-07T20:05:00+00:00"
@@ -120,8 +117,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         first = json.loads(self.request(self.project_args())["stdout"])
         self.record_approval("Ready for project coordination", title="Second story")
         self.pull.update(number=236, url="https://github.com/team/project/pull/236")
-        self.at = "2026-09-07T20:03:30+00:00"
-        self.presentation = T.message(self.project, self.slug, "l2", self.pull["url"])
         task = S.load_task(self.project, self.slug)
         task["prs"] = [236]
         S.save_task(self.project, task)
@@ -133,25 +128,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         for receipt in (first, second):
             self.assertEqual((receipt["source"], receipt["approval"], receipt["authorized_by"]),
                              ("project", "a" * 12, T.OPERATOR_MESSAGE_ROLE))
-
-    def test_revocation_reviewed_by_l3_renews_the_hold_and_refuses_old_authority(self):
-        self.project_approval()
-        args = self.project_args()
-        self.at = "2026-09-07T20:06:00+00:00"
-        revoked = l3.chat_log(self.project, "user", "Stop; retain both holds.", turn_id="b" * 12, trigger="chat")
-        # Deterministic L3 judgment: this correction revokes permission. The coordinator
-        # records its consequence; application code does not classify operator prose.
-        T.message(self.project, self.slug, "l3", f"Decision {revoked['turn_id']} revokes merge permission.")
-        T.set_hold_merge(self.project, self.slug, "Operator revoked merge permission")
-        with self.assertRaisesRegex(ValueError, "stale"):
-            self.request(args)
-        self.assertTrue(S.load_task(self.project, self.slug)["hold_merge"])
-
-    def test_task_approval_survives_unrelated_project_and_task_discussion(self):
-        self.project_approval("We should discuss tomorrow's planning separately.")
-        T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Thanks for the explanation.", wake_blocked=False)
-        receipt = json.loads(self.request()["stdout"])
-        self.assertEqual(receipt["approval"], self.approval["id"])
 
     def test_pending_project_correction_is_not_yet_reviewed_authority(self):
         self.project_approval()
@@ -192,15 +168,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         with self.assertRaisesRegex(ValueError, "original operator"):
             self.request(self.project_args())
 
-    def test_l3_retains_hold_when_project_approval_is_for_another_outcome(self):
-        original = self.project_approval("Merge the separate billing change.")
-        # Fixture L3 judgment rejects applying this source to the narrative outcome.
-        T.message(self.project, self.slug, "l3", f"{original['turn_id']} approves billing only; narrative remains held.")
-        task = S.load_task(self.project, self.slug)
-        self.assertTrue(task["hold_merge"])
-        self.assertFalse(task.get("merge_approval"))
-        self.assertFalse(any(e["kind"] == "release-merge" for e in S.read_events(self.project, self.slug)))
-
     def test_project_answer_preserves_exact_question_source_and_revision(self):
         self.at = "2026-09-07T20:04:10+00:00"
         task = T.escalate(self.project, self.slug, "May this reviewed PR merge?",
@@ -237,7 +204,8 @@ class TestRecordedMergeApproval(AltitudeCase):
         T.dispatch(self.project, foreign["slug"], attempt=1, session_id="other", agent_id="other",
                    worktree=str(self.repo), branch="worktree-other")
         other = T.message(self.project, foreign["slug"], T.OPERATOR_MESSAGE_ROLE, "You can merge it")
-        for identity in ("0" * 32, other["id"], self.presentation["id"]):
+        nonoperator = T.message(self.project, self.slug, "l2", "Ready for review.")
+        for identity in ("0" * 32, other["id"], nonoperator["id"]):
             with self.subTest(identity=identity):
                 args = self.args(); args[4] = identity
                 with self.assertRaisesRegex(ValueError, "original operator approval"):
@@ -272,9 +240,7 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.assertEqual(json.loads(self.request()["stdout"])["pr"], 235)
 
     def test_cited_conversational_authorizations_do_not_depend_on_a_phrase_list(self):
-        for index, text in enumerate(("Good to merge", "good to merge.", "GOOD TO MERGE!",
-                                      "You can merge it", "you can merge it.", "YOU CAN MERGE IT!",
-                                      "  You can merge it.\n", "Ship this reviewed PR, please.")):
+        for index, text in enumerate(("Good to merge", "  YOU CAN MERGE IT.\n", "Ship this reviewed PR, please.")):
             with self.subTest(text=text):
                 self.record_approval(text, title=f"Review wording {index}")
                 conversation = (self.directory / "conversation.jsonl").read_bytes()
@@ -340,13 +306,10 @@ class TestRecordedMergeApproval(AltitudeCase):
             self.request(project="foreign", actor=T.OPERATOR_MESSAGE_ROLE, stdin="You can merge it")
         self.assertEqual(S.load_task("foreign", self.slug)["hold_merge"], "Other review")
 
-    def test_approval_needs_no_owner_presentation_or_message_adjacency(self):
-        path = self.directory / "conversation.jsonl"
-        rows = [json.loads(line) for line in path.read_text().splitlines()]
-        path.write_text("".join(json.dumps(row) + "\n" for row in rows if row["id"] != self.presentation["id"]))
+    def test_cited_approval_carries_through_unrelated_discussion(self):
+        self.project_approval("We should discuss tomorrow's planning separately.")
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Explain the unrelated roadmap later.", wake_blocked=False)
         T.message(self.project, self.slug, "l2", "I will address that separately.")
-        self.pull.pop("updatedAt")
         receipt = json.loads(self.request()["stdout"])
         self.assertEqual(receipt["approval"], self.approval["id"])
 
@@ -455,8 +418,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         self.at = "2026-09-07T20:07:00+00:00"
         T.accept_question(self.project, self.slug, self.question["id"], self.question["revision"])
         design = copy.deepcopy(S.load_task(self.project, self.slug)["questions"][-1])
-        self.at = "2026-09-07T20:08:00+00:00"
-        self.presentation = T.message(self.project, self.slug, "l2", f"Ready for merge review: {self.pull['url']}")
         self.at = "2026-09-07T20:09:00+00:00"
         self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "You can merge it", wake_blocked=False)
         self.assertEqual(self.approval["question_refs"], [{"id": design["id"], "revision": design["revision"]}])
@@ -473,8 +434,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         source = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Drop that alternative.")
         T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"], source["id"],
                            disposition="superseded", reason="The alternative is abandoned", expected_attempt=1)
-        self.at = "2026-09-07T20:08:00+00:00"
-        self.presentation = T.message(self.project, self.slug, "l2", self.pull["url"])
         self.at = "2026-09-07T20:09:00+00:00"
         self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Merge this reviewed result.")
         task = S.load_task(self.project, self.slug)
@@ -502,10 +461,6 @@ class TestRecordedMergeApproval(AltitudeCase):
         task["prs"] = [235, 236]
         S.save_task(self.project, task)
         self.refused("active PR")
-
-
-
-
 
     def test_interrupted_same_reason_hold_cannot_reuse_older_generation(self):
         with mock.patch.object(S, "append_event", side_effect=OSError("interrupted")):

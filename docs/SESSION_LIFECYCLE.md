@@ -342,28 +342,16 @@ Changed evidence reaches only the originating L3; unchanged observations remain 
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
 stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
 
-Task messages retain original authorship: a coordinator relay is not operator approval. Sending a
-message or resolving a question does not automatically clear a merge hold. L3 applies an actual
-operator merge decision through [`hold-merge --approval`](CLI.md#recorded-merge-approval), citing the
-original source, applicable question revision, current PR/head and its scope judgment. Task chat,
-UI choices and original project user/chat turns share this path. L3 reviews subsequent corrections
-in both conversations; interpretation belongs to the model. Design or implementation acceptance,
-unresolved conditions, revoked permission and changed objectives do not authorize merge.
+L3 applies an original operator merge decision to each held PR through
+[`hold-merge --approval`](CLI.md#recorded-merge-approval), preserving the source, applicable question,
+current PR/head and scope judgment in its receipt. It reviews corrections in both task and project
+chat. Altd validates authority, question evidence, the current hold and assigned/adopted PR identity;
+[the architecture](ARCHITECTURE.md#isolation-and-landing) specifies those boundaries.
 
-Altd verifies source authority, applicable current question/option evidence, the original current
-hold generation and assigned/adopted PR identity. A later conversational approval can carry a
-previously resolved question as context only, without accepting its old option. Missing/corrupt
-sources, pending project chat or an explicit renewed hold preserve the hold. Unrelated discussion,
-PR update times and routine integration do not expire the original decision or require a prescribed
-presentation. A follow-up PR restores the original review requirement; L3 must release that PR
-separately after judging that the source covers it. An explicit renewed hold requires authority
-for that renewed requirement.
-
-The receipt preserves original source, scope reason, hold and current PR/head without changing
-worker or question state. L3 checks it before resuming a blocked owner; the owner completes review
-and exact-candidate checks through `alt land --merge`. A repeated release without an active hold
-refuses. Failed reconciliation follows L3's machinery-recovery path; the operator need not repeat
-an already recorded decision or repair the hold manually.
+Release changes the hold while preserving worker and question state. L3 verifies the receipt before
+resuming a blocked owner, who completes review and current-candidate checks through `alt land --merge`.
+A follow-up restores the original review requirement for its own scoped release; an explicit renewed
+hold requires approval of that renewed requirement. Failed reconciliation follows L3's recovery path.
 
 Voice capture does not add a lifecycle state. **Stop** transcribes the bounded recording into
 the editable draft; the send arrow transcribes, appends and sends at once. Both sending paths use
