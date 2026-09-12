@@ -135,10 +135,15 @@ test("early owner withdrawal preserves independent answers and work, then reasks
   const withdrawnAgain = questionCard(page, unchanged);
   const closedGroup = withdrawnAgain.locator("xpath=ancestor::div[contains(@class, 'conversation-question')]");
   await expect(closedGroup).toHaveAttribute("data-historical", "true");
+  await expect(closedGroup).toHaveCSS("outline-style", "none");
   await walk.state("07b-withdrawn-only-group-leaves-a-quiet-audit-row", {
     visible: [withdrawnAgain.getByText("Question withdrawn", { exact: true })],
     hidden: [withdrawnAgain.getByText(unchanged.question, { exact: true }), closedGroup.getByText("L2", { exact: true }), withdrawnAgain.getByRole("button")],
   });
+  await withdrawnAgain.locator("summary").focus();
+  await expect(withdrawnAgain.locator("summary")).toHaveCSS("outline-style", "solid");
+  await withdrawnAgain.locator("summary").press("Enter");
+  await expect(withdrawnAgain.getByText(unchanged.question, { exact: true })).toBeVisible();
   const revised = await ready(true);
   expect(revised.id).not.toBe(unchanged.id);
   expect(revised.question).toBe("Merge the revised rollout?");
