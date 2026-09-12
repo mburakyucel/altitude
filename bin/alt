@@ -231,6 +231,7 @@ def main(argv=None) -> None:
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch")
     n.add_argument("--effort", choices=config.TASK_EFFORTS, help="task reasoning effort; supporting engines default to high")
+    n.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
     for name in ("reject", "block"):
         x = ts.add_parser(name); x.add_argument("slug"); x.add_argument("--reason", required=name == "reject")
         if name == "block":
@@ -262,6 +263,7 @@ def main(argv=None) -> None:
     ho.add_argument("--attempt", required=True, type=int); ho.add_argument("--reason", required=True)
     ms = ts.add_parser("message", help="message the existing L2; blocked and reported/open-PR owners resume with it")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
+    ms.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
     st = ts.add_parser("stop", help="ask altd to stop the task's L2 worker; the task blocks until resumed")
     st.add_argument("slug"); st.add_argument("--reason", required=True)
     pc = ts.add_parser("preserve-checkout", help="ask altd to archive dirty main for an unlaunched blocked task")
@@ -389,7 +391,7 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge))
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge, image_ids=args.image_ids))
         elif tc in ("reject", "resume", "stop", "preserve-checkout", "handoff"):
             from altitude import dispatch
             options = {"engine": args.engine, "expected_attempt": args.attempt} if tc == "handoff" else {}
@@ -465,7 +467,7 @@ def main(argv=None) -> None:
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
-            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR)
+            message = T.message(p, args.slug, "l3" if ACTOR == "l3" else "burak", _stdin_or_file(args), by=ACTOR, image_ids=args.image_ids)
             out(message)
         elif tc == "paths":
             declared = [x.strip() for x in args.paths.split(",") if x.strip()]

@@ -22,6 +22,7 @@ def configure(*, expected_error=lambda _message: False):
     engines.installation = lambda engine: {
         "available": engine == config.ENGINES[0], "why": "deterministic browser engine fixture"}
     engines.claude_agents = lambda: []
+    engines.image_capability = lambda _engine: {"available": True, "why": "deterministic image fixture"}
 
 
 def serve(handler=server.Handler, *, release=lambda: None):

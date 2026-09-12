@@ -18,6 +18,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   Captures are confined to the owning task, active HTML is excluded, and replacement designs require
   a new question revision without releasing merge holds.
 
+- Add private screenshot/photo input to project and task chat, compact previews and full-image
+  viewing, durable retries and same-project image handoff to the assigned task owner.
+
 - Protected Git hooks allow reference packing, loose-copy pruning and fetch garbage collection
   while main lags origin/main, preserving its tip and subsequent permitted fast-forward. Genuine
   unauthorized protected branch moves and deletions remain blocked (#291).

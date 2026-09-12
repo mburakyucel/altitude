@@ -1,6 +1,7 @@
 """altd — the Altitude web/API server and task timers."""
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -16,12 +17,13 @@ import threading
 import time
 import traceback
 import wave
+import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import config, digest, dispatch, engines, git_policy, incidents, l3, monitor, quota_codex, route, state as S, tasks as T, transcript, verify
+from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, quota_codex, route, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -193,6 +195,33 @@ def transcribe_voice(raw: bytes, content_type: str) -> str:
         raise
     except OSError as exc:
         raise VoiceInputError("Voice transcription is unavailable on this host.", 503) from exc
+
+
+def image_capability(project: str, slug: str | None = None) -> dict:
+    """Image input follows this conversation's current engine and the optional local converter."""
+    config.project(project)
+    state = images.capability()
+    if slug:
+        try:
+            task = S.load_task(project, S.require_task_slug(slug))
+        except (ValueError, FileNotFoundError):
+            raise images.ImageError("Image access denied.", 403)
+        engine = task.get("l2_engine") or task.get("engine")
+        choice = {"engine": engine} if engine else route.pick_engine("l2", project=config.project(project))
+    else:
+        choice = l3._select(project)
+    if state["available"]:
+        native = engines.image_capability(choice.get("engine"))
+        state = {"available": native["available"], "reason": native.get("why")}
+    return {**state, "max_count": images.MAX_IMAGES, "max_bytes": images.MAX_BYTES,
+            "max_total_bytes": images.MAX_TOTAL_BYTES, "max_pixels": images.MAX_PIXELS,
+            "max_dimension": images.MAX_SIDE}
+
+
+def require_image_capability(project: str, slug: str | None = None) -> None:
+    capability = image_capability(project, slug)
+    if not capability["available"]:
+        raise images.ImageError(capability.get("reason") or "Image input unavailable.")
 
 
 def log(msg: str) -> None:
@@ -1025,6 +1054,10 @@ def tick_project(project: str) -> None:
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
     try:
+        images.collect(project)
+    except (images.ImageError, OSError) as e:
+        log(f"image cleanup deferred for {project}: {e}")
+    try:
         dispatch.run_settings(project)
         for task in S.list_tasks(project):
             if (task.get("ci_recheck") or {}).get("status") in ("pending", "probing", "notifying"):
@@ -1257,12 +1290,67 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _body(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
+    def _body(self, *, max_bytes: int | None = None) -> dict:
         try:
-            return json.loads(self.rfile.read(n) or b"{}")
+            n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
+            raise images.ImageError("Invalid message size.", 400)
+        if max_bytes is not None and (n < 0 or n > max_bytes):
+            self.close_connection = True
+            raise images.ImageError("Message is too large. Use up to 4 images, 10 MB each and 20 MB total.", 413)
+        raw = self.rfile.read(n)
+        if max_bytes is not None and len(raw) != n:
+            raise images.ImageError("The message upload was incomplete.", 400)
+        try:
+            value = json.loads(raw or b"{}")
+        except ValueError:
+            if max_bytes is not None:
+                raise images.ImageError("The message could not be read.", 400)
             return {}
+        if max_bytes is not None and not isinstance(value, dict):
+            raise images.ImageError("Expected a message object.", 400)
+        return value
+
+    def _image_origin(self) -> None:
+        origin = self.headers.get("Origin")
+        if (self.headers.get("Sec-Fetch-Site") == "cross-site"
+                or origin and urlparse(origin).netloc != self.headers.get("Host")):
+            raise images.ImageError("Image access denied.", 403)
+
+    def _image_request(self, body: dict) -> dict:
+        self._image_origin()
+        if self.headers.get_content_type() != "application/json":
+            raise images.ImageError("Image messages require JSON input.", 415)
+        try:
+            request_id = uuid.UUID(body.get("request_id", "")).hex
+        except (ValueError, TypeError, AttributeError):
+            raise images.ImageError("Image messages require a valid submission identity.", 400)
+        if body.get("images") and body.get("image_ids"):
+            raise images.ImageError("Select images or retry saved images, not both.", 400)
+        data = {key: value for key, value in body.items() if key != "request_id"}
+        return {"request_id": request_id, "request_digest": hashlib.sha256(
+            json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            "uploads": body.get("images"), "image_ids": body.get("image_ids")}
+
+    def _images(self, parts: list[str], query: dict) -> None:
+        self._image_origin()
+        project = unquote(parts[2]) if len(parts) > 2 else ""
+        if not config.is_managed(project):
+            raise images.ImageError("Image access denied.", 403)
+        if len(parts) == 3:
+            return self._json(image_capability(project, query.get("task", [None])[0]))
+        if len(parts) != 4:
+            raise images.ImageError("Image unavailable.", 404)
+        with S.project_lock(project):
+            data, meta = images.read(project, unquote(parts[3]))
+        self.send_response(200)
+        self.send_header("Content-Type", meta["mime_type"])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _transcribe_voice(self) -> None:
         try:
@@ -1324,6 +1412,8 @@ class Handler(BaseHTTPRequestHandler):
             api = parts[1] if len(parts) > 1 else ""
             if api == "design":
                 return self._task_design(parts[2:])
+            if api == "images":
+                return self._images(parts, q)
             if api == "overview":
                 return self._json(overview())
             if api == "project" and len(parts) > 2:
@@ -1349,21 +1439,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({**lifecycle, "l3": l3.info(project),
                                    "engine": config.project(project).get("l3_engine")})
             return self._json({"error": "unknown api"}, 404)
+        except images.ImageError as exc:
+            return self._json({"error": str(exc)}, exc.status)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"GET {self.path}: client went away ({type(e).__name__}: {e})")
             return
         except Exception as e:  # noqa: BLE001
             log(f"GET {self.path}: {e}\n{traceback.format_exc()}")
-            return self._json({"error": str(e)}, 500)
+            return self._json({"error": "Image temporarily unavailable." if len(parts) > 1 and parts[1] == "images" else str(e)}, 500)
 
     def do_POST(self) -> None:
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
+        image_submission = False
         try:
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
             if api == "transcribe":
                 return self._transcribe_voice()
-            o = self._body()
+            o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
+            image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api == "issue":
                 try:
                     if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor", "incident", "url"}:
@@ -1439,13 +1533,19 @@ class Handler(BaseHTTPRequestHandler):
             if api == "l2" and len(parts) > 2 and parts[2] == "message":
                 project, slug = o["project"], o["slug"]
                 text = str(o.get("text") or "").strip()
-                if not text:
+                image_args = self._image_request(o) if o.get("images") or o.get("image_ids") else {}
+                if not text and not image_args:
                     return self._json({"error": "empty task message"}, 400)
+                if image_args:
+                    existing = next((row for row in T.task_messages(project, slug)
+                                     if row["id"] == image_args["request_id"]), None)
+                    if not existing:
+                        require_image_capability(project, slug)
                 try:
                     message = T.message(project, slug, "burak", text,
                                         question_id=o.get("question_id"), revision=o.get("revision"),
                                         group_id=o.get("group_id"), group_revision=o.get("group_revision"),
-                                        stop_id=o.get("stop_id"))
+                                        stop_id=o.get("stop_id"), **image_args)
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 try:
@@ -1475,13 +1575,28 @@ class Handler(BaseHTTPRequestHandler):
                 project, text = o["project"], (o.get("text") or "").strip()
                 if not config.is_managed(project):
                     return self._json({"error": "This project is not managed. Add its folder again to attach L3."}, 409)
-                if not text:
+                image_args = self._image_request(o) if o.get("images") or o.get("image_ids") else {}
+                if not text and not image_args:
                     return self._json({"error": "empty"}, 400)
                 # A follow-up from a decision page names the decision's task (SPEC.md §5.2 note 6).
                 try:
                     slug = S.require_task_slug(o["slug"]) if o.get("slug") else None
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
+                if image_args:
+                    try:
+                        with S.project_lock(project):
+                            existing = l3.image_receipt(project, image_args["request_id"], image_args["request_digest"])
+                        if not existing:
+                            require_image_capability(project)
+                        row = l3.queue_message(project, text, trigger="chat", role=T.OPERATOR_MESSAGE_ROLE,
+                                               slug=slug, **image_args)
+                    except images.ImageError:
+                        raise
+                    except ValueError as exc:
+                        return self._json({"error": str(exc)}, 409)
+                    request_l3_drain(project)
+                    return self._json({"queued": row, "accepted": True})
                 if l3.busy(project) or config.restart_in_progress():
                     # Burak types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
@@ -1536,13 +1651,15 @@ class Handler(BaseHTTPRequestHandler):
                 except RestartBusy as exc:
                     return self._json({"error": str(exc)}, 409)
             return self._json({"error": "unknown api"}, 404)
+        except images.ImageError as exc:
+            return self._json({"error": str(exc)}, exc.status)
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as e:  # the client left mid-response (a phone's audio player, a closed tab): not a fault
             log(f"POST {self.path}: client went away ({type(e).__name__}: {e})")
             return
         except Exception as e:  # noqa: BLE001
             log(f"POST {self.path}: {e}\n{traceback.format_exc()}")
             try:
-                self._json({"error": str(e)}, 500)
+                self._json({"error": "Could not confirm image send. Retry this submission." if image_submission else str(e)}, 500)
             except Exception:  # noqa: BLE001
                 pass
 
