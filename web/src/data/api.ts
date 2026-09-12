@@ -271,7 +271,7 @@ export const TaskMessageSchema = z
     at: z.string().nullish(),
     role: z.enum(["burak", "l2", "l3"]),
     text: z.string(),
-    delivery: z.object({ state: z.enum(["queued", "delivered", "unconfirmed"]), at: z.string().nullable() }).nullish(),
+    delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
   })
   .passthrough();
 
@@ -736,6 +736,8 @@ export async function sendL2Message(input: L2MessageInput): Promise<TaskMessage>
   return TaskMessageSchema.parse(out.message);
 }
 
+export const removeL2Message = (project: string, slug: string, id: string) => post("/api/l2/remove", { project, slug, id });
+
 /** Stop or Reject from the task page's inline confirm (SPEC.md §3.10); failure reads inline there. */
 export function taskAction(input: TaskActionInput): Promise<unknown> {
   return post("/api/task/action", input);
@@ -776,8 +778,7 @@ export function useChatDequeue(project: string) {
   return useOptimisticMutation<string, unknown, ChatView>({
     mutationFn: (id) => post("/api/chat/remove", { project, id }),
     queryKey: ["chat", project],
-    update: (cached, id) =>
-      cached && { ...cached, queued: (cached.queued ?? []).filter((q) => q.id !== id) },
+    update: () => undefined,
     failureMessage: "Couldn't remove the queued message.",
   });
 }

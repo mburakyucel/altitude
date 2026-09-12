@@ -159,7 +159,10 @@ class TestL2Steering(AltitudeCase):
                 failed_resume = self.view(task)
                 self.assertEqual(failed_resume["steering"]["state"], "stopped")
                 self.assertEqual(failed_resume["session_id"], task["session_id"])
-                self.assertEqual([row["delivery"]["state"] for row in failed_resume["messages"]], ["queued", "queued"])
+                self.assertEqual([row["delivery"]["state"] for row in failed_resume["messages"]], ["unconfirmed", "unconfirmed"])
+                self.assertFalse(any(row["delivery"]["removable"] for row in failed_resume["messages"]))
+                with self.assertRaises(T.TransitionError):
+                    T.remove_message(self.project, task["slug"], row["id"])
                 self.assertEqual(T.pending(self.project, task["slug"])[0]["id"], row["id"])
 
     def test_consumption_without_handoff_evidence_is_unconfirmed_and_saved_wake_failure_is_accepted(self):

@@ -590,7 +590,18 @@ Accepted messages stay sent through wake or refresh errors. The composer appears
 blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
-evidence is missing. Delivery does not claim understanding or action. Finished conversations remain
+evidence is missing. Each eligible queued operator bubble has **Remove**; quick-choice receipts and
+messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
+the response; success replaces only that bubble's text with **Message removed** and **Removed · not
+sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
+cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
+A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
+refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
+loading reads disable removal. The empty queue has no removal control; listening and transcription
+keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
+`web/e2e/queued-messages.pw.ts` walks queue, removal, handoff, recovery and failure states on phone and
+desktop; `l2-progress.pw.ts` covers listening, denied microphone and Stop states.
+Delivery does not claim understanding or action. Finished conversations remain
 readable with the activity area, composer and Stop gone.
 
 The live transcript has tinted prompt blocks, the worker's prose, compact tool rows with folded

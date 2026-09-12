@@ -62,8 +62,16 @@ observed; explicit Continue releases the same held inbox. An L3 CLI process stop
 request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
-A claimed message is still queued. Successful input handoff and matching session initialization
-record delivery for the exact bound batch; native hook attachments can independently prove delivery.
+An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
+the same project lock as resume and hook pickup, records removal in the existing message delivery
+metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
+the UI shows Message removed, and CLI history/search retain an explicit removal marker. Removed text
+cannot serve as a new decision source. Quick choices and messages
+already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
+request. Claimed messages say Sending to session and cannot be removed; a launch attempt retains
+per-message uncertainty through failed-launch recovery. A released prelaunch claim becomes removable
+again. Successful input handoff and matching session initialization record delivery for the exact
+bound batch; native hook attachments can independently prove delivery.
 Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
 empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
 session, while engine failures and explicit question blocks retain their existing recovery paths.
@@ -855,8 +863,8 @@ handoff and is delivered once. A control takes Burak's chat back off the queue o
 waits. Server-triggered work is also visible in its FIFO position but is not editable. The queue is a
 file in the project directory, so a reload, another device and a restart all see the same pending
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive chat
-messages fold into one turn in arrival order, each on its own line, while server-triggered messages
-keep their own turn, and nothing runs while a turn holds the project's L3 lock.
+messages for the same conversation fold into one turn in arrival order, each on its own line, while
+server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

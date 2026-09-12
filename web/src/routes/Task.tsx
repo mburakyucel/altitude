@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
+import { ApiError, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
 import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseRepository } from "../components/Prose";
 import { agoText, when } from "../data/observed";
@@ -197,6 +197,16 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const [denied, setDenied] = useState(false);
   const [accessRefresh, setAccessRefresh] = useState(0);
   const messages = task.messages ?? [];
+  const removal = useMutation({
+    mutationFn: (id: string) => removeL2Message(project, task.slug, id),
+    onSuccess: async (_result, id) => {
+      await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
+      queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) => cached && ({ ...cached,
+        messages: cached.messages?.map((row) => row.id === id ? { ...row, delivery: { state: "removed", at: null, removable: false } } : row),
+      }));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
+  });
   const anchorKey = `${location.key}:${questionId ?? ""}:${revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -304,9 +314,13 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question) {
-      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
-        receipt={message.delivery ? message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
-          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed" : undefined} /> :
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
+        receipt={message.delivery ? message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
+        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending}
+          onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
+        {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+      </Bubble> :
         <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />);
     }
   });
