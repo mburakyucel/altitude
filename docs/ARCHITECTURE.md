@@ -495,6 +495,8 @@ before removing a loose copy; these remain blocked. Packing, repacking and fetch
 collection therefore preserve a lagging main and permit its subsequent guarded fast-forward.
 Real-Git regressions exercise these transaction forms and deletion refusals in loose, packed and
 mixed storage, including linked worktrees.
+The automatic-GC fixture creates its two packs with `repack -a`, which owns its revision input;
+the regression also runs with an open caller stdin and captured output as in local landing.
 
 Dirty-checkout recovery uses `alt task preserve-checkout <slug> --reason "…"`, a durable daemon
 request available to the operator and the project's L3 for an unlaunched blocked task. Under the

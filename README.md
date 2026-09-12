@@ -263,6 +263,8 @@ license has been selected; public release is a separate milestone.
 Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
 to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
 deletions remain blocked.
+The real-Git automatic-GC regression also runs with open stdin and captured output, so validation
+does not depend on the caller closing its input stream.
 
 ## Project conversations
 

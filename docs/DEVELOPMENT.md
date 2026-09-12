@@ -47,6 +47,11 @@ allocation and a second boundary while retaining real incident storage and autho
 Independent Git fixtures created with `make_repo` use separate parent directories because each
 bare `origin.git` lives beside its checkout. The fault/recovery reporting test gives its two
 initial commits distinct timestamps so shared origins cannot hide behind identical commits.
+The automatic-GC fixture uses `git repack -a` without `-d` to retain two packs and trigger real
+fetch housekeeping. Unlike `pack-objects --all`, it supplies its own revision input rather than
+waiting for the caller's stdin to close. A bounded subprocess regression holds stdin open while
+capturing stdout/stderr, matching landing's inherited-input condition, and checks the same real
+packing, pruning, protected-tip and fast-forward assertions.
 
 ## Browser walkthroughs
 
