@@ -498,6 +498,7 @@ outside Git, accessible until review is complete under the [project UI rule](../
 This repository's temporary local policy runs `make check` on the current merge candidate through
 `alt land`, including PR preparation without merging. Logs, the self-contained browser report and
 candidate-bound results stay in the task's `local-checks/` folder, without duplicate raw attachments.
+Suite timeouts preserve captured stdout and stderr in `check.log` and leave validation failed.
 Only passing current evidence supplies the PR test
 line. Historical hosted failures do not gate delivery; failed local checks, stale base/head,
 required reviews and merge holds still block. Other projects retain their configured gate.

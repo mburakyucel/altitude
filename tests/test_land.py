@@ -763,6 +763,43 @@ class TestLand(AltitudeCase):
         self.assertNotIn("Tests:", self.pr_body)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
+    def test_project_local_timeout_retains_output_and_failed_candidate_identity(self):
+        self.local_policy()
+        self.fake_runner("make", script=(
+            "import time\n"
+            "print('phase: Python complete\\nRan 12 tests in 0.4s', flush=True)\n"
+            "sys.stderr.buffer.write(b'phase: web stalled \\xe2\\x82'); sys.stderr.flush()\n"
+            "time.sleep(10)\n"))
+        self.staged_change()
+        with mock.patch.object(land, "LOCAL_TEST_TIMEOUT", 0.5):
+            result = land.land("fix: retain timeout evidence", cwd=self.repo, wait=0, merge=True)
+        tests = result["local_tests"]
+        self.assertFalse(result["merged"])
+        self.assertEqual(result["checks"], "local-fail")
+        self.assertFalse(tests["passed"])
+        self.assertIsNone(tests["returncode"])
+        self.assertIsNone(tests["tests"])
+        self.assertEqual(tests["head"], result["head"])
+        self.assertEqual(self.git("rev-parse", tests["candidate"] + "^{tree}").strip(), tests["tree"])
+        evidence = Path(tests["evidence"])
+        self.assertEqual(json.loads((evidence / "result.json").read_text()), tests)
+        output = (evidence / "check.log").read_text()
+        self.assertIn("phase: Python complete\nRan 12 tests", output)
+        self.assertIn("phase: web stalled \ufffd", output)
+        self.assertIn("timed out", output)
+        self.assertFalse(Path(self.runner_calls()[-1]["cwd"]).exists())
+        self.assertNotIn("Tests:", self.pr_body)
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_local_timeout_without_output_still_records_failure(self):
+        self.fake_runner("quiet-suite", script="import time\ntime.sleep(10)\n")
+        log = self.tmp / "check.log"
+        with mock.patch.object(land, "LOCAL_TEST_TIMEOUT", 0.1):
+            result = land._local_suite(self.repo, "quiet-suite", log=log)
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["returncode"])
+        self.assertIn("timed out", log.read_text())
+
     def test_project_local_browser_failure_retains_report_attachments_without_raw_duplicates(self):
         self.local_policy()
         self.fake_runner("make", script=(
