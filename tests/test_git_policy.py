@@ -1,10 +1,7 @@
 """Repository policy tests use real repositories, refs, hooks, and pushes."""
 import json
-import os
 import shutil
-import signal
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -351,27 +348,6 @@ class TestGitPolicy(unittest.TestCase):
         allowed = self.git("merge", "--ff-only", "origin/main", check=False)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertEqual(self.git("rev-parse", "main").stdout.strip(), topic)
-
-
-class TestGitPolicyCapturedInput(unittest.TestCase):
-    def test_automatic_gc_finishes_with_open_stdin_and_captured_output(self):
-        # Recurring validation stall: keep the writer open even during communicate().
-        read_fd, write_fd = os.pipe()
-        with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb"):
-            with subprocess.Popen(
-                [sys.executable, "-m", "unittest", "-v",
-                 "tests.test_git_policy.TestGitPolicy.test_fetch_automatic_gc_packs_and_prunes_lagging_main"],
-                cwd=Path(__file__).resolve().parent.parent, stdin=reader,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-            ) as child:
-                try:
-                    stdout, stderr = child.communicate(timeout=30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    stdout, stderr = child.communicate(timeout=5)
-                    self.fail(f"automatic GC fixture stalled with open stdin:\n{stdout}\n{stderr}")
-                self.assertEqual(child.returncode, 0, stdout + stderr)
-                self.assertIn("Ran 1 test", stderr)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """The test process never touches the operator's live state: the fixture isolates it, and config refuses it."""
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,26 @@ from altitude import config
 
 
 class TestIsolation(unittest.TestCase):
+    def test_git_and_cli_fixtures_finish_with_open_stdin_and_captured_output(self):
+        # Recurring validation stall: keep the writer open even during communicate().
+        read_fd, write_fd = os.pipe()
+        with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb"):
+            with subprocess.Popen(
+                [sys.executable, "-m", "unittest", "-v",
+                 "tests.test_git_policy.TestGitPolicy.test_fetch_automatic_gc_packs_and_prunes_lagging_main",
+                 "tests.test_l3_privilege.TestIssueVerbs.test_operator_close_cli_and_api_validate_the_same_operation"],
+                cwd=REPO, stdin=reader, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, start_new_session=True,
+            ) as child:
+                try:
+                    stdout, stderr = child.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    stdout, stderr = child.communicate(timeout=5)
+                    self.fail(f"validation fixture stalled with open stdin:\n{stdout}\n{stderr}")
+                self.assertEqual(child.returncode, 0, stdout + stderr)
+                self.assertIn("Ran 2 tests", stderr)
+
     def test_suite_process_uses_throwaway_homes(self):
         self.assertEqual(Path.home(), SUITE / "home")
         self.assertEqual(config.ROOT, SUITE / "altitude")

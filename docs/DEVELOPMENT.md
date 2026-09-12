@@ -51,7 +51,9 @@ The automatic-GC fixture uses `git repack -a` without `-d` to retain two packs a
 fetch housekeeping. Unlike `pack-objects --all`, it supplies its own revision input rather than
 waiting for the caller's stdin to close. A bounded subprocess regression holds stdin open while
 capturing stdout/stderr, matching landing's inherited-input condition, and checks the same real
-packing, pruning, protected-tip and fast-forward assertions.
+packing, pruning, protected-tip and fast-forward assertions. The shared CLI fixture supplies empty
+input explicitly; the same regression includes real issue-close CLI/API validation so it cannot
+wait on the worker's input stream either. Tests that submit a body supply that input themselves.
 
 ## Browser walkthroughs
 
