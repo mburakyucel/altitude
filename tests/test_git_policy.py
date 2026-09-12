@@ -111,11 +111,11 @@ class TestGitPolicy(unittest.TestCase):
     def test_fetch_automatic_gc_packs_and_prunes_lagging_main(self):
         trace = self.trace_reference_transactions()
         tip = self.git("rev-parse", "main").stdout.strip()
-        prefix = str(self.repo / ".git/objects/pack/pack")
-        self.git("pack-objects", "--all", prefix)
+        # repack supplies revision input itself; pack-objects --all waits for inherited stdin.
+        self.git("repack", "-a")
         remote = self.advance_remote()
         self.git("fetch", "-q", "origin", "main")
-        self.git("pack-objects", "--all", prefix)
+        self.git("repack", "-a")
         self.assertEqual(len(list((self.repo / ".git/objects/pack").glob("*.pack"))), 2)
         # Exceed the loose-ref threshold used by newer Git's GC pack-refs --auto.
         for index in range(32):

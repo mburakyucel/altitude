@@ -508,6 +508,10 @@ Fetch housekeeping may pack protected refs while local main is behind its fetche
 hook permits unchanged logical tips and pruning of loose copies retained at the same packed tip;
 actual unauthorized protected moves and deletions still refuse. Housekeeping does not advance main;
 the supported guarded fast-forward performs that move.
+Its real-Git validation runs with captured output and open caller stdin; fixture packing supplies
+its own revision input so it cannot wait for the worker's input stream to close.
+The shared CLI test fixture likewise supplies explicit empty input; the same open-input regression
+checks issue-close CLI/API validation without changing the production command's input handling.
 
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
 then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#adopt-an-existing-pr).
