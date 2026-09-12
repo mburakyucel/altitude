@@ -1,5 +1,6 @@
 """#302: task polling tolerates inbox consumption and archival without inventing handoff evidence."""
 from pathlib import Path
+import threading
 from unittest import mock
 
 from tests.support import AltitudeCase, make_repo
@@ -27,15 +28,36 @@ class TestL2ViewRaces(AltitudeCase):
         inbox = S.task_dir(self.project, task["slug"]) / "inbox.jsonl"
         read_text = Path.read_text
         intercepted = []
+        attempted, finished = threading.Event(), threading.Event()
+        errors = []
+
+        def write():
+            attempted.set()
+            try:
+                action()
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                finished.set()
+
+        writer = threading.Thread(target=write)
 
         def read(path, *args, **kwargs):
             if path == inbox and not intercepted:
                 intercepted.append(True)
-                action()
+                writer.start()
+                self.assertTrue(attempted.wait(5))
+                self.assertFalse(finished.is_set(), "the writer must wait for the locked message snapshot")
             return read_text(path, *args, **kwargs)
 
-        with mock.patch.object(Path, "read_text", new=read):
-            view = server.task_view(self.project, task["slug"])
+        try:
+            with mock.patch.object(Path, "read_text", new=read):
+                view = server.task_view(self.project, task["slug"])
+        finally:
+            if writer.ident:
+                writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(errors, [])
         self.assertEqual(intercepted, [True])
         return view
 
@@ -56,10 +78,13 @@ class TestL2ViewRaces(AltitudeCase):
                     view = self.race(task, action)
                     self.assertEqual([(row["id"], row["text"]) for row in view["messages"]],
                                      [(message["id"], message["text"])])
-                    self.assertEqual(view["messages"][0]["delivery"], {"state": "unconfirmed", "at": None})
+                    self.assertEqual(view["messages"][0]["delivery"], {"state": "queued", "at": None, "removable": True})
                     settled = server.task_view(self.project, task["slug"])
                     self.assertEqual(settled["messages"][0]["delivery"]["state"],
-                                     "queued" if operation in ("claim", "archive") else "unconfirmed")
+                                     "sending" if operation == "claim" else "queued" if operation == "archive" else "unconfirmed")
+                    self.assertFalse(settled["messages"][0]["delivery"]["removable"])
+                    with self.assertRaises(T.TransitionError):
+                        T.remove_message(self.project, task["slug"], message["id"])
                     if operation == "archive":
                         self.assertEqual(settled["state"], "rejected")
                         self.assertTrue((S.archive_dir(self.project) / task["slug"] / "inbox.jsonl").exists())
@@ -74,7 +99,9 @@ class TestL2ViewRaces(AltitudeCase):
                 queued = T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Later correction.")
                 view = self.race(task, lambda: T.take_inbox(self.project, task["slug"]))
                 self.assertEqual([row["id"] for row in view["messages"]], [delivered["id"], queued["id"]])
-                self.assertEqual([row["delivery"]["state"] for row in view["messages"]], ["delivered", "unconfirmed"])
+                self.assertEqual([row["delivery"]["state"] for row in view["messages"]], ["delivered", "queued"])
+                settled = server.task_view(self.project, task["slug"])
+                self.assertEqual([row["delivery"]["state"] for row in settled["messages"]], ["delivered", "unconfirmed"])
 
     def test_corrupt_and_denied_inbox_reads_still_fail_explicitly(self):
         task = self.launch(config.ENGINES[0])
