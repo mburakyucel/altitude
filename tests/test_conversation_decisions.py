@@ -1,4 +1,6 @@
-"""A follow-up cannot erase a dilemma; only cited authority or obsolescence closes it."""
+"""Owners assess freshness; withdrawal never supplies an operator answer or cancels required work."""
+import builtins
+import os
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
@@ -26,6 +28,60 @@ class ConversationDecisions(AltitudeCase):
 
     def current(self):
         return T.question_views(self.project, self.slug)[-1]
+
+    def test_message_readers_see_complete_records_during_publication(self):
+        for name in ("conversation.jsonl", "inbox.jsonl"):
+            with self.subTest(name=name):
+                path = S.task_dir(self.project, self.slug) / name
+                T._append_jsonl(path, {"id": "earlier", "text": "Keep the requested work."})
+                before = T._rows(path, name)
+                row = {"id": "new-guidance", "text": "Required revision. " * 1000}
+                reads = []
+
+                def split_write(stream):
+                    write = stream.write
+
+                    def interrupted(text):
+                        middle = len(text) // 2
+                        write(text[:middle])
+                        stream.flush()
+                        reads.append(T._rows(path, name))
+                        return middle + write(text[middle:])
+
+                    stream.write = interrupted
+                    return stream
+
+                real_open, real_fdopen = builtins.open, os.fdopen
+                with S.project_lock(self.project), \
+                     mock.patch.object(T, "open", side_effect=lambda *a, **k: split_write(real_open(*a, **k)),
+                                       create=True), \
+                     mock.patch.object(S.os, "fdopen", side_effect=lambda *a, **k: split_write(real_fdopen(*a, **k))):
+                    T._append_jsonl(path, row)
+                self.assertEqual(reads, [before])
+                self.assertEqual(T._rows(path, name), before + [row])
+
+    def test_acceptance_recovers_after_inbox_publication_fails(self):
+        guidance = T.message(self.project, self.slug, "burak", "Keep the requested revisions.")
+        question = self.current()
+        path = S.task_dir(self.project, self.slug) / "inbox.jsonl"
+        prefix = path.read_bytes()
+        replace = os.replace
+
+        def fail_inbox(source, destination):
+            if destination == path:
+                raise OSError("inbox publication interrupted")
+            return replace(source, destination)
+
+        with mock.patch.object(S.os, "replace", side_effect=fail_inbox), self.assertRaises(OSError):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertEqual(path.read_bytes(), prefix)
+        receipt = self.current()["resolution"]
+        for _ in range(2):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertEqual(self.current()["resolution"], receipt)
+        self.assertEqual([row["id"] for row in T.pending(self.project, self.slug)],
+                         [guidance["id"], receipt["message_id"]])
+        self.assertTrue(path.read_bytes().startswith(prefix))
 
     def resolve(self, row, *, question=None, **kwargs):
         question = question or self.current()
@@ -62,6 +118,53 @@ class ConversationDecisions(AltitudeCase):
         self.assertNotIn("How long should", S.regen_state_md(self.project).split("## Tasks")[0])
         self.assertEqual(self.resolve(message), result, "the same semantic record is retry-idempotent")
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 2)
+
+    def test_owner_withdraws_before_analysis_without_changing_work_or_authority(self):
+        question = self.current()
+        guidance = T.message(self.project, self.slug, "l3", "Check the changed storage requirement first.")
+        T.resume(self.project, self.slug)
+        before = S.load_task(self.project, self.slug)
+        args = (self.project, self.slug, question["id"], 1, None)
+        kwargs = dict(disposition="withdrawn", reason="Checking whether storage changes this choice.", expected_attempt=1)
+        result = T.resolve_question(*args, **kwargs)
+        self.assertEqual(result["resolution"]["by"], "l2")
+        self.assertIsNone(result["resolution"]["message_id"])
+        after = S.load_task(self.project, self.slug)
+        for key in ("state", "hold_merge", "agent_id", "session_id", "attempt", "resume_request", "resume_after"):
+            self.assertEqual(after.get(key), before.get(key), key)
+        self.assertEqual(T.pending(self.project, self.slug), [guidance])
+        self.assertEqual(T.decisions(self.project), [])
+        self.assertEqual(T.resolve_question(*args, **kwargs), result)
+        with self.assertRaises(T.TransitionError):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        fresh = self.ask(question["detail"])
+        self.assertNotEqual(fresh["id"], question["id"])
+        self.assertEqual(fresh["revision"], 1)
+        self.assertIsNone(fresh["resolution"])
+        with self.assertRaises(T.TransitionError):
+            T.resolve_question(*args, **{**kwargs, "reason": "A conflicting retry"})
+
+    def test_withdrawal_refuses_decision_fields_and_cannot_replace_an_answer(self):
+        question = self.current()
+        args = (self.project, self.slug, question["id"], 1, None)
+        kwargs = dict(disposition="withdrawn", reason="Review needs checking.", expected_attempt=1)
+        before = S.load_task(self.project, self.slug)
+        for extra in ({"remaining": "Approve later?"}, {"recommendation": "Merge"}, {"source": "project"},
+                      {"l3_authority": "L3 said so"}, {"expected_attempt": 0}):
+            with self.subTest(extra=extra), self.assertRaises(T.TransitionError):
+                T.resolve_question(*args, **{**kwargs, **extra})
+            self.assertEqual(S.load_task(self.project, self.slug), before)
+        l3.chat_log(self.project, "user", "Use seven days", trigger="chat")
+        for disposition in ("answered", "superseded"):
+            with self.assertRaises(T.TransitionError):
+                T.resolve_question(*args, **{**kwargs, "disposition": disposition, "source": "project"})
+        accepted = T.accept_question(self.project, self.slug, question["id"], 1)
+        correction = T.message(self.project, self.slug, "burak", "Finish the extra checks before merging.")
+        with self.assertRaises(T.TransitionError):
+            T.resolve_question(*args, **kwargs)
+        self.assertEqual(self.current()["resolution"], accepted["resolution"])
+        self.assertIn(correction, T.pending(self.project, self.slug))
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
 
     def test_partial_answer_retains_only_relevant_remainder_then_new_direction_closes_it(self):
         question = self.ask("How long should we keep the index, and when should cleanup run?")
@@ -416,6 +519,19 @@ class ConversationDecisions(AltitudeCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.current()["resolution"]["message_id"], message["id"])
 
+    def test_withdraw_cli_requires_current_owner_and_no_operator_source(self):
+        question = self.current()
+        args = ["task", "resolve", self.slug, "--question", question["id"], "--revision", "1",
+                "--disposition", "withdrawn", "--reason", "Reassess before continuing."]
+        env = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2",
+               "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+        for override in ({"ALTITUDE_ACTOR": "l3"}, {"ALTITUDE_TASK": "another-task"}, {"ALTITUDE_ATTEMPT": "0"}):
+            self.assertNotEqual(self.alt(*args, env={**env, **override}).returncode, 0)
+        self.assertNotEqual(self.alt(*args, "--message", "operator-message", env=env).returncode, 0)
+        result = self.alt(*args, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.current()["resolution"]["disposition"], "withdrawn")
+
     def test_cli_l3_authority_remains_current_owner_only_and_retains_source(self):
         question = self.ask("May I run the required local tests?")
         message = T.message(self.project, self.slug, "l3", "The project rules require local tests.")
@@ -494,7 +610,7 @@ class ConversationDecisions(AltitudeCase):
                 self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], T.OPERATOR_MESSAGE_ROLE)
                 self.assertEqual(T.decisions(self.project), [after])
                 self.assertFalse(l3.queue_path(self.project).exists(), "parking an operator dilemma does not queue L3 again")
-                self.assertIn("same pending question text", T.question_context(after))
+                self.assertIn("Keep it visible if still valid", T.question_context(after))
         T.resume(self.project, self.slug)
         changed = T.block(self.project, self.slug, before["detail"], actor="l2", updates={"waiting_on": "l3"},
                           recommendation="Keep it for fourteen days.")["questions"][-1]

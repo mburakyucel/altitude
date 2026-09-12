@@ -54,7 +54,9 @@ or memory store and no expansion of project-local or upstream reporting authorit
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
 Burak messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. Appending a message to a blocked
+worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
+lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
+Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
 faulted task and messages held by Stop. Stop records its identity when accepted, before termination,
 so old or racing sends cannot restart the session. A correction must name the confirmed Stop it
@@ -992,12 +994,18 @@ Opening a preview performs reads only; neither viewing, a follow-up nor a resume
 A dilemma (spec §3.8–3.10) lives in the owning task conversation. The task record's `questions`
 contains versioned question text, zero to three explicit options and a recommendation key,
 source/audience, stable ID and message anchor, and an open or resolved status. A question group
-contains up to three independently answerable members, a group revision, and one stable discussion
-anchor. `task_view` projects `question_group` with current member records, `question` as the first
+contains up to three open members plus closed history, a group revision, and one stable discussion
+anchor. `task_view` projects `question_group` with member records, `question` as the first
 open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the same unresolved operator questions. Question
 state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
-records a decision. Existing stopped/fault cards link to their ordinary task controls; an operational
+records a decision. On receiving guidance, the owner assesses each question before lengthy work.
+Unaffected choices remain answerable; doubtful ones are withdrawn with a reason in chat and re-asked
+when ready, even unchanged. Relevant revisions and checks precede a completed-work review;
+independent work need not finish. Answers settle only their stated scope and preserve required work.
+Guidance waits for the owner's checkpoint; it considers an earlier answer with later guidance before acting.
+No message classifier or automatic invalidation supplies that judgment.
+Existing stopped/fault cards link to their ordinary task controls; an operational
 pause with no open question offers Resume through the existing daemon operation.
 If a provider limit queues a fresh attempt, the existing dilemma remains answerable. Replies and
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
@@ -1034,7 +1042,11 @@ The message endpoint returns the stored row even when its immediate resume wake 
 resume request remains due for the existing timer. L3 queue wake failures likewise retain the queue
 receipt and defer to the timer. A restart race after stream headers returns the saved queued row.
 The same L2 answers follow-ups, clarifies uncertainty, or uses [`alt task resolve`](CLI.md#conversational-decisions)
-to record an actual decision against its original message. Task/attempt ownership and source-message
+to record an actual decision against its original message. `--disposition withdrawn` instead records
+the owning L2's reason, without a source message, decision authority or remainder. Withdrawal closes
+only the selected member, retains history and refuses stale acceptance. Re-asking uses a new member
+without an ID in `block --questions-file` when independent questions remain; closed members do not
+consume the three-open-question limit. Task/attempt ownership and source-message
 authority are checked at the existing command boundary; L3 prose cannot stand in for operator approval.
 The owning L2 can explicitly record `--l3-authority` with specific evidence and rationale when an L3
 answer settles an unnecessary escalation within existing delegated authority. The command requires an
@@ -1061,7 +1073,8 @@ uses the existing question and conversation records without a second summary or 
 `/projects/<name>/tasks/<slug>?question=<id>&revision=<n>` focuses that question's group
 and surrounding prose, suppressing the initial scroll to latest. Historical revisions remain
 readable under **Earlier question**, opened automatically by an old-version link; stale controls
-cannot act on a replacement. Following the bottom resumes ordinary chat
+cannot act on a replacement. A compact, muted **Question withdrawn** row expands to the original
+question, owner's reason and former recommendation without answer controls. Following the bottom resumes ordinary chat
 scrolling. Pending questions poll every two seconds, and new replies offer **Latest messages**
 without moving a reader away from the question. Technical activity and reference links stay behind
 **Activity & evidence** and the existing live session view. A saved decision URL redirects into this
@@ -1102,8 +1115,9 @@ overflow menu turns it into Design boards, opening in a new tab. Any project wit
 route knows nothing about this repository's own.
 
 Pending task designs use captured screenshots and text, bound to the existing question revision.
-The current L2 supplies an explicit selection through `alt task block --design-file`; ignored and
-untracked files are supported without staging or committing them. The task and
+The current L2 supplies an explicit selection through `alt task block --design-file`, optionally
+with a `--questions-file` naming exactly one new or existing open member. Other members stay unchanged;
+ambiguous group attachment is refused. Ignored and untracked files need no Git changes. The task and
 attempt checks apply, and the CLI also binds the project. `tasks.py` reads only that task's registered
 worktree under the project's `design/wireframes/` subtree, walking directory descriptors without
 following symlinks. Publication accepts one UTF-8 `.md`/`.txt` proposal up to 64 KiB and one to twelve

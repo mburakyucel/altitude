@@ -242,11 +242,11 @@ def main(argv=None) -> None:
     es = ts.add_parser("escalate"); es.add_argument("slug"); es.add_argument("--question", help="one plain dilemma for Burak, with a recommendation")
     es.add_argument("--questions-file", help="JSON with one to three questions; L3 supplies '-' on stdin")
     es.add_argument("--recommendation"); es.add_argument("--label"); es.add_argument("--why")
-    resolution = ts.add_parser("resolve", help="current L2: record a contextual decision against its original source message")
+    resolution = ts.add_parser("resolve", help="current L2: record a sourced decision or withdraw a doubtful question")
     resolution.add_argument("slug"); resolution.add_argument("--question", required=True)
-    resolution.add_argument("--revision", required=True, type=int); resolution.add_argument("--message", required=True)
+    resolution.add_argument("--revision", required=True, type=int); resolution.add_argument("--message")
     resolution.add_argument("--source", choices=("task", "project"), default="task")
-    resolution.add_argument("--disposition", choices=("answered", "superseded"), required=True)
+    resolution.add_argument("--disposition", choices=("answered", "superseded", "withdrawn"), required=True)
     resolution.add_argument("--reason", required=True); resolution.add_argument("--remaining")
     resolution.add_argument("--l3-authority", help="evidence and rationale that L3's answer settles an unnecessary escalation")
     resolution.add_argument("--recommendation"); resolution.add_argument("--label"); resolution.add_argument("--why")
@@ -402,8 +402,8 @@ def main(argv=None) -> None:
             if args.design_file:
                 if (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
                         or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
-                        or args.fault or questions is not None):
-                    sys.exit("alt task block --design-file: only the current L2's own project/task and one ordinary question")
+                        or args.fault or (questions is not None and len(questions["questions"]) != 1)):
+                    sys.exit("alt task block --design-file: only the current L2's own project/task and one question")
                 try:
                     with open(args.design_file, "rb") as stream:
                         data = stream.read(T.DESIGN_TEXT_LIMIT + 1)
@@ -430,8 +430,9 @@ def main(argv=None) -> None:
                                       recommendation=args.recommendation, recommendation_label=args.label,
                                       recommendation_why=args.why, questions=questions, design=design)
                     if design is not None:
+                        design_question = questions["questions"][0]["question"] if questions else args.reason
                         question = next(q for q in reversed(blocked["questions"])
-                                        if q["status"] == "open" and q["detail"].strip() == args.reason.strip())
+                                        if q["status"] == "open" and q["detail"].strip() == design_question.strip())
                         out({**blocked, "design_url": T.design_url(p, args.slug, question)})
                     else:
                         out(blocked)
