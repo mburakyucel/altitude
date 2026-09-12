@@ -17,7 +17,8 @@ make check
 ```
 
 `make check` times the full Python suite, web unit suite, TypeScript/build and all isolated browser
-specs. Dependency and browser installation are explicit prerequisites, so a warm run need not
+specs. Python prints each test name so an incomplete run identifies the last test it started.
+Dependency and browser installation are explicit prerequisites, so a warm run need not
 fetch packages. In a restricted worktree add `--store-dir /tmp/altitude-ui-pnpm-store` to the
 frozen install. Do not alter the lockfile to work around an installation failure. On a clean
 Linux CI host, `playwright install --with-deps chromium` also installs browser OS dependencies.
@@ -149,6 +150,9 @@ their attached screenshots and failure traces are already in the report. Install
 failures before a report exists retain the available logs and result record. Open the retained
 report with `pnpm --dir web exec playwright show-report /path/to/ui-artifacts/report`.
 Results name command, exit status, base, head, candidate SHA and tree.
+On suite timeout, `check.log` retains captured stdout and stderr before the timeout diagnostic;
+an incomplete encoded character is replaced so it cannot prevent evidence retention. The result
+remains failed with no exit status or passing-test count, even if an earlier phase passed.
 The synthetic commit's metadata differs from the eventual GitHub commit; the tree and bound
 base/head identify the tested merge content. A local pass updates the PR with
 `Tests: make check passed locally (<candidate SHA>)` plus its base/head. A stale pair, failed test

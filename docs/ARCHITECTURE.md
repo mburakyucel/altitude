@@ -318,7 +318,8 @@ exception. Its landing runs `make check` on the existing synthetic merge candida
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
 its verdict. Active required hosted checks must be removed by the operator before this route can
 run; identity, provenance, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
-retains logs, browser artifacts and a result binding command, base, head, candidate and tree. A
+retains logs, browser artifacts and a result binding command, base, head, candidate and tree.
+Suite timeouts retain captured stdout and stderr with the timeout diagnostic and a failed result. A
 successful current run writes a concise PR test line through the ordinary landing boundary.
 See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
