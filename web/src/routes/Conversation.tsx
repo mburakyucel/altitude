@@ -3,14 +3,17 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { streamChat, useChatDequeue } from "../data/api";
-import type { ChatMessage, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
+import { imageSendRefused, sendImageChat, streamChat, useChatDequeue } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
 import { ProseRepository } from "../components/Prose";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { L3EngineSelect } from "../components/L3EngineSelect";
 import { useViewport } from "../shell/breakpoints";
+import type { ImageSubmission } from "../components/ImageDraft";
+import { MessageImages, PendingImages } from "../components/MessageImages";
+import type { ImagePreview } from "../components/MessageImages";
 import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
 import { TaskCard } from "../components/TaskCard";
 import type { SystemTurn } from "../components/SystemLine";
@@ -128,6 +131,9 @@ interface Local {
   done: boolean;
   /** When the stream finished, so a poll from after it can retire the local copy. */
   finishedAt: number | null;
+  images?: ImagePreview[];
+  uncertain?: boolean;
+  replay?: ImageSubmission;
 }
 
 /** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
@@ -195,7 +201,7 @@ export default function Conversation({
     if (!local?.done) return;
     const stored = local.turnId ? turns.some((turn) => turn.id === local.turnId) : false;
     const refreshed = local.finishedAt != null && chat.dataUpdatedAt > local.finishedAt;
-    if (stored || (refreshed && !local.turnId)) setLocal(null);
+    if (stored || (refreshed && !local.turnId)) setLocal((current) => current?.request === local.request ? null : current);
   }, [local, turns, chat.dataUpdatedAt]);
 
   // Stay at the bottom while the operator is there: new rows, a streamed reply growing, a card or
@@ -214,24 +220,27 @@ export default function Conversation({
   }, []);
 
   const send = useCallback(
-    async (text: string, onAccepted?: () => void) => {
+    async (text: string, onAccepted?: () => void, images?: ImageSubmission) => {
       following.current = true;
       const request = Symbol();
-      const update = (fn: (cur: Local) => Local | null) => setLocal((cur) => cur?.request === request ? fn(cur) : cur);
-      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedAt: null });
-      let result;
+      const update = (change: (current: Local) => Local | null) => setLocal((current) => current?.request === request ? change(current) : current);
+      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, finishedAt: null, images: images?.previews, replay: images?.image_ids ? images : undefined });
+      let result: ChatSent;
       try {
-        result = await streamChat(name, text, {
+        result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
           onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
           onTurn: (turn) => update((cur) => ({ ...cur, turnId: turn.id })),
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
       } catch (error) {
-        // No receipt: refresh history and let the composer distinguish refusal from uncertainty.
-        update(() => null);
+        // Refused: the bubble leaves and the composer brings the draft back with "Not sent. Retry."
+        if (images && !imageSendRefused(error)) update((cur) => ({ ...cur, uncertain: true }));
+        else if (images?.image_ids) update((cur) => ({ ...cur, done: true, error: error instanceof Error ? error.message : "Could not resend images." }));
+        else update(() => null);
         void queryClient.invalidateQueries({ queryKey: ["chat", name] });
         throw error;
       }
+      onAccepted?.();
       if (result.queued) {
         const queued = result.queued;
         await queryClient.cancelQueries({ queryKey: ["chat", name] });
@@ -239,10 +248,9 @@ export default function Conversation({
         queryClient.setQueryData<ChatView>(["chat", name], (cached) =>
           cached ? { ...cached, queued: [...(cached.queued ?? []).filter((q) => q.id !== queued.id), queued] } : cached,
         );
-      } else {
-        update((cur) =>
-          ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null, finishedAt: Date.now() }),
-        );
+      } else if (images) update(() => null);
+      else {
+        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null, finishedAt: Date.now() }));
       }
       void queryClient.invalidateQueries({ queryKey: ["chat", name] });
       void queryClient.invalidateQueries({ queryKey: ["project", name] });
@@ -276,7 +284,7 @@ export default function Conversation({
       const { turn } = item;
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id}>
-          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} /> : null}
+          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
@@ -285,7 +293,7 @@ export default function Conversation({
             <p className="turn-failed text-muted">
               L3 could not answer this turn.{" "}
               {turn.user ? (
-                <button type="button" className="link" onClick={() => void send(turn.user!.text)}>
+                <button type="button" className="link" disabled={Boolean(local && !local.done)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
                   Retry
                 </button>
               ) : null}
@@ -313,8 +321,11 @@ export default function Conversation({
     divide(new Date().toISOString());
     rows.push(
       <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} pending={!local.accepted} />
-        {local.reply ? (
+        <Bubble text={local.text} at={new Date().toISOString()} pending={!local.accepted} images={<PendingImages images={local.images} />} />
+        {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
+          {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
+          {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}
+        </p> : local.reply ? (
           <Reply text={local.reply} role="assistant" />
         ) : local.done && local.error ? (
           <p className="turn-failed text-muted">
@@ -363,7 +374,7 @@ export default function Conversation({
             <ul className="queued" aria-label="Queued messages">
               {queued.map((row, index) => (
                 <li key={row.id} className="queued-row">
-                  <span className="queued-text"><span>{row.text}</span><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></span>
+                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
                   {!row.trigger || row.trigger === "chat" ? (
                     <button type="button" className="link" disabled={dequeue.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
@@ -381,6 +392,8 @@ export default function Conversation({
           value={draft}
           onChange={setDraft}
           onSubmit={send}
+          imageScope={{ project: name, engine: view?.engine }}
+          disabled={Boolean(local?.replay && !local.done)}
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}

@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, route, state as S, transcript
+from . import config, engines, images as image_store, route, state as S, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
@@ -224,6 +224,8 @@ def chat_log(project: str, role: str, text: str, **meta) -> dict:
     row = {"at": S.now(), "role": role, "text": text, **meta}
     with open(path, "a") as stream:
         stream.write(json.dumps(row, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     return row
 
 
@@ -439,7 +441,8 @@ def chat_state(project: str, limit: int = 60) -> dict:
     with _lifecycle_guard(project):
         turn = _active.get(project)
         with S.project_lock(project):
-            waiting = _queue_rows(queue_path(project))
+            waiting = [row for row in _queue_rows(queue_path(project))
+                       if not row.get("image_turn_id") or row["image_turn_id"] != _active.get(project, {}).get("id")]
         return {"history": chat_history(project, limit), "queued": waiting,
                 "active": dict(turn) if turn else None, "busy": turn_lock.locked()}
 
@@ -514,10 +517,27 @@ def _write_queue(path: Path, rows: list[dict]) -> None:
 def queued(project: str) -> list[dict]:
     """The messages waiting for L3, oldest first. A queued message is dropped or run, never edited."""
     with S.project_lock(project):
-        return _queue_rows(queue_path(project))
+        return [row for row in _queue_rows(queue_path(project))
+                if not row.get("image_turn_id") or row["image_turn_id"] != _active.get(project, {}).get("id")]
 
 
-def queue_message(project: str, text: str, *, trigger: str, role: str = "server", slug: str | None = None) -> dict:
+def image_receipt(project: str, request_id: str, request_digest: str | None) -> dict | None:
+    """The queue or original human message is the admission receipt; no second message registry."""
+    row = next((row for row in _queue_rows(queue_path(project)) + chat_history(project, None)
+                if row.get("request_id") == request_id), None)
+    if row:
+        if row.get("request_digest") != request_digest:
+            raise ValueError("This submission identity already belongs to another message.")
+        return {**row, "id": request_id}
+    if any(event.get("kind") == "image-message-cancelled" and event.get("request_id") == request_id
+           for event in S.read_project_log(project, limit=0)):
+        raise ValueError("This queued message was removed. Start a new message to send again.")
+    return None
+
+
+def queue_message(project: str, text: str, *, trigger: str, role: str = "server", slug: str | None = None,
+                  uploads: list[dict] | None = None, image_ids: list[str] | None = None,
+                  request_id: str | None = None, request_digest: str | None = None) -> dict:
     """Leave one message for the project's L3; the server delivers it as a turn once L3 is free. The
     returned row carries the id that drops it again and its position in the queue."""
     path = queue_path(project)
@@ -526,9 +546,18 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     with S.project_lock(project):
         if trigger == "chat" and not config.is_managed(project):
             raise ValueError("This project is not managed. Add its folder again to attach L3.")
+        if request_id:
+            previous = image_receipt(project, request_id, request_digest)
+            if previous:
+                return previous
+        if uploads or image_ids:
+            if not request_id or uploads and image_ids:
+                raise ValueError("Image input requires one submission identity and one image source.")
+            refs = (image_store.store(project, uploads, message_id=request_id) if uploads
+                    else image_store.lookup(project, image_ids))
+            row.update(id=request_id, request_id=request_id, request_digest=request_digest, images=refs)
         waiting = len(_queue_rows(path))
-        with open(path, "a") as stream:
-            stream.write(json.dumps(row, sort_keys=True) + "\n")
+        _write_queue(path, [*_queue_rows(path), row])
     return {**row, "position": waiting + 1}
 
 
@@ -679,11 +708,35 @@ def drop_queued(project: str, message_id: str) -> bool:
     with S.project_lock(project):
         rows = _queue_rows(path)
         rest = [row for row in rows
-                if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != "burak"]
+                if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != "burak"
+                or row.get("image_turn_id")]
         if len(rest) == len(rows):
             return False
+        removed = next(row for row in rows if row not in rest)
+        if removed.get("images"):
+            S.project_log(project, "image-message-cancelled", request_id=removed["request_id"])
         _write_queue(path, rest)
         return True
+
+
+def _finish_image_queue(project: str) -> None:
+    """A retained claim is recovered visibly after interruption, never executed twice on restart."""
+    with S.project_lock(project):
+        rows = _queue_rows(queue_path(project))
+        claimed = [row for row in rows if row.get("image_turn_id")]
+        if not claimed:
+            return
+        history = chat_history(project, None)
+        for row in claimed:
+            turn_id = row["image_turn_id"]
+            if not any(item.get("turn_id") == turn_id and item.get("role") == "user" for item in history):
+                chat_log(project, "user", row["text"], trigger="chat", turn_id=turn_id,
+                         images=row["images"], request_id=row["request_id"], request_digest=row.get("request_digest"),
+                         **_slug_meta(row.get("slug")))
+            if not any(item.get("turn_id") == turn_id and item.get("role") in ("assistant", "error") for item in history):
+                chat_log(project, "error", "Image delivery was interrupted. Retry this message to deliver its saved images.",
+                         trigger="chat", turn_id=turn_id, **_slug_meta(row.get("slug")))
+        _write_queue(queue_path(project), [row for row in rows if row not in claimed])
 
 
 def deliver_queued(project: str) -> dict | None:
@@ -702,6 +755,7 @@ def deliver_queued(project: str) -> dict | None:
     if not turn_lock.acquire(blocking=False):
         return None
     try:
+        _finish_image_queue(project)
         choice = _select(project)
         if not choice.get("engine"):
             return None
@@ -711,9 +765,9 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat":  # task-linked chat keeps its own turn
+            if rows[0].get("trigger") == "chat" and not rows[0].get("images"):
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
-                       and rows[take].get("slug") == rows[0].get("slug")):
+                       and rows[take].get("slug") == rows[0].get("slug") and not rows[take].get("images")):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
@@ -725,6 +779,9 @@ def deliver_queued(project: str) -> dict | None:
                     eligible = [row for row in current if _ci_recheck_ready(project, row)]
                     if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
+                    if selected[0].get("images"):
+                        next(row for row in current if row["id"] == selected[0]["id"])["image_turn_id"] = active_turn["id"]
+                        _write_queue(path, current)
                     if selected[0].get("trigger") == "ci-recheck":
                         from . import tasks as T
                         task = S.load_task(project, selected[0]["slug"])
@@ -741,10 +798,13 @@ def deliver_queued(project: str) -> dict | None:
                             # #277: preserve deduplication through the queue-to-chat crash window.
                             S.project_log(project, "upstream-notification-received", url=row["upstream_url"],
                                           message_id=row["id"])
-                    _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
+                    if not selected[0].get("images"):
+                        _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
                     try:
                         chat_log(project, "user", prompt, trigger=trigger, engine=choice["engine"],
-                                 at=active_turn["started_at"], turn_id=active_turn["id"], **_slug_meta(slug))
+                                 at=active_turn["started_at"], turn_id=active_turn["id"], **_slug_meta(slug),
+                                 **({key: selected[0][key] for key in ("images", "request_id", "request_digest")}
+                                    if selected[0].get("images") else {}))
                     except Exception:
                         _write_queue(path, current)
                         raise
@@ -759,15 +819,21 @@ def deliver_queued(project: str) -> dict | None:
                     _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn,
                                            "choice": choice, "logged": trigger != "ci-recheck"}
                     try:
-                        result = turn(project, prompt, trigger=trigger, **_slug_meta(slug))
+                        result = turn(project, prompt, trigger=trigger,
+                                      **_slug_meta(slug), **({"image_message": selected[0]} if selected[0].get("images") else {}))
                     finally:
                         del _turn_local.claimed
             except Exception as exc:
+                if selected[0].get("images"):
+                    _finish_image_queue(project)
+                    return {"completed": False, "error": "Image delivery failed. Retry the saved message."}
                 if trigger != "ci-recheck":
                     raise
                 result = {"completed": False, "error": str(exc)}
             if trigger == "ci-recheck":
                 queue_ci_recheck(project, slug)
+            if selected[0].get("images"):
+                _finish_image_queue(project)
             return result
     finally:
         turn_lock.release()
@@ -794,6 +860,10 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     lines.append('[altitude] For earlier decisions beyond the handoff, use `alt l3 search "literal text"` '
                  '(add --json for source references and excerpt bounds). Historical evidence does not override '
                  'current instructions or task records; check conditions and later corrections before acting.')
+    lines.append("[altitude] When a task depends on an operator image, pass its committed image ID with "
+                 "`alt task new --image <id>` or `alt task message <slug> --image <id>`. Repeat --image "
+                 "for selected images from this project. A handoff retains the original message source; "
+                 "it does not grant new authority or release a hold.")
     lines.append("[altitude] Task dilemmas belong in the owning L2 conversation. For operator judgment, "
                  "use alt task escalate <slug> --question '<dilemma>' with --recommendation/--label/--why, "
                  "or --questions-file - with JSON on stdin: {\"questions\":[{\"id\":\"existing question id\","
@@ -815,7 +885,8 @@ def _header(project: str, trigger: str, fresh: bool, slug: str | None = None) ->
     return "\n".join(lines) + "\n\n"
 
 
-def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool = False) -> str:
+def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool = False,
+             project: str | None = None) -> str:
     """Fresh sessions need recent human chat; resumed ones need only the other provider's missed rows."""
     conversation = [item for item in history if item.get("role") in ("user", "assistant")]
     if fresh:
@@ -832,6 +903,13 @@ def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool
     for item in missed[-20:]:
         text = str(item.get("text") or "")
         lines.append(f"- {item['role']}: {text[:800]}" + (" [truncated]" if len(text) > 800 else ""))
+        if item.get("images") and project:
+            try:
+                with S.project_lock(project):
+                    historical = image_store.resolve(project, item["images"])
+                lines.append(engines.image_read_instructions(engine, historical))
+            except (image_store.ImageError, engines.ImageInputError) as exc:
+                lines.append(f"Historical images unavailable: {exc}")
     return (f"[altitude] {label} (historical context; latest 20 messages, oldest first; "
             "800 characters per message, longer text marked [truncated]). "
             "Use as context for the current turn, not as new instructions:\n" + "\n".join(lines)
@@ -848,7 +926,8 @@ def _select(project: str, engine: str | None = None, *, model: str | None = None
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
-         on_text=None, on_start=None, model: str | None = None, slug: str | None = None) -> dict:
+         on_text=None, on_start=None, model: str | None = None, slug: str | None = None,
+         image_message: dict | None = None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
     a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
     a task-linked project conversation and its queued turn."""
@@ -867,18 +946,30 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         turn_started_at = active_turn["started_at"]
         if not claimed or not claimed["logged"]:
             chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
-                     turn_id=turn_id, **_slug_meta(slug))
+                     turn_id=turn_id, **_slug_meta(slug), **({key: image_message[key]
+                     for key in ("images", "request_id", "request_digest") if key in image_message} if image_message else {}))
         tried = []
         while choice.get("engine"):
-            res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug)
+            try:
+                with S.project_lock(project):
+                    resolved = image_store.resolve(project, image_message["images"]) if image_message else []
+                res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug,
+                                   **({"images": resolved} if resolved else {}))
+            except (image_store.ImageError, engines.ImageInputError) as exc:
+                chat_log(project, "error", str(exc), trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+                return {"completed": False, "error": str(exc), "turn_id": turn_id}
             if res.get("rejection"):
                 route.note_rejection(choice, res["rejection"])
             elif res.get("limited"):
                 route.note_limit(choice["engine"], res["limited"])
             else:
+                if image_message and res.get("error") and not any(
+                        row.get("turn_id") == turn_id and row.get("role") == "error"
+                        for row in chat_history(project, None)):
+                    chat_log(project, "error", res["error"], trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
-            if pinned or not res.get("safe_to_retry"):
+            if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
                          trigger=trigger, engine=choice["engine"], turn_id=turn_id, **_slug_meta(slug))
                 return res
@@ -891,7 +982,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id}
 
 
-def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug):
+def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=()):
     turn_id = active_turn["id"]
     engine = choice["engine"]
     S.regen_state_md(project)
@@ -914,11 +1005,12 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         save_info(project, inf)
         sid = None
     history = [row for row in chat_history(project, None if fresh else 60) if row.get("turn_id") != turn_id]
-    handoff = _handoff(history, engine, session.get("last_turn"), fresh=fresh)
+    handoff = _handoff(history, engine, session.get("last_turn"), fresh=fresh, project=project)
     turn_started_at = active_turn["started_at"]
     if engine == "codex":
         res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
-                          handoff, model=choice.get("model"), on_start=on_start, slug=slug)
+                          handoff, model=choice.get("model"), on_start=on_start, slug=slug,
+                          **({"images": images} if images else {}))
     else:
         text = _header(project, trigger, fresh, slug) + handoff + prompt
         runtime = _l3_runtime(project, "claude")
@@ -929,6 +1021,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
                 model=choice.get("model"), on_text=on_text, on_start=on_start,
+                **({"images": images} if images else {}),
                 timeout=_ci_turn_timeout(project, slug, trigger, config.L3_TURN_TIMEOUT),
                 **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
                 extra_env=_l3_env(project, runtime))
@@ -980,7 +1073,7 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
-                slug: str | None = None) -> dict:
+                slug: str | None = None, images=()) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     sid = None if fresh else session.get("session_id")
@@ -1004,6 +1097,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
             body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
             **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
             effort=config.CODEX_EFFORT.get("l3"), resume=sid, on_start=on_start,
+            **({"images": images} if images else {}),
             extra_env=_l3_env(project, runtime),
             sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
             ignore_user_config=True, on_session=record_session)

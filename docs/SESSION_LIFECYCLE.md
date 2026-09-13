@@ -192,6 +192,48 @@ expose `engine`, `model` (omitted when unknown), and `engine_reasoning_effort`.
 
 ## Messages, resume, and stop
 
+### Image delivery and recovery
+
+Project and task messages may contain managed `images` references with an opaque ID, display name,
+validated format/size/dimensions, integrity digest and original operator message/task provenance.
+Image selection stays local until Send. Admission holds the project lock while normalizing files
+and saving one durable record: the project queue row or task `status.json.image_messages` entry.
+Task message reads and pending delivery project that entry; its delivered flag changes atomically
+with resume claims. A same-ID HTTP retry returns the original receipt after delivery or archive,
+and changed content under that identity is refused. Confirmed refusals restore the draft; uncertain
+responses keep its controls frozen and retry the same submission without creating another message.
+
+Each image-bearing project message keeps its own turn and caption. Its queue claim remains on disk
+until human history and a terminal response are durable. After interruption, recovery preserves the
+original message and shows an explicit delivery error; it does not execute that turn twice. Removing
+a waiting image message records cancellation so a late admission retry cannot resurrect it. Saved
+failed-turn Retry selects the same committed IDs with a new message identity. Missing bytes remain
+an error with the text readable. Existing task resume/block/recovery authority still governs L2 retries.
+Task images share individual message removal and Stop/Continue controls. Removed messages stay
+out of checkpoint and resume batches; an accepted image correction retains the observed Stop identity.
+Refused images leave a reported owner's report and state intact; accepted follow-ups use the same
+open-PR continuation and preserve its review hold.
+
+The engine seam accepts neutral resolved image inputs on fresh/resumed L3 and L2 calls. Native
+multimodal payloads retain the selected provider, model and session. Image capability is checked
+before admission and again at delivery; image failure does not select a different provider. Live
+checkpoints that accept only text receive explicit native visual-read instructions and readable
+canonical locations. Resume batches over native image limits use those readers for every image,
+preserving message boundaries. Project session handoffs retain bounded source references and retrieval
+instructions. Deterministic fixtures prove payloads and readable bytes, not live model compatibility.
+Fresh L2 attempts, including explicit provider handoff, receive previously delivered image-message
+captions and their canonical images as historical context. Larger sets use native visual readers;
+the original conversation and delivered flags remain intact. Ordinary same-session resume carries
+only its claimed pending messages.
+
+L3 passes selected same-project committed IDs through `alt task new/message --image <id>`.
+The task assignment or L3-authored message retains original provenance; it grants neither operator
+approval nor new file scope. Images remain in project-managed storage across task archive and
+worktree deletion. Conversation/task references protect them indefinitely under current retention;
+unreferenced files are collected after 24 hours on the existing maintenance cadence.
+
+### Messages and questions
+
 Inbox reads tolerate a concurrent resume consuming the queued file. A missing inbox carries no
 delivery proof; message labels still require the recorded handoff evidence described below.
 

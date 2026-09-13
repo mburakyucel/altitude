@@ -14,6 +14,12 @@ preview and steering for #302 on 2026-09-09; the delivered application remains h
 Stop stays directly accessible beside the composer and in Live session on phone and desktop;
 task metadata and Reject remain in the compact phone details sheet.
 
+## Approved image-input interaction
+
+[Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.
+The shared composer spec and `web/e2e/image-input.pw.ts` maintain its states and phone/desktop
+walkthrough. Review captures stay outside Git. The compact mobile layout is defined above.
+
 ## Approved conversation-first design
 
 [Review the Needs you / L2 conversation design](CONVERSATION_FIRST.md), with

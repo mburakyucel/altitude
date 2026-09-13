@@ -1,5 +1,6 @@
 """#310: explicit recovery retains one task while replacing its exited provider attempt."""
 import json
+import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -7,7 +8,8 @@ from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, digest, dispatch, route, server, state as S, tasks as T
+from tests.test_images import upload
+from altitude import config, digest, dispatch, engines, route, server, state as S, tasks as T
 
 
 class TestProviderHandoff(AltitudeCase):
@@ -110,6 +112,36 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(self.engine.calls[-1]["session_id"], current["session_id"])
         self.assertEqual(resumed["questions"], before["questions"])
         self.assertEqual(resumed["hold_merge"], before["hold_merge"])
+
+    def test_fresh_handoff_keeps_already_delivered_chat_images_visually_inspectable(self):
+        self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
+        task = self.owner()
+        slug = task["slug"]
+        rows = [T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, f"Inspect screenshot {index}.",
+                          uploads=[upload(name=f"screen-{index}.png")]) for index in range(5)]
+        self.assertEqual(T.take_inbox(self.project, slug), rows)
+        before = S.load_task(self.project, slug)
+        self.assertFalse(before.get("images"), "Only already-delivered chat images can supply this context")
+        self.request(before)
+        self.execute(before)
+        dispatch.run(self.project, slug)
+        current = S.load_task(self.project, slug)
+        launch = self.engine.calls[-1]
+        self.assertEqual((current["attempt"], launch["engine"]), (2, "codex"))
+        self.assertIsNone(launch["session_id"], "An explicit handoff uses a fresh native session")
+        self.assertEqual(current["hold_merge"], before["hold_merge"])
+        self.assertEqual(T.task_messages(self.project, slug), rows)
+        self.assertEqual(T.pending(self.project, slug), [], "Historical context must not requeue delivered messages")
+        self.assertEqual(len(launch["images"]), len(rows))
+        args, prompt = engines._image_input(launch["engine"], launch["prompt"], launch["images"])
+        self.assertEqual(args, [], "A larger history uses native visual reads")
+        self.assertIn("native view_image tool", prompt)
+        for row, image in zip(rows, launch["images"]):
+            self.assertIn(row["text"], prompt)
+            self.assertIn(row["id"], prompt)
+            self.assertIn(image["path"], prompt)
+            self.assertEqual(image["source_message_id"], row["id"])
+            self.assertEqual(hashlib.sha256(Path(image["path"]).read_bytes()).hexdigest(), image["sha256"])
 
     def test_handoff_request_is_idempotent_and_target_and_attempt_are_part_of_its_identity(self):
         task = self.owner()

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
-import { ApiError, transcribeVoice } from "../data/api";
+import { ApiError, imageSendRefused, transcribeVoice } from "../data/api";
+import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
+import type { ImageScope, ImageSubmission } from "./ImageDraft";
 
 /*
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
@@ -73,7 +75,8 @@ export interface ComposerProps {
   onChange: (value: string) => void;
   /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
    * transport/server failure restores it with a reminder to check the conversation first. */
-  onSubmit: (text: string, onAccepted: () => void) => void | Promise<void>;
+  onSubmit: (text: string, onAccepted: () => void, images?: ImageSubmission) => void | Promise<void>;
+  imageScope?: ImageScope;
   placeholder: string;
   ariaLabel: string;
   /** L3 is mid-turn: the arrow queues; desktop also explains that the message runs next. */
@@ -241,9 +244,17 @@ export default function Composer({
   selection,
   onEscapeOwnership,
   autoFocus = false,
+  imageScope,
 }: ComposerProps) {
   const hintId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const images = useImageDraft(imageScope);
+  const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
+  const admitting = useRef(false);
+  const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string } | null>(null);
+  const deferredRecovery = useRef<SubmittedText | null>(null);
+  const [refusalReason, setRefusalReason] = useState("");
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
@@ -332,9 +343,10 @@ export default function Composer({
 
   useEffect(() => {
     const view = {
-      draft: () => draft.current,
+      draft: () => deferredRecovery.current?.text ?? draft.current,
       failure: () => failure.current,
       restore: (saved: SubmittedText, unavailable = false) => {
+        if (admitting.current) { deferredRecovery.current = saved; return; }
         draft.current = saved.text;
         onChange(saved.text);
         failure.current = saved.failure;
@@ -393,10 +405,15 @@ export default function Composer({
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
   const submit = useCallback(
-    async (text: string) => {
+    async (text: string, retry?: ImageSubmission) => {
       const ready = text.trim();
-      if (!ready || disabled || sendDisabled) return;
-      const id = crypto.randomUUID();
+      const withImages = Boolean(retry || images.selected.length);
+      if ((!ready && !withImages) || disabled || sendDisabled || images.checking || (admitting.current && !retry)) return;
+      if (withImages && !retry && !images.capability?.available) {
+        images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
+        return;
+      }
+      const id = retry && retryImage.current ? retryImage.current.recoveryId : crypto.randomUUID();
       try {
         const saved = readSubmitted(conversation);
         saved.pending[id] = text;
@@ -409,9 +426,9 @@ export default function Composer({
       }
       liveSubmissions.add(id);
       failure.current = null;
-      setSendFailure(null);
-      setRecoveryUnavailable(false);
-      setVoiceFailure("");
+      setSendFailure(null); setRecoveryUnavailable(false); setRefusalReason("");
+      setVoiceFailure(""); images.setError("");
+      if (withImages) { admitting.current = true; setAdmission("sending"); }
       draft.current = "";
       onChange("");
       let accepted = false;
@@ -419,16 +436,49 @@ export default function Composer({
         accepted = true;
         settleSubmitted(conversation, id, text, null);
       };
+      let submission = retry;
       try {
-        await onSubmit(ready, accept);
+        if (withImages) {
+          submission ??= await images.submission();
+          if (!mounted.current) {
+            settleSubmitted(conversation, id, text, "refused");
+            return;
+          }
+          retryImage.current = { text, submission, recoveryId: id };
+          await onSubmit(ready, accept, submission);
+        } else await onSubmit(ready, accept);
         accept();
-        if (mounted.current) focusField();
       } catch (error) {
-        if (!accepted) settleSubmitted(conversation, id, text,
-          error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
+        if (!accepted) {
+          if (withImages && submission && !imageSendRefused(error) && mounted.current) {
+            // Keep the immutable image retry here; a later remount recovers only its caption.
+            liveSubmissions.delete(id);
+            setAdmission("uncertain");
+            return;
+          }
+          settleSubmitted(conversation, id, text,
+            !submission && withImages || error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
+          if (mounted.current && withImages && error instanceof Error) setRefusalReason(error.message);
+        }
       }
+      if (!mounted.current) return;
+      if (withImages) {
+        if (accepted) images.clear();
+        admitting.current = false; setAdmission(""); retryImage.current = null;
+        if (deferredRecovery.current) {
+          const saved = deferredRecovery.current; deferredRecovery.current = null;
+          let unavailable = false;
+          try {
+            const current = readSubmitted(conversation);
+            current.text = saved.text; current.failure = saved.failure;
+            saveSubmitted(conversation, current);
+          } catch { unavailable = true; }
+          recoveryViews.get(conversation)?.restore(saved, unavailable);
+        }
+      }
+      focusField();
     },
-    [conversation, disabled, sendDisabled, focusField, onChange, onSubmit],
+    [conversation, disabled, sendDisabled, focusField, images, onChange, onSubmit],
   );
   // A recording can outlive the render that supplied its submit callback or disabled state.
   const currentSubmit = useRef(submit);
@@ -500,7 +550,7 @@ export default function Composer({
   }, [finish, stream]);
 
   const start = useCallback(async () => {
-    if (unavailable || denied || disabled || phase !== "idle") return;
+    if (unavailable || denied || disabled || admitting.current || phase !== "idle") return;
     setVoiceFailure("");
     setSendFailure((current) => current === "unconfirmed" ? current : null);
     setElapsed(0);
@@ -624,20 +674,27 @@ export default function Composer({
   const listening = phase === "listening" || phase === "starting";
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
-  const canSend = !disabled && !sendDisabled && (phase === "listening" || (phase === "idle" && value.trim().length > 0));
+  const canSend = !disabled && !sendDisabled && !admission && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
   const micShown = !unavailable;
-  const micDisabled = denied || disabled || transcribing;
+  const micDisabled = denied || disabled || transcribing || Boolean(admission);
 
   let hintText: ReactNode = hint ?? null;
   let routineHint = false;
   let hintTone: "muted" | "danger" = "muted";
   let hintRole: "alert" | "status" | undefined;
-  if (sendFailure === "refused") {
+  if (admission === "uncertain") {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = <>Could not confirm send. <button type="button" className="link" onClick={() => { const retry = retryImage.current; if (retry) void submit(retry.text, retry.submission); }}>Retry</button></>;
+  } else if (admission === "sending") {
+    hintRole = "status";
+    hintText = "Sending images…";
+  } else if (sendFailure === "refused" && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
     hintText = (
       <>
-        Not sent.{" "}
+        Not sent. {refusalReason}{" "}
         <button type="button" className="link" onClick={() => void submit(draft.current)}>
           Retry
         </button>
@@ -647,6 +704,10 @@ export default function Composer({
     hintTone = "danger";
     hintRole = "alert";
     hintText = "Could not confirm delivery. Check the conversation before sending again.";
+  } else if (images.error || (images.selected.length && !images.capability?.available)) {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = images.error || `Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`;
   } else if (transcribing) {
     hintRole = "status";
     hintText = "Transcribing…";
@@ -677,8 +738,19 @@ export default function Composer({
   }
 
   return (
-    <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}>
+    <div className="composer" data-phase={phase} data-busy={busy || undefined} onKeyDown={onComposerKeyDown}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+        if (!imageScope || !files.length) return;
+        event.preventDefault();
+        if (!disabled && !admission && phase === "idle") void images.add(files);
+      }}>
       <div className="composer-box">
+        {images.selected.length && !admission ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
+          <div className="image-draft-item" key={image.key}>
+            <img src={image.url} alt={image.name} />
+            <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled} onClick={() => images.remove(image.key)}><CloseIcon /></button>
+          </div>)}</div> : null}
         <textarea
           ref={field}
           className="composer-field"
@@ -687,7 +759,7 @@ export default function Composer({
           placeholder={listening ? "" : placeholder}
           value={value}
           rows={1}
-          disabled={disabled}
+          disabled={disabled || Boolean(admission)}
           autoFocus={autoFocus}
           onChange={(event) => editDraft(event.target.value)}
           onKeyDown={onFieldKeyDown}
@@ -695,7 +767,17 @@ export default function Composer({
           onBlur={(event) => { if (selection) selection.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }}
         />
         <div className="composer-row">
-          {pill ? <div className="composer-pill">{pill}</div> : null}
+          {pill ? <fieldset role="presentation" className="composer-pill" disabled={disabled || Boolean(admission)}>{pill}</fieldset> : null}
+          {imageScope && !listening && !transcribing ? <>
+            <input ref={picker} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden aria-label="Choose images" onChange={(event) => {
+              if (!disabled && !admission) void images.add(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }} />
+            <button type="button" className="composer-icon composer-add-image" aria-label="Add images" title={IMAGE_HELP} disabled={disabled || Boolean(admission) || images.checking} onClick={() => {
+              if (!images.capability?.available) images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
+              else picker.current?.click();
+            }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4" /><circle cx="15" cy="8" r="1.5" /></svg></button>
+          </> : null}
           {listening || transcribing ? (
             <div className="composer-voice" data-frozen={transcribing || undefined}>
               {listening ? (

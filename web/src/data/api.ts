@@ -265,6 +265,39 @@ export const ProjectViewSchema = z
   })
   .passthrough();
 
+export const MessageImageSchema = z.object({
+  id: z.string(), name: z.string(), mime_type: z.string(), size: z.number(),
+  width: z.number(), height: z.number(), source_message_id: z.string(),
+  source_task: z.string().nullish(),
+}).passthrough();
+export type MessageImage = z.infer<typeof MessageImageSchema>;
+export interface ImageUpload { name: string; data: string }
+export interface ImageSend { request_id: string; images?: ImageUpload[]; image_ids?: string[] }
+export const ImageCapabilitySchema = z.object({
+  available: z.boolean(), reason: z.string().nullish(), max_count: z.number().positive(),
+  max_bytes: z.number().positive(), max_total_bytes: z.number().positive(),
+  max_pixels: z.number().positive(), max_dimension: z.number().positive(),
+});
+export type ImageCapability = z.infer<typeof ImageCapabilitySchema>;
+/** A lost response may follow a durable write. Only an explicit client refusal restores a draft. */
+export function imageSendRefused(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
+/** Admission is bounded independently of an agent turn; retry keeps the submission identity. */
+async function admitImages<T>(path: string, body: unknown): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  try { return await api<T>(path, { method: "POST", body: JSON.stringify(body), signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+export async function sendImageChat(project: string, text: string, input: ImageSend) {
+  const out = await admitImages<{ accepted: boolean; queued?: unknown }>("/api/chat", { project, text, ...input });
+  if (!out.accepted) throw new Error("Image send was not confirmed");
+  return { accepted: true, queued: out.queued ? QueuedMessageSchema.parse(out.queued) : undefined };
+}
+
 export const TaskMessageSchema = z
   .object({
     id: z.string(),
@@ -272,6 +305,7 @@ export const TaskMessageSchema = z
     role: z.enum(["burak", "l2", "l3"]),
     text: z.string(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
+    images: z.array(MessageImageSchema).nullish(),
   })
   .passthrough();
 
@@ -407,6 +441,7 @@ export const ChatMessageSchema = z
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    images: z.array(MessageImageSchema).nullish(),
     trigger: z.string().nullish(),
     /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
     heads_up: z.boolean().nullish(),
@@ -428,6 +463,7 @@ export const QueuedMessageSchema = z
     trigger: z.string().nullish(),
     role: z.string().nullish(),
     text: z.string(),
+    images: z.array(MessageImageSchema).nullish(),
     /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
     position: z.number().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
@@ -726,13 +762,17 @@ export interface L2MessageInput {
   revision?: number;
   group_id?: string;
   group_revision?: number;
+  request_id?: string;
+  images?: ImageUpload[];
 }
 
 /** The task page's message to the L2 (SPEC.md §3.10): the page owns the bubble and the "Not sent.
  * Retry." hint itself, so this is the plain call rather than the toasting hook below. The reply
  * carries the stored row, which the page appends to the conversation it already holds. */
 export async function sendL2Message(input: L2MessageInput): Promise<TaskMessage> {
-  const out = await post<{ message: unknown }>("/api/l2/message", input);
+  const out = input.images?.length
+    ? await admitImages<{ message: unknown }>("/api/l2/message", input)
+    : await post<{ message: unknown }>("/api/l2/message", input);
   return TaskMessageSchema.parse(out.message);
 }
 

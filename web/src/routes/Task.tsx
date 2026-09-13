@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ReactNode, RefObject } from "react";
+import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
-import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
+import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useProject, useTask } from "../data/api";
+import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseRepository } from "../components/Prose";
 import { agoText, when } from "../data/observed";
 import { questionPath } from "../data/decisions";
@@ -13,6 +13,9 @@ import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
 import { SteeringControls, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
+import type { ImageSubmission } from "../components/ImageDraft";
+import { MessageImages, PendingImages } from "../components/MessageImages";
+import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet } from "../components/DecisionCard";
 import { TokenUsage } from "../components/TokenUsage";
 import { useTaskBack } from "../components/useTaskBack";
@@ -170,9 +173,11 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
+interface PendingMessage { text: string; images?: ImagePreview[] }
+
 function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, showLive, phone, selection, onEscapeOwnership }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
-  draft: string; setDraft: (value: string) => void; pending: string | null; setPending: (value: string | null) => void;
+  draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: Dispatch<SetStateAction<PendingMessage | null>>;
   steering: Steering; showLive: () => void; phone: boolean;
   selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
 }) {
@@ -196,6 +201,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
   const [denied, setDenied] = useState(false);
   const [accessRefresh, setAccessRefresh] = useState(0);
+  const submission = useRef<L2MessageInput | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; setPending(null); };
+  }, [setPending]);
   const messages = task.messages ?? [];
   const removal = useMutation({
     mutationFn: (id: string) => removeL2Message(project, task.slug, id),
@@ -243,7 +254,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [updateQuestionVisibility]);
-  const send = async (text: string, onAccepted: () => void) => {
+  const send = async (text: string, onAccepted: () => void, images?: ImageSubmission) => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
     const currentBounds = currentNode?.getBoundingClientRect();
@@ -253,13 +264,17 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const context = following.current || viewingCurrent ? current ?? target : target ?? current;
     following.current = true;
     setLatest(false);
-    setPending(text);
+    const preview = { text, images: images?.previews };
+    setPending(preview);
     try {
-      const row = await sendL2Message({ project, slug: task.slug, text,
+      const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text,
         ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
+        ...(images ? { request_id: images.request_id, images: images.images } : {}),
         ...(group && group.questions.length > 1 && context && inGroup(context)
           ? { group_id: group.id, group_revision: group.revision }
-          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
+          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) };
+      if (images) submission.current = input;
+      const row = await sendL2Message(input);
       onAccepted();
       await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
@@ -267,10 +282,16 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       );
       void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
       void queryClient.invalidateQueries({ queryKey: ["overview"] });
+      if (images && submission.current?.request_id === images.request_id) submission.current = null;
+      if (mounted.current) setPending((current) => current === preview ? null : current);
     } catch (error) {
       if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+      if (mounted.current && (!images || imageSendRefused(error))) {
+        if (images && submission.current?.request_id === images.request_id) submission.current = null;
+        setPending((current) => current === preview ? null : current);
+      }
       throw error;
-    } finally { setPending(null); }
+    }
   };
   const rows: ReactNode[] = [];
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
@@ -317,13 +338,14 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>);
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
+        images={message.delivery?.state !== "removed" ? <MessageImages project={project} images={message.images} /> : undefined}
         receipt={message.delivery ? message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
           ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
         {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending}
           onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
       </Bubble> :
-        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined} />);
+        <Reply key={key} text={message.text} at={message.at} role={message.role} from={message.role === "l3" ? "L3" : undefined}><MessageImages project={project} images={message.images} /></Reply>);
     }
   });
   return (
@@ -345,7 +367,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
-          {pending ? <Bubble text={pending} at={new Date().toISOString()} pending /> : null}
+          {pending ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
           {task.question?.status === "resolved" && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
@@ -365,6 +387,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />
         </div> : null}
         <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
         hint={["stopped", "stopping", "stop_unconfirmed"].includes(steering.state) ? "" : task.state !== "queued" && current ? "Reply or ask a question. Discussion keeps the decision open." : facts.hint} />
@@ -516,7 +539,7 @@ function TaskPage({
   const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
   const decision = task.question?.status === "open" ? task.question : undefined;
   const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingMessage | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
   const selection = useRef<{ start: number; end: number } | null>(null);
   const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);

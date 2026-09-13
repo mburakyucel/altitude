@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, route, state as S, tasks as T
+from . import config, engines, git_policy, images, route, state as S, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -888,16 +888,22 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         tried = []
         while True:
             brief_md = build_brief(project, slug)
+            history = [row for row in task.get("image_messages", []) if row.get("delivered")] if task.get("attempt") else []
+            if history:
+                brief_md += "\n\nPreviously delivered image context; these are saved messages, not new requests:\n" + T.render_inbox(history)
             T.brief(project, slug, brief_md, actor="altd")
+            with S.project_lock(project):
+                refs = (task.get("images") or []) + [image for row in history for image in row["images"]]
+                attached = images.resolve(project, list({ref["id"]: ref for ref in refs}.values()), task=slug)
             res = engines.start_l2(
                 engine, worker_name(project, slug, attempt), brief_md, cwd=worktree_path, persona=config.PERSONAS / "l2.md",
                 model=selected_model, effort=selected_effort, settings=settings, extra_env=l2_env(project, slug, attempt),
-                job_root=l2_job_root(project, slug))
+                job_root=l2_job_root(project, slug), images=attached)
             rejection = res.get("rejection")
             if not rejection:
                 break
             route.note_rejection(choice, rejection)
-            if not res.get("safe_to_retry"):
+            if attached or not res.get("safe_to_retry"):
                 break
             tried.append(route.option_key(choice))
             choice = route.pick_task(proj, task, excluded=tried)
@@ -1069,6 +1075,8 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         prompt += "\n\n" + T.group_context(task)
     worker = {}
     try:
+        with S.project_lock(project):
+            attached = images.resolve(project, [image for row in rows for image in row.get("images") or []], task=slug)
         T.update_resume_claim(project, slug, claim["id"], phase="launching")
         with S.project_lock(project):
             current = S.load_task(project, slug)
@@ -1080,7 +1088,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
             effort=task.get("launch_effort"),
             settings=S.task_dir(project, slug) / "settings.json",
-            extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root)
+            extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root, images=attached)
         worker = res.get("agent") or {}
         if res.get("returncode") != 0:
             raise RuntimeError(res.get("stderr") or res.get("stdout") or f"exit {res.get('returncode')}")
