@@ -7,7 +7,7 @@ from unittest import mock
 
 from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
 from tests import test_land as ordinary
-from altitude import dispatch, engines, git_policy, land, state as S, tasks as T
+from altitude import dispatch, engines, land, state as S, tasks as T
 
 
 class TestAdoption(AltitudeCase):
@@ -91,7 +91,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(task["prs"], [101, 102])
         self.assertEqual(second["previous_merge"], self.git("rev-parse", "origin/main").strip())
         dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        git_policy.capture_origin_sha(self.repo), require_clean=True)
+                                        require_clean=True)
         land.land("retry second proposal", cwd=self.repo, wait=0, **next_pr)
         self.assertEqual(self.receipt(), second)
         events = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"]
@@ -135,7 +135,7 @@ class TestAdoption(AltitudeCase):
             land.land("next", cwd=self.repo, wait=0, **next_pr)
         self.assertNotIn("adoption_history", S.load_task("demo", "fix-x"))
 
-    def test_continuation_preserves_hold_and_refuses_later_unowned_history(self):
+    def test_continuation_preserves_hold_with_later_manual_history(self):
         next_pr = self.next_pr()
         task = S.load_task("demo", "fix-x")
         task["hold_merge"] = "Review the next PR"
@@ -144,12 +144,12 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(S.load_task("demo", "fix-x")["hold_merge"], "Review the next PR")
         with self.assertRaisesRegex(land.LandError, "merge hold"):
             land.land("merge next", cwd=self.repo, wait=0, merge=True)
-        self.commit("src/unowned.py", "Unassigned later update")
-        with self.assertRaisesRegex(land.LandError, "without exact"):
-            land.land("next", cwd=self.repo, wait=0)
-        with self.assertRaisesRegex(T.TransitionError, "without exact"):
-            dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                            git_policy.capture_origin_sha(self.repo), require_clean=True)
+        head = self.commit("src/later.py", "Reviewed later update")
+        self.assertEqual(land.land("next", cwd=self.repo, wait=0)["pr"], 102)
+        dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo, require_clean=True)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
+        with self.assertRaisesRegex(land.LandError, "merge hold"):
+            land.land("merge next", cwd=self.repo, wait=0, merge=True)
 
     def test_previous_pr_approval_restores_hold_on_next_adoption_even_with_merge(self):
         next_pr = self.next_pr()
@@ -188,7 +188,7 @@ class TestAdoption(AltitudeCase):
         git("push", "-q", "origin", "main", cwd=self.project_repo)
         self.git("fetch", "origin", "main")
         new_base = self.git("rev-parse", "origin/main").strip()
-        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main", "-m", "Altitude-Task: demo/fix-x")
+        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main")
         head = self.git("rev-parse", "HEAD").strip()
         self.git("push", "-q", "origin", "HEAD:proposal/external")
         self.original = head
@@ -222,11 +222,11 @@ class TestAdoption(AltitudeCase):
         self.assertEqual((receipt["head"], receipt["actor"], receipt["attempt"]), (self.original, "l2", 1))
         self.assertEqual(S.load_task("demo", "fix-x")["prs"], [101])
         self.assertEqual(result["branch"], "worktree-fix-x")
-        self.assertEqual(self.git("log", "-1", "--format=%(trailers:key=Altitude-Task,valueonly)").strip(), "demo/fix-x")
+        self.assertEqual(self.git("log", "-1", "--format=%B").strip(), "docs: reconcile proposal")
         self.assertEqual(self.git("show", "-s", "--format=%B", self.original).strip(), "Original external proposal")
         dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        git_policy.capture_origin_sha(self.repo), require_clean=True)
-        self.adopt()  # replay cannot change the exception or write a second adoption event
+                                        require_clean=True)
+        self.adopt()  # replay cannot change the assignment or write a second adoption event
         self.assertEqual(self.receipt(), receipt)
         self.assertEqual(len([e for e in S.read_events("demo", "fix-x") if e["kind"] == "pr-adopted"]), 1)
         # Hosted merge advances a real bare origin. The local worktree branch stays task-owned.
@@ -260,7 +260,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(current["prs"], [101, 102])
 
     def test_only_explicit_observed_head_adopts(self):
-        for kwargs, error in [({}, "without exact"), ({"expected_head": self.original}, "require --adopt-pr"),
+        for kwargs, error in [({"expected_head": self.original}, "require --adopt-pr"),
                               ({"adopt_pr": 101}, "requires a positive"),
                               ({"adopt_pr": 101, "expected_head": "0" * 40, "reason": "assigned"}, "head changed")]:
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(land.LandError, error):
@@ -296,24 +296,25 @@ class TestAdoption(AltitudeCase):
         for args in self.gh_log():
             self.assertEqual(args[args.index("--repo") + 1], "team/demo")
 
-    def test_foreign_trailers_in_original_history_are_not_adoptable(self):
-        self.original = self.commit("src/foreign.py", "Other task", "demo/other")
+    def test_original_history_with_old_foreign_labels_is_adopted_unchanged(self):
+        self.original = self.commit("src/foreign.py", "Reviewed assigned history", "demo/other")
         self.git("push", "-q", "origin", "HEAD:proposal/external")
-        with self.assertRaisesRegex(land.LandError, "without exact"):
-            self.adopt()
-        self.assert_unpublished()
+        self.assertEqual(self.adopt()["pr"], 101)
+        self.assertEqual(self.git("show", "-s", "--format=%B", self.original).strip(),
+                         "Reviewed assigned history\n\nAltitude-Task: demo/other")
+        self.assertEqual(self.receipt()["head"], self.original)
 
-    def test_later_unowned_or_foreign_history_refused_on_land_and_resume(self):
+    def test_later_manual_and_old_label_history_lands_and_resumes_unchanged(self):
         self.adopt()
-        pinned = self.git("rev-parse", "HEAD").strip()
-        for trailer in (None, "demo/other", "another/fix-x"):
-            self.git("reset", "--hard", pinned)
-            self.commit("src/foreign.py", "Later foreign work", trailer)
-            with self.subTest(trailer=trailer), self.assertRaisesRegex(land.LandError, "without exact"):
+        for index, trailer in enumerate((None, "demo/other", "another/fix-x")):
+            with self.subTest(trailer=trailer):
+                head = self.commit(f"src/later-{index}.py", "Reviewed reconciliation", trailer)
+                message = self.git("show", "-s", "--format=%B", head)
                 land.land("reconcile", cwd=self.repo, wait=0)
-            with self.assertRaisesRegex(T.TransitionError, "without exact"):
                 dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                                git_policy.capture_origin_sha(self.repo), require_clean=False)
+                                                require_clean=False)
+                self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
+                self.assertEqual(git("show", "-s", "--format=%B", head, cwd=self.remote), message)
 
     def test_rewritten_or_unrelated_head_and_widened_adoption_refused(self):
         self.adopt()
@@ -324,9 +325,9 @@ class TestAdoption(AltitudeCase):
         self.commit("src/unrelated.py", "Unrelated branch", "demo/fix-x")
         with self.assertRaisesRegex(land.LandError, "not an ancestor"):
             land.land("reconcile", cwd=self.repo, wait=0)
-        with self.assertRaisesRegex(git_policy.GitPolicyError, "not an ancestor"):
+        with self.assertRaisesRegex(T.TransitionError, "not an ancestor"):
             dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                            git_policy.capture_origin_sha(self.repo), require_clean=True)
+                                            require_clean=True)
 
     def test_adoption_and_selected_additions_do_not_require_predicted_paths(self):
         task = S.load_task("demo", "fix-x")
@@ -361,7 +362,7 @@ class TestAdoption(AltitudeCase):
         (other / "src").mkdir()
         (other / "src" / "remote.py").write_text("concurrent update\n")
         git("add", "src/remote.py", cwd=other)
-        git("commit", "-q", "-m", "Concurrent task update", "-m", "Altitude-Task: demo/fix-x", cwd=other)
+        git("commit", "-q", "-m", "Concurrent task update", cwd=other)
         remote_head = git("rev-parse", "HEAD", cwd=other).strip()
         def race(args):
             if args[:2] == ["git", "push"]:
@@ -458,7 +459,7 @@ print('3 passed')
         git("commit", "-q", "-m", "another task landed", cwd=self.project_repo)
         git("push", "-q", "origin", "main", cwd=self.project_repo)
         self.git("fetch", "-q", "origin", "main")
-        self.git("merge", "--no-ff", "origin/main", "-m", "Merge main", "-m", "Altitude-Task: demo/fix-x")
+        self.git("merge", "--no-ff", "origin/main", "-m", "Merge main")
         result = land.land("reconcile", cwd=self.repo, wait=0)
         self.assertEqual(result["checks"], "pass")
         self.git("merge-base", "--is-ancestor", self.original, "HEAD")

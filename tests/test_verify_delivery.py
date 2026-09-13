@@ -23,8 +23,7 @@ class TestVerifyDelivery(AltitudeCase):
         base = git("rev-parse", "main", cwd=self.repo).strip()
         (self.worktree / f"change-{number}").write_text(f"delivery {number}\n")
         git("add", "-A", cwd=self.worktree)
-        git("commit", "-qm", f"delivery {number}", "-m",
-            f"Altitude-Task: {self.project}/continue", cwd=self.worktree)
+        git("commit", "-qm", f"delivery {number}", cwd=self.worktree)
         head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
         merge_sha = None
         if merged:

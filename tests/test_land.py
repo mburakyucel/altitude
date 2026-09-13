@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.support import ALT, AltitudeCase, git, make_repo
+from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
 from altitude import land, state as S
 
 
@@ -26,12 +26,11 @@ class TestLand(AltitudeCase):
         for key, value in (("ALTITUDE_PROJECT", "demo"), ("ALTITUDE_TASK", "fix-x"),
                            ("ALTITUDE_ACTOR", "burak"), ("ALTITUDE_ATTEMPT", "")):
             self.setenv(key, value)
-        d = S.tasks_dir("demo") / "fix-x"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "status.json").write_text(json.dumps(
-            {"slug": "fix-x", "state": "running", "paths": ["src", "docs/NOTES.md"]}))
         make_repo(self.repo)
-        git("checkout", "-q", "-b", "worktree-fix-x", cwd=self.repo)
+        self.project_repo = self.repo
+        self.repo = add_worktree(self.project_repo, "fix-x")
+        S.save_task("demo", {"slug": "fix-x", "state": "running", "paths": ["src", "docs/NOTES.md"],
+                             "worktree": str(self.repo), "branch": "worktree-fix-x"})
         self.remote = self.tmp / "origin.git"
         self.git("config", f"url.{self.remote}.insteadOf", "https://github.com/team/demo.git")
         self.git("remote", "set-url", "origin", "https://github.com/team/demo.git")
@@ -113,7 +112,7 @@ class TestLand(AltitudeCase):
         workflow.mkdir(parents=True)
         (workflow / "ci.yml").write_text("on: [push]\n")
         self.git("add", ".github/workflows/ci.yml")
-        self.git("commit", "-q", "-m", "ci", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "ci")
 
     def advance_base(self, name, content="base\n"):
         other = self.clone("base-" + name.replace("/", "-"))
@@ -129,13 +128,12 @@ class TestLand(AltitudeCase):
         return sorted(git("branch", "--format=%(refname:short)", cwd=self.remote).split())
 
     def test_refuses_on_main(self):
-        self.git("checkout", "-q", "main")
         with self.assertRaisesRegex(land.LandError, "main"):
-            land.land("msg", cwd=self.repo)
+            land.land("msg", cwd=self.project_repo)
 
     def test_rebase_in_progress_refuses(self):
         self.staged_change()
-        (self.repo / ".git" / "rebase-merge").mkdir()
+        Path(self.git("rev-parse", "--git-path", "rebase-merge").strip()).mkdir()
         with self.assertRaisesRegex(land.LandError, "rebase is in progress"):
             land.land("msg", cwd=self.repo)
         self.assertEqual(self.git("write-tree"), self.selected_index)
@@ -191,19 +189,95 @@ class TestLand(AltitudeCase):
         self.assertEqual(result["pr"], 101)
         self.assertEqual(result["staged"], ["src/thing.py"])
 
-    def test_plain_and_merge_land_refuse_unprovenanced_history_before_mutation(self):
-        (self.repo / "rogue-history.txt").write_text("direct commit\n")
-        self.git("add", "rogue-history.txt")
-        self.git("commit", "-q", "-m", "missing task trailer")
+    def test_wrong_task_checkout_refuses_before_mutation_and_preserves_selection(self):
         self.staged_change()
+        original = S.load_task("demo", "fix-x")
+        commands = self.record_commands()
+        for fields in ({"worktree": None}, {"worktree": str(self.tmp / "other-worktree")},
+                       {"branch": "worktree-other"}):
+            with self.subTest(fields=fields):
+                S.save_task("demo", {**original, **fields})
+                with self.assertRaisesRegex(land.LandError, "isolated worktree"):
+                    land.land("must refuse", cwd=self.repo, wait=0)
+        S.save_task("demo", original)
+        other_repo = self.clone("unrelated-project-checkout")
+        with mock.patch.object(land.config, "project_path", return_value=other_repo):
+            with self.assertRaisesRegex(land.LandError, "isolated worktree"):
+                land.land("must refuse", cwd=self.repo, wait=0)
+        self.assert_no_publish_mutation(commands)
 
-        for merge in (False, True):
-            with self.subTest(merge=merge), self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
-                land.land("must refuse", cwd=self.repo, wait=0, merge=merge)
+    def test_another_active_tasks_branch_refuses_before_publication(self):
+        self.staged_change()
+        S.save_task("demo", {"slug": "other", "state": "running", "branch": "worktree-fix-x"})
+        commands = self.record_commands()
+        with self.assertRaisesRegex(land.LandError, "already belongs to task other"):
+            land.land("must refuse", cwd=self.repo, wait=0)
+        self.assert_no_publish_mutation(commands)
 
+    def test_current_task_cannot_publish_from_another_tasks_worktree(self):
+        other = add_worktree(self.project_repo, "other")
+        S.save_task("demo", {"slug": "other", "state": "running", "worktree": str(other),
+                             "branch": "worktree-other"})
+        (other / "selected.txt").write_text("Other task's selected work\n")
+        git("add", "selected.txt", cwd=other)
+        selected = git("write-tree", cwd=other)
+        head = git("rev-parse", "HEAD", cwd=other)
+        commands = self.record_commands()
+        with self.assertRaisesRegex(land.LandError, "isolated worktree"):
+            land.land("must refuse", cwd=other, wait=0)
+        self.assertEqual(git("write-tree", cwd=other), selected)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=other), head)
+        self.assertEqual(self.remote_heads(), ["main"])
+        self.assertFalse(any(args[0] == "gh" or args[:2] in
+                             (["git", "fetch"], ["git", "commit"], ["git", "push"]) for args in commands))
+
+    def test_another_active_tasks_pr_refuses_before_selected_commit_or_push(self):
+        self.staged_change()
+        first = land.land("First reviewed publication", cwd=self.repo, wait=0)
+        self.staged_change("src/second.py")
+        S.save_task("demo", {"slug": "other", "state": "running", "prs": [first["pr"]]})
+        commands = self.record_commands()
+        with self.assertRaisesRegex(land.LandError, "already belongs to task other"):
+            land.land("must refuse", cwd=self.repo, wait=0)
         self.assertEqual(self.git("write-tree"), self.selected_index)
-        self.assertEqual(self.gh_log(), [])
-        self.assertNotIn("worktree-fix-x", self.remote_heads())
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), first["head"])
+        self.assertEqual(git("rev-parse", "worktree-fix-x", cwd=self.remote).strip(), first["head"])
+        self.assertFalse(any(args[:2] in (["git", "commit"], ["git", "push"], ["gh", "pr"])
+                             and (args[0] == "git" or args[2] in ("create", "edit", "merge"))
+                             for args in commands))
+
+    def test_manual_history_and_old_labels_publish_without_message_repair(self):
+        messages = ("Reviewed manual commit", "Reviewed inherited commit\n\nAltitude-Task: demo/other")
+        commits = []
+        for index, message in enumerate(messages):
+            self.staged_change(f"src/manual-{index}.py")
+            self.git("commit", "-q", "-m", message)
+            commits.append(self.git("rev-parse", "HEAD").strip())
+        self.staged_change()
+        result = land.land("Publish reviewed history", cwd=self.repo, wait=0)
+        self.assertEqual(result["pr"], 101)
+        for commit, message in zip(commits, messages):
+            self.assertEqual(git("show", "-s", "--format=%B", commit, cwd=self.remote).strip(), message)
+            self.git("merge-base", "--is-ancestor", commit, "origin/worktree-fix-x")
+        self.assertTrue(land.land("Resume delivery", cwd=self.repo, wait=0, merge=True)["merged"])
+
+    def test_wrong_pr_target_refuses_before_commit_push_or_edit(self):
+        self.staged_change()
+        first = land.land("First reviewed publication", cwd=self.repo, wait=0)
+        self.staged_change("src/second.py")
+        pull = json.loads((self.ghdir / "pr.json").read_text())
+        commands = self.record_commands()
+        for change in ({"baseRefName": "release"}, {"headRefName": "proposal/other"}):
+            with self.subTest(change=change):
+                S.write_json(self.ghdir / "pr.json", {**pull, **change})
+                with self.assertRaisesRegex(land.LandError, "not the expected"):
+                    land.land("must refuse", cwd=self.repo, wait=0, pr_title="Must not edit")
+        self.assertEqual(self.git("write-tree"), self.selected_index)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), first["head"])
+        self.assertEqual(git("rev-parse", "worktree-fix-x", cwd=self.remote).strip(), first["head"])
+        self.assertFalse(any(args[:2] in (["git", "commit"], ["git", "push"])
+                             or args[:3] in (["gh", "pr", "create"], ["gh", "pr", "edit"], ["gh", "pr", "merge"])
+                             for args in commands))
 
     def test_happy_path(self):
         self.staged_change("src/has space.py")
@@ -223,8 +297,7 @@ class TestLand(AltitudeCase):
         self.assertIn("src/a[1].py", self.git("show", "--name-only", "--format=", "HEAD"))
         self.assertEqual(
             self.git("log", "-1", "--format=%B").strip(),
-            "fix: land the thing\n\nlonger body\n\n"
-            "Altitude-Task: demo/fix-x")
+            "fix: land the thing\n\nlonger body")
         remote_sha = git("rev-parse", "worktree-fix-x", cwd=self.remote).strip()
         self.assertEqual(remote_sha, self.git("rev-parse", "HEAD").strip())
         self.assertEqual(res["head"], remote_sha)
@@ -370,10 +443,10 @@ class TestLand(AltitudeCase):
 
     def test_rebased_push_retries_with_recorded_tip_lease_exactly_once(self):
         self.staged_change("src/original.py")
-        self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "original")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
-        self.git("commit", "--amend", "-q", "-m", "rebased", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "--amend", "-q", "-m", "rebased")
         self.staged_change()
         commands = self.record_commands()
         res = land.land("fix: retry", cwd=self.repo, wait=0)
@@ -390,10 +463,10 @@ class TestLand(AltitudeCase):
 
     def test_refused_lease_reports_recorded_and_current_tips(self):
         self.staged_change()
-        self.git("commit", "-q", "-m", "original", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "original")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         recorded_tip = self.git("rev-parse", "origin/worktree-fix-x").strip()
-        self.git("commit", "--amend", "-q", "-m", "rebased", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "--amend", "-q", "-m", "rebased")
         current_tip = "b" * 40
         tip_reads = 0
 
@@ -572,13 +645,13 @@ class TestLand(AltitudeCase):
         seed.parent.mkdir(parents=True, exist_ok=True)
         seed.write_text("base\n")
         self.git("add", "src/f.py")
-        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "seed")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         other = self.clone("other")
         git("checkout", "-q", "worktree-fix-x", cwd=other)
         (other / "src" / "f.py").write_text("remote\n")
         git("add", "src/f.py", cwd=other)
-        git("commit", "-q", "-m", "remote change", "-m", "Altitude-Task: demo/fix-x", cwd=other)
+        git("commit", "-q", "-m", "remote change", cwd=other)
         git("push", "-q", cwd=other)
         seed.write_text("local\n")
         self.git("add", "src/f.py")
@@ -592,14 +665,14 @@ class TestLand(AltitudeCase):
 
     def test_strictly_behind_branch_is_not_force_rewound(self):
         self.staged_change("src/f.py")
-        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "seed")
         self.git("push", "-q", "-u", "origin", "worktree-fix-x")
         local_tip = self.git("rev-parse", "HEAD").strip()
         other = self.clone("other-behind")
         git("checkout", "-q", "worktree-fix-x", cwd=other)
         (other / "src" / "remote.py").write_text("foreign\n")
         git("add", "src/remote.py", cwd=other)
-        git("commit", "-q", "-m", "foreign", "-m", "Altitude-Task: demo/fix-x", cwd=other)
+        git("commit", "-q", "-m", "foreign", cwd=other)
         git("push", "-q", cwd=other)
         foreign_tip = git("rev-parse", "worktree-fix-x", cwd=self.remote).strip()
         commands = self.record_commands()
@@ -629,7 +702,7 @@ class TestLand(AltitudeCase):
 
     def test_staged_rename_can_cross_expected_paths(self):
         self.staged_change("src/keep.py")
-        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "seed")
         self.git("mv", "src/keep.py", "needed.py")
         result = land.land("move selected file", cwd=self.repo, wait=0)
         self.assertEqual(result["pr"], 101)
@@ -638,7 +711,7 @@ class TestLand(AltitudeCase):
 
     def test_partial_selection_commits_index_bytes_and_keeps_later_work(self):
         self.staged_change("src/value.py")
-        self.git("commit", "-q", "-m", "seed", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-q", "-m", "seed")
         target = self.repo / "src/value.py"
         target.write_text("selected hunk\nunchanged line\n")
         self.git("add", "src/value.py")
@@ -875,7 +948,7 @@ class TestLand(AltitudeCase):
                     git("checkout", "-q", moving_ref, cwd=other)
                     (other / (moving_ref + ".txt")).write_text("late change\n")
                     git("add", ".", cwd=other)
-                    git("commit", "-q", "-m", "move", "-m", "Altitude-Task: demo/fix-x", cwd=other)
+                    git("commit", "-q", "-m", "move", cwd=other)
                     git("push", "-q", "origin", moving_ref, cwd=other)
                     return result
 
@@ -1242,10 +1315,7 @@ class TestLand(AltitudeCase):
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_workflows_only_on_the_base_branch_still_count_as_ci(self):
-        self.git("checkout", "-q", "main")
-        self.configure_ci()
-        self.git("push", "-q", "origin", "main")
-        self.git("checkout", "-q", "worktree-fix-x")
+        self.advance_base(".github/workflows/ci.yml", "on: [push]\n")
         self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
@@ -1382,7 +1452,7 @@ class TestLand(AltitudeCase):
             self.setenv(key, None)
         self.staged_change()
         (self.repo / "anything.txt").write_text("unselected work\n")
-        with self.assertRaisesRegex(land.LandError, "cannot verify commit provenance"):
+        with self.assertRaisesRegex(land.LandError, "--project"):
             land.land("fix: undeclared", cwd=self.repo, wait=0)
         self.assertEqual(self.git("write-tree"), self.selected_index)
         self.assertEqual(self.gh_log(), [])
@@ -1414,8 +1484,10 @@ class TestCheckEvidence(AltitudeCase):
         self.git("add", self.workflow_path)
         self.git("commit", "-q", "-m", "Initial workflow")
         self.git("push", "-q", "origin", "main")
-        self.git("checkout", "-q", "-b", "worktree-fix-x")
-        S.save_task("demo", {"slug": "fix-x", "state": "running", "paths": ["src", ".github/workflows"]})
+        self.project_repo = self.repo
+        self.repo = add_worktree(self.project_repo, "fix-x")
+        S.save_task("demo", {"slug": "fix-x", "state": "running", "paths": ["src", ".github/workflows"],
+                             "worktree": str(self.repo), "branch": "worktree-fix-x"})
         for key, value in {"ALTITUDE_PROJECT": "demo", "ALTITUDE_TASK": "fix-x",
                            "ALTITUDE_ACTOR": "burak", "ALTITUDE_ATTEMPT": ""}.items():
             self.setenv(key, value)
@@ -1474,7 +1546,7 @@ class TestCheckEvidence(AltitudeCase):
     def test_stale_base_metadata_with_incorporated_main_and_exact_merge_checks_lands(self):
         original_base = self.base
         self.diverge_base()
-        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main\n\nAltitude-Task: demo/fix-x")
+        self.git("merge", "--no-ff", "origin/main", "-m", "Incorporate main")
         saved = json.loads((self.ghdir / "pr.json").read_text())
         saved["baseRefOid"] = original_base
         S.write_json(self.ghdir / "pr.json", saved)
@@ -1604,13 +1676,6 @@ class TestCheckEvidence(AltitudeCase):
 
     def test_adopted_pr_with_inapplicable_job_merges_and_preserves_history(self):
         self.git("push", "-q", "origin", "HEAD:proposal/external")
-        self.git("checkout", "-q", "main")
-        worktree = self.tmp / "task-worktree"
-        self.git("worktree", "add", str(worktree), "worktree-fix-x")
-        self.repo = worktree
-        task = S.load_task("demo", "fix-x")
-        task.update(worktree=str(worktree), branch="worktree-fix-x")
-        S.save_task("demo", task)
         pull = json.loads((self.ghdir / "pr.json").read_text())
         pull.update(url="https://github.com/team/demo/pull/101", headRefName="proposal/external",
                     isCrossRepository=False, isDraft=False, reviewDecision="APPROVED")

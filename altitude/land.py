@@ -1,6 +1,6 @@
 """The guarded land-a-PR sequence as one deterministic command.
 
-Commit the owner's staged changes with the Altitude trailer, leaving working and untracked edits intact,
+Commit the owner's staged changes, leaving working and untracked edits intact,
 push with one force-with-lease retry against the branch tip recorded before committing (never two), open or
 reuse the PR, wait for checks, merge only on green — or, under the project's local-check policy, on a
 full local suite that passed on the base-plus-head merge candidate — and only when asked. No
@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, git_policy, github_intake, state as S
+from . import config, dispatch, github_intake, state as S
 
 CHECK_POLL_SECONDS = 15
 LOCAL_TEST_TIMEOUT = 1800
@@ -106,6 +106,26 @@ def _require_current_publisher(project: str, slug: str, task: dict, authority: d
         raise LandError(f"current L2 cannot land {project}/{slug}: attempt {attempt} is no longer current")
 
 
+def _require_task_checkout(root: Path, project: str, slug: str, task: dict, branch: str) -> None:
+    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "task Git directory")
+    repo = config.project_path(project).resolve()
+    repo_common = _need(_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"), "project Git directory")
+    if (not task.get("worktree") or root.resolve() != Path(task["worktree"]).resolve()
+            or root.resolve() == repo or common != repo_common
+            or branch != f"worktree-{slug}" or task.get("branch") != branch):
+        raise LandError("landing requires this task's registered isolated worktree and branch in its repository")
+
+
+def _require_unowned_pr(project: str, slug: str, branch: str, number: int | None = None) -> None:
+    """Inspect existing ownership records under the caller's project lock."""
+    for other in S.list_tasks(project):
+        adopted = other.get("adopted_pr") or {}
+        if other["slug"] != slug and other["state"] in S.OPEN_STATES and (
+                adopted.get("branch") == branch or other.get("branch") == branch
+                or number is not None and (adopted.get("number") == number or number in other.get("prs", []))):
+            raise LandError(f"PR or branch already belongs to task {other['slug']}")
+
+
 def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     """Refresh and return origin/<branch>; a branch that does not exist yet has no tip to lease."""
     ref = f"refs/remotes/origin/{branch}"
@@ -122,7 +142,7 @@ def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     return tip.stdout.strip()
 
 
-def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str | None,
+def _push(root: Path, branch: str, recorded_tip: str | None,
           *, source_branch: str | None = None) -> list[str]:
     """Push normally; only ordinary task branches may retry against the recorded remote-tip lease."""
     refspec = f"refs/heads/{source_branch}:refs/heads/{branch}" if source_branch else branch
@@ -152,16 +172,6 @@ def _push(root: Path, branch: str, base: str, task_ref: str, recorded_tip: str |
             f"force-with-lease push refused — recorded remote tip: {recorded_tip}; current remote tip: "
             f"{current}. Run `git fetch origin {branch}`, look at the foreign commits, rebase by hand, then "
             "re-run `alt land`. Local HEAD adds no commits outside the recorded remote history"
-        )
-    try:
-        missing = git_policy.commits_missing_task_trailer(root, base, task_ref)
-    except git_policy.GitPolicyError as exc:
-        raise LandError(f"cannot revalidate provenance after rebase: {exc}") from exc
-    if missing:
-        sample = ", ".join(sha[:12] for sha in missing[:5])
-        raise LandError(
-            f"rebased branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
-            "stopping before the second push"
         )
     audit = _need(
         _git(root, "rev-list", "--oneline", "--max-count=10", recorded_tip, "^HEAD"),
@@ -231,19 +241,12 @@ def _require_closing_issues(root: Path, number: int, issues: list[int]) -> None:
         raise LandError(f"PR #{number} must target GitHub's default branch {default_branch!r} to close issues")
 
 
-def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base: str,
+def _adoption(root: Path, task: dict, base: str,
               number: int | None, expected_head: str | None, reason: str | None) -> tuple[dict | None, dict | None]:
     """Explicitly select one PR/head at a time in this project's isolated task checkout."""
     receipt = task.get("adopted_pr")
     if number is None and not receipt:
         return None, None
-    expected_path = Path(task.get("worktree") or config.project_path(project))
-    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "task Git directory")
-    repo_common = _need(_git(config.project_path(project), "rev-parse", "--path-format=absolute",
-                            "--git-common-dir"), "project Git directory")
-    if (root.resolve() != expected_path.resolve() or root.resolve() == config.project_path(project).resolve()
-            or common != repo_common or branch != f"worktree-{slug}"):
-        raise LandError("PR adoption requires this task's isolated worktree and branch in its registered repository")
     origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
     match = github_intake._REMOTE.fullmatch(origin)
     if not match:
@@ -258,7 +261,7 @@ def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base
         _need(_git(root, "merge-base", "--is-ancestor", previous_merge, f"origin/{base}"),
               "previous delivery is not on current main")
     if receipt and number is not None and number != receipt["number"]:
-        # #266: continuation requires completed, preserved history, never a wider provenance exception.
+        # #266: finish each assigned PR before selecting the next.
         if any(old["number"] == number for old in task.get("adoption_history", [])):
             raise LandError("cannot reactivate an earlier adoption receipt")
         previous = _pr_view(root, str(receipt["number"])) or {}
@@ -276,6 +279,9 @@ def _adoption(root: Path, project: str, slug: str, task: dict, branch: str, base
     if receipt and (receipt["base"] != base or receipt["origin"] != origin
                     or number is not None and (number != receipt["number"] or expected_head != receipt["head"])):
         raise LandError("adopted PR identity is immutable; cannot change its PR, base, origin, or original head")
+    if receipt:
+        _need(_git(root, "merge-base", "--is-ancestor", receipt["head"], "HEAD"),
+              "adopted PR head is not an ancestor of HEAD; preserve its history")
     pr = _pr_view(root, str(receipt["number"] if receipt else number))
     url = f"https://github.com/{match['owner']}/{match['repo']}/pull/{receipt['number'] if receipt else number}"
     allowed_states = ("OPEN", "MERGED") if receipt else ("OPEN",)
@@ -311,12 +317,7 @@ def _record_adoption(project: str, slug: str, receipt: dict, authority: dict | N
         _require_current_publisher(project, slug, current, authority)
         if current.get("adopted_pr") != previous:
             raise LandError("task adoption changed during landing")
-        for other in S.list_tasks(project):
-            adopted = other.get("adopted_pr") or {}
-            if other["slug"] != slug and other["state"] in S.OPEN_STATES and (
-                    adopted.get("number") == receipt["number"] or adopted.get("branch") == receipt["branch"]
-                    or other.get("branch") == receipt["branch"] or receipt["number"] in other.get("prs", [])):
-                raise LandError(f"PR or branch already belongs to task {other['slug']}")
+        _require_unowned_pr(project, slug, receipt["branch"], receipt["number"])
         if dry_run or previous == receipt:
             return receipt, current.get("hold_merge")
         receipt = {**receipt, "actor": (authority or {}).get("actor") or os.environ.get("ALTITUDE_ACTOR", "operator"),
@@ -352,6 +353,7 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
     with S.project_lock(project):
         current = S.load_task(project, slug)
         _require_current_publisher(project, slug, current, authority)
+        _require_unowned_pr(project, slug, branch, number)
         if current.get("adopted_pr") != task.get("adopted_pr"):
             raise LandError("task adoption changed during landing")
         old = current.get("delivery") or {}
@@ -374,7 +376,7 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
         return current
 
 
-def _continuation_base(root: Path, project: str, slug: str, task: dict, branch: str,
+def _continuation_base(root: Path, branch: str,
                        base: str, pr: dict, dirty: bool, remote_tip: str | None) -> str | None:
     """Separate the already merged head from follow-up, including a retry after reconciliation."""
     head = _need(_git(root, "rev-parse", "HEAD"), "local head")
@@ -398,14 +400,6 @@ def _continuation_base(root: Path, project: str, slug: str, task: dict, branch: 
     if _need(_git(root, "rev-list", "--merges", f"{cutoff}..HEAD"), "follow-up merges"):
         raise LandError("follow-up contains merge commits; reconcile that work onto current main in this "
                         "task worktree before landing, preserving any merge-resolution edits")
-    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "task Git directory")
-    repo_common = _need(_git(config.project_path(project), "rev-parse", "--path-format=absolute",
-                            "--git-common-dir"), "project Git directory")
-    if (root.resolve() != Path(task.get("worktree") or "").resolve()
-            or root.resolve() == config.project_path(project).resolve() or common != repo_common
-            or task.get("branch") != f"worktree-{slug}"
-            or _need(_git(root, "branch", "--show-current"), "task branch") != task.get("branch")):
-        raise LandError("continuation requires this task's registered isolated worktree and branch")
     if remote_tip and remote_tip != previous_head:
         _need(_git(root, "merge-base", "--is-ancestor", remote_tip, "HEAD"),
               "continuation remote branch has unseen work; incorporate it before landing")
@@ -700,14 +694,18 @@ def _fetch_rev(root: Path, ref: str) -> str:
     return _need(_git(root, "rev-parse", "FETCH_HEAD"), f"cannot resolve origin/{ref} after fetching it")
 
 
+def _require_pr_target(pr: dict, branch: str, base: str) -> None:
+    if pr.get("baseRefName") != base or pr.get("headRefName") != branch:
+        raise LandError(f"PR #{pr.get('number')} targets {pr.get('baseRefName')!r} from {pr.get('headRefName')!r}, not "
+                        f"the expected {base!r} from {branch!r}")
+
+
 def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_head: str) -> dict:
     """Pin the exact GitHub PR base/head pair that check classification and local testing will judge."""
     pr = _pr_view(root, str(number)) or {}
     if pr.get("state") != "OPEN":
         raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
-    if pr.get("baseRefName") != base or pr.get("headRefName") != branch:
-        raise LandError(f"PR #{number} targets {pr.get('baseRefName')!r} from {pr.get('headRefName')!r}, not "
-                        f"the expected {base!r} from {branch!r}")
+    _require_pr_target(pr, branch, base)
     # #266: baseRefOid is PR metadata and may lag the actual branch after main is incorporated.
     base_sha, fetched_head = _fetch_rev(root, base), _fetch_rev(root, branch)
     head_sha = pr.get("headRefOid")
@@ -881,7 +879,7 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
            *, preserve_history: bool = False) -> tuple[bool, dict | None]:
     """Merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
     local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
-    PR head changed after the commit whose provenance and checks this invocation validated."""
+    PR head changed after the candidate this invocation validated."""
     method = ["--merge"] if preserve_history else ["--squash", "--delete-branch"]
     m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
@@ -1027,7 +1025,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     project, slug, task = _resolve(branch, project)
     if task is None or not project or not slug:
         raise LandError(
-            f"cannot verify commit provenance for branch {branch!r}: no task record resolved; "
+            f"cannot verify task ownership for branch {branch!r}: no task record resolved; "
             "pass `--project` or run from the dispatch environment"
         )
     hold_merge = task.get("hold_merge")
@@ -1042,26 +1040,18 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     # fence in the library rather than only in bin/alt so direct callers cannot
     # bypass current-publisher ownership.
     _require_current_publisher(project, slug, task, authority=authority)
+    _require_task_checkout(root, project, slug, task, branch)
+    with S.project_lock(project):
+        _require_unowned_pr(project, slug, branch)
     fetched = _git(root, "fetch", "-q", "origin", base)
     if fetched.returncode != 0:
         raise LandError(f"git fetch origin {base}: {(fetched.stderr or fetched.stdout).strip()[-300:]}")
     # Record the branch tip before committing: a later force may replace only this exact
     # remote history, and a push from another worker after this point must make the lease fail.
-    adoption, pr = _adoption(root, project, slug, task, branch, base, adopt_pr, expected_head, reason)
+    adoption, pr = _adoption(root, task, base, adopt_pr, expected_head, reason)
     publish_branch = adoption["branch"] if adoption else branch
     recorded_tip = None if adoption else _fetch_remote_tip(root, branch)
     task_ref = f"{project}/{slug}"
-    try:
-        missing = git_policy.commits_missing_task_trailer(
-            root, base, task_ref, adopted_head=adoption["head"] if adoption else None)
-    except git_policy.GitPolicyError as exc:
-        raise LandError(f"cannot verify commit provenance: {exc}") from exc
-    if missing:
-        sample = ", ".join(sha[:12] for sha in missing[:5])
-        raise LandError(
-            f"branch has commit(s) without exact `Altitude-Task: {task_ref}` provenance: {sample}; "
-            "refusing before committing or pushing" + ("" if adoption else ", or contacting GitHub")
-        )
     lease = dispatch.task_paths(project, task)
     staged_diff = _git(root, "diff", "--cached", "--name-only", "--no-renames", "-z")
     _need(staged_diff, "staged changes")
@@ -1079,9 +1069,13 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption}
     if not adoption:
         pr = _pr_view(root, branch)
+        if pr:
+            _require_pr_target(pr, branch, base)
+        with S.project_lock(project):
+            _require_unowned_pr(project, slug, branch, (pr or {}).get("number"))
     cutoff, continued_pr = None, None
     if pr is not None and pr.get("state") == "MERGED":
-        cutoff = _continuation_base(root, project, slug, task, publish_branch, base, pr, bool(changed), recorded_tip)
+        cutoff = _continuation_base(root, publish_branch, base, pr, bool(changed), recorded_tip)
         if cutoff is None:
             return _merged_retry(root, project, slug, task, authority, branch, base, pr, lease, closes_issues)
         continued_pr = pr
@@ -1103,8 +1097,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         task = _record_delivery(project, slug, task, authority, branch=publish_branch,
                                 base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
     if changed:
-        body = message.rstrip("\n") + f"\n\nAltitude-Task: {task_ref}"
-        _need(_git(root, "commit", "-m", body), "git commit")
+        _need(_git(root, "commit", "-m", message), "git commit")
         commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
         staged = changed
         _note(f"committed {commit[:7]} ({len(staged)} path(s))")
@@ -1124,7 +1117,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
-    replaced = _push(root, publish_branch, base, task_ref, recorded_tip,
+    replaced = _push(root, publish_branch, recorded_tip,
                      source_branch=branch if adoption else None)
     pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
     _note(f"pushed head {pushed_head}")

@@ -61,7 +61,7 @@ task also persists a due `resume_after` request, except non-waking coordinator d
 faulted task and messages held by Stop. Stop records its identity when accepted, before termination,
 so old or racing sends cannot restart the session. A correction must name the confirmed Stop it
 observed; explicit Continue releases the same held inbox. An L3 CLI process stops there: altd coalesces that
-request with timer and capacity-available wakes, then owns Git provenance validation and provider relaunch. A
+request with timer and capacity-available wakes, then owns Git isolation validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
@@ -318,23 +318,27 @@ evidence available through inspection commands.
 ## Isolation and landing
 
 Each task uses the isolated worktree path `.claude/worktrees/<slug>` and branch `worktree-<slug>`,
-based on the exact fetched `origin/main`. Task commits require the task provenance trailer. Protected
-branches cannot be updated outside the guarded landing path. The trusted landing code validates the
-task ownership and repository, fetches the base, commits the selected index, pushes, opens the PR,
+based on the exact fetched `origin/main`. Ownership belongs to the task and PR; commit messages,
+including historical labels, are ordinary text. Before mutation or publication, trusted landing
+validates the current worker, registered checkout and repository, and excludes PRs or branches
+owned by other active tasks. Protected branches require the guarded landing path. Landing
+fetches the base, commits the selected index, pushes, opens the PR,
 pins the current base/head pair, waits for configured checks, and merges only
-when requested and allowed. A task may carry an explicit merge hold for Burak review.
+when requested and allowed. A task may carry an explicit merge hold for operator review.
 The temporary local-check repository in `config.py` selects this project's operator-authorized
 exception. Its landing runs `make check` on the existing synthetic merge candidate, with frozen
 web dependencies, even when opening a PR without merging. Historical hosted results do not supply
 its verdict. Active required hosted checks must be removed by the operator before this route can
-run; identity, provenance, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
+run; identity, isolation, review and hold checks remain enforced. The task's `local-checks/<candidate>/`
 retains logs, browser artifacts and a result binding command, base, head, candidate and tree.
 Suite timeouts retain captured stdout and stderr with the timeout diagnostic and a failed result. A
 successful current run writes a concise PR test line through the ordinary landing boundary.
 See [policy, bootstrap and restoration](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
-unstaged and untracked work. Parallel tasks may edit shared paths; their briefs
+unstaged and untracked work. Before pushing, the owner reviews all outgoing commits and the complete
+PR diff for scope and privacy, including intermediate content absent from the final tree.
+Parallel tasks may edit shared paths; their briefs
 name those paths and ask owners to rebase onto main before landing and keep shared-doc edits to
 their own sections. If main moves, the owner runs `git rebase origin/main` in the task worktree;
 an unresolved conflict is an ordinary `alt task block` to L3, never a system fault. Landing does
@@ -415,18 +419,17 @@ assignment reason. Before switching, landing verifies the previous PR's merge an
 head ancestry on current main. It retains the previous receipt unchanged in `adoption_history`,
 records the verified previous merge in the new receipt, and atomically selects the next active PR.
 Retries preserve receipts; incomplete deliveries, reactivation of earlier receipts and concurrent
-target changes refuse. Landing, resume provenance and recorded hold approval use the active receipt.
-The history grants no additional provenance exceptions or authority over unrelated PRs.
+target changes refuse. Landing, resume ancestry validation and recorded hold approval use the active
+receipt. The history grants no authority over unrelated PRs.
 If recorded approval released the previous PR's hold, the next adoption restores the original
 requirement for a separate PR-bound scope judgment and release. A later explicit task-wide release
 remains effective.
 
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
-Only unowned ancestors of that original head are exempt from task trailers; foreign task trailers
-and later unowned commits refuse landing and resume. The original head must remain an ancestor.
+The original head must remain an ancestor during landing and resume.
 The task keeps its local branch and publishes a fast-forward refspec to the original PR branch;
-adopted pushes never retry with force. To incorporate main, the owner makes a merge commit with the
-task trailer, preserving the adopted history. Adoption cannot be widened to a later external head.
+adopted pushes never retry with force. The owner incorporates main with a merge commit, preserving
+the adopted history. Adoption cannot be widened to a later external head.
 The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
 and the live task owner/hold/active receipt are rechecked before merging. The fetched base branch
 is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
@@ -471,7 +474,7 @@ carries that receipt; local refusals record `merge-approval-refused`. Release le
 question state intact. Direct `--off` is operator-only.
 
 A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
-daemon-side resume fast-forward it before the provenance gate reads it, so a PR another task merged
+daemon-side resume fast-forward it before Git validation reads it, so a PR another task merged
 while it was still running no longer refuses every launch in the window until that task's report
 lands. A sandboxed coordinator never performs this fetch on behalf of a message. The move is the
 same guarded fast-forward that runs after a task lands, and it happens only when the checkout is
@@ -565,7 +568,7 @@ The engine seam reports allowance scope and an optional reset. A named model all
 that model, never unrelated models or engines. An unknown reset creates no resume timer or global
 timed hold; the existing routing observation expires after thirty minutes without claiming a reset.
 A provider-reported reset schedules resumption. Fresh attempts retain the existing worktree, including
-uncommitted work, and validate its branch and commit provenance. Task conversations, worker evidence,
+uncommitted work, and validate its checkout and adopted ancestry. Task conversations, worker evidence,
 PRs, expected files, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour
 window), and leaves an FYI and one message in that same project's L3 queue; a repeat of that kind

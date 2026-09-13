@@ -84,7 +84,7 @@ until cumulative delivery satisfies its full scope and required acceptance. See
 An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
 Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
 The owner inspects and incorporates its history in the task worktree first. Adoption records that
-specific PR and original head; later task commits retain their provenance trailers. Updates go to
+specific PR and original head. Commit messages need no ownership labels or repair. Updates go to
 the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
 commit history without requesting branch deletion. An explicitly assigned next PR can be adopted
 after the previous merge and its preserved history are verified on main; earlier receipts remain
@@ -127,8 +127,8 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   An explicit question block survives worker exit and restart; older queued messages do not
   resume it. A later message or explicit Resume brings the session back.
 - **Independent execution.** Owners choose how to investigate, implement and use native helpers.
-  Worktrees isolate changes; planned files guide coordination. Owners select and review the staged
-  changes that `alt land` commits; checks and PRs make delivery reviewable.
+  Worktrees isolate changes; planned files guide coordination. Owners review selected changes and
+  all outgoing history for scope and privacy before `alt land` publishes through their assigned PR.
   Shared-file changes still need rebasing and reconciliation by their owners.
 - **Selective attention.** Needs you collects unresolved dilemmas across projects. Each item
   makes the task's purpose and actual choice clear with one question or a small group together,

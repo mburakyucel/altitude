@@ -27,21 +27,21 @@ class TestDispatchWorktreePolicy(AltitudeCase):
         self.assertEqual(git("branch", "--show-current", cwd=worktree).strip(), "worktree-safe-task")
         (worktree / "safe.txt").write_text("safe\n")
         git("add", "safe.txt", cwd=worktree)
-        git("commit", "-q", "-m", "safe", "-m", "Altitude-Task: demo/safe-task", cwd=worktree)
+        git("commit", "-q", "-m", "Reviewed manual change", cwd=worktree)
 
         self.assertEqual(dispatch._task_worktree(self.repo, "demo", "safe-task", self.origin_sha), worktree)
 
-    def test_existing_branch_with_direct_commit_is_refused(self):
-        T.new("demo", "Bad task", "Verify provenance refusal")
-        staging = self.repo / ".claude" / "worktrees" / "bad-task"
-        git("worktree", "add", "-q", "-b", "worktree-bad-task", str(staging), self.origin_sha, cwd=self.repo)
-        (staging / "bad.txt").write_text("bad\n")
-        git("add", "bad.txt", cwd=staging)
-        git("commit", "-q", "-m", "direct commit", cwd=staging)
-
-        with self.assertRaisesRegex(T.TransitionError, "without exact.*provenance"):
-            dispatch._task_worktree(self.repo, "demo", "bad-task", self.origin_sha)
-        self.assertTrue(staging.exists())
+    def test_existing_task_history_with_old_foreign_labels_is_reused_unchanged(self):
+        T.new("demo", "Assigned task", "Resume reviewed assigned history")
+        worktree = dispatch._task_worktree(self.repo, "demo", "assigned-task", self.origin_sha)
+        message = "Reviewed inherited change\n\nAltitude-Task: demo/previous-owner"
+        (worktree / "assigned.txt").write_text("assigned\n")
+        git("add", "assigned.txt", cwd=worktree)
+        git("commit", "-q", "-m", message, cwd=worktree)
+        head = git("rev-parse", "HEAD", cwd=worktree)
+        self.assertEqual(dispatch._task_worktree(self.repo, "demo", "assigned-task", self.origin_sha), worktree)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=worktree), head)
+        self.assertEqual(git("show", "-s", "--format=%B", "HEAD", cwd=worktree).strip(), message)
 
     def test_orphan_task_branch_is_not_reattached_after_validation_races(self):
         staging = self.tmp / "orphan-staging"
