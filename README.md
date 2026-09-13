@@ -88,10 +88,9 @@ specific PR and original head. Commit messages need no ownership labels or repai
 the original PR branch through fast-forward pushes, and a checked, reviewed `--merge` preserves
 commit history without requesting branch deletion. An explicitly assigned next PR can be adopted
 after the previous merge and its preserved history are verified on main; earlier receipts remain
-immutable. Checks bind to the current base and head. A skipped job is exempt only when authoritative
-workflow evidence proves it inapplicable and it is not required. Supported conditions are the
-[main-push conjunction](docs/CLI.md#adopt-an-existing-pr) and `github.event_name != 'pull_request'`,
-the latter only for a `pull_request` run. Task scope and merge holds still apply.
+immutable. Checks bind to the current base and head. Nonrequired skipped checks do not block delivery;
+required checks must succeed, and hosted CI needs at least one actual success. Failed or pending
+checks still block. Task scope and merge holds still apply.
 
 Operator decisions in task chat, project chat and the UI authorize delivery within their actual scope,
 including routine integration. L3 applies [recorded merge approval](docs/CLI.md#recorded-merge-approval)

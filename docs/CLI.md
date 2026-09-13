@@ -929,15 +929,12 @@ active PR only when that decision covers its work; restoration does not invent a
 Complete the repository's applicable review before `--merge`. Drafts, requested changes and
 outstanding required reviews block adopted merges. Checks must belong to the pinned base/head
 candidate. Required checks, including those specified by active branch rules, must pass; missing,
-ambiguous, unrelated or required skipped checks are not green. A nonrequired skipped Actions job
-can be excluded only when its executed immutable workflow unambiguously identifies the job and
-proves its complete condition false for the associated PR event. The supported conditions are
-`github.event_name == 'push' && github.ref == 'refs/heads/main'` for `pull_request` or
-`pull_request_target`, and `github.event_name != 'pull_request'` only for `pull_request`.
-The latter is true for `pull_request_target` and cannot exempt its skipped jobs. Both conditions
-accept surrounding `${{ ... }}` and spaces around operators; unsupported expressions or
-ambiguous job/source mappings stay blocked. These rules apply to ordinary and adopted landing.
-At least one applicable check must succeed.
+ambiguous, unrelated or required skipped checks are not green. Completed skipped checks identified
+as nonrequired by GitHub are ignored, regardless of workflow condition or check provider. Altitude
+does not prove why they skipped; a job that must execute needs to be required. Failed, cancelled
+and pending checks still block, including nonrequired checks; pending checks use the normal wait.
+Unknown requiredness remains blocked. These rules apply to ordinary and adopted landing.
+At least one hosted check must actually succeed; entirely skipped CI cannot use the no-CI fallback.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
 default `make test` is unsuitable; it runs on the exact two-parent merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward

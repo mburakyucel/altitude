@@ -1346,13 +1346,13 @@ class TestLand(AltitudeCase):
         self.assertIsNone(result["local_tests"])
         self.assertEqual(self.runner_log(), [])
 
-    def test_a_pass_mixed_with_a_skip_is_skipped_not_a_pass(self):
+    def test_a_pass_with_a_nonrequired_skip_merges_without_local_fallback(self):
         self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}, {"bucket": "skipping"}]')
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         result = land.land("fix: half skipped", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(result["checks"], "skipped")
-        self.assertFalse(result["merged"])
+        self.assertEqual(result["checks"], "pass")
+        self.assertTrue(result["merged"])
         self.assertIsNone(result["local_tests"])
         self.assertEqual(self.runner_log(), [])
 
@@ -1459,16 +1459,14 @@ class TestLand(AltitudeCase):
 
 
 class TestCheckEvidence(AltitudeCase):
-    """#266/#288: real Git candidates and immutable workflow blobs through the shared GitHub transport."""
+    """Real Git candidates and required/optional results through the shared GitHub transport."""
     git = TestLand.git
     clone = TestLand.clone
     advance_base = TestLand.advance_base
     staged_change = TestLand.staged_change
     workflow_path = ".github/workflows/checks.yml"
-    condition = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    source = ("on: [pull_request, push, workflow_dispatch]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
-              "    steps:\n      - run: echo tests\n  deploy:\n    if: " + condition
-              + "\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n")
+    source = ("on: [pull_request, push]\njobs:\n  tests:\n    runs-on: ubuntu-latest\n"
+              "    steps:\n      - run: echo tests\n")
 
     def setUp(self):
         super().setUp()
@@ -1515,12 +1513,10 @@ class TestCheckEvidence(AltitudeCase):
         S.write_json(self.ghdir / "check_evidence.json", self.evidence)
         return land._checks_value(self.repo, 101, self.pair)
 
-    def optional_deploy(self, *, required=False, event="pull_request", revision=None):
+    def optional_deploy(self, *, required=False, event="pull_request"):
         check = copy.deepcopy(self.contexts()["nodes"][0])
         check.update(name="deploy", conclusion="SKIPPED", isRequired=required)
-        check["checkSuite"].update(app={"databaseId": 15368, "slug": "github-actions"}, workflowRun={
-            "event": event, "file": {"path": self.workflow_path, "repositoryName": "team/demo",
-                "repositoryFileUrl": f"https://github.com/team/demo/blob/{revision or self.head}/{self.workflow_path}"}})
+        check["checkSuite"].update(app={"databaseId": 15368}, workflowRun={"event": event})
         self.contexts().update(self.connection([self.contexts()["nodes"][0], check]))
         S.write_json(self.ghdir / "checks.json", [{"bucket": "pass"}, {"bucket": "skipping"}])
         return check
@@ -1649,6 +1645,7 @@ class TestCheckEvidence(AltitudeCase):
                 base["rules"] = self.connection([] if classic else [{"type": "REQUIRED_STATUS_CHECKS",
                     "parameters": {"requiredStatusChecks": [{"context": "absent", "integrationId": None}]}}])
                 self.assertEqual(self.classify(), "skipped")
+                self.assertFalse(land.land("required check missing", cwd=self.repo, wait=0, merge=True)["merged"])
 
     def test_required_app_and_requiredness_are_enforced(self):
         check = self.contexts()["nodes"][0]
@@ -1664,7 +1661,7 @@ class TestCheckEvidence(AltitudeCase):
         with self.assertRaisesRegex(land.LandError, "incomplete"):
             self.classify()
 
-    def test_optional_inapplicable_job_does_not_block_successful_pr_checks(self):
+    def test_optional_skip_does_not_block_successful_pr_checks(self):
         self.optional_deploy()
         self.assertEqual(self.classify(), "pass")
         result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
@@ -1674,7 +1671,7 @@ class TestCheckEvidence(AltitudeCase):
         self.assertTrue(query_calls)
         self.assertTrue(all("owner=team" in a and "repo=demo" in a for a in query_calls))
 
-    def test_adopted_pr_with_inapplicable_job_merges_and_preserves_history(self):
+    def test_adopted_pr_checks_block_then_pass_and_preserve_history(self):
         self.git("push", "-q", "origin", "HEAD:proposal/external")
         pull = json.loads((self.ghdir / "pr.json").read_text())
         pull.update(url="https://github.com/team/demo/pull/101", headRefName="proposal/external",
@@ -1685,6 +1682,7 @@ class TestCheckEvidence(AltitudeCase):
         receipt = S.load_task("demo", "fix-x")["adopted_pr"]
         self.refresh()
         self.optional_deploy()
+        self.assert_blocked_checks()
         self.assertEqual(self.classify(), "pass")
         (self.ghdir / "merge_git.txt").touch()
         result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
@@ -1703,82 +1701,41 @@ class TestCheckEvidence(AltitudeCase):
                 self.assertEqual(self.classify(), "skipped")
                 self.assertFalse(land.land("required deploy skipped", cwd=self.repo, wait=0, merge=True)["merged"])
 
-    def test_required_or_non_actions_skipped_job_remains_blocked(self):
+    def test_required_skip_blocks_and_nonrequired_skip_is_provider_independent(self):
         check = self.optional_deploy(required=True)
         self.assertEqual(self.classify(), "skipped")
         check["isRequired"] = False
-        check["checkSuite"]["app"]["slug"] = "unrelated-app"
-        self.assertEqual(self.classify(), "skipped")
-
-    def test_unsupported_or_ambiguous_job_source_cannot_prove_inapplicability(self):
-        cases = {
-            "unknown condition": self.source.replace(self.condition, "needs.tests.result == 'success'"),
-            "condition true": self.source.replace(self.condition, "github.event_name == 'pull_request'"),
-            "disjunction": self.source.replace(self.condition, self.condition + " || true"),
-            "continued scalar": self.source.replace(self.condition, self.condition + "\n      || true"),
-            "step condition": self.source.replace("    if:", "    steps:\n      - if:"),
-            "custom name": self.source.replace("  tests:\n", "  tests:\n    name: deploy\n"),
-            "duplicate if": self.source.replace("    runs-on: ubuntu-latest\n", "    if: true\n    runs-on: ubuntu-latest\n"),
-            "duplicate jobs": self.source + self.source[self.source.index("jobs:"):],
-            "yaml merge": self.source.replace("  deploy:\n", "  deploy:\n    <<: *defaults\n"),
-            "matrix": self.source.replace("  deploy:\n", "  deploy:\n    strategy:\n      matrix: {os: [ubuntu-latest]}\n"),
-            "job alias": self.source.replace("  deploy:\n", "  deploy: *other\n"),
-            "quoted root jobs": self.source.replace("jobs:", '"jobs":'),
-            "complex root jobs": self.source.replace("jobs:", "? jobs\n:"),
-            "fake jobs inside quoted scalar": 'name: "A workflow name\njobs:\n  deploy:\n    if: ' + self.condition
-                + '\n"\non: pull_request\njobs: {deploy: {runs-on: ubuntu-latest, if: false, steps: [{run: echo hi}]}}\n',
-        }
-        for label, source in cases.items():
-            with self.subTest(source=label):
-                (self.repo / self.workflow_path).write_text(source)
-                self.git("add", self.workflow_path)
-                self.refresh()
-                self.optional_deploy()
-                self.assertEqual(self.classify(), "skipped")
-
-    def test_complete_expression_wrapper_is_supported(self):
-        (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "${{ " + self.condition + " }}"))
-        self.git("add", self.workflow_path)
-        self.refresh()
-        self.optional_deploy()
+        check["checkSuite"].update(app={"databaseId": 987}, workflowRun=None)
+        check["name"] = "Remote optional check / custom name"
         self.assertEqual(self.classify(), "pass")
 
-    def test_unpinned_foreign_or_wrong_workflow_source_is_not_proof(self):
+    def test_skips_use_requiredness_and_candidate_association_without_workflow_source(self):
         check = self.optional_deploy()
-        original = copy.deepcopy(check["checkSuite"]["workflowRun"]["file"])
-        cases = [{"repositoryName": "other/demo"}, {"path": ".github/workflows/other.yml"},
-                 {"repositoryFileUrl": f"https://github.com/team/demo/blob/main/{self.workflow_path}"},
-                 {"repositoryFileUrl": f"https://github.com/team/demo/blob/{'0' * 40}/{self.workflow_path}"},
-                 {"repositoryFileUrl": f"https://github.com/other/demo/blob/{self.head}/{self.workflow_path}"},
-                 {"repositoryFileUrl": None}]
-        for changed in cases:
-            with self.subTest(source=changed):
-                check["checkSuite"]["workflowRun"]["file"] = {**original, **changed}
-                self.assertEqual(self.classify(), "skipped")
+        for event in ("pull_request", "pull_request_target", "push"):
+            with self.subTest(event=event):
+                check["checkSuite"]["workflowRun"] = {"event": event}
+                self.assertEqual(self.classify(), "pass")
+        self.assertFalse(any("expression=" in arg for call in self.gh_log() for arg in call))
 
-    def test_working_tree_cannot_replace_the_executed_workflow_condition(self):
-        (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, "true"))
-        self.git("add", self.workflow_path)
-        self.refresh()
-        self.optional_deploy()
-        (self.repo / self.workflow_path).write_text(self.source)
-        self.assertEqual(self.classify(), "skipped")
+    def test_skipped_check_with_unknown_requiredness_or_wrong_candidate_refuses(self):
+        check = self.optional_deploy()
+        for value in (None, "false", 0):
+            with self.subTest(requiredness=value):
+                check["isRequired"] = value
+                with self.assertRaisesRegex(land.LandError, "lacks requiredness"):
+                    self.classify()
+        check.pop("isRequired")
+        with self.assertRaisesRegex(land.LandError, "incomplete"):
+            self.classify()
+        check["isRequired"] = False
+        check["checkSuite"]["commit"]["oid"] = "0" * 40
+        with self.assertRaisesRegex(land.LandError, "unrelated"):
+            self.classify()
 
-    def test_missing_or_truncated_workflow_blob_cannot_prove_inapplicability(self):
-        self.optional_deploy()
-        for blob in (None, {"text": self.source}, {"text": self.source, "isTruncated": True}):
-            with self.subTest(blob=blob):
-                S.write_json(self.ghdir / "workflow_blob.json", blob)
-                self.assertEqual(self.classify(), "skipped")
-
-    def test_merge_candidate_skip_needs_its_own_source_when_base_and_head_diverge(self):
+    def test_merge_candidate_accepts_nonrequired_skip_when_base_and_head_diverge(self):
         self.diverge_base()
         self.optional_deploy()
-        merge = self.merge_candidate()
-        self.assertEqual(self.classify(), "skipped")
-        skipped = merge["statusCheckRollup"]["contexts"]["nodes"][-1]
-        skipped["checkSuite"]["workflowRun"]["file"]["repositoryFileUrl"] = (
-            f"https://github.com/team/demo/blob/{merge['oid']}/{self.workflow_path}")
+        self.merge_candidate()
         self.assertEqual(self.classify(), "pass")
 
     def test_truncated_connections_never_hide_other_gates(self):
@@ -1802,21 +1759,71 @@ class TestCheckEvidence(AltitudeCase):
         self.merge_candidate(checks=False)
         self.assertEqual(self.classify(), "pass")
 
-    def test_all_inapplicable_jobs_do_not_become_a_green_gate(self):
+    def test_all_skipped_jobs_do_not_become_a_green_gate(self):
         skipped = self.optional_deploy()
         self.contexts().update(self.connection([skipped]))
         S.write_json(self.ghdir / "checks.json", [{"bucket": "skipping"}])
         self.assertEqual(self.classify(), "skipped")
 
-    def test_inapplicable_job_does_not_hide_applicable_failure_or_pending_check(self):
+    def assert_blocked_checks(self):
+        check = self.contexts()["nodes"][0]
+        original = copy.deepcopy(check)
+        base = self.pr["baseRef"]
+        cases = [("COMPLETED", conclusion, "fail") for conclusion in
+                 ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")]
+        cases += [("IN_PROGRESS", None, "pending"), ("QUEUED", "SKIPPED", "pending"),
+                  ("COMPLETED", "SKIPPED", "skipped"), ("COMPLETED", "NEUTRAL", "skipped"),
+                  ("COMPLETED", None, "skipped")]
+        for required in (False, True):
+            check["isRequired"] = required
+            base["branchProtectionRule"] = {"requiredStatusChecks": [
+                {"context": check["name"], "app": None}]} if required else None
+            for status, conclusion, expected in cases:
+                with self.subTest(required=required, status=status, conclusion=conclusion):
+                    check.update(status=status, conclusion=conclusion)
+                    self.assertEqual(self.classify(), expected)
+                    result = land.land("check is not green", cwd=self.repo, wait=0, merge=True)
+                    self.assertEqual((result["checks"], result["merged"]), (expected, False))
+                    self.assertIsNone(result["local_tests"])
+        check.clear()
+        check.update(original)
+        base["branchProtectionRule"] = None
+
+    def test_optional_skip_does_not_hide_required_or_nonrequired_blockers(self):
+        self.optional_deploy()
+        self.assert_blocked_checks()
+
+    def test_status_contexts_require_success_and_never_use_the_check_run_skip_exemption(self):
+        self.optional_deploy()
+        status = {"__typename": "StatusContext", "context": "legacy-tests",
+                  "commit": {"oid": self.head}}
+        self.contexts().update(self.connection([*self.contexts()["nodes"], status]))
+        for required in (False, True):
+            status["isRequired"] = required
+            self.pr["baseRef"]["branchProtectionRule"] = {"requiredStatusChecks": [
+                {"context": "legacy-tests", "app": None}]} if required else None
+            for state, expected in (("SUCCESS", "pass"), ("FAILURE", "fail"), ("ERROR", "fail"),
+                                    ("PENDING", "pending"), ("SKIPPED", "skipped")):
+                with self.subTest(required=required, state=state):
+                    status["state"] = state
+                    self.assertEqual(self.classify(), expected)
+
+    def test_pending_required_check_waits_then_merges_on_success(self):
         self.optional_deploy()
         check = self.contexts()["nodes"][0]
-        for status, conclusion, expected in (("COMPLETED", "FAILURE", "fail"), ("IN_PROGRESS", None, "pending")):
-            with self.subTest(expected=expected):
-                check.update(status=status, conclusion=conclusion)
-                self.assertEqual(self.classify(), expected)
-                result = land.land("applicable check is not green", cwd=self.repo, wait=0, merge=True)
-                self.assertEqual((result["checks"], result["merged"]), (expected, False))
+        check.update(status="IN_PROGRESS", conclusion=None, isRequired=True)
+        self.pr["baseRef"]["branchProtectionRule"] = {"requiredStatusChecks": [
+            {"context": check["name"], "app": None}]}
+        self.assertEqual(self.classify(), "pending")
+
+        def finish_check(_seconds):
+            check.update(status="COMPLETED", conclusion="SUCCESS")
+            S.write_json(self.ghdir / "check_evidence.json", self.evidence)
+
+        with mock.patch.object(land.time, "sleep", side_effect=finish_check) as sleep:
+            result = land.land("required check finishes", cwd=self.repo, wait=10, merge=True)
+        sleep.assert_called_once()
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
 
     def test_buckets_without_candidate_evidence_cannot_enter_no_ci_fallback(self):
         self.pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
@@ -1833,29 +1840,6 @@ class TestCheckEvidence(AltitudeCase):
                 S.write_json(self.ghdir / "graphql_response.json", response)
                 with self.assertRaises(land.LandError):
                     self.classify()
-
-
-class TestPullRequestExcludedCheckEvidence(TestCheckEvidence):
-    """Run the same landing and evidence protections for the #288 condition."""
-    condition = "github.event_name != 'pull_request'"
-    source = TestCheckEvidence.source.replace(TestCheckEvidence.condition, condition)
-
-    def test_condition_true_for_target_or_push_run_cannot_exempt_skipped_job(self):
-        for event in ("pull_request_target", "push"):
-            with self.subTest(event=event):
-                self.optional_deploy(event=event, revision=self.base)
-                self.assertEqual(self.classify(), "skipped")
-                self.assertFalse(land.land("deployment was applicable", cwd=self.repo, wait=0, merge=True)["merged"])
-
-    def test_event_inequality_only_accepts_the_exact_pull_request_literal(self):
-        for condition in ("github.event_name != 'push'", "github.event_name != 'pull_request_target'",
-                          "github.event_name != inputs.event", "github.event_name != 'pull_request' && true"):
-            with self.subTest(condition=condition):
-                (self.repo / self.workflow_path).write_text(self.source.replace(self.condition, condition))
-                self.git("add", self.workflow_path)
-                self.refresh()
-                self.optional_deploy()
-                self.assertEqual(self.classify(), "skipped")
 
 
 if __name__ == "__main__":

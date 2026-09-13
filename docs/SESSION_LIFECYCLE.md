@@ -577,10 +577,9 @@ PR branch. Merge main when necessary to preserve the adopted
 commits. No adopted push uses force, and adoption never expands to a later external head.
 Checks bind to the current authoritative base/head and candidate, tolerating stale `baseRefOid`
 metadata while refusing actual movement. Missing or skipped required checks remain blocked;
-only a nonrequired job whose immutable executed workflow proves it inapplicable can be excluded.
-Supported conditions are the [main-push conjunction](CLI.md#adopt-an-existing-pr) and
-`github.event_name != 'pull_request'`, the latter only for a `pull_request` run, never
-`pull_request_target`. Unknown conditions remain blocked; at least one applicable check must pass.
+nonrequired skipped checks are ignored without interpreting workflow conditions. Failed, cancelled
+and pending checks still block, including nonrequired checks. Unknown requiredness and ambiguous
+candidate evidence refuse delivery; at least one hosted check must actually pass.
 Review blockers, required checks and merge holds apply to the reused PR; the owner, active PR and hold are
 checked again immediately before merge. Recorded operator approval matches the adopted PR's
 number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains

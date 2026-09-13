@@ -184,13 +184,6 @@ elif cmd == ("api", "graphql"):
     variables = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args[:-1]) if arg in ("-F", "-f"))
     if read("graphql_response.json") is not None:
         print(read("graphql_response.json"))
-    elif "expression" in variables:
-        # Workflow evidence is read at the exact requested Git revision, never the working tree.
-        source = subprocess.run(["git", "show", variables["expression"]], capture_output=True, text=True)
-        blob = {"text": source.stdout, "isTruncated": False} if source.returncode == 0 else None
-        if read("workflow_blob.json") is not None:
-            blob = json.loads(read("workflow_blob.json"))
-        print(json.dumps({"data": {"repository": {"object": blob}}}))
     elif read("check_evidence.json") is not None:
         print(json.dumps({"data": {"repository": json.loads(read("check_evidence.json"))}}))
     else:
