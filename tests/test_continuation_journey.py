@@ -41,7 +41,7 @@ class TestContinuationJourney(AltitudeCase):
         target.parent.mkdir(exist_ok=True, parents=True)
         target.write_text(content)
         git("add", path, cwd=self.worktree)
-        git("commit", "-q", "-m", message, "-m", f"Altitude-Task: {self.project}/{self.slug}", cwd=self.worktree)
+        git("commit", "-q", "-m", message, cwd=self.worktree)
         return git("rev-parse", "HEAD", cwd=self.worktree).strip()
 
     def resume_with_message(self, text):

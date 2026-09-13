@@ -96,7 +96,7 @@ keys the edit-count telemetry across worker replacements.
 ```text
 queued task
   ├─ self-deploy checkout fast-forwarded to origin/main
-  ├─ WIP and Git provenance gates
+  ├─ WIP and Git isolation gates
   ├─ highest available preference tier, then weekly headroom (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
   ├─ create the provider session in the isolated task worktree
@@ -109,7 +109,8 @@ landing, and keeps shared-doc edits in that task's own sections. Status shows ex
 informational overlaps. Owners can edit newly needed files within the authorized objective without
 another permission or resume. L3 and the operator can update the advisory list with `alt task paths`.
 The owner selects files or hunks with `git add` and reviews `git diff --cached`; `alt land` commits
-that index and leaves unstaged and untracked work intact.
+that index and leaves unstaged and untracked work intact. Before publication, the owner reviews all
+outgoing commits and the complete PR diff for scope and privacy, including intermediate content.
 
 Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
@@ -146,7 +147,7 @@ cap can exceed a machine cap lowered later; the aggregate gate still applies. Re
 restores 8 even if the machine cap is lower. Changes need no task slot or service restart.
 
 When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
-the provenance gate reads it, and announces activation pending if the pull carried loaded backend code
+Git validation reads it, and announces activation pending if the pull carried loaded backend code
 or a tracked web build input. Only a clean checkout on main that is strictly behind moves; every other
 state still refuses the dispatch.
 
@@ -453,7 +454,7 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 2. `resume_after` makes a message request or operational retry due; an exhausted window of a pinned engine or a
    WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
 3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
-   worktree and commit provenance are validated, and a worker that is still live is stopped first;
+   checkout and adopted ancestry are validated, and a worker that is still live is stopped first;
    systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
    Unknown or unavailable status refuses the launch and preserves the claimed inbox for recovery;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
@@ -461,7 +462,7 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    alter that attempt. The replacement worker is bound atomically; a superseded bind stops the unowned
    worker and keeps the newer question. Launch failures and uncertain worker ownership retain incident
    evidence without changing a newer question's wait. A genuine
-   provenance or relaunch fault restores the claimed batch, consumes only the generation it tried, and blocks
+   Git validation or relaunch fault restores the claimed batch, consumes only the generation it tried, and blocks
    normally until another explicit request. A newer message carries a newer generation and stays due. A
    coordinator filesystem restriction never reaches this trusted boundary.
    An explicit resume receipt also consumes only its original block and request; it cannot remove the
@@ -524,7 +525,7 @@ finished tasks and decision-only waits, and checks task/project pins and target 
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
 and configured target options again, preserves committed and uncommitted work in the existing worktree,
-validates provenance, and increments the attempt only when the fresh worker binds. The target is then
+validates isolation and adopted ancestry, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
 survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before
 requesting a live handoff, and observes the new running attempt before reporting recovery.
@@ -532,7 +533,7 @@ requesting a live handoff, and observes the new running attempt before reporting
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
 Both engines have one contract: the persona may invoke the scoped Altitude
-CLI, and the backend applies the identity, clean-Git, provenance, and merge-policy checks relevant to each
+CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
 check.
 Landing fetches the base and validates the current PR base/head pair. An owner whose branch needs
@@ -563,16 +564,16 @@ then uses [`alt land --adopt-pr N --expected-head SHA --reason "…"`](CLI.md#ad
 Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
 After a verified history-preserving merge on main, the same task can explicitly select its next
 assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
-unchanged in `adoption_history`; `adopted_pr` selects the active landing, provenance and approval
+unchanged in `adoption_history`; `adopted_pr` selects the active landing, ancestry and approval
 target. Failed or repeated transitions do not overwrite earlier receipts or expand their authority.
 A prior PR's recorded hold approval restores the original requirement for the next adoption unless
 the operator subsequently released it for the task as a whole. L3 checks the original decision's
 scope before releasing the new active PR; a restored hold retains its generation, while an explicit
 renewed hold changes it and requires approval of that renewed requirement.
-The original unowned ancestors are accepted during landing and resumed-session provenance checks;
-later commits still need the exact task trailer, and foreign task trailers remain refused.
+Landing and resume preserve the original head's ancestry. Commit messages, including historical
+labels naming other tasks, carry no ownership authority; landing excludes other active tasks' PRs and branches.
 The local task branch stays unchanged in identity while fast-forward pushes update the original
-PR branch. Merge main with a task-trailed merge commit when necessary to preserve the adopted
+PR branch. Merge main when necessary to preserve the adopted
 commits. No adopted push uses force, and adoption never expands to a later external head.
 Checks bind to the current authoritative base/head and candidate, tolerating stale `baseRefOid`
 metadata while refusing actual movement. Missing or skipped required checks remain blocked;
@@ -585,9 +586,6 @@ checked again immediately before merge. Recorded operator approval matches the a
 number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains
 history without requesting deletion of the original branch. The normal report and archive path
 verifies delivery; adoption grants no authority over another project's task.
-If the owner is already blocked before adoption, the operator records adoption through the same
-landing command in their own shell before the coordinator requests resume. Resume never supplies
-an adoption exception by itself, and adoption leaves the blocked state and provider session intact.
 
 ### Continuing an active task after merge
 
@@ -599,7 +597,7 @@ Each PR needs its own candidate checks, review and applicable hold release. Prio
 approval does not release the next PR's hold. See [continuation commands and recovery](CLI.md#continue-after-a-pr-merges).
 
 The attempt, engine, launch model, provider conversation and durable messages do not change because
-of a merge. Resume still uses the existing claim and provenance gates. A new resume claim discards
+of a merge. Resume still uses the existing claim and Git isolation gates. A new resume claim discards
 previous completion verification before launching the owner; a new delivery also invalidates it.
 The current `delivery` timestamp joins worker launch/resume time when deciding report freshness.
 Final reports cover every recorded PR and the current published work; historical success cannot

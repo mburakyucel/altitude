@@ -352,7 +352,8 @@ status and the `paths` event retain the plan.
 
 Select files or hunks with `git add`, inspect `git diff --cached`, then run `alt land`. Landing
 commits exactly the selected index. Unstaged and untracked edits stay in the worktree, including
-working versions that differ from staged content.
+working versions that differ from staged content. Before publication, review all outgoing commits
+and the complete PR diff for authorized scope and private content, including intermediate changes.
 
 ## Dirty-checkout recovery
 
@@ -877,9 +878,9 @@ content change creates a replacement revision. Symlinked saved paths still refus
 
 The task owner or operator can explicitly adopt an assigned, open, same-repository PR targeting
 main. The task keeps its isolated worktree and `worktree-<slug>` branch. The owner reviews the
-original commits and complete PR diff against the assignment. Adoption refuses
-another task's branch, foreign task trailers, unrelated local history and a PR already adopted
-by another active task. Fork PRs are not supported.
+original commits and complete PR diff for assignment scope and private content. Landing refuses
+PRs and branches owned by other active tasks. Commit messages need no labels or repair, including
+historical labels naming other tasks. Fork PRs are not supported.
 
 From the task worktree, inspect the existing PR and its full history. For a fictional PR #42
 on `proposal/external`:
@@ -899,19 +900,16 @@ alt land --adopt-pr 42 --expected-head <full-observed-head-sha> \
 ```
 
 Use the actual full SHA observed from the PR. The head must agree with origin and be an ancestor
-of local HEAD; already-present task-owned additions are allowed. If the local task branch has
-diverged, incorporate the inspected PR with a merge commit carrying the exact
-`Altitude-Task: <project>/<slug>` trailer. Never rewrite the original history. Add any reconciliation
-edits before landing, select them with `git add`, and inspect `git diff --cached`.
-`alt land` commits that index and adds the task trailer.
+of local HEAD; already-present additions within the assignment are allowed. If the local task branch
+has diverged, incorporate the inspected PR with a merge commit. Preserve the original history.
+Select reconciliation edits with `git add` and inspect `git diff --cached`; `alt land` commits that index.
 
 The explicit command records the active immutable `adopted_pr` receipt and `pr-adopted` event before
 publication, visible through `alt task status` and `alt task events`. `--dry-run` fetches and
 validates the PR but records nothing and stages/pushes nothing. After adoption, ordinary
 `alt land --message "…" [--merge]` reuses that PR and its original branch. Retrying adoption with the same original PR/head is
-idempotent; selecting another original head for that PR is refused. Later unowned commits cannot be adopted by
-repeating the command. If origin moves, inspect and incorporate only changes belonging to this
-task; unrelated history requires a separate ownership decision, not a broader adoption receipt.
+idempotent; selecting another original head for that PR is refused. If origin moves, inspect and
+incorporate only changes belonging to this task; the original receipt remains unchanged.
 
 For a task explicitly assigned several existing PRs, finish the active PR before adopting the next.
 Fetch main, incorporate the next inspected PR without rewriting history, then repeat `--adopt-pr`
@@ -947,12 +945,11 @@ pushes; rejected pushes never retry with force. `--merge` uses a merge commit an
 branch deletion, so the repository must permit that merge method. Host-side branch deletion
 settings remain the repository operator's policy.
 
-When main advances, preserve the adopted commits with a task-owned merge commit:
+When main advances, preserve the adopted commits with a merge commit:
 
 ```sh
 git fetch origin main
-git merge --no-ff origin/main -m "Merge main for validation" \
-  -m "Altitude-Task: <project>/<slug>"
+git merge --no-ff origin/main -m "Merge main for validation"
 ```
 
 Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
@@ -960,13 +957,6 @@ Landing pins current origin main and the PR head, confirms GitHub's authoritativ
 and refuses actual base/head movement. A lagging PR `baseRefOid` alone does not block that pair.
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
-
-If a task is already blocked on unowned PR history before its first adoption, resume still refuses
-that history. The operator can run the adoption command above from the task's registered worktree
-in their own shell, with `ALTITUDE_PROJECT=<project> ALTITUDE_TASK=<slug>` selecting the task.
-Adoption records the receipt without changing the blocked state; the coordinator then requests
-`alt task resume <slug> --reason "Existing PR adoption is recorded"`. A blocked worker cannot
-land, and coordinators cannot invoke landing. Activation alone does not adopt existing history.
 
 ### Recorded merge approval
 

@@ -19,7 +19,6 @@ from typing import Any, Sequence
 
 
 DEFAULT_BASE = "main"
-TASK_TRAILER = "Altitude-Task"
 REQUIRED_HOOKS = ("pre-commit", "pre-merge-commit", "pre-push", "reference-transaction")
 
 
@@ -266,50 +265,6 @@ def service_preflight(repo: str | Path, base: str = DEFAULT_BASE) -> RepositoryS
     if refusal:
         raise GitPolicyError(f"service preflight refused: {refusal}")
     return state
-
-
-def _trailer_values(repo: Path, sha: str) -> tuple[str, ...]:
-    # Git's trailer formatter only reads the final trailer block.  This prevents
-    # a matching sentence in the commit body from masquerading as provenance.
-    fmt = f"%(trailers:key={TASK_TRAILER},valueonly,separator=%x00)"
-    result = _run(repo, "show", "--quiet", f"--format={fmt}", sha)
-    raw = _output(result, f"cannot read trailers for {sha}")
-    return tuple(value.strip() for value in raw.split("\0") if value.strip())
-
-
-def commits_missing_task_trailer(
-    repo: str | Path,
-    base: str,
-    task_ref: str,
-    *,
-    origin_sha: str | None = None,
-    adopted_head: str | None = None,
-) -> list[str]:
-    """Require task trailers, except unowned history at an explicitly adopted immutable PR head."""
-    root = Path(repo).resolve()
-    base_sha = origin_sha or capture_origin_sha(root, base)
-    head_sha = _output(
-        _run(root, "rev-parse", "--verify", "HEAD^{commit}"),
-        "cannot resolve HEAD",
-    )
-    rows = _output(
-        _run(root, "rev-list", "--reverse", f"{base_sha}..{head_sha}"),
-        f"cannot list commits in {base_sha}..HEAD",
-    )
-    expected = task_ref.strip()
-    adopted = set()
-    if adopted_head:
-        # #252: adoption must preserve the original history and cannot bless later foreign commits.
-        _output(_run(root, "merge-base", "--is-ancestor", adopted_head, head_sha),
-                "adopted PR head is not an ancestor of HEAD; preserve its history")
-        adopted = set(_output(_run(root, "rev-list", f"{base_sha}..{adopted_head}"),
-                              "cannot inspect adopted history").splitlines())
-    missing = []
-    for sha in rows.splitlines():
-        trailers = _trailer_values(root, sha)
-        if trailers != (expected,) and not (sha in adopted and not trailers):
-            missing.append(sha)
-    return missing
 
 
 def _configured_hooks_path(repo: Path) -> str | None:

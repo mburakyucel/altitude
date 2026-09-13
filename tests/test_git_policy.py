@@ -240,25 +240,6 @@ class TestGitPolicy(unittest.TestCase):
         with self.assertRaisesRegex(git_policy.GitPolicyError, "diverged"):
             git_policy.service_preflight(self.repo)
 
-    def test_commit_trailers_are_exact(self):
-        base_sha = git_policy.capture_origin_sha(self.repo)
-        self.git("checkout", "-q", "-b", "task")
-        good = self.commit_file(
-            "good.txt", "good\n", "good change\n\nAltitude-Task: demo/fix",
-        )
-        bad = self.commit_file(
-            "bad.txt", "bad\n", "bad change\n\nAltitude-Task: demo/fix-extra",
-        )
-        duplicate = self.commit_file(
-            "duplicate.txt", "duplicate\n",
-            "ambiguous change\n\nAltitude-Task: demo/fix\nAltitude-Task: demo/other",
-        )
-        missing = git_policy.commits_missing_task_trailer(
-            self.repo, "main", "demo/fix", origin_sha=base_sha,
-        )
-        self.assertEqual(missing, [bad, duplicate])
-        self.assertNotIn(good, missing)
-
     def test_install_hooks_is_idempotent_and_refuses_an_existing_different_path(self):
         expected = Path(__file__).resolve().parent.parent / "hooks"
         with self.assertRaisesRegex(git_policy.GitPolicyError, "not installed"):

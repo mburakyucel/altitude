@@ -48,12 +48,13 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual(self.land()["checks"], "merged")
         self.assertEqual(self.task()["delivery"], before["delivery"])
         self.followup()
-        self.git("commit", "-m", "followup", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-m", "Reviewed manual followup")
         result = self.land(merge=True)
         self.assertEqual((result["pr"], result["merged"]), (102, True))
         self.assertEqual(self.task()["prs"], [101, 102])
         self.assertEqual(self.git("show", "HEAD:src/value"), "first\n")
         self.assertEqual(self.git("show", "-s", "--format=%P", "HEAD").strip(), self.merge)
+        self.assertEqual(self.git("show", "-s", "--format=%B", "HEAD").strip(), "Reviewed manual followup")
 
     def test_retry_after_rebase_or_push_does_not_replay_first_pr(self):
         self.followup()
@@ -89,7 +90,7 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual((self.repo / "src/followup").read_text(), "second\n")
         self.assertEqual(self.git("status", "--porcelain"), "")
         dispatch._validate_task_worktree(self.project_repo, "demo", "fix-x", self.repo,
-                                        self.git("rev-parse", "origin/main").strip(), require_clean=False)
+                                        require_clean=False)
 
     def test_raised_rebase_failure_also_aborts(self):
         git("merge", "--ff-only", "origin/main", cwd=self.project_repo)
@@ -133,20 +134,17 @@ class TestLandContinuation(AltitudeCase):
         self.assertEqual(self.land()["checks"], "merged")
         self.assertEqual(self.task()["delivery"], receipt)
 
-    def test_followup_keeps_provenance_boundary_without_predicted_paths(self):
+    def test_followup_publishes_reviewed_history_without_predicted_paths_or_labels(self):
         (self.repo / "needed").write_text("needed\n")
         self.git("add", "needed")
-        self.git("commit", "-m", "needed file", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-m", "needed file")
         self.followup()
-        self.git("commit", "-m", "missing provenance")
-        head, index = self.git("rev-parse", "HEAD"), self.git("write-tree")
-        calls = len(self.gh_log())
-        with self.assertRaisesRegex(land.LandError, "without exact.*provenance"):
-            self.land()
-        self.assertEqual(self.git("rev-parse", "HEAD"), head)
-        self.assertEqual(self.git("write-tree"), index)
-        self.assertEqual(self.task()["prs"], [101])
-        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.gh_log()[calls:]))
+        self.git("commit", "-m", "Reviewed inherited followup\n\nAltitude-Task: demo/old-owner")
+        self.assertEqual(self.land()["pr"], 102)
+        self.assertEqual(self.git("show", "HEAD:needed"), "needed\n")
+        self.assertEqual(self.git("show", "-s", "--format=%B", "HEAD").strip(),
+                         "Reviewed inherited followup\n\nAltitude-Task: demo/old-owner")
+        self.assertEqual(self.task()["prs"], [101, 102])
 
     def test_unstaged_only_retry_keeps_private_work_and_creates_nothing(self):
         before = copy.deepcopy(self.task())
@@ -195,15 +193,15 @@ class TestLandContinuation(AltitudeCase):
     def test_merge_resolution_edits_are_preserved_by_refusing_automatic_replay(self):
         self.git("checkout", "-b", "owned-side")
         self.followup()
-        self.git("commit", "-m", "side", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-m", "side")
         self.git("checkout", "worktree-fix-x")
         (self.repo / "src/main-side").write_text("main side\n")
         self.git("add", "src/main-side")
-        self.git("commit", "-m", "main side", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-m", "main side")
         self.git("merge", "--no-commit", "owned-side")
         (self.repo / "src/merge-only").write_text("merge resolution\n")
         self.git("add", "src/merge-only")
-        self.git("commit", "-m", "resolve owned merge", "-m", "Altitude-Task: demo/fix-x")
+        self.git("commit", "-m", "resolve owned merge")
         before = self.git("rev-parse", "HEAD")
         with self.assertRaisesRegex(land.LandError, "merge-resolution edits"):
             self.land()

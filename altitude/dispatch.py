@@ -687,12 +687,12 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
         return worktree
 
     task = S.load_task(project, slug)
-    _validate_task_worktree(repo, project, slug, worktree, origin_sha,
+    _validate_task_worktree(repo, project, slug, worktree,
                            require_clean=not bool(task.get("attempt") and task.get("worktree") == str(worktree)))
     return worktree
 
 
-def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path, origin_sha: str,
+def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
                             *, require_clean: bool) -> None:
     """Validate an already-created L2 checkout before either a fresh launch or a resume."""
     import subprocess
@@ -706,18 +706,14 @@ def _validate_task_worktree(repo: Path, project: str, slug: str, worktree: Path,
         raise T.TransitionError(
             f"task worktree {worktree} is on {actual or 'detached HEAD'}, expected {expected_branch!r}"
         )
-    task_ref = f"{project}/{slug}"
     task = S.read_json(S.status_path(project, slug), {}) or {}
-    missing = git_policy.commits_missing_task_trailer(
-        worktree, "main", task_ref, origin_sha=origin_sha,
-        adopted_head=(task.get("adopted_pr") or {}).get("head"),
-    )
-    if missing:
-        sample = ", ".join(sha[:12] for sha in missing[:5])
-        raise T.TransitionError(
-            f"existing task branch {expected_branch!r} has commit(s) without exact "
-            f"`Altitude-Task: {task_ref}` provenance: {sample}"
+    if adopted_head := (task.get("adopted_pr") or {}).get("head"):
+        ancestry = subprocess.run(
+            ["git", "-C", str(worktree), "merge-base", "--is-ancestor", adopted_head, "HEAD"],
+            capture_output=True, text=True, timeout=60,
         )
+        if ancestry.returncode != 0:
+            raise T.TransitionError("adopted PR head is not an ancestor of HEAD; preserve its history")
     if require_clean:
         dirty = subprocess.run(
             ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all"],
@@ -1054,9 +1050,9 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         repo = config.project_path(project)
         with publication_settlement(project):
             settle_deploy_checkout(project, slug)
-            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+            git_policy.fetch_and_require_exact_base(repo, "main")
             # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
-            _validate_task_worktree(repo, project, slug, cwd, origin_sha, require_clean=False)
+            _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence

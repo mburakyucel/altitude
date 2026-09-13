@@ -61,7 +61,8 @@ development/admin exposure grants no new privilege model, generic flag framework
 - Keep one active task in one isolated worktree and branch. Never develop in the deployment
   checkout, reuse another task's branch, or bypass the PR path.
 - Preserve unrelated and in-progress work. Stay inside the authorized objective and explicit exclusions;
-  planned file lists guide coordination, not permission. Stage and review only the changes to publish.
+  planned file lists guide coordination, not permission. Review selected changes and all outgoing
+  history for scope and privacy before publication, including content absent from the final diff.
 - Ship the docs with the change: a PR that changes behavior updates `README.md`,
   `docs/ARCHITECTURE.md`, and `docs/SESSION_LIFECYCLE.md` wherever they describe that behavior, in
   the same PR and in present tense.
