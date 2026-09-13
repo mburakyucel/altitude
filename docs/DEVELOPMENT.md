@@ -156,7 +156,10 @@ The operator's 2026-09-09 Pacific decision suspends hosted CI for this repositor
 and artifact capacity are unavailable. The workflow is removed; Git history retains its source.
 The repository-specific `LOCAL_CHECK_REPOSITORY` in the trusted `config.py` selects mandatory
 local `make check` through the existing landing candidate mechanism. Other projects retain their
-gates. No runner installation, new service, billing change or generic bypass flag is involved.
+gates. Shared hosted-check handling ignores completed nonrequired skips without parsing workflow
+conditions. Required checks must succeed; failures, pending checks, missing required results and
+entirely skipped CI block. Candidate identity and complete requiredness evidence remain mandatory.
+No runner installation, new service, billing change or generic bypass flag is involved.
 
 `alt land` pins the current base and head, constructs the candidate for the selected merge method,
 installs frozen web dependencies using the shared Altitude-home pnpm store, then runs the full

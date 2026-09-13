@@ -435,12 +435,11 @@ and the live task owner/hold/active receipt are rechecked before merging. The fe
 is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
 current GitHub base target/head and exact candidate association, with real movement refusing merge.
 Required checks from branch protection and active rules remain mandatory, including missing or
-skipped checks. A nonrequired skipped job is exempt only when its immutable executed workflow and
-PR event prove the supported main-push-only condition false, or prove
-`github.event_name != 'pull_request'` false for a `pull_request` run. The inequality does not
-exempt `pull_request_target` jobs; ambiguous conditions, source or association refuse.
-At least one applicable check must actually pass under the hosted gate. Without CI, or under
-this repository's temporary local policy, the full local suite runs on a clean merge candidate:
+skipped checks. Completed skipped checks identified as nonrequired by GitHub are ignored without
+interpreting workflow conditions. Failed, cancelled and pending checks still block, including
+nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
+candidate association refuses delivery. At least one check must actually pass under the hosted gate.
+Without CI, or under this repository's temporary local policy, the full local suite runs on a clean merge candidate:
 one parent for squash delivery, two for adopted history. Adopted PRs use a
 GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr).
 

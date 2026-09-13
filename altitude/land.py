@@ -484,8 +484,7 @@ def _checks_state(root: Path, number: int) -> str:
         return "fail"
     if "pending" in buckets:
         return "pending"
-    # A rollup that mixes passes with skips is not a pass: the skipped check is a configured gate that did
-    # not run; a configured gate is never satisfied by its absence.
+    # Skips need candidate requiredness; this inventory alone is no merge verdict.
     return "skipped" if "skipping" in buckets else "pass"
 
 
@@ -518,86 +517,9 @@ def _complete_check_nodes(connection: dict) -> list[dict]:
         raise LandError("GitHub check evidence is truncated or incomplete") from exc
 
 
-def _inapplicable_job(source: str, name: str, event: str) -> bool:
-    """Recognize complete job conditions false for the PR event; unsupported YAML stays unknown."""
-    lines = source.splitlines()
-    if ("\t" in source or [line for line in lines if re.match(r"^jobs\s*:", line)] != ["jobs:"]
-            or any(line and not line[0].isspace() and not line.startswith("#")
-                   and not re.match(r"[A-Za-z_][\w-]*:", line) for line in lines)):
-        return False
-    for line in lines:
-        # A quoted scalar spanning lines can contain an apparent jobs block (#266 review).
-        plain = re.sub(r"'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"|#.*", "", line)
-        if "'" in plain or '"' in plain:
-            return False
-    active, job, field, seen, condition = False, None, None, set(), None
-    for line in lines:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if line == "jobs:":
-            active = True
-            continue
-        if not active:
-            continue
-        if not line.startswith(" "):
-            active = False
-            continue
-        if not line.startswith("    "):
-            found = re.fullmatch(r"  ([A-Za-z_][\w-]*):(?:\s*#.*)?", line)
-            if not found or ("job", found[1]) in seen:
-                return False
-            job, field = found[1], None
-            seen.add(("job", job))
-        elif not line.startswith("     "):
-            found = re.fullmatch(r"    ([A-Za-z_][\w-]*):\s*(.*)", line)
-            if not found or not job or (job, found[1]) in seen or found[1] == "name":
-                return False
-            field = found[1]
-            seen.add((job, field))
-            if job == name and field in {"strategy", "uses"}:
-                return False
-            if job == name and field == "if":
-                condition = found[2].strip()
-        elif field is None or job == name and field == "if":
-            return False  # A continued plain scalar could change the condition's meaning.
-    if condition is None:
-        return False
-    if condition.startswith("${{") and condition.endswith("}}"):
-        condition = condition[3:-2].strip()
-    return (re.fullmatch(r"github\.event_name\s*==\s*'push'\s*&&\s*"
-                         r"github\.ref\s*==\s*'refs/heads/main'", condition) is not None
-            or event == "pull_request"
-            and re.fullmatch(r"github\.event_name\s*!=\s*'pull_request'", condition) is not None)
-
-
-def _inapplicable_check(root: Path, check: dict, pair: dict, merge_sha: str | None, repository: str) -> bool:
-    suite = check.get("checkSuite") or {}
-    run = suite.get("workflowRun") or {}
-    file = run.get("file") or {}
-    if (check.get("isRequired") is not False or (suite.get("app") or {}).get("slug") != "github-actions"
-            or run.get("event") not in {"pull_request", "pull_request_target"}
-            or file.get("repositoryName") != repository):
-        return False
-    match = re.fullmatch(r"https://github\.com/" + re.escape(repository)
-                         + r"/blob/([0-9a-f]{40})/(\.github/workflows/[^/]+\.ya?ml)",
-                         file.get("repositoryFileUrl") or "")
-    allowed = {pair["base_sha"]} if run["event"] == "pull_request_target" else {merge_sha}
-    if run["event"] == "pull_request" and _git(
-            root, "merge-base", "--is-ancestor", pair["base_sha"], pair["head_sha"]).returncode == 0:
-        allowed.add(pair["head_sha"])
-    if not match or match[1] not in allowed or match[2] != file.get("path"):
-        return False
-    workflow = _check_query(root, """query($owner:String!,$repo:String!,$expression:String!){
-      repository(owner:$owner,name:$repo){object(expression:$expression){... on Blob{isTruncated text}}}}""",
-                            expression=f"{match[1]}:{match[2]}")
-    blob = workflow.get("object") or {}
-    return blob.get("isTruncated") is False and _inapplicable_job(
-        blob.get("text") or "", check.get("name") or "", run["event"])
-
-
 def _checks_evidence(root: Path, pair: dict) -> str:
-    """#266: prove the exact candidate, mandatory contexts and any optional job exclusion."""
-    query = """query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){nameWithOwner
+    """#266: prove the exact candidate and successful required checks."""
+    query = """query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){
       pullRequest(number:$number){number state baseRefName headRefName headRefOid
         baseRef{target{oid} branchProtectionRule{requiredStatusChecks{context app{databaseId}}}
           rules(first:100){totalCount pageInfo{hasNextPage} nodes{type parameters{
@@ -607,9 +529,9 @@ def _checks_evidence(root: Path, pair: dict) -> str:
         statusCheckRollup{contexts(first:100){totalCount pageInfo{hasNextPage} nodes{__typename
           ... on StatusContext{context state isRequired(pullRequestNumber:$number) commit{oid}}
           ... on CheckRun{name status conclusion isRequired(pullRequestNumber:$number)
-            checkSuite{commit{oid} app{databaseId slug} branch{name}
+            checkSuite{commit{oid} app{databaseId} branch{name}
               matchingPullRequests(first:100){totalCount pageInfo{hasNextPage} nodes{number baseRefName headRefName}}
-              workflowRun{event file{path repositoryName repositoryFileUrl}}}}}}}}"""
+              workflowRun{event}}}}}}}"""
     try:
         repository = _check_query(root, query, number=pair["number"])
         pr = repository["pullRequest"]
@@ -663,20 +585,19 @@ def _checks_evidence(root: Path, pair: dict) -> str:
                     raise LandError("workflow run does not belong to this PR candidate")
             status = check["conclusion"] if is_run and check["status"] == "COMPLETED" else (
                 "PENDING" if is_run else check["state"])
-            if status == "SKIPPED" and _inapplicable_check(root, check, pair, merge["oid"] if merge else None,
-                                                         repository["nameWithOwner"]):
+            if is_run and status == "SKIPPED" and check["isRequired"] is False:
                 continue
             states.add(status)
             if status == "SUCCESS":
                 passed.add((check["name"] if is_run else check["context"],
                             (suite.get("app") or {}).get("databaseId"), check["isRequired"]))
-        if any(not any(name == check_name and needed and (app is None or app == check_app)
-                       for check_name, check_app, needed in passed) for name, app in required):
-            return "skipped"
         if states & {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
             return "fail"
         if states & {"PENDING", "EXPECTED"}:
             return "pending"
+        if any(not any(name == check_name and needed and (app is None or app == check_app)
+                       for check_name, check_app, needed in passed) for name, app in required):
+            return "skipped"
         if states - {"SUCCESS"} or not states:
             return "skipped" if contexts or required else "none"
         return "pass"
