@@ -29,7 +29,6 @@ _turn_local = threading.local()
 
 L3_CONFINEMENT_VERSION = 1
 L3_TOOLS = "Read,Grep,Glob,Bash"
-ALLOWED_TOOLS = engines.L3_ALLOWED_TOOLS + ",Bash(alt issue new *),Bash(alt issue comment *),Bash(alt issue close *),Bash(alt issue upstream *),Bash(alt l3 search *)"
 
 
 def _write_executable(path: Path, text: str) -> None:
@@ -77,14 +76,12 @@ def _l3_runtime(project: str, engine: str) -> Path:
 import os, sys
 args = sys.argv[1:]
 allowed = bool(args) and args[0] in ("log", "diff", "show")
-if args and args[0] in ("diff", "show"):
-    allowed = allowed and any(arg == "--stat" or arg.startswith("--stat=") for arg in args[1:])
 blocked = any(arg == "-o" or arg.startswith(("--output", "--ext-diff", "--textconv")) for arg in args[1:])
 if not allowed or blocked:
-    print("git: L3 checkout access is read-only; use log, diff --stat, or show --stat", file=sys.stderr)
+    print("git: L3 checkout access is read-only; use log, diff, or show", file=sys.stderr)
     raise SystemExit(77)
-os.execv({json.dumps(real_git)}, [{json.dumps(real_git)}, "--no-pager", "-c", "diff.external=", "-C",
-         {json.dumps(str(repo))}, *args])
+os.execv({json.dumps(real_git)}, [{json.dumps(real_git)}, "--no-pager", "-C", {json.dumps(str(repo))},
+         args[0], "--no-ext-diff", "--no-textconv", *args[1:]])
 ''')
     _write_executable(bindir / "journalctl", f'''#!{python}
 import os, re, sys
@@ -1017,7 +1014,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         try:
             res = engines.claude_print(
                 text, cwd=runtime, resume=None if fresh else sid,
-                persona=config.PERSONAS / "l3.md", allowed_tools=ALLOWED_TOOLS, tools=L3_TOOLS,
+                persona=config.PERSONAS / "l3.md", allowed_tools=engines.L3_ALLOWED_TOOLS, tools=L3_TOOLS,
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
                 model=choice.get("model"), on_text=on_text, on_start=on_start,

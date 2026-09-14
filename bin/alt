@@ -11,17 +11,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from altitude import config, state as S, tasks as T  # noqa: E402
 
 ACTOR = os.environ.get("ALTITUDE_ACTOR", "burak")
-L2_COMMANDS = {("task", "status"), ("task", "show"), ("task", "report"), ("task", "events"), ("task", "messages"), ("task", "list"),
-               ("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done")}  # the door a worker may use
-L3_COMMANDS = {
+READ_COMMANDS = {("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"), ("incident", "list"),
+                 *(("task", name) for name in ("status", "show", "report", "events", "messages", "list"))}
+L2_COMMANDS = READ_COMMANDS | {("task", "reply"), ("task", "block"), ("task", "resolve"), ("task", "done")}
+L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"),
+    ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
-    ("repo", None), ("pr", None), ("l3", "tools"), ("l3", "search"),
     ("issue", "new"), ("issue", "comment"), ("issue", "close"), ("issue", "upstream"),
-    *(("task", name) for name in ("new", "reject", "escalate", "events", "messages", "report",
-                                    "status", "show", "resume", "message", "stop", "paths", "hold-merge",
-                                    "done", "list", "preserve-checkout", "recheck-ci", "handoff")),
-    *(("incident", name) for name in ("new", "amend", "list")),
+    *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
+                                    "done", "preserve-checkout", "recheck-ci", "handoff")),
+    *(("incident", name) for name in ("new", "amend")),
 }
 
 
@@ -319,17 +319,20 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     config.ensure_root()
     c = args.cmd
-    if ACTOR == "l2" and (c, getattr(args, "tcmd", None)) not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
-        sys.exit(f"alt {c}: not available to an L2 worker; use status, messages, reply, block, done, or land")
+    closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "icmd", None) if c == "incident" else
                      getattr(args, "pcmd", None) if c == "project" else
                      getattr(args, "l3cmd", None) if c == "l3" else None)
-    if c == "issue":
-        actor_command = (c, args.operation)
+    if c == "issue" or closing_pr:
+        actor_command = (c, "close" if closing_pr else args.operation)
+    if ACTOR == "l2":
+        if actor_command not in L2_COMMANDS and c not in ("land", "fyi", "incident"):
+            sys.exit(f"alt {c}: not available to an L2 worker; use project inspection or owned-task verbs")
+        if c in ("repo", "pr", "l3") and _project(args) != os.environ.get("ALTITUDE_PROJECT"):
+            sys.exit("alt: owner inspection is bound to the launch project")
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
-    closing_pr = c == "pr" and args.target == "close"
     if closing_pr and (args.number is None or args.number < 1 or args.as_json):
         ap.error("alt pr close requires one positive PR number and no options")
     if c == "issue" or closing_pr:

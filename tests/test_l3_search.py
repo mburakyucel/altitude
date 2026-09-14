@@ -131,7 +131,9 @@ class TestL3Search(AltitudeCase):
         self.chat("A human exchange", tools=[{"command": "tool-only"}])
         for query in ("foreign-only", "system-only", "tool-only"):
             self.assertEqual(self.lookup(query, "--json")["matched"], 0)
-        self.assertNotEqual(self.alt("l3", "search", "x", env={"ALTITUDE_ACTOR": "l2"}).returncode, 0)
+        denied = self.alt("--project", other, "l3", "search", "foreign-only", env={"ALTITUDE_ACTOR": "l2"})
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn("launch project", denied.stderr)
         for args in (["--project", other, "l3", "search", "foreign-only"],
                      ["l3", "search", "x", "--file", "/etc/passwd"]):
             with self.assertRaisesRegex(ValueError, "socket fixes the project"):
@@ -185,7 +187,7 @@ class TestL3Search(AltitudeCase):
                 self.assertEqual(response["returncode"], 0, response)
                 evidence = json.loads(response["stdout"])
             else:
-                self.assertIn("Bash(alt l3 search *)", kwargs["allowed_tools"])
+                self.assertIn("Bash(alt *)", kwargs["allowed_tools"])
                 result = subprocess.run([str(runtime / "bin" / "alt"), *args], input="", cwd=runtime,
                                         env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)

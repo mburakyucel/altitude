@@ -27,10 +27,11 @@ L2 block ─► one queued L3 message ─► L3 answers (task resumes) or escala
 
 L3 maintains the project-level conversation, sees the active task set, and decides whether a
 request can be answered directly or needs an L2. It does not run a mandatory planning pipeline and
-cannot launch subagents directly. Its routine inspection goes through compact `alt` verbs for task
-reports, recent messages and events, queue waits, repository/service state, PRs, and its own recent
-shell commands. L3 turns persist bounded shell command text with their tool evidence, so repeated
-ad-hoc commands are visible and can become stable verbs. Its process is read-only on the deployment
+cannot launch subagents directly. L2 and L3 share one project-read command set in `bin/alt` for task
+records, repository/PR evidence, history search, tool summaries and incidents. Mutation admission stays
+role-specific. Owner repository, PR and history/tool reads require the launch project; global queue,
+decisions, monitor and state views retain their existing admission. L3 turns persist bounded shell
+command text with their tool evidence. Its process is read-only on the deployment
 checkout on either engine; source changes always belong to one L2 worktree and PR.
 
 The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. Material
@@ -546,9 +547,13 @@ shell wrappers. The command sandbox keeps networking disabled. The common sessio
 legacy conversations once before their next turn, so a resumed conversation cannot retain the old transport
 instructions after activation; current conversations then resume normally. A Claude L3 turn uses an equivalent runtime cwd,
 `dontAsk` with unattended prompts denied, restricted settings, only Read/Grep/Glob/Bash, no editing
-tools, and exact read/`alt` command rules. Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
+tools, and native admission for the trusted `alt`, `git`, `gh`, `journalctl` and `systemctl` shims.
+The CLI, broker and read shims authorize their operations without a duplicate native verb list.
+Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
-re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command. Read-only Git and journal shims resolve against the deployment checkout. Claude's native Bash sandbox
+re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
+Git log/diff/show reads include full patches and historical files, disable external diff/text-conversion
+helpers and reject output-file options. Git and journal shims retain their checkout/service targets. Claude's native Bash sandbox
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
 `alt issue new --title "…" [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.

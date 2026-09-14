@@ -620,8 +620,9 @@ unreachable inside the native sandbox. The adapter starts isolated Python from p
 loads code from the writable runtime, and has no shell execution operation. Its one tool is approved for
 unattended use; altd still applies its project and actor authorization on every request. A Claude L3 turn has the same runtime cwd and uses
 `--restricted`, `dontAsk`, no unattended permission
-prompts, no Edit/Write/NotebookEdit tools, and an exact allowlist. Both can read the checkout with Git
-log/diff-stat/show-stat shims and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and fixed
+prompts, no Edit/Write/NotebookEdit tools, and native admission for trusted shim names. Both can read the checkout with Git
+log/diff/show shims, including full patches and historical files with external diff/text-conversion helpers
+disabled, and the altitude journal. Claude's runtime shims and the MCP tool send every `alt` invocation and fixed
 GitHub/service read through the project-bound socket, where altd supplies the project, rejects path-shaped task ids and
 daemon-side file inputs, and re-applies the L3 command door; GitHub reads cannot select another repository, and checkout, GitHub, and service
 write commands are absent; `alt issue new` and `alt issue comment` publish requested backlog through altd after its private-evidence check.
@@ -734,8 +735,9 @@ new instructions, with at most 800 characters of each text and an explicit `[tru
 when longer. Task state remains in `STATE.md`; no tool evidence or generated summaries are replayed.
 
 Every fresh or resumed L3 turn also names `alt l3 search "literal text"` for evidence outside the
-handoff. The read-only lookup uses the existing project-bound transport on whichever engine runs
-the turn. It scans human project chat and active/archived task conversations, reports and digests;
+handoff. Owners use the same lookup through their CLI, bound to their launch project alongside repository,
+PR and tool-summary reads. Both roles share project inspection admission; mutation permissions stay separate.
+The coordinator lookup uses its project-bound transport on either engine. It scans human project chat and active/archived task conversations, reports and digests;
 no provider session identity limits the search. Original excerpts retain dates, attribution and
 source references, with adjacent context and explicit result/text/output bounds. Search writes no
 memory and performs no model calls. Empty evidence is `no_results`; unavailable evidence is an

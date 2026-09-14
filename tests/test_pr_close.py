@@ -91,7 +91,6 @@ class TestPrClose(AltitudeCase):
         self.assertEqual(len(events), 1)
         self.assertEqual({key: events[0][key] for key in ("kind", "actor", *result)},
                          {"kind": "pr-close", "actor": "l3", **result})
-        self.assertIn("Bash(alt pr *)", l3.ALLOWED_TOOLS)
 
     def test_repeat_closed_and_merged_are_verified_without_mutation(self):
         server.pr_close(self.project, 42, actor="operator")
