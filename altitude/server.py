@@ -321,7 +321,7 @@ def _l3_verb_request(project: str, request: dict) -> dict:
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
         try:
-            result = subprocess.run([str(config.REPO / "bin" / "alt"), *args], input=stdin,
+            result = subprocess.run([str(config.SOURCE / "bin" / "alt"), *args], input=stdin,
                                     cwd=str(config.project_path(project)), env=env,
                                     capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -1748,7 +1748,7 @@ def _request_restart_unit() -> dict:
     unit = f"altitude-restart-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
     cmd = [engines.SYSTEMD_RUN_BIN, "--user", "--collect", "--quiet", f"--unit={unit}", "--same-dir",
            f"--setenv=PATH={os.environ.get('PATH', '')}", "--",
-           sys.executable, str(config.REPO / "scripts" / "restart_altitude.py")]
+           sys.executable, str(config.SOURCE / "scripts" / "restart_altitude.py")]
     res = subprocess.run(cmd, cwd=str(config.REPO), capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
         raise RuntimeError(f"systemd-run refused the restart unit: {(res.stderr or res.stdout).strip()[:300]}")
@@ -2104,8 +2104,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the systemd instance clears the restart-pending flag
         try:
-            git_policy.service_preflight(config.REPO)
-            git_policy.require_hooks_installed(config.REPO)
+            git_policy.activate_source()
         except git_policy.GitPolicyError as e:
             log(f"service startup refused: {e}")
             raise SystemExit(1) from e

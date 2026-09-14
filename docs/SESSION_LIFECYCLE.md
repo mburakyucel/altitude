@@ -64,7 +64,8 @@ Altitude-specific rules. No session rotation or extra engine policy is needed fo
 The [L3 persona](../personas/l3.md) directs compiled discussion handoffs and persistence of clearly
 reusable feedback through an appropriately scoped task/PR. Its report names the instruction source
 and distinguishes queued, merged and effective changes. Project rules are referenced each turn;
-personas follow the existing engine loading path, supplied per invocation or at fresh session creation.
+personas come from the activated committed installation export, supplied per invocation or at fresh
+session creation through the existing engine loading path.
 A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
 an existing session has loaded it. The per-invocation adapter receives the current persona file on
 fresh and resumed turns; the fresh-thread adapter embeds the current contents when starting a new
@@ -95,7 +96,7 @@ keys the edit-count telemetry across worker replacements.
 
 ```text
 queued task
-  ├─ self-deploy checkout fast-forwarded to origin/main
+  ├─ fetch origin/main and create the isolated worktree from its immutable SHA
   ├─ WIP and Git isolation gates
   ├─ highest available preference tier, then weekly headroom (or explicit task/project pin)
   ├─ persist l2_engine + model + routing reason
@@ -112,7 +113,11 @@ The owner selects files or hunks with `git add` and reviews `git diff --cached`;
 that index and leaves unstaged and untracked work intact. Before publication, the owner reviews all
 outgoing commits and the complete PR diff for scope and privacy, including intermediate content.
 
-Uncommitted changes on main block fresh dispatch for ordinary and `--source recovery` tasks alike.
+Deployment staged, working and untracked content remains untouched by dispatch and resume.
+Task CLI code, personas, hooks, templates and schemas come from the activated committed installation
+export outside worker writable roots; fresh project work starts from fetched `origin/main`.
+Deployment and activation errors remain visible independently of isolated task progress.
+
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
 unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records
@@ -146,10 +151,9 @@ Dispatch and due resumes wait until the running counts are below both effective 
 cap can exceed a machine cap lowered later; the aggregate gate still applies. Resetting a project
 restores 8 even if the machine cap is lower. Changes need no task slot or service restart.
 
-When the project deploys from its own checkout, dispatch moves that checkout to `origin/main` before
-Git validation reads it, and announces activation pending if the pull carried loaded backend code
-or a tracked web build input. Only a clean checkout on main that is strictly behind moves; every other
-state still refuses the dispatch.
+For projects that deploy from their checkout, the daemon tick and delivery path separately advance
+clean main and report deployment failures. Backend, launch-source or tracked web input changes mark
+activation pending; ordinary dispatch and resume do not move the deployment checkout.
 
 L3 and fresh L2 dispatch use the same project Auto preference tiers. Set them with
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason "…"`; commas tie
@@ -384,9 +388,9 @@ delivery evidence and local observations that the actual cause is gone, then req
 reason-bearing resume. Notification receipt, issue closure and unrelated restart never establish
 repair. Coordinator messages to faulted tasks carry the existing non-waking inbox marker and leave
 the saved block in place; they are readable in the conversation and delivered at a later supported
-resume. Operator discussion retains its ordinary wake behavior. A workerless `main-unpushed` task passes the
-checkout guard before requeue clears its fault; a failed check keeps its blocked reason and fault,
-retains pending messages, and consumes only the attempted wake. A restart does not repair dirty main.
+resume. Operator discussion retains its ordinary wake behavior. Explicit resume can requeue a
+workerless `main-unpushed` task independently of deployment recovery. Fresh dispatch validates its
+fetched base and isolated worktree; a restart does not repair deployment edits.
 
 For a known external CI wait, L3 uses `alt task recheck-ci <slug> --run <id> --at <ISO-time> --reason "…"`.
 The task-local record survives daemon restart and exposes the due probe or coordinator delivery in
@@ -453,8 +457,8 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
 1. a task blocked before any launch goes back to the queue;
 2. `resume_after` makes a message request or operational retry due; an exhausted window of a pinned engine or a
    WIP cap keeps the task blocked with a `waiting: …` reason until the request can run;
-3. a self-deploy checkout is fast-forwarded to `origin/main` on the same terms as a fresh dispatch, then
-   checkout and adopted ancestry are validated, and a worker that is still live is stopped first;
+3. the owner's worktree path, branch and adopted ancestry are validated without a remote fetch or
+   deployment gate, and a worker that is still live is stopped first;
    systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
    Unknown or unavailable status refuses the launch and preserves the claimed inbox for recovery;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
@@ -762,7 +766,7 @@ process cannot advertise stale work.
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
-to Altitude's loaded backend or served web bundle inputs activates at a narrow quiet point: no dispatch
+to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
 marker or resume claim, L3 turn, or report verification in flight. Running and blocked workers do not
 hold activation, and new dispatches continue while activation is pending. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns

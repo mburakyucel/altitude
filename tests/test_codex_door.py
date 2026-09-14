@@ -261,7 +261,7 @@ class TestFreshAttempt(AltitudeCase):
         S.save_task(PROJECT, task)
         fake = {"stdout": "", "stderr": "", "returncode": 0, "agent": {"id": "agent-1", "sessionId": "session-1"}}
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=config.ROOT), \
              mock.patch.object(dispatch.route, "pick_engine",
                                side_effect=lambda role, forced=None, **kwargs: {"engine": forced or "codex", "why": "t"}) as pick, \

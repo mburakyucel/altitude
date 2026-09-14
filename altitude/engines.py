@@ -384,7 +384,7 @@ def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for systemd."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
-    env["PATH"] = str(config.REPO / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
+    env["PATH"] = str(config.SOURCE / "bin") + ":" + env.get("PATH", "/usr/bin:/bin") + ":" + str(Path.home() / ".local/bin")
     return env
 
 
@@ -1354,7 +1354,7 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
     # Unix allowlist is macOS-only. MCP stdio is the supported boundary; its adapter has no shell verb.
-    adapter = (f"import sys; sys.path.insert(0, {str(config.REPO.resolve())!r}); "
+    adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
                f"from altitude.engines import codex_l3_mcp; codex_l3_mcp({str(broker)!r})")
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":read-only"',
             f"permissions.{profile}.filesystem={filesystem}",

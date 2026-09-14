@@ -17,7 +17,7 @@ class TestResumeHold(AltitudeCase):
         self.launched = []
         self.quiet_engines()
         self.patch(engines, "claude_stop", return_value="stopped")
-        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(engines, "resume_l2", side_effect=self._resume_l2)
 

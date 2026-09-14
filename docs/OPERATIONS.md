@@ -60,7 +60,8 @@ incident evidence from published text.
 
 ## Recovering dirty main
 
-A dirty deployment checkout blocks normal and recovery task dispatch. Use the
+A dirty deployment checkout leaves isolated dispatch and resume available; deployment failures
+remain visible separately. To reconcile its edits, use the
 [dirty-checkout recovery procedure](CLI.md#dirty-checkout-recovery): select an unlaunched blocked
 task, pause edits to main, and request `alt task preserve-checkout <slug> --reason "…"` as L3 or
 the operator. Altd preserves staged, unstaged and untracked files on a local archive branch, records
@@ -72,11 +73,12 @@ Inspect `alt task status <slug>` for the request result, branch and SHA before s
 its reconciliation instructions. The owner inspects the two archive commits and applies the net
 binary diff from `<SHA>~2` to `<SHA>` inside its isolated worktree, as the CLI procedure describes.
 This flattens staging intent; staged content remains inspectable in `<SHA>^`. Review the contents
-against the authorized objective and publication rules and deliver through a PR. Resume other tasks separately
-once the checkout is clean. Archives remain local until explicit operator removal; Altitude never
+against the authorized objective and publication rules and deliver through a PR. Resume blocked tasks
+explicitly; isolated work does not require checkout cleanup. Archives remain local until explicit
+operator removal; Altitude never
 pushes or deletes them. An interrupted request is not replayed: inspect
 `archive/checkout-<request-id>` and task events first, even if no task snapshot receipt exists.
-Cleanup failures, ignored obstructions and submodule/nested-repository dirt keep dispatch blocked;
+Cleanup failures, ignored obstructions and submodule/nested-repository dirt keep preservation blocked;
 retain the snapshot and fault evidence. Legacy `preserved_checkout` stash SHAs stay readable and
 apply with `git stash apply --index <SHA>` in the owner's worktree; existing stashes remain untouched.
 Restart notices retain unresolved faults and require observed resolution before resume.

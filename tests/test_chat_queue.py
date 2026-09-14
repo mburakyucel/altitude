@@ -319,7 +319,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
 
     def test_l3_cli_saves_the_message_when_git_metadata_is_unavailable(self):
         unavailable = PermissionError(".git/FETCH_HEAD is read-only in the coordinator")
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=unavailable) as fetch, \
+        with mock.patch.object(dispatch.git_policy, "fetch_origin", side_effect=unavailable) as fetch, \
              mock.patch.object(incidents, "system_fault") as fault:
             row = cli(["--project", self.project, "task", "message", self.slug, "Use the existing thread."])
 
@@ -375,8 +375,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         self.addCleanup(lambda: release.set())
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
-             mock.patch.object(dispatch, "settle_deploy_checkout"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch.object(engines, "worker_live", return_value=False), \
              mock.patch.object(engines, "resume_l2", side_effect=resume_l2), \
@@ -488,8 +487,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
 
                 with mock.patch.object(dispatch, "wip_hold", return_value=None), \
                      mock.patch.object(engines, "window_hold", return_value=None), \
-                     mock.patch.object(dispatch, "settle_deploy_checkout"), \
-                     mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                     mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
                      mock.patch.object(dispatch, "_validate_task_worktree"), \
                      mock.patch.object(engines, "worker_live", return_value=False), \
                      mock.patch.object(engines, "resume_l2", return_value={"returncode": 0,
@@ -558,8 +556,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
 
                 with mock.patch.object(dispatch, "wip_hold", side_effect=wip), \
                      mock.patch.object(engines, "window_hold", return_value=None), \
-                     mock.patch.object(dispatch, "settle_deploy_checkout"), \
-                     mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                     mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
                      mock.patch.object(dispatch, "_validate_task_worktree", side_effect=validate), \
                      mock.patch.object(engines, "worker_live", return_value=False), \
                      mock.patch.object(engines, "resume_l2", return_value={"returncode": 0,
@@ -689,8 +686,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
         T.message(self.project, self.slug, "l3", "Resume after stopping the idle worker.", by="l3")
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
-             mock.patch.object(dispatch, "settle_deploy_checkout"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch.object(engines, "worker_live", return_value=True), \
              mock.patch.object(engines, "stop_l2_worker", side_effect=RuntimeError("worker would not stop")), \
@@ -711,8 +707,7 @@ class TestTaskMessageResumeQueue(AltitudeCase):
                     "agent": {"id": "agent-new", "sessionId": "thread-old", "state": "working"}}
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
-             mock.patch.object(dispatch, "settle_deploy_checkout"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch.object(engines, "worker_live", return_value=False), \
              mock.patch.object(engines, "resume_l2", return_value=launched), \

@@ -366,7 +366,13 @@ current instructions and task records govern action. Lookup makes no model calls
 
 ## Project faults
 
-When uncommitted changes block task dispatch, L3 or the operator can use
+Isolated tasks progress independently of the deployment checkout. Fresh worktrees start from freshly
+fetched `origin/main`; resume validates the owner's existing worktree without fetching or changing
+deployment. Staged, working and untracked deployment edits stay untouched. Task launch uses the
+activated installation's committed CLI, personas, hooks, templates and schemas; deployment and
+activation failures remain separately visible while otherwise valid tasks continue.
+
+To preserve deployment edits for an authorized reconciliation, L3 or the operator can use
 [`alt task preserve-checkout <slug> --reason "…"`](docs/CLI.md#dirty-checkout-recovery)
 for a blocked task that has never launched. The daemon preserves staged, unstaged and untracked
 changes on a uniquely named local archive branch and records its immutable snapshot SHA. The
@@ -374,8 +380,8 @@ snapshot's parent retains staged content; applying the complete snapshot flatten
 The task owner inspects and applies authorized changes in its isolated worktree, selects what to
 stage, and delivers through a PR. Expected files are [coordination guidance](docs/CLI.md#task-file-lists).
 Archives remain local until explicit operator removal; Altitude never pushes or deletes them.
-Existing stash records and stashes remain readable and recoverable. Ordinary dispatch still
-requires clean main at `origin/main`; a restart does not clear an unresolved checkout fault.
+Existing stash records and stashes remain readable and recoverable. Explicit resume can requeue
+an unlaunched task with a saved deployment-dirt fault; deployment recovery remains separate.
 
 A task's system fault blocks that task and keeps its incident evidence, FYI and coordinator
 notification in the owning project. Unchanged saved blockers stay quiet across restarts and incident

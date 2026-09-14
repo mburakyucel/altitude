@@ -113,9 +113,9 @@ class TestSelfDeploy(AltitudeCase):
         git("commit", "-qm", "code + hook", cwd=other)
         git("push", "-q", "origin", "main", cwd=other)
         notes = dispatch.pull_after_done("altitude", {"slug": "landed"})
-        self.assertTrue((self.repo / "hooks" / "h.py").exists(), notes)          # hooks deploy by the pull itself
+        self.assertTrue((self.repo / "hooks" / "h.py").exists(), notes)
         pend = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {})
-        self.assertEqual(pend.get("files"), ["altitude/x.py"], notes)            # python needs a restart: flagged, not done
+        self.assertEqual(pend.get("files"), ["altitude/x.py", "hooks/h.py"], notes)
         self.assertTrue(any("restart pending" in n for n in notes), notes)
         self.assertEqual(dispatch.pull_after_done("altitude", {"slug": "landed"}), [])  # nothing new → silent
 

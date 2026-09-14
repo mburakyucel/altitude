@@ -22,7 +22,7 @@ class TestDirectDispatch(AltitudeCase):
             return {"returncode": 0, "agent": {"id": f"agent-{len(launches)}",
                                                "sessionId": f"session-{len(launches)}"}}
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
              mock.patch.object(dispatch.engines, "start_l2", side_effect=launch):
             server.dispatch_waiting(self.project)
@@ -99,7 +99,7 @@ class TestDirectDispatch(AltitudeCase):
         task = T.new(self.project, "Missing launch identity", "Try to dispatch it.", actor="burak")
         fake = {"stdout": "started", "stderr": "", "returncode": 0, "agent": None}
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
              mock.patch.object(dispatch.engines, "start_l2", return_value=fake), \
              mock.patch("altitude.incidents.system_fault") as fault:
@@ -116,7 +116,7 @@ class TestDirectDispatch(AltitudeCase):
         fake = {"stdout": "started", "stderr": "", "returncode": 0,
                 "agent": {"id": "agent-1", "sessionId": "session-1"}}
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
              mock.patch.object(dispatch.engines, "start_l2", return_value=fake) as launch:
             dispatch.run(self.project, task["slug"])
@@ -138,7 +138,7 @@ class TestDirectDispatch(AltitudeCase):
             T.block(self.project, task["slug"], "Confirm scope first", updates={"waiting_on": "burak"})
             return {"returncode": 0, "agent": {"id": "late-worker", "sessionId": "late-session"}}
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
              mock.patch.object(dispatch.engines, "start_l2", side_effect=launch), \
              mock.patch.object(dispatch.engines, "stop_l2_worker") as stop, \
@@ -164,7 +164,7 @@ class TestDirectDispatch(AltitudeCase):
                         raise OSError("Fixture launch failed")
                     return {"returncode": 1, "stderr": "Fixture launch failed"}
 
-                with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+                with mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
                      mock.patch.object(dispatch, "_task_worktree", return_value=self.repo), \
                      mock.patch.object(dispatch.engines, "start_l2", side_effect=launch):
                     with self.assertRaises(dispatch.DispatchFailure):

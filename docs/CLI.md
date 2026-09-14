@@ -357,6 +357,11 @@ and the complete PR diff for authorized scope and private content, including int
 
 ## Dirty-checkout recovery
 
+Ordinary dispatch and resume preserve deployment staged, working and untracked content. Fresh task
+worktrees use freshly fetched `origin/main`; owned resume validates its existing worktree without a
+remote fetch or deployment gate. Deployment and activation failures remain separately visible.
+Preservation is an explicit recovery action, independent of otherwise valid isolated work.
+
 `alt task preserve-checkout <slug> --reason "…"` asks altd to preserve the selected project's dirty
 main checkout for an existing blocked task that has never launched. It is available to the
 operator and project-bound L3, and denied to L2. It needs neither a worker nor a free task slot.
@@ -379,9 +384,9 @@ operator's shell selects the project by inserting `--project example` after `alt
    and keeps the task blocked. Snapshot commits live only on the local archive branch.
 4. Give the owner the branch, SHA and authorized reconciliation scope with
    `alt task message reconcile-edits "Inspect archive <branch> at <SHA>; apply the reviewed snapshot in your task worktree using the CLI recovery procedure and deliver through your PR."`
-   This message requests resume. The owner inspects the snapshot before applying authorized changes
-   and selecting what to stage and publish.
-   Resume any other blocked task separately with `alt task resume <slug> --reason "Checkout is clean after preservation"`.
+   For a faulted task, this L3 message records scope without waking it; request
+   `alt task resume reconcile-edits --reason "Archive and reconciliation scope verified"` separately.
+   The owner inspects the snapshot before applying authorized changes and selecting what to publish.
 
 In the owner's isolated worktree, inspect and apply using the recorded immutable SHA:
 
@@ -421,7 +426,8 @@ the task creates an archive; inspect with `git stash show --include-untracked <S
 `git log -g --format='%H %gs' refs/stash` for its request ID. Existing stashes are never silently
 deleted or converted. Never use `stash pop`, `stash drop`, `reset --hard` or `clean` as a recovery
 shortcut; archive or stash removal requires an explicit operator action.
-A restart alone does not resolve the fault, and unsuccessful resume leaves it reported.
+An unlaunched task with a saved `main-unpushed` fault can requeue through explicit reason-bearing
+resume independently of deployment recovery. Restart alone does not recover or discard edits.
 
 For upstream defects, the originating L3 checks public delivery evidence and local observations
 that the actual cause is gone before `alt task resume <slug> --reason "<verified fix and observation>"`.

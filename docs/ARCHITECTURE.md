@@ -176,7 +176,17 @@ turn. The instruction directs each role to follow references/imports and applica
 L2 resolves against its task worktree; L3 resolves against the registered repository while its cwd
 remains a disposable scratch directory. Discovery is repeated each turn, including native resumes.
 Repositories with only the legacy file are read as they stand; Altitude neither rewrites their files
-nor injects its own project policy. Brief boundary excerpts use that same rule-file selection.
+nor injects its own project policy. Brief boundary excerpts use the task worktree's rule file.
+
+On successful service startup, Altitude exports its committed installation HEAD into the ignored
+deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
+`config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
+These exports sit outside worker writable roots and remain available to existing workers. Managed
+Git guards use `.altitude-source/current/hooks`; startup updates only known installation hook paths
+and preserves unrelated custom configurations. Task inputs use activated source independently of
+uncommitted deployment files or newer code awaiting activation.
+An unavailable project guard update reports a project fault without stopping service startup;
+that project's launch waits for trusted guards while other projects continue.
 
 Everything that encodes the operator, their providers, or their hardware sits behind a named seam.
 The operator seam is one configured name and role, so personas, docs, and UI text say "the operator"
@@ -472,13 +482,13 @@ question/revision/option, hold ID/event/time, PR URL/head and scope reason. A `r
 carries that receipt; local refusals record `merge-approval-refused`. Release leaves worker and
 question state intact. Direct `--off` is operator-only.
 
-A project that deploys from its own checkout keeps that checkout at `origin/main`. Dispatch and
-daemon-side resume fast-forward it before Git validation reads it, so a PR another task merged
-while it was still running no longer refuses every launch in the window until that task's report
-lands. A sandboxed coordinator never performs this fetch on behalf of a message. The move is the
-same guarded fast-forward that runs after a task lands, and it happens only when the checkout is
-clean, on main, and strictly behind: a dirty, diverged, ahead, or off-main checkout still refuses,
-unchanged and untouched.
+Fresh dispatch fetches `origin/main` and creates the isolated task worktree from that immutable SHA.
+Resume validates the existing owner's worktree, branch and adopted ancestry without a remote fetch
+or deployment gate. Neither operation moves deployment HEAD, index or working content. A project's
+deployment advances separately after delivery and on daemon ticks, through the guarded fast-forward
+of clean main. Dirty, diverged, ahead or off-main deployment remains untouched and reports its own
+failure; otherwise valid isolated tasks continue. Publication retains its current-candidate checks,
+ownership boundaries and review holds.
 
 The reference-transaction hook allows writes that retain a protected ref's current logical tip,
 including `pack-refs` writes whose old object ID is zero. Loose-ref pruning is allowed only when
@@ -511,10 +521,9 @@ removal; Altitude never pushes or deletes them and never resumes a task as part 
 Legacy `preserved_checkout` string SHAs and stash events remain readable; their stashes are neither
 deleted nor converted. The task owner inspects and applies the snapshot in its own worktree,
 reviews the authorized objective and publication scope, and uses the normal PR path.
-The [recovery procedure](CLI.md#dirty-checkout-recovery) requires a separate resume after the
-checkout passes the guard. Workerless `main-unpushed` tasks retain their fault and blocked reason
-when a resume still fails that guard; a failed message wake leaves the inbox intact and does not
-retry until another wake is requested.
+The [recovery procedure](CLI.md#dirty-checkout-recovery) leaves resumption explicit. An unlaunched
+task with a saved `main-unpushed` fault can requeue on explicit resume independently of deployment
+recovery; its fresh dispatch still requires a fetched current base and a valid isolated worktree.
 
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
@@ -674,12 +683,13 @@ source-project FYI. Failed or uncertain publication and failed link verification
 no automatic publication retry or historical notification backfill.
 
 A merged Altitude change marks activation pending when the self-deploy fast-forward brings in loaded
-backend paths (`altitude/`, `bin/`, `systemd/`) or tracked inputs to the served web bundle
+backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `personas/`, `hooks/`,
+`templates/`, `schemas/`) or tracked inputs to the served web bundle
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
-`web/tsconfig.json`, `web/vite.config.ts`), whether the fast-forward runs after a task lands or at the
-next dispatch, or the regular thirty-second daemon tick discovers a merge while its worker still runs.
+`web/tsconfig.json`, `web/vite.config.ts`), whether the fast-forward runs after a task lands or the
+regular thirty-second daemon tick discovers a merge while its worker still runs.
 Web docs, design boards, the unused npm lockfile, and other non-build files do not
-trigger activation. Hooks, personas, and templates are read per use and deploy with the pull itself.
+trigger activation. Launch-source changes become available through the activated committed export.
 
 The web app's restart banner sits above the header on every route while activation is pending: it
 uses a compact phone summary with Details and the same available Restart action. Changed area,

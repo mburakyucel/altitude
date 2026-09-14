@@ -3,7 +3,7 @@
 The central rule is deliberately small: ``origin/<base>`` is the authority for
 new work and agents never write the base branch directly.  Inspection is local
 and side-effect free; callers that need a current answer must explicitly use
-``fetch_and_require_exact_base`` first.
+``fetch_origin`` first.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 from typing import Any, Sequence
 
 
@@ -187,15 +188,14 @@ def _state_error(state: RepositoryState, base: str, *, exact: bool) -> str | Non
             f"oldest local commit {state.oldest_local_sha} must be moved to a PR branch"
         )
     if exact and state.behind:
-        return f"{base} is {state.behind} commit(s) behind origin/{base}; fast-forward it before dispatch"
+        return f"{base} is {state.behind} commit(s) behind origin/{base}; fast-forward it before activation or recovery"
     return None
 
 
 def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch, then require a clean checkout exactly at ``origin/<base>``.
 
-    This is the dispatch boundary.  It does not alter the checkout to make it
-    pass: repair and task-branch recovery are explicit operator actions.
+    Used for explicit checkout recovery and activation, never isolated task admission.
     """
     origin_sha = fetch_origin(repo, base)
     state = inspect_repository(repo, base)
@@ -205,6 +205,56 @@ def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> 
     if state.head != origin_sha:
         raise GitPolicyError(f"dispatch refused: {base} is not exactly origin/{base}")
     return origin_sha
+
+
+def activate_source() -> None:
+    """Pin service launch inputs to committed source outside every worker's writable roots."""
+    from . import config
+
+    repo = config.REPO
+    head = service_preflight(repo).head
+    installed = _configured_hooks_path(repo)
+    old_hooks = _resolve_hooks_path(repo, installed) if installed else _active_hooks().resolve()
+    if old_hooks not in ((repo / "hooks").resolve(), _active_hooks().resolve()):
+        raise GitPolicyError("installation Git guards belong to another hook owner")
+    require_hooks_installed(repo, old_hooks)
+    root = repo / ".altitude-source"
+    root.mkdir(exist_ok=True)
+    source = root / head
+    if not source.exists():
+        with tempfile.TemporaryDirectory(dir=root) as staging:
+            archive = Path(staging) / "source.tar"
+            _output(_run(repo, "archive", "--format=tar", f"--output={archive}", head), "cannot export launch source")
+            tree = Path(staging) / "tree"
+            tree.mkdir()
+            with tarfile.open(archive) as contents:
+                contents.extractall(tree, filter="data")
+            tree.rename(source)
+    current = root / "current"
+    link = root / "next"
+    link.unlink(missing_ok=True)
+    link.symlink_to(head, target_is_directory=True)
+    link.replace(current)
+    config.SOURCE = source
+    config.PERSONAS, config.SCHEMAS = source / "personas", source / "schemas"
+    config.TEMPLATES, config.HOOKS = source / "templates", source / "hooks"
+    # Later imports use the same committed code as the modules loaded at clean startup.
+    sys.modules[__package__].__path__ = [str(source / "altitude")]
+    # Only Altitude's existing guard installation moves; a custom hook owner is untouched.
+    _output(_run(repo, "config", "--local", "core.hooksPath", str(current / "hooks")), "cannot activate Git guards")
+    for project in config.load_projects():
+        repository = config.project_path(project)
+        if repository == repo:
+            continue
+        try:
+            installed = _configured_hooks_path(repository)
+            if installed and _resolve_hooks_path(repository, installed) in (
+                    (repo / "hooks").resolve(), old_hooks, config.HOOKS.resolve()):
+                _output(_run(repository, "config", "--local", "core.hooksPath", str(current / "hooks")),
+                        "cannot activate Git guards")
+        except GitPolicyError as exc:
+            from . import incidents
+            incidents.system_fault("launch-source", f"{project}: {exc}", project=project)
 
 
 @contextmanager
@@ -279,6 +329,12 @@ def _resolve_hooks_path(repo: Path, raw: str) -> Path:
     return path.resolve() if path.is_absolute() else (repo / path).resolve()
 
 
+def _active_hooks() -> Path:
+    from . import config
+    current = config.REPO / ".altitude-source/current/hooks"
+    return current if current.is_dir() else config.HOOKS
+
+
 def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
     """Install the tracked guard hooks through this repository's local config.
 
@@ -287,7 +343,7 @@ def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path
     """
     root = Path(repo).resolve()
     _git_dir(root)
-    desired = Path(hooks_dir or (Path(__file__).resolve().parent.parent / "hooks")).resolve()
+    desired = Path(hooks_dir or _active_hooks()).absolute()
     missing = [name for name in REQUIRED_HOOKS if not (desired / name).is_file()]
     if missing:
         raise GitPolicyError(f"hook directory {desired} is missing: {', '.join(missing)}")
@@ -297,7 +353,7 @@ def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path
     current = _configured_hooks_path(root)
     if current is not None:
         resolved = _resolve_hooks_path(root, current)
-        if resolved != desired:
+        if resolved != desired.resolve():
             raise GitPolicyError(
                 f"core.hooksPath is already {current!r}; refusing to overwrite it with {str(desired)!r}"
             )
@@ -311,7 +367,7 @@ def require_hooks_installed(repo: str | Path, hooks_dir: str | Path | None = Non
     """Verify the complete tracked guard set without changing repository configuration."""
     root = Path(repo).resolve()
     _git_dir(root)
-    desired = Path(hooks_dir or (Path(__file__).resolve().parent.parent / "hooks")).resolve()
+    desired = Path(hooks_dir or _active_hooks()).resolve()
     current = _configured_hooks_path(root)
     if current is None or _resolve_hooks_path(root, current) != desired:
         raise GitPolicyError(f"Git guards are not installed from {desired}; run `alt install-git-guards`")

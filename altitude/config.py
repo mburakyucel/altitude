@@ -21,17 +21,20 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
         "refusing to use the live ~/.altitude state from a unittest process; "
         "set ALTITUDE_HOME to a throwaway directory before importing altitude"
     )
-REPO = Path(__file__).resolve().parent.parent          # this checkout: personas/, schemas/, templates/, web/
+SOURCE = Path(__file__).resolve().parent.parent
+REPO = SOURCE.parent.parent if SOURCE.parent.name == ".altitude-source" else SOURCE
+if SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
+    SOURCE = (REPO / ".altitude-source/current").resolve()
 # Product issue target, set only in altd's environment. Unset uses this installation's origin.
 UPSTREAM_ISSUE_REPOSITORY = os.environ.get("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY")
 # Operator decision 2026-09-09 Pacific: this project's hosted CI is suspended.
 # Remove this exception when restoring its workflow; other projects retain their gates.
 LOCAL_CHECK_REPOSITORY = "mburakyucel/altitude"
-PERSONAS = REPO / "personas"
-SCHEMAS = REPO / "schemas"
-TEMPLATES = REPO / "templates"
+PERSONAS = SOURCE / "personas"
+SCHEMAS = SOURCE / "schemas"
+TEMPLATES = SOURCE / "templates"
 WEB_DIST = REPO / "web" / "dist"
-HOOKS = REPO / "hooks"
+HOOKS = SOURCE / "hooks"
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")

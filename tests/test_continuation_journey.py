@@ -66,6 +66,32 @@ class TestContinuationJourney(AltitudeCase):
                   "review": [], "blocked": ""}
         S.write_json(S.task_dir(self.project, self.slug) / "report.json", report)
 
+    def test_dirty_deployment_survives_checked_delivery_and_same_owner_followup(self):
+        deployment_head = git("rev-parse", "HEAD", cwd=self.repo)
+        (self.repo / "README.md").write_text("Deployment staged version\n")
+        git("add", "README.md", cwd=self.repo)
+        (self.repo / "README.md").write_text("Deployment working version\n")
+        (self.repo / "private.txt").write_text("Fictional private deployment note\n")
+        index = (self.repo / ".git/index").read_bytes()
+        self.commit("README.md", "First authorized delivery\n", "First authorized change")
+        first = land.land("First checked delivery", cwd=self.worktree, merge=True, wait=0)
+        self.assertEqual((first["pr"], first["checks"], first["merged"]), (101, "pass", True))
+        self.resume_with_message("Continue the same task with the second authorized delivery.")
+        self.commit("README.md", "Second authorized delivery\n", "Second authorized change")
+        second = land.land("Second checked delivery", cwd=self.worktree, merge=True, wait=0)
+        self.assertEqual((second["pr"], second["checks"], second["merged"]), (102, "pass", True))
+        self.assertEqual(git("show", "main:README.md", cwd=self.remote), "Second authorized delivery\n")
+        notes = dispatch.pull_after_done(self.project, S.load_task(self.project, self.slug))
+        self.assertTrue(any("self-deploy refused" in note for note in notes))
+        current = S.load_task(self.project, self.slug)
+        self.assertEqual((current["state"], current["prs"]), ("running", [101, 102]))
+        self.assertFalse(current.get("fault"), "deployment failure is separate from the delivery owner")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo), deployment_head)
+        self.assertEqual((self.repo / ".git/index").read_bytes(), index)
+        self.assertEqual((self.repo / "README.md").read_text(), "Deployment working version\n")
+        self.assertEqual((self.repo / "private.txt").read_text(), "Fictional private deployment note\n")
+        self.assertNotIn("private.txt", git("ls-tree", "-r", "--name-only", "main", cwd=self.remote))
+
     def test_squash_continuation_failed_checks_retry_resume_report_and_archive(self):
         original_base = git("rev-parse", "HEAD", cwd=self.worktree).strip()
         first_commit = self.commit("README.md", "First delivery.\n", "first owned change")
@@ -152,7 +178,10 @@ class TestContinuationJourney(AltitudeCase):
         self.assertEqual(verify.verify(self.project, self.slug)["verdict"], "contradicted",
                          "both merges succeeding does not make an earlier-delivery-only report current")
 
+        deployment_head = git("rev-parse", "HEAD", cwd=self.repo).strip()
         resumed = self.resume_with_message("Both deliveries are ready; verify the full task and report completion.")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), deployment_head)
+        dispatch.self_deploy_fast_forward(self.project)
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), second_merge)
         pending = S.read_json(pending_path)
         self.assertEqual(pending["head"], second_merge)
