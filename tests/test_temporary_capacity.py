@@ -140,7 +140,7 @@ class TestTemporaryCapacity(AltitudeCase):
                 "id": "replacement-worker", "sessionId": session_id, "state": "working", "startedAt": 2,
             }}
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
                 mock.patch.object(dispatch, "_validate_task_worktree"), \
                 mock.patch.object(engines, "worker_live", return_value=False), \
                 mock.patch.object(engines, "resume_l2", side_effect=resume), \

@@ -594,7 +594,7 @@ def run_task_operation(project: str, slug: str) -> dict:
 
 @contextmanager
 def publication_settlement(project: str):
-    """Serialize the deployment checkout: one gate at a time fast-forwards it and reads its provenance."""
+    """Serialize project fetch, deployment and explicit checkout preservation."""
     path = config.project_dir(project) / ".publication-settlement.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as handle:
@@ -606,7 +606,7 @@ def publication_settlement(project: str):
 
 
 def preserve_checkout(project: str, slug: str, request: dict) -> str:
-    """Issue #247: preserve a dirty main through altd, before any worker can launch."""
+    """Issue #247: explicitly preserve a dirty main for an unlaunched recovery owner."""
     with publication_settlement(project), S.project_lock(project):
         task = S.load_task(project, slug)
         T._require_daemon_fence(task, slug, expected_daemon_request=request["id"],
@@ -629,21 +629,6 @@ def preserve_checkout(project: str, slug: str, request: dict) -> str:
         git_policy.fetch_and_require_exact_base(repo)
         return (f"Preserved {branch} at {sha}; inspect the archive; apply its binary diff SHA~2..SHA "
                 "with git apply --index in the task worktree, review and deliver a PR; retain until operator removal")
-
-
-def settle_deploy_checkout(project: str, slug: str) -> None:
-    """Do the fast-forward the provenance gate would otherwise only demand.
-
-    I-20260903-075410: an L2 merges its PR while its task is still running, so the deployment checkout stays behind
-    origin/main until that task's report lands, and every dispatch in the window refused. A checkout that is clean,
-    on main and strictly behind moves to exactly origin/main here; anything else stays untouched for
-    `fetch_and_require_exact_base` to refuse with its precise reason."""
-    try:
-        notes = self_deploy_fast_forward(project, slug)
-    except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError, KeyError):
-        return   # not a fast-forward, or no registered checkout to move: the strict gate decides
-    if notes:
-        S.append_event(project, slug, "self-deploy", note="; ".join(notes))
 
 
 def _git_branch(worktree: str | Path) -> str | None:
@@ -786,15 +771,17 @@ def build_brief(project: str, slug: str) -> str:
     if task.get("attempt") and progress.exists():
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
                     "kept; its `progress.md` follows.\n\n" + progress.read_text().rstrip() + "\n")
+    worktree = config.project_path(project) / ".claude" / "worktrees" / slug
     text = (config.TEMPLATES / "brief.md").read_text().format(
         slug=slug, project=project, title=task["title"], report_schema=config.SCHEMAS / "report.json",
         engine=engine,
         model=task.get("engine_model") or task.get("model") or "provider default",
         leases=("; ".join(f"`{l['slug']}` on {', '.join(l['paths']) or '(undeclared paths)'}" for l in other_leases) or "none"),
         paths=", ".join(task_paths(project, task)) or "(not declared — stay inside the request's scope)",
-        task_dir=d, merge_policy=merge_policy, never_list=project_never_list(config.project_path(project)),
+        task_dir=d, merge_policy=merge_policy,
+        never_list=project_never_list(worktree),
         repo=config.project_path(project),
-        branch=worktree_branch(slug, config.project_path(project) / ".claude" / "worktrees" / slug),
+        branch=worktree_branch(slug, worktree),
         completion_contract=completion_contract, conversation_contract=conversation_contract,
         publication_contract=publication_contract, request=request)
     if task.get("questions"):
@@ -827,8 +814,7 @@ def run(project: str, slug: str, model: str | None = None) -> dict:
 
 
 def _run(project: str, slug: str, model: str | None = None) -> dict:
-    # Read task eligibility first, but do not mark or write anything until the deployment checkout has passed
-    # its remote-backed gate and this task's worktree has a provenance-safe base.
+    # New work starts at the fetched commit; deployment HEAD, index and working files are not launch inputs.
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task["state"] != "queued":
@@ -842,12 +828,13 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
     try:
         repo = config.project_path(project)
         with publication_settlement(project):
-            settle_deploy_checkout(project, slug)
-            origin_sha = git_policy.fetch_and_require_exact_base(repo, "main")
+            if config.SOURCE != config.REPO:
+                git_policy.require_hooks_installed(repo)
+            origin_sha = git_policy.fetch_origin(repo, "main")
     except git_policy.GitPolicyError as exc:
         # system_fault may acquire state locks, so it deliberately lives outside project_lock.
         from . import incidents
-        incidents.system_fault("main-unpushed", f"{project}/{slug}: {exc}", project=project, task=slug)
+        incidents.system_fault("task-git-provenance", f"{project}/{slug}: {exc}", project=project, task=slug)
         raise T.TransitionError(f"dispatch refused by Git provenance gate: {exc}") from exc
     try:
         worktree_path = _task_worktree(repo, project, slug, origin_sha)
@@ -1009,19 +996,6 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
     if task.get("waiting_on") and not task.get("fault") and not task.get("resume_after") and daemon_request_id is None:
         return {"waiting": True}  # I-20260908-045037: an old inbox/wake is not an answer to a new question.
     if not task.get("agent_id") or not task.get("session_id"):
-        if task.get("fault") == "main-unpushed":
-            try:
-                with publication_settlement(project):
-                    settle_deploy_checkout(project, slug)
-                    git_policy.fetch_and_require_exact_base(config.project_path(project))
-            except git_policy.GitPolicyError as exc:
-                with S.project_lock(project):
-                    current = S.load_task(project, slug)
-                    if all(current.get(k) == task.get(k) for k in ("state", "resume_request", "resume_after")):
-                        current.pop("resume_after", None)
-                        current.pop("resume_request", None)
-                        S.save_task(project, current)
-                raise ResumeFailure(f"checkout fault remains unresolved: {exc}") from exc
         T.requeue(project, slug, expected_daemon_request=daemon_request_id,
                   expected_block_id=task.get("block_id"), **daemon_fence)
         return {"requeued": True}
@@ -1048,11 +1022,10 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         raise record_resume_failure(project, slug, claim["id"], error) from error
     try:
         repo = config.project_path(project)
-        with publication_settlement(project):
-            settle_deploy_checkout(project, slug)
-            git_policy.fetch_and_require_exact_base(repo, "main")
-            # Uncommitted work is exactly what a resumed session continues; path, branch, and ancestry stay strict.
-            _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
+        if config.SOURCE != config.REPO:
+            git_policy.require_hooks_installed(repo)
+        # A resume continues owned work, including edits, without needing a fresh remote base.
+        _validate_task_worktree(repo, project, slug, cwd, require_clean=False)
     except (git_policy.GitPolicyError, T.TransitionError, subprocess.SubprocessError, OSError) as exc:
         raise record_resume_failure(project, slug, claim["id"], exc, kind="task-git-provenance") from exc
     except Exception as exc:  # noqa: BLE001 — no post-claim infrastructure fault may strand the durable fence
@@ -1083,7 +1056,7 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
             persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
             effort=task.get("launch_effort"),
-            settings=S.task_dir(project, slug) / "settings.json",
+            settings=session_settings(project, slug, S.session_key(project, slug, task["attempt"])),
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root, images=attached)
         worker = res.get("agent") or {}
         if res.get("returncode") != 0:
@@ -1429,7 +1402,7 @@ def _seconds_since(iso: str) -> float:
 
 
 RESTART_PENDING = "restart-pending.json"
-BACKEND_ACTIVATION_DIRS = ("altitude/", "bin/", "systemd/")
+BACKEND_ACTIVATION_DIRS = ("altitude/", "bin/", "systemd/", "hooks/", "personas/", "schemas/", "templates/", "scripts/")
 WEB_BUILD_INPUTS = (
     "web/src/",
     "web/design/tokens.css",
@@ -1459,14 +1432,12 @@ def self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]
 
 
 def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str]:
-    """When a project's checkout is its deployment, fast-forward it to origin/main, so merged hooks, personas and
-    templates are what the next session runs. Loaded backend changes and tracked web build inputs need activation:
-    those are announced with an FYI and `monitor/restart-pending.json`, never restarted from here.
+    """Fast-forward a project's deployment to origin/main. Backend, launch inputs and tracked web build inputs
+    need activation: announce those with an FYI and `monitor/restart-pending.json`, never restart from here.
 
-    The one implementation `pull_after_done` and the dispatch/resume gate share. Returns notes, empty when the
+    The one implementation the deployment tick and `pull_after_done` share. Returns notes, empty when the
     project does not deploy from its checkout or the checkout is already at origin/main. Anything that is not a
-    pure fast-forward — dirty, on another branch, ahead of origin, or diverged — raises, and every caller keeps
-    refusing exactly as before."""
+    pure fast-forward — dirty, on another branch, ahead of origin, or diverged — raises a deployment failure."""
     proj = config.project(project)
     if not proj.get("self_deploy", project == "altitude"):
         return []
@@ -1507,7 +1478,7 @@ def pull_after_done(project: str, task: dict) -> list[str]:
         return self_deploy_fast_forward(project, task.get("slug"))
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         from . import incidents
-        incidents.system_fault("self-deploy", f"{project}: {e}", project=project, task=task.get("slug"))
+        incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
         T.fyi(project, task.get("slug"), f"self-deploy refused in {config.project_path(project)}: {str(e)[:300]}")
         return [f"self-deploy refused: {str(e)[:160]}"]
 

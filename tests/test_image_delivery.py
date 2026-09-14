@@ -201,7 +201,7 @@ class TestImageInbox(ImageDeliveryCase):
         super().setUp()
         self.quiet_engines()
         self.private_ledgers()
-        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
         self.patch(dispatch, "_task_worktree", return_value=self.repo)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(dispatch, "wip_hold", return_value=None)

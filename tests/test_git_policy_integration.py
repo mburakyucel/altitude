@@ -53,24 +53,24 @@ class TestDispatchWorktreePolicy(AltitudeCase):
 
 
 class TestDispatchBoundaryOrdering(AltitudeCase):
-    def test_unsafe_main_refuses_before_task_or_agent_mutation(self):
+    def test_failed_origin_fetch_refuses_before_task_or_agent_mutation(self):
         task = {
             "slug": "blocked", "state": "queued", "dispatching": None,
         }
         with mock.patch.object(dispatch.S, "project_lock", side_effect=lambda _project: contextlib.nullcontext()), \
              mock.patch.object(dispatch.S, "load_task", return_value=task), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.config, "project_path", return_value=Path("/tmp/unsafe-main")), \
+             mock.patch.object(dispatch.config, "project_path", return_value=Path("/tmp/unreachable-origin")), \
              mock.patch.object(
-                 dispatch.git_policy, "fetch_and_require_exact_base",
-                 side_effect=git_policy.GitPolicyError("main is ahead"),
+                 dispatch.git_policy, "fetch_origin",
+                 side_effect=git_policy.GitPolicyError("origin unavailable"),
              ), \
              mock.patch("altitude.incidents.system_fault") as fault, \
              mock.patch.object(dispatch.S, "save_task") as save, \
              mock.patch.object(dispatch.S, "write_json") as write_json, \
              mock.patch.object(dispatch.T, "brief") as brief, \
              mock.patch.object(dispatch.engines, "start_l2") as launch:
-            with self.assertRaisesRegex(T.TransitionError, "main is ahead"):
+            with self.assertRaisesRegex(T.TransitionError, "origin unavailable"):
                 dispatch.run("demo", "blocked")
 
         fault.assert_called_once()
@@ -89,22 +89,20 @@ class TestDaemonResumeProvenance(AltitudeCase):
         make_repo(self.repo)
         task = T.new(self.project, "Blocked provenance", "Resume it.")
         self.slug = task["slug"]
-        worktree = add_worktree(self.repo, self.slug)
+        worktree = self.worktree = add_worktree(self.repo, self.slug)
         task.update({"state": "blocked", "attempt": 1, "session_id": "thread-old", "agent_id": "agent-old",
                      "l2_engine": "codex", "worktree": str(worktree), "blocked_reason": "waiting", "waiting_on": "l3"})
         S.save_task(self.project, task)
 
     def test_real_daemon_provenance_failure_blocks_and_reports_without_losing_the_message(self):
         message = T.message(self.project, self.slug, "l3", "The restriction is fixed.", by="l3")
-        error = git_policy.GitPolicyError("git fetch origin main: genuine remote provenance failure")
+        git("switch", "-c", "wrong-owner", cwd=self.worktree)
 
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
-             mock.patch.object(dispatch, "settle_deploy_checkout"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=error), \
              mock.patch.object(engines, "resume_l2") as launch, \
              mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(T.TransitionError, "genuine remote provenance failure"):
+            with self.assertRaisesRegex(T.TransitionError, "wrong-owner"):
                 dispatch.resume(self.project, self.slug)
 
         launch.assert_not_called()
@@ -119,7 +117,7 @@ class TestDaemonResumeProvenance(AltitudeCase):
 
     def test_a_message_arriving_during_a_failed_resume_keeps_a_fresh_daemon_request(self):
         first = T.message(self.project, self.slug, "l3", "First answer.", by="l3")
-        error = git_policy.GitPolicyError("remote provenance is still invalid")
+        error = T.TransitionError("task worktree ownership is invalid")
         arrived = []
 
         def fail_after_message(*_args, **_kwargs):
@@ -128,8 +126,7 @@ class TestDaemonResumeProvenance(AltitudeCase):
 
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
-             mock.patch.object(dispatch, "settle_deploy_checkout"), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", side_effect=fail_after_message), \
+             mock.patch.object(dispatch, "_validate_task_worktree", side_effect=fail_after_message), \
              mock.patch("altitude.incidents.system_fault"):
             with self.assertRaises(dispatch.ResumeFailure):
                 dispatch.resume(self.project, self.slug)
@@ -153,9 +150,8 @@ class TestServiceGitPreflight(AltitudeCase):
 
     def test_unsafe_service_checkout_refuses_before_state_or_timers_change(self):
         with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "1"}), \
-             mock.patch.object(git_policy, "service_preflight",
+             mock.patch.object(git_policy, "activate_source",
                                side_effect=git_policy.GitPolicyError("main is ahead")) as preflight, \
-             mock.patch.object(git_policy, "require_hooks_installed") as hooks, \
              mock.patch.object(server.threading, "Thread") as thread, \
              mock.patch.object(server, "ThreadingHTTPServer") as httpd, \
              mock.patch.object(server, "log") as log:
@@ -163,8 +159,7 @@ class TestServiceGitPreflight(AltitudeCase):
                 server.main()
 
         self.assertEqual(stopped.exception.code, 1)
-        preflight.assert_called_once_with(config.REPO)
-        hooks.assert_not_called()
+        preflight.assert_called_once_with()
         self.assertTrue(self.pending.exists())
         thread.assert_not_called()
         httpd.assert_not_called()
@@ -172,16 +167,14 @@ class TestServiceGitPreflight(AltitudeCase):
 
     def test_failed_api_bind_keeps_restart_hold_even_with_a_safe_checkout(self):
         with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "0"}), \
-             mock.patch.object(git_policy, "service_preflight") as preflight, \
-             mock.patch.object(git_policy, "require_hooks_installed") as hooks, \
+             mock.patch.object(git_policy, "activate_source") as preflight, \
              mock.patch.object(server, "ThreadingHTTPServer", side_effect=OSError("stop after preflight")) as httpd, \
              mock.patch.object(server, "log"):
             with self.assertRaises(SystemExit) as stopped:
                 server.main()
 
         self.assertEqual(stopped.exception.code, 1)
-        preflight.assert_called_once_with(config.REPO)
-        hooks.assert_called_once_with(config.REPO)
+        preflight.assert_called_once_with()
         self.assertTrue(self.pending.exists())
         httpd.assert_called_once()
 
@@ -189,8 +182,7 @@ class TestServiceGitPreflight(AltitudeCase):
         def serve():
             self.assertFalse(self.pending.exists())
         with mock.patch.dict(os.environ, {"ALTITUDE_SERVICE": "1", "ALTITUDE_TIMERS": "0"}), \
-             mock.patch.object(git_policy, "service_preflight"), \
-             mock.patch.object(git_policy, "require_hooks_installed"), \
+             mock.patch.object(git_policy, "activate_source"), \
              mock.patch.object(server, "ensure_l3_verb_broker"), \
              mock.patch.object(server, "stop_l3_verb_brokers"), \
              mock.patch.object(config, "TLS", False), \
@@ -215,9 +207,8 @@ class TestInstallGitGuardsCommand(AltitudeCase):
         self.assertTrue(Path(configured).is_absolute())
 
 
-class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
-    """I-20260903-075410: an L2 merges its PR while its task is still running, so the deployment checkout stays one
-    commit behind origin/main until that report lands. The gate fast-forwards that checkout instead of refusing."""
+class TestDispatchDeploymentIndependence(AltitudeCase):
+    """Task launches read current origin while deployment advances only through activation."""
 
     def setUp(self):
         super().setUp()
@@ -249,32 +240,31 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
     def head(self) -> str:
         return git("rev-parse", "HEAD", cwd=self.repo).strip()
 
-    def dispatch_refuses(self, pattern: str) -> None:
-        task = T.new("altitude", "Dispatch refused", "Dispatch it.", actor="burak")
-        head = self.head()
-        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.engines, "start_l2") as launch, \
-             mock.patch("altitude.incidents.system_fault") as fault:
-            with self.assertRaisesRegex(T.TransitionError, pattern):
-                dispatch.run("altitude", task["slug"])
-        self.assertEqual(self.head(), head)                       # a checkout it may not move is left alone
-        launch.assert_not_called()
-        fault.assert_called_once()
+    def snapshot(self, repo):
+        return (git("rev-parse", "HEAD", cwd=repo), git("branch", "--show-current", cwd=repo),
+                git("status", "--porcelain", "--untracked-files=all", cwd=repo),
+                git("diff", "--binary", cwd=repo), git("diff", "--cached", "--binary", cwd=repo))
 
-    def test_an_unrelated_web_file_is_fast_forwarded_without_pending_activation(self):
-        task = T.new("altitude", "Dispatch behind main", "Dispatch it.", actor="burak")
-        merged = self.merged_on_origin("web/README.md")
+    def dispatch_preserves_deployment(self, expected_origin):
+        task = T.new("altitude", "Independent dispatch", "Dispatch it.", actor="burak")
+        before = self.snapshot(self.repo)
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
              mock.patch("altitude.incidents.system_fault") as fault:
             dispatch.run("altitude", task["slug"])
-
-        self.assertEqual(self.head(), merged)
-        self.assertEqual(S.load_task("altitude", task["slug"])["state"], "running")
+        self.assertEqual(self.snapshot(self.repo), before)
+        launched = S.load_task("altitude", task["slug"])
+        self.assertEqual(launched["state"], "running")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=launched["worktree"]).strip(), expected_origin)
         fault.assert_not_called()
         self.assertFalse(self.pending.exists())
+        return launched
 
-    def test_web_source_and_build_inputs_mark_activation_pending(self):
+    def test_new_task_uses_remote_commit_without_advancing_deployment(self):
+        merged = self.merged_on_origin("web/README.md")
+        self.dispatch_preserves_deployment(merged)
+
+    def test_independent_web_deployment_marks_activation_pending(self):
         task = T.new("altitude", "Dispatch behind web", "Dispatch it.", actor="burak")
         inputs = {
             "web/src/app.tsx": "export default 1;\n",
@@ -290,6 +280,9 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
              mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
              mock.patch("altitude.incidents.system_fault") as fault:
             dispatch.run("altitude", task["slug"])
+            self.assertNotEqual(self.head(), merged)
+            self.assertFalse(self.pending.exists())
+            dispatch.self_deploy_fast_forward("altitude", task["slug"])
 
         self.assertEqual(self.head(), merged)
         pend = S.read_json(self.pending, {})
@@ -297,13 +290,16 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertIn("the deployed web bundle is older than main", fyi_rows("altitude")[-1]["text"])
         fault.assert_not_called()
 
-    def test_backend_code_pulled_at_dispatch_marks_activation_pending(self):
+    def test_independent_backend_deployment_marks_activation_pending(self):
         task = T.new("altitude", "Dispatch behind code", "Dispatch it.", actor="burak")
         merged = self.merged_on_origin("altitude/x.py", "# new\n")
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(dispatch.engines, "start_l2", return_value=self.launched), \
              mock.patch("altitude.incidents.system_fault") as fault:
             dispatch.run("altitude", task["slug"])
+            self.assertNotEqual(self.head(), merged)
+            self.assertFalse(self.pending.exists())
+            dispatch.self_deploy_fast_forward("altitude", task["slug"])
 
         self.assertEqual(self.head(), merged)
         pend = S.read_json(self.pending, {})
@@ -327,47 +323,94 @@ class TestSelfDeployFastForwardAtDispatch(AltitudeCase):
         self.assertEqual(S.read_json(self.pending)["unit"], "test-restart")
         restart.assert_called_once()
 
-    def test_a_resumed_task_fast_forwards_the_same_way(self):
-        task = T.new("altitude", "Resume behind main", "Resume it.", actor="burak")
+    def test_same_owner_resume_preserves_both_dirty_trees_without_remote_access(self):
+        task = T.new("altitude", "Resume own edits", "Resume it.", actor="burak")
         slug = task["slug"]
         worktree = add_worktree(self.repo, slug)
         task.update({"state": "blocked", "attempt": 1, "agent_id": "agent-0", "session_id": "session-0",
                      "worktree": str(worktree), "branch": f"worktree-{slug}", "blocked_reason": "waiting"})
         S.save_task("altitude", task)
-        merged = self.merged_on_origin("templates/t.md")
+        for tree in (self.repo, worktree):
+            (tree / "README.md").write_text("staged edits\n")
+            git("add", "README.md", cwd=tree)
+            (tree / "README.md").write_text("working edits\n")
+            (tree / "draft.bin").write_bytes(b"\x00untracked\xff")
+        before = [self.snapshot(tree) for tree in (self.repo, worktree)]
+        self.merged_on_origin("templates/t.md")
+        git("remote", "set-url", "origin", str(self.tmp / "missing-origin"), cwd=self.repo)
+        message = T.message("altitude", slug, "l3", "Continue your edits", by="l3")
         with mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(engines, "window_hold", return_value=None), \
              mock.patch.object(dispatch.engines, "worker_live", return_value=False), \
-             mock.patch.object(dispatch.engines, "resume_l2", return_value=self.launched), \
+             mock.patch.object(dispatch.engines, "resume_l2", return_value=self.launched) as launch, \
+             mock.patch.object(git_policy, "fetch_origin", side_effect=AssertionError("resume must not fetch")), \
              mock.patch("altitude.incidents.system_fault") as fault:
             dispatch.resume("altitude", slug)
-
-        self.assertEqual(self.head(), merged)
+        self.assertEqual([self.snapshot(tree) for tree in (self.repo, worktree)], before)
+        for tree in (self.repo, worktree):
+            self.assertEqual((tree / "draft.bin").read_bytes(), b"\x00untracked\xff")
         self.assertEqual(S.load_task("altitude", slug)["state"], "running")
+        self.assertEqual(launch.call_args.args[2], "session-0")
+        self.assertIn(message["text"], launch.call_args.args[3])
+        self.assertEqual(T.pending("altitude", slug), [])
         fault.assert_not_called()
 
-    def test_a_dirty_checkout_behind_origin_still_refuses(self):
-        self.merged_on_origin("web/src/app.tsx")
-        (self.repo / "README.md").write_text("uncommitted\n")
-        self.dispatch_refuses("uncommitted changes")
+    def test_dirty_deployment_failure_remains_visible_without_blocking_dispatch(self):
+        merged = self.merged_on_origin("web/src/app.tsx")
+        (self.repo / "README.md").write_text("staged\n")
+        git("add", "README.md", cwd=self.repo)
+        (self.repo / "README.md").write_text("working\n")
+        (self.repo / "untracked.bin").write_bytes(b"\x00draft\xff")
+        task = self.dispatch_preserves_deployment(merged)
+        before = self.snapshot(self.repo)
+        with mock.patch("altitude.incidents.system_fault") as fault:
+            notes = dispatch.pull_after_done("altitude", task)
+        self.assertIn("self-deploy refused", notes[0])
+        self.assertEqual(fault.call_args.args[0], "self-deploy")
+        self.assertNotIn("task", fault.call_args.kwargs)
+        self.assertIn("self-deploy refused", fyi_rows("altitude")[-1]["text"])
+        self.assertEqual(S.load_task("altitude", task["slug"])["state"], "running")
+        self.assertEqual(self.snapshot(self.repo), before)
+        self.assertEqual((self.repo / "untracked.bin").read_bytes(), b"\x00draft\xff")
 
-    def test_a_checkout_ahead_of_origin_still_refuses(self):
-        (self.repo / "direct.txt").write_text("developed in the deployment checkout\n")
+    def test_unavailable_origin_blocks_fresh_dispatch_and_retains_its_inbox(self):
+        task = T.new("altitude", "Remote unavailable", "Use a trusted fresh base.", actor="burak")
+        T.block("altitude", task["slug"], "Waiting before first launch")
+        message = T.message("altitude", task["slug"], "l3", "Preserve this instruction", by="l3")
+        T.requeue("altitude", task["slug"])
+        git("remote", "set-url", "origin", str(self.tmp / "missing-origin"), cwd=self.repo)
+        before = self.snapshot(self.repo)
+        with mock.patch.object(dispatch, "wip_hold", return_value=None), \
+             mock.patch.object(dispatch.engines, "start_l2") as launch:
+            with self.assertRaisesRegex(T.TransitionError, "git fetch origin main"):
+                dispatch.run("altitude", task["slug"])
+        launch.assert_not_called()
+        blocked = S.load_task("altitude", task["slug"])
+        self.assertEqual((blocked["state"], blocked["fault"]), ("blocked", "task-git-provenance"))
+        self.assertEqual([row["id"] for row in T.pending("altitude", task["slug"])], [message["id"]])
+        self.assertEqual(self.snapshot(self.repo), before)
+        self.assertFalse((self.repo / ".claude/worktrees" / task["slug"]).exists())
+
+    def test_a_checkout_ahead_of_origin_dispatches_from_origin(self):
+        origin = git_policy.capture_origin_sha(self.repo)
+        (self.repo / "direct.txt").write_text("local deployment commit\n")
         git("add", "direct.txt", cwd=self.repo)
         git("commit", "-qm", "direct main commit", cwd=self.repo)
-        self.dispatch_refuses("ahead of origin/main")
+        task = self.dispatch_preserves_deployment(origin)
+        self.assertFalse((Path(task["worktree"]) / "direct.txt").exists())
 
-    def test_a_diverged_checkout_still_refuses(self):
-        self.merged_on_origin("web/src/app.tsx")
-        (self.repo / "direct.txt").write_text("developed in the deployment checkout\n")
+    def test_a_diverged_checkout_dispatches_from_current_origin(self):
+        merged = self.merged_on_origin("web/src/app.tsx")
+        (self.repo / "direct.txt").write_text("local deployment commit\n")
         git("add", "direct.txt", cwd=self.repo)
         git("commit", "-qm", "direct main commit", cwd=self.repo)
-        self.dispatch_refuses("diverged from origin/main")
+        task = self.dispatch_preserves_deployment(merged)
+        self.assertFalse((Path(task["worktree"]) / "direct.txt").exists())
 
-    def test_a_checkout_off_main_still_refuses(self):
-        self.merged_on_origin("web/src/app.tsx")
+    def test_a_checkout_off_main_dispatches_from_current_origin(self):
+        merged = self.merged_on_origin("web/src/app.tsx")
         git("checkout", "-q", "-b", "side", cwd=self.repo)
-        self.dispatch_refuses("checkout is on side, expected main")
+        self.dispatch_preserves_deployment(merged)
 
 
 if __name__ == "__main__":

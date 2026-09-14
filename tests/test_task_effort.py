@@ -14,7 +14,7 @@ class TestTaskEffort(AltitudeCase):
         self.private_ledgers()
         self.quiet_engines()
         self.register(self.project, routing=config.parse_routing("codex > claude:opus"))
-        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
         self.patch(dispatch, "_task_worktree", return_value=self.repo)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(engines, "worker_live", return_value=False)

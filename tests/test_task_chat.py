@@ -36,7 +36,7 @@ class ChatCase(AltitudeCase):
 
     def quiet_launch(self):
         """One resume launches nothing real: base check, worktree validation and the holds are stubbed out."""
-        self.patch(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40)
+        self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(dispatch, "wip_hold", return_value=None)
         self.quiet_engines()

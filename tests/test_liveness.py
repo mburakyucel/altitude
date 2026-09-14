@@ -184,7 +184,7 @@ class TestResumeRebinds(AltitudeCase):
              mock.patch.object(engines, "worker_live", side_effect=lambda *a, **kw: bool(rows)), \
              mock.patch.object(engines, "stop_l2_worker", side_effect=lambda *a, **kw: rows.clear() or "stopped") as stop, \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree") as validate:
             res = dispatch.resume(self.project, "resume-me")
         validate.assert_called_once()
@@ -217,7 +217,7 @@ class TestResumeRebinds(AltitudeCase):
                  "stdout": "started", "stderr": "", "returncode": 0,
              }), mock.patch.object(engines, "worker_live", return_value=False), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
-             mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+             mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "_validate_task_worktree"), \
              mock.patch("altitude.incidents.system_fault") as fault:
             with self.assertRaisesRegex(RuntimeError, "no concrete live worker"):
@@ -238,7 +238,7 @@ class TestResumeRebinds(AltitudeCase):
             "attempt": 1, "worktree": str(wt),
         })
 
-        with mock.patch.object(dispatch.git_policy, "fetch_and_require_exact_base", return_value="a" * 40), \
+        with mock.patch.object(dispatch.git_policy, "fetch_origin", return_value="a" * 40), \
              mock.patch.object(dispatch, "wip_hold", return_value=None), \
              mock.patch.object(
                  dispatch, "_validate_task_worktree", side_effect=T.TransitionError("foreign commit")

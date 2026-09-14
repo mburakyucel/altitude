@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 from altitude import config, dispatch, git_policy, state as S  # noqa: E402
 
 
+ROOT = config.REPO
 SERVICE = "altitude.service"
 WEB = ROOT / "web"
 DIST = WEB / "dist"

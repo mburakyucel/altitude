@@ -1820,9 +1820,10 @@ class TestCheckEvidence(AltitudeCase):
             check.update(status="COMPLETED", conclusion="SUCCESS")
             S.write_json(self.ghdir / "check_evidence.json", self.evidence)
 
-        with mock.patch.object(land.time, "sleep", side_effect=finish_check) as sleep:
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = finish_check
             result = land.land("required check finishes", cwd=self.repo, wait=10, merge=True)
-        sleep.assert_called_once()
+        clock.sleep.assert_called_once()
         self.assertEqual((result["checks"], result["merged"]), ("pass", True))
 
     def test_buckets_without_candidate_evidence_cannot_enter_no_ci_fallback(self):
