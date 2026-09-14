@@ -567,6 +567,21 @@ override. L3 can explicitly file an Altitude defect with the separate create-onl
 `alt issue upstream` verb through the same transport. Its product target and public reproduction
 contract are described under [faults](#faults); private evidence stays in the calling project.
 
+`alt pr close <number>` closes an explicitly selected superseded PR through the same project-bound
+coordinator transport or the operator's `POST /api/pr/close` endpoint. `server.pr_close` fixes the
+repository from the checkout origin, accepts a positive number and no body, and restricts actors
+to L3 or the operator. The broker fixes L3; HTTP fixes operator and rejects actor/target overrides.
+The command reads PR identity and state, closes only an open PR without branch deletion or comment,
+then re-reads even after a failed or timed-out write. Verified closed/merged states return the URL
+and an explicit outcome; already-closed and merged PRs need no mutation. Open or unreadable results
+fail without a success event. Confirmed calls append actor, number, URL, state and outcome to the
+existing `pr-close` project log. Repeated calls read current state; no registry or automatic retry runs.
+L3 judges authorization and superseding delivery from the existing evidence; the command does not
+prove replacement equivalence or select cleanup targets. L2 hands that evidence to L3 and gains no
+PR-close authority. Task state, archives and merge holds retain their own lifecycle.
+The [L3 persona](../personas/l3.md) directs capability-gap recommendations and authorized remediation;
+that guidance grants no permission expansion by itself.
+
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried

@@ -166,6 +166,34 @@ restores the compact line. Other FYIs and historical rows without selection rema
 grouping. This command changes no task state and creates no operator decision.
 The [L3 persona](../personas/l3.md) defines when and how the coordinator uses this mechanism.
 
+## Superseded PR closure
+
+```text
+alt pr close <number>
+```
+
+L3 and the operator use this verb for authorized superseded-PR cleanup. L2 supplies the existing
+authorization and superseding delivery evidence through `alt task reply` and report follow-ups;
+L3 verifies it before closing. This permits no autonomous unrelated cleanup. The command enforces
+project and actor boundaries; L3 judges the authorization and replacement's completeness.
+
+Supply one positive PR number. The repository comes from the project's checkout origin, and L3's
+transport fixes the project. No URL, repository override, branch deletion, comment, stdin body,
+or other option is accepted. `alt pr <number> [--json]` remains the inspection command.
+The coordinator tool takes `{"kind":"alt","args":["pr","close","42"]}`.
+The operator CLI uses `POST /api/pr/close` with `{"project":"<name>","number":42}`;
+an optional `body` must be empty. HTTP fixes actor `operator`; the coordinator fixes `l3`.
+
+The JSON result contains `number`, `url`, verified `state` (`CLOSED` or `MERGED`), and `outcome`
+(`closed`, `already-closed`, or `merged`). Already-closed and merged targets return without mutation.
+An open target receives one close attempt without deleting its branch, followed by a state read,
+including after a failed or timed-out write. A still-open PR fails; an unreadable result is
+unconfirmed and names the target URL for inspection before retrying. Each invocation reads current
+state; no mutation retry loop runs. A confirmed closed state establishes the result, not which
+concurrent actor caused it. Confirmed calls record a `pr-close` project event with actor and the
+result fields; failed or unconfirmed calls record no success. Branches, checkout archives, task
+ownership and merge holds remain intact. Closure alone proves neither delivery nor activation.
+
 ## GitHub issues
 
 ```text

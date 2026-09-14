@@ -649,7 +649,16 @@ L3 may use `alt issue close <number> --reason completed|not-planned` for request
 reconcile verified completion of an authorized delivery with `completed`, without another routine
 operator request. Unrelated autonomous backlog cleanup remains unauthorized. It follows the same coordinator/socket boundary, publishes no text,
 and records the actor, issue number, closure reason, and URL in the project log after GitHub succeeds.
-L2 remains unable to mutate issues. Claude's native Bash
+L2 remains unable to mutate issues.
+For authorized superseded-PR cleanup, L2 hands authorization and replacement-delivery evidence to L3.
+L3 verifies scope and uses [`alt pr close <number>`](CLI.md#superseded-pr-closure) through its existing
+project-bound transport; the operator can use the same verb through altd. Closure retains branches
+and archives, verifies the resulting state, and records confirmed outcomes in the project log.
+Already-closed and merged PRs return without mutation; uncertain results never imply completion.
+Closing a PR does not finish, reject or resume its owner, release a hold, or prove activation.
+Missing supported capabilities lead to scoped recommendations and authorized remediation under the
+[L3 guidance](../personas/l3.md), with permission changes still requiring their applicable approval.
+Claude's native Bash
 sandbox is unavailable on this host because unprivileged bwrap namespaces cannot be created, so enabling its
 hard-failure mode would prevent every headless L3 turn; the deny-by-default tool boundary and runtime cwd provide
 Claude's confinement, while Codex retains its native filesystem sandbox.
