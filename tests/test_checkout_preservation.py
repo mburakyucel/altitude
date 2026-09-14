@@ -121,7 +121,6 @@ class TestCheckoutPreservation(AltitudeCase):
             self.assertNotEqual(self.alt("--project", self.project, *args, env=env).returncode, 0)
         with self.assertRaises(ValueError):
             server.l3_verb_request(self.project, {"kind": "alt", "args": ["task", "preserve-checkout", "../other", "--reason", "No"]})
-        self.assertIn("Bash(alt task preserve-checkout *)", engines.L3_ALLOWED_TOOLS)
 
     def test_existing_worker_and_changed_task_are_refused(self):
         self.legacy_checkout_fault(self.slug)

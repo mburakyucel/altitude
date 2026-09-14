@@ -17,7 +17,11 @@ engine/attempt/owner or delegated attribution, coverage notes, and checked/obser
 These commands do not rescan provider logs. Missing counters remain null or partial; archived tasks
 retain their final observation. See [token semantics](SESSION_LIFECYCLE.md#task-token-accounting).
 
-These commands are read-only. They print compact text unless `--json` is present:
+L2 and L3 share task status/show/report/messages/events/list, repository/PR reads, history search,
+tool summaries and incident listing. Owner repository, PR and history/tool reads require the launch
+project. Mutation permissions stay separate; L2 does not gain global queue, decisions, monitor or
+state views. Repository inspection includes only the selected project's fault counters, alongside
+the installation's service/activation summary. The inspection commands below print compact text unless `--json` is present:
 
 ```text
 alt task report <slug> [--json]
@@ -38,8 +42,10 @@ tasks waiting for Burak.
 `alt l3 tools` groups the shell commands persisted with recent L3 turns. Commands outside the `alt`
 door appear first so recurring inspection pipelines are easy to replace with known verbs.
 
-An L3 process is read-only on the deployment checkout and Altitude home. Its direct shell reads are limited
-to Git log/diff-stat/show-stat and the altitude user journal. Runtime shims carry every `alt` invocation plus
+An L3 process is read-only on the deployment checkout and Altitude home. Native command admission names
+trusted shims; the CLI, broker and shims authorize their operations. Git log/diff/show include full patches
+and historical files, with external diff/text-conversion helpers disabled and output-file options refused.
+The altitude user journal is also readable. Runtime shims carry every `alt` invocation plus
 `gh pr` view/list/diff/checks, GitHub issue/run inspection, and altitude service status over that project's
 same-user altd Unix socket. The socket fixes the project independently of request data. The broker re-applies the
 L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
@@ -123,8 +129,8 @@ no next action is not scheduled monitoring.
 conversation, active and archived task conversations (including decision/acceptance messages),
 report string fields, and completion digests. L3 uses its usual runtime command or coordinator MCP
 request `{"kind":"alt","args":["l3","search","index migration","--json"]}`. The socket fixes the
-project; the operator CLI can select one through the usual `--project` option. L2's command authority
-is unchanged. Source paths resolving outside the project are refused.
+project; L2 uses the same CLI read bound to its launch project, while the operator can select one through
+the usual `--project` option. Source paths resolving outside the project are refused.
 
 The query is 1–200 characters, contains non-whitespace text and matches a literal case-insensitive
 substring, without regex, token ranking or model calls. The full existing corpus is scanned on each

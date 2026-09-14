@@ -299,7 +299,6 @@ class TestCIRecheck(AltitudeCase):
                 T.recheck_ci(self.project, self.slug, run, at, "Verify", actor="l3")
         with self.assertRaises(ValueError):
             server._validate_l3_alt_args(["task", "recheck-ci", "../foreign"])
-        self.assertIn("Bash(alt task recheck-ci *)", l3.ALLOWED_TOOLS)
 
     def test_github_transport_binds_repository_host_method_and_timeout(self):
         with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")) as run:

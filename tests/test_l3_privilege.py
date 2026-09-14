@@ -57,8 +57,6 @@ class TestIssueVerbs(AltitudeCase):
                          [("issue-new", "l3", "--requested", self.url.split("#")[0]),
                           ("issue-comment", "l3", "Issue #42", self.url)])
         self.assertNotIn(body, json.dumps(events))
-        self.assertIn("Bash(alt issue new *)", l3.ALLOWED_TOOLS)
-        self.assertIn("Bash(alt issue comment *)", l3.ALLOWED_TOOLS)
 
     def test_l3_close_maps_both_reasons_to_origin_and_records_the_receipt(self):
         self.setenv("GH_REPO", "other/private")
@@ -75,7 +73,6 @@ class TestIssueVerbs(AltitudeCase):
         events = S.read_project_log(self.project)
         self.assertEqual([(e["kind"], e["actor"], e["number"], e["reason"], e["url"]) for e in events],
                          [("issue-close", "l3", 42, reason, self.url) for reason in ("completed", "not-planned")])
-        self.assertIn("Bash(alt issue close *)", l3.ALLOWED_TOOLS)
 
     def test_close_refuses_extra_authority_and_published_text(self):
         invalid = [[], ["--reason", "duplicate"], ["--reason", "not planned"], ["--rea", "completed"],
@@ -271,6 +268,38 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertIn("read-only", denied.stderr)
         self.assertEqual(self.checkout_snapshot(), before, "the denied Git write leaves checkout and Git metadata untouched")
 
+    def test_git_evidence_reads_full_patches_and_blobs_without_diff_helpers(self):
+        (self.repo / ".gitattributes").write_text("README.md diff=fixture\n")
+        (self.repo / "README.md").write_text("inspect this exact change\n")
+        git("add", ".", cwd=self.repo)
+        git("commit", "-m", "evidence", cwd=self.repo)
+        marker = self.tmp / "helper-ran"
+        helper = self.tmp / "diff-helper"
+        helper.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+        helper.chmod(0o700)
+        git("config", "diff.external", str(helper), cwd=self.repo)
+        git("config", "diff.fixture.textconv", str(helper), cwd=self.repo)
+        git("config", "diff.fixture.cachetextconv", "true", cwd=self.repo)
+        before = {p: p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}
+        for engine in ("claude", "codex"):
+            runtime = l3._l3_runtime(self.project, engine)
+            self.addCleanup(l3._remove_runtime, runtime)
+            for args in (("diff", "HEAD~", "HEAD"), ("show", "HEAD"), ("show", "HEAD:README.md"),
+                         ("log", "-1", "-p")):
+                with self.subTest(engine=engine, args=args):
+                    read = subprocess.run([str(runtime / "bin" / "git"), *args], capture_output=True, text=True)
+                    self.assertEqual(read.returncode, 0, read.stderr)
+                    self.assertIn("inspect this exact change", read.stdout)
+            for args in (("fetch", "origin"), ("config", "user.name", "No"),
+                         ("show", "--textconv", "HEAD:README.md"), ("diff", "--ext-diff", "HEAD~", "HEAD"),
+                         ("diff", "--output=" + str(marker), "HEAD~", "HEAD")):
+                with self.subTest(engine=engine, denied=args):
+                    denied = subprocess.run([str(runtime / "bin" / "git"), *args], capture_output=True, text=True)
+                    self.assertEqual(denied.returncode, 77, denied.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual({p: p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}, before,
+                         "inspection leaves checkout, config, index and textconv cache refs untouched")
+
     def test_i_20260903_075410_claude_l3_denies_checkout_write_and_reads(self):
         before, seen = self.checkout_snapshot(), {}
         l3.save_info(self.project, {"sessions": {"claude": {"session_id": "old-auto-session"}},
@@ -299,9 +328,9 @@ class TestL3CheckoutConfinement(AltitudeCase):
                          "restricted Claude retains read access to the Altitude home")
         self.assertNotIn("Edit", seen["tools"]); self.assertNotIn("Write", seen["tools"])
         self.assertNotIn("git fetch", seen["allowed_tools"])
-        for read in ("gh pr diff", "gh pr checks", "git show --stat", "journalctl --user -u altitude",
-                     "systemctl --user status altitude"):
-            self.assertIn(read, seen["allowed_tools"])
+        self.assertEqual(set(seen["allowed_tools"].split(",")),
+                         {"Read", "Grep", "Glob", "Bash(alt *)", "Bash(git *)", "Bash(gh *)",
+                          "Bash(journalctl *)", "Bash(systemctl *)"})
         self.assertEqual(l3.info(self.project)["sessions"]["claude"]["confinement_version"],
                          l3.L3_CONFINEMENT_VERSION)
 
@@ -467,8 +496,6 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         run.assert_not_called()
 
     def test_sept7_l3_sets_wip_through_broker_but_cannot_register_or_cross_projects(self):
-        self.assertIn("Bash(alt project set *)", engines.L3_ALLOWED_TOOLS)
-        self.assertNotIn("Bash(alt project add *)", engines.L3_ALLOWED_TOOLS)
         for options, expected in ((["--wip", "5"], 5), (["--unset-wip"], None)):
             result = server.l3_verb_request(self.project, {
                 "kind": "alt", "args": ["project", "set", self.project, *options, "--reason", "test"]})
@@ -593,7 +620,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         with mock.patch.object(engines, "usage_hold", return_value=None), \
              mock.patch.object(engines.subprocess, "Popen", side_effect=claude_popen):
             engines.claude_print("prompt", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
-                                 restricted=True, tools=l3.L3_TOOLS, allowed_tools=l3.ALLOWED_TOOLS,
+                                 restricted=True, tools=l3.L3_TOOLS, allowed_tools=engines.L3_ALLOWED_TOOLS,
                                  add_dirs=(self.repo, config.ROOT), settings=self.tmp / "settings.json")
         command = seen["claude"][0]
         self.assertIn("--restricted", command)

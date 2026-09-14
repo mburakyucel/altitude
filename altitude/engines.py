@@ -36,21 +36,7 @@ def repository_rule_prompt(repo: Path) -> str:
 
 L3_ALLOWED_TOOLS = ",".join((
     "Read", "Grep", "Glob",
-    "Bash(alt project set *)", "Bash(alt state *)", "Bash(alt task new *)", "Bash(alt task reject *)",
-    "Bash(alt task report *)", "Bash(alt task messages *)", "Bash(alt task events *)",
-    "Bash(alt task status *)", "Bash(alt task show *)", "Bash(alt task list *)", "Bash(alt task message *)",
-    "Bash(alt task escalate *)", "Bash(alt task resume *)", "Bash(alt task stop *)", "Bash(alt task handoff *)",
-    "Bash(alt task paths *)", "Bash(alt task hold-merge *)", "Bash(alt task done *)",
-    "Bash(alt task preserve-checkout *)",
-    "Bash(alt task recheck-ci *)",
-    "Bash(alt fyi *)", "Bash(alt decisions *)", "Bash(alt monitor *)", "Bash(alt queue *)",
-    "Bash(alt repo *)", "Bash(alt pr *)", "Bash(alt l3 tools *)",
-    "Bash(alt incident new *)", "Bash(alt incident amend *)", "Bash(alt incident list *)",
-    "Bash(git log *)", "Bash(git diff --stat *)", "Bash(git show --stat *)",
-    "Bash(gh pr view *)", "Bash(gh pr list *)", "Bash(gh pr diff *)", "Bash(gh pr checks *)",
-    "Bash(gh issue list *)", "Bash(gh issue view *)", "Bash(gh run list *)", "Bash(gh run view *)",
-    "Bash(gh run watch *)",
-    "Bash(journalctl --user -u altitude*)", "Bash(systemctl --user status altitude*)",
+    *(f"Bash({name} *)" for name in ("alt", "git", "gh", "journalctl", "systemctl")),
 ))
 _codex_processes: dict[str, subprocess.Popen] = {}
 

@@ -147,7 +147,7 @@ def repo(project: str) -> dict:
     try:
         raw_faults = S.read_json(incidents.FAULTS, {}) or {}
         faults = {kind: {key: row.get(key) for key in ("count", "last", "incident")}
-                  for kind, row in raw_faults.items() if isinstance(row, dict)}
+                  for kind, row in raw_faults.items() if isinstance(row, dict) and row.get("project") == project}
     except (OSError, ValueError) as exc:
         _error(errors, "faults", exc); faults = {}
     service = engines.service_status()

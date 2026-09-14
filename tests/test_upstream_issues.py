@@ -559,7 +559,6 @@ class TestUpstreamIssues(AltitudeCase):
                  ([*ARGS, "--repo", "other/repo"], REPORT, True),
                  (["issue", "close", "42", "--reason", "completed", "--target", "upstream"], REPORT, True),
                  (ARGS, REPORT | {"actual": "Read incidents/private.md"}, True)]
-        self.assertIn("Bash(alt issue upstream *)", l3.ALLOWED_TOOLS)
         for args, report, denied in cases:
             stdin = json.dumps(report) if report is not None else ""
             result = subprocess.run([str(bindir / "alt"), *args], input=stdin, cwd=runtime,

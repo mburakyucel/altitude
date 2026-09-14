@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase, git, make_repo
-from altitude import config, digest, engines, incidents, l3, state as S
+from altitude import config, digest, engines, incidents, l3, state as S, tasks as T
 
 
 def cli(*argv: str) -> str:
@@ -41,6 +41,48 @@ class TestInspectionCLI(AltitudeCase):
         directory.mkdir(parents=True, exist_ok=True)
         S.write_json(directory / "status.json", row)
         return row
+
+    def test_owner_and_coordinator_inspect_project_decisions_and_delivery(self):
+        self.task()
+        T.message(self.project, "inspect", "burak", "Keep the pilot scoped to Atlas.")
+        l3.chat_log(self.project, "user", "Atlas pilot approved.", turn_id="original")
+        l3.chat_log(self.project, "user", "Correction: Atlas pilot needs review.", turn_id="correction")
+        S.write_json(self.ghdir / "prs.json", {"8": {"number": 8, "state": "OPEN", "headRefOid": "candidate",
+                     "files": [{"path": "README.md"}], "statusCheckRollup": [{"conclusion": "SUCCESS"}]}})
+        before = {p: p.read_bytes() for p in config.project_dir(self.project).rglob("*") if p.is_file()}
+        for actor in ("l2", "l3"):
+            with self.subTest(actor=actor):
+                self.setenv("ALTITUDE_ACTOR", actor)
+                record = json.loads(cli("l3", "search", "Atlas pilot", "--json"))
+                self.assertEqual(record["matched"], 2)
+                evidence = json.dumps(record)
+                for text in ("original", "correction", "needs review", "not new authority"):
+                    self.assertIn(text, evidence)
+                self.assertIn("Keep the pilot scoped", cli("task", "messages", "inspect"))
+                self.assertEqual(json.loads(cli("pr", "8", "--json"))["head_sha"], "candidate")
+                self.assertEqual(json.loads(cli("repo", "--json"))["project"], self.project)
+                self.assertIn("groups", json.loads(cli("l3", "tools", "--json")))
+        self.assertEqual({p: p.read_bytes() for p in config.project_dir(self.project).rglob("*") if p.is_file()}, before)
+
+    def test_owner_inspection_preserves_project_and_mutation_boundaries(self):
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        for command in (("repo",), ("pr", "8"), ("l3", "search", "decision"), ("l3", "tools")):
+            with self.subTest(command=command), self.assertRaisesRegex(SystemExit, "launch project"):
+                cli("--project", "foreign", *command)
+        self.setenv("ALTITUDE_PROJECT", "")
+        with self.assertRaisesRegex(SystemExit, "launch project"):
+            cli("--project", self.project, "l3", "search", "decision")
+        self.setenv("ALTITUDE_PROJECT", self.project)
+        for command in (("queue",), ("decisions",), ("monitor",), ("state",), ("task", "new", "--title", "No"),
+                        ("task", "resume", "inspect", "--reason", "No"), ("task", "hold-merge", "inspect", "--off"),
+                        ("issue", "close", "8", "--reason", "completed"), ("machine", "show")):
+            with self.subTest(command=command), self.assertRaisesRegex(SystemExit, "not available to an L2"):
+                cli(*command)
+        with mock.patch.object(urllib.request, "urlopen") as publish, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                cli("pr", "close", "8")
+        publish.assert_not_called()
+        self.assertEqual(self.gh_log(), [])
 
     def test_operator_issue_cli_sends_stdin_and_options_to_daemon(self):
         for args, operation in ((["new", "--title", "Backlog", "--label", "later", "-"], "new"),
@@ -171,7 +213,9 @@ class TestInspectionCLI(AltitudeCase):
         (self.repo / "new.txt").write_text("new\n")
         S.write_json(config.MONITOR_DIR / "restart-pending.json", {"since": S.now(), "files": ["bin/alt"]})
         S.write_json(incidents.FAULTS, {"restart": {"count": 3, "last": S.now(), "incident": "I-1",
-                                                           "detail": "private"}})
+                                                           "detail": "private", "project": self.project},
+                                      '["foreign", "fault"]': {"count": 2, "incident": "I-foreign", "project": "foreign"},
+                                      "legacy": {"count": 1, "incident": "I-unscoped"}})
         service = {"unit": "altitude.service", "state": "active", "substate": "running", "pid": 321,
                    "last_restart": "Thu 2026-09-04 00:00:00 PDT", "error": None}
         with mock.patch.object(engines, "service_status", return_value=service):
@@ -183,6 +227,7 @@ class TestInspectionCLI(AltitudeCase):
             self.assertIn(value, text)
         self.assertEqual(record["dirty_files"], 2)
         self.assertNotIn("detail", record["faults"]["restart"])
+        self.assertEqual(set(record["faults"]), {"restart"})
         self.assertEqual(record["service"], service)
 
     def test_repo_counts_a_rename_and_quoted_filename_once_each(self):

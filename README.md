@@ -357,11 +357,15 @@ with longer text marked `[truncated]`. Resumed sessions keep native conversation
 only a bounded handoff of messages missed while another provider handled L3. No tool
 transcripts or generated summaries are replayed.
 
-For decisions beyond that handoff, L3 uses [`alt l3 search "literal text"`](docs/CLI.md#historical-evidence-search).
+Owners and the coordinator share [project inspection commands](docs/CLI.md#inspection) for task records,
+PRs, checkout status and historical evidence. Owner history, tool-summary, PR and repository reads stay
+bound to their launch project; mutation and publication permissions remain separate. Coordinator Git
+reads include full diffs and historical files, with external diff and text-conversion helpers disabled.
+For decisions beyond the handoff, either role uses [`alt l3 search "literal text"`](docs/CLI.md#historical-evidence-search).
 It searches the project's human conversation and active/archived task conversations, reports and
 digests, returning original excerpts, dates, speaker attribution and stable source references.
 Matching records appear newest first with adjacent context; clipped text and omitted results are
-explicit. Missing evidence returns no result. Historical evidence preserves context for judgment;
+explicit. Unavailable evidence returns an error. Historical evidence preserves context for judgment;
 current instructions and task records govern action. Lookup makes no model calls and writes no memory.
 
 ## Project faults
