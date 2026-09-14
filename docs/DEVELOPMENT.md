@@ -69,6 +69,9 @@ can be shared across worktrees through `PLAYWRIGHT_BROWSERS_PATH`; use the same 
 and execution. Chromium's own sandbox is disabled inside the worker filesystem sandbox because
 of the documented host browser restriction; profiles/configuration remain temporary or under
 ignored `web/ui-artifacts/`. Missing browsers fail with installation guidance.
+Incident I-20260907-041446: this host's installed Chrome AppArmor profile denies network sockets
+inside the worker sandbox. Use the locked bundled Chromium in Altitude home's shared `browsers/`
+directory; a missing bundle is a failed prerequisite.
 
 `web/e2e/fixtures.ts` starts the disposable services. `acceptance-service.py` supplies fictional
 tasks/history for route and component walkthroughs. Project-isolation and project-lifecycle

@@ -34,23 +34,13 @@ decisions, monitor and state views retain their existing admission. L3 turns per
 command text with their tool evidence. Its process is read-only on the deployment
 checkout on either engine; source changes always belong to one L2 worktree and PR.
 
-The [L3 persona](../personas/l3.md) owns compiled handoffs and durable feedback handling. Material
-project direction/decision changes and L2 findings/delivery prompt L3 to assess affected active owners
-and send targeted updates through task messages. Each update cites sources, what changed and what it
-supersedes, impact on the owner's work and uncertainty; proposals remain distinct from verified delivery
-and operator authority from recommendations. Unchanged context does not trigger repeated nudges.
-L3 executes supported administrative coordination and already-authorized continuation handoffs
-through existing task operations, preserving remaining scope, acceptance, original evidence,
-dependencies, holds and sessions for work that stays with its owner. New scope/provider decisions
-or operator judgments still escalate; routine administration does not become an operator question.
-The [L2 persona](../personas/l2.md) requires owners to reassess plans and open question members, record
-sourced supersession through the existing resolver and continue within authorized scope. Still-relevant
-operator decisions, proposal checkpoints, merge holds and fault-recovery verification retain their rules.
-Operator feedback about system or role behavior follows the existing task/PR path to the narrowest
-authoritative instruction source for future sessions unless scoped to a session or task; tentative
-suggestions and one-off exceptions stay scoped. L3 distinguishes queued work, merged rules
-and their effective loading. These are role instructions, with no automatic broadcast, runtime classifier
-or memory store and no expansion of project-local or upstream reporting authority.
+The [L3 persona](../personas/l3.md) owns roadmap sequencing, targeted handoffs, durable feedback,
+capability-gap recommendations and authorized continuation. L3 judges who needs context and when
+based on its effect on their responsibilities, decisions or work.
+The [L2 persona](../personas/l2.md) owns task execution, source assessment, questions and delivery.
+These responsibilities use existing task operations, with no broadcast, runtime classifier or
+memory store. Project-local authority, proposal checkpoints, merge holds and verified recovery
+remain governed by the existing boundaries.
 
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with Burak is stored apart from tool logs, so
@@ -167,17 +157,11 @@ the current worker reports it. Model compatibility stays with the native provide
 effort errors follow the existing task-local failure path, without downgrading effort or rerouting
 that error. No model capability catalog, session migration or L3 effort control exists.
 
-Both roles read two layers of rules. The personas in `personas/` are the global layer: how anyone
-works under Altitude on any project, carrying nothing project-specific. The repository's own
-instructions file is the project layer, owned by that repository's operator and read first.
-Altitude's [AGENTS.md](../AGENTS.md) is authoritative; root `CLAUDE.md` contains only `@AGENTS.md`,
-the native import that shares the same rules. The shared engine boundary selects root `AGENTS.md`
-when present, otherwise `CLAUDE.md`, and names its absolute path on every L2 launch/resume and L3
-turn. The instruction directs each role to follow references/imports and applicable directory rules.
-L2 resolves against its task worktree; L3 resolves against the registered repository while its cwd
-remains a disposable scratch directory. Discovery is repeated each turn, including native resumes.
-Repositories with only the legacy file are read as they stand; Altitude neither rewrites their files
-nor injects its own project policy. Brief boundary excerpts use the task worktree's rule file.
+Global role responsibilities live in the personas; project policy lives in the repository's
+instructions, with [AGENTS.md](../AGENTS.md) authoritative for Altitude. The shared engine boundary
+names the repository rule file each turn; [instruction loading](SESSION_LIFECYCLE.md#repository-instructions)
+describes selection, imports and activation limits. Brief boundary excerpts use the task worktree's
+rule file. Managed projects retain their own policy.
 
 On successful service startup, Altitude exports its committed installation HEAD into the ignored
 deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
@@ -189,14 +173,8 @@ uncommitted deployment files or newer code awaiting activation.
 An unavailable project guard update reports a project fault without stopping service startup;
 that project's launch waits for trusted guards while other projects continue.
 
-Everything that encodes the operator, their providers, or their hardware sits behind a named seam.
-The operator seam is one configured name and role, so personas, docs, and UI text say "the operator"
-or read the configured name. The intended engine seam is `engines.py`, `route.py`, and `config.py`:
-new engine-specific behavior belongs there; existing references outside it migrate when touched.
-The capability seam is the local services — the speech socket,
-`ffmpeg`, a GPU — each optional, detected, and degrading to an explicit unavailable state.
-`tests/test_project_layers.py` holds the per-file counts of provider and operator names outside the
-seams as a ratchet that can only fall.
+The [project seams rule](../AGENTS.md#seams) owns operator, engine and machine assumptions.
+`tests/test_project_layers.py` ratchets names outside those boundaries and project policy in personas.
 
 ## Engine integration boundary
 

@@ -61,11 +61,11 @@ native `@AGENTS.md` import. Managed repositories keep their own rules and need n
 The global L2/L3 personas describe roles and retain explicit reading instructions without embedding
 Altitude-specific rules. No session rotation or extra engine policy is needed for this reference.
 
-The [L3 persona](../personas/l3.md) directs compiled discussion handoffs and persistence of clearly
-reusable feedback through an appropriately scoped task/PR. Its report names the instruction source
-and distinguishes queued, merged and effective changes. Project rules are referenced each turn;
-personas come from the activated committed installation export, supplied per invocation or at fresh
-session creation through the existing engine loading path.
+The [L2](../personas/l2.md) and [L3](../personas/l3.md) personas own role judgment and essential
+operating guidance; the [CLI reference](CLI.md) owns detailed command contracts. Global personas
+do not depend on a managed project containing Altitude's reference docs. Project rules are
+referenced each turn; personas come from the activated committed installation export, supplied
+per invocation or at fresh session creation through the existing engine loading path.
 A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
 an existing session has loaded it. The per-invocation adapter receives the current persona file on
 fresh and resumed turns; the fresh-thread adapter embeds the current contents when starting a new
@@ -330,28 +330,19 @@ then uses the cited-message [`resolve` operation](CLI.md#conversational-decision
 A typed group reply retains the viewed member references; the owner can cite that one message to
 resolve several independent questions. A follow-up alone never resolves the dilemma. A partial answer leaves the relevant remainder open;
 a changed direction can make the old question unnecessary and close it with a recorded reason.
-L3 proactively sends sourced context to affected active owners when project direction or another task's
-findings/delivery materially changes their work. On receiving guidance, the owner assesses each open
-question before lengthy analysis: unaffected choices stay; doubtful ones are withdrawn with a reason
-in chat behind a compact **Question withdrawn** disclosure. Expanding it reveals the question and
-reason without answer controls. Withdrawal records owner judgment without an operator answer. The owner re-asks when the
-decision is ready, even unchanged, preserving independent open questions and closed history.
-Relevant revisions and checks precede a completed-work review; unrelated work need not finish.
-Answers settle only their stated scope and preserve required work. Queued guidance waits for the
-owner's checkpoint; an answer arriving first is considered with later guidance before action.
-Authoritative changed direction can instead supersede a question against its original source.
-Proposals and recommendations grant no authority; proposal checkpoints remain.
-L2 routes routine coordination within the authorized outcome to L3. L3 carries out supported
-assignment or continuation handoffs without another administrative approval, preserving remaining
-scope, acceptance, original evidence, holds and existing owner sessions. New scope/provider decisions
-still require their actual authority, and existing handoff and fault-recovery rules apply.
+Targeted guidance follows [L3 coordination judgment](../personas/l3.md#authority-and-coordination).
+The owner applies
+[decision guidance](../personas/l2.md#conversation-and-decisions) through the existing resolver.
+A withdrawn question appears behind a compact **Question withdrawn** disclosure, showing its
+question and reason without answer controls. It records owner judgment without an operator answer;
+independent open questions and closed history remain. Supersession instead records the authoritative
+source making the question obsolete. Queued guidance reaches the owner's next checkpoint.
 For an unnecessary escalation that L3 settles within existing delegated authority, the L2 records
 `--l3-authority` with specific evidence and rationale against the exact L3 task message and question
 revision. The receipt attributes the answer to L3 and the authority assessment to its owning L2/attempt;
 source and revision checks do not replace the owner's substantive judgment. Partial resolution preserves
 the original audience and independent worker, capacity and fault state. Genuine operator choices still
 need original operator authority, and neither this resolution nor its receipt releases a merge hold.
-After a harmless follow-up, the L2 parks with the still-valid question, recommendation and authority.
 Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
 Neither operational resume nor closing an obsolete question approves its abandoned recommendation.

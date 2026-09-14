@@ -109,20 +109,12 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
 - **Project continuity.** One persistent L3 conversation holds direction across tasks. Discuss
   tradeoffs, change priorities, or return after delivery; follow-up and escalations feed back
   into that conversation.
-- **Compiled handoffs and durable feedback.** L3 proactively informs affected active owners when
-  project direction, decisions or another task's findings or delivery change their work. Targeted updates
-  cite sources, superseded context and uncertainty, distinguishing proposals from verified delivery
-  and operator decisions from recommendations. Owners reassess their plans and close obsolete questions
-  against the original authority, keeping remaining operator choices visible.
-  L3 carries out supported coordination and already-authorized continuation handoffs, preserving
-  scope, evidence, holds and existing owner sessions without another administrative approval.
-  Feedback about system or role behavior leads to a durable instruction change through the task/PR path
-  unless scoped to a session or task; tentative suggestions and one-off exceptions stay scoped.
-  L3 reports what is queued, merged and effective. Rules stay in their appropriate
-  project or role source; see the [L3 persona](personas/l3.md).
-  When a missing supported capability blocks authorized completion, L3 explains the gap,
-  recommends a scoped correction and coordinates remediation through the task/PR path.
-  Permission changes retain their approval requirements.
+- **Coordination and durable feedback.** L3 tracks the roadmap and next steps, and sends owners
+  sourced updates when their current work is affected. It handles authorized continuation,
+  persists reusable feedback through the task/PR path, and recommends scoped corrections for
+  missing capabilities. It uses judgment about who needs context and when. The
+  [L3 persona](personas/l3.md) owns these responsibilities; its reports distinguish queued,
+  merged and effective changes.
 - **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
   session, and follow its PR and report. A replacing public update and recorded activity show what
   is visible from the current worker. Messages stay separate and individually removable while waiting
@@ -211,8 +203,10 @@ prescribed sequence of specialist stages.
 Repository rules stay with each project. Altitude's authoritative rules are in [AGENTS.md](AGENTS.md);
 `CLAUDE.md` imports that file. Both engines receive an explicit instruction-file path on fresh and
 resumed L2/L3 turns, including L3's scratch directory outside the checkout. Projects with only
-`CLAUDE.md` remain supported without changing their files. Global personas contain role guidance;
-they do not carry Altitude's own project rules into other repositories.
+`CLAUDE.md` remain supported without changing their files. Global personas own role responsibilities,
+AGENTS.md owns this project's policy, and the [CLI reference](docs/CLI.md) describes commands.
+Personas retain essential operating guidance without depending on another project's copy of
+Altitude documentation. See [instruction loading and activation limits](docs/SESSION_LIFECYCLE.md#repository-instructions).
 
 Both project roles can use one installed engine with Auto. Configure project preference tiers with
 `alt project set <name> --routing 'codex,claude:fable>claude:opus' --reason '…'`: commas tie options,

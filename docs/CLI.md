@@ -4,6 +4,11 @@
 `ALTITUDE_PROJECT=<name>` selects a project. Commands that change task state are validated against the
 task record and current attempt under the project lock.
 
+This page describes command contracts and examples. Global role responsibilities live in the
+[L2](../personas/l2.md) and [L3](../personas/l3.md) personas; Altitude's own policy lives in
+[AGENTS.md](../AGENTS.md). [Session lifecycle](SESSION_LIFECYCLE.md#repository-instructions)
+describes how those instructions reach each engine.
+
 Start with [setup](SETUP.md) to build the app, install project Git guards, register a project
 with Auto preferences or explicit pins, and start a conversation. `alt project add` registers state; it does
 not install Git guards. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
@@ -235,16 +240,14 @@ URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful clos
 L3 maintains the authorized issue breakdown through `alt issue comment <number> -`, with its public
 body on stdin, using L2's `alt task reply` and report `follow_ups` for progress and delivery evidence.
 The [coordinator instructions](../personas/l3.md) define breakdown contents, increment briefs and
-authorization; the [owner instructions](../personas/l2.md#incremental-delivery) define acceptance and
+authorization; the [owner instructions](../personas/l2.md#scope-and-evidence) define acceptance and
 safe delivery. A task can complete its agreed increment while the parent issue retains outstanding
 scope. Altitude's [project rules](../AGENTS.md#roles) retain proposal checkpoints and implementation
 constraints. Closure follows the cumulative evidence rules below.
 
-L3 performs supported coordination and already-authorized continuation handoffs through existing
-task operations, carrying forward remaining scope, acceptance, evidence, dependencies and holds.
-L2 routes that administration to L3; it does not require another operator approval. Existing owner
-sessions and recovery conditions remain intact for work that stays with them. Actual new scope/provider
-decisions or operator judgments still escalate under the project rules.
+Coordination and subsequent-step tracking follow the
+[L3 authority rules](../personas/l3.md#authority-and-coordination). Existing task operations preserve
+owner sessions, recovery conditions and holds.
 
 ### Delivery-linked issue completion
 
@@ -763,15 +766,11 @@ provide a recommendation only when it applies to the remaining question. Harmles
 no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
 
-On receiving guidance, assess each open member before lengthy analysis or revision work. Keep
-unaffected questions answerable; promptly use `withdrawn` when guidance could change what an answer
-means, and explain in chat. It records L2 judgment, without `--message`, `--source`, `--l3-authority`,
-`--remaining` or recommendation fields. It removes that member's controls and retains its history;
-it grants no approval and discards no work. Re-ask when ready, even unchanged, without waiting for
-unrelated work. A completed-work review waits for its relevant revisions, checks and review.
-Answers apply only to their stated scope. If an answer precedes queued guidance, consider both and
-clarify any genuine conflict before acting. No message classifier or automatic withdrawal is involved.
-For sourced decisions, cite original authority; proposals and ongoing work are not verified delivery.
+The [owner's decision guidance](../personas/l2.md#conversation-and-decisions) governs assessment
+of new guidance, withdrawal and re-asking. `withdrawn` records L2 judgment without `--message`,
+`--source`, `--l3-authority`, `--remaining` or recommendation fields. It removes that member's
+controls and retains its history; it grants no approval and discards no work. No message classifier
+or automatic withdrawal is involved.
 
 When a provider limit queues a fresh attempt, existing question replies and quick acceptance wait
 in the normal inbox. The new owner receives the current question or receipt in its brief; semantic
