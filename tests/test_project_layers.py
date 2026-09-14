@@ -42,7 +42,6 @@ PROVIDER_BASELINE = {
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
 OPERATOR_BASELINE = {
-    "AGENTS.md": 5,
     "README.md": 4,
     "altitude/config.py": 1,
     "altitude/digest.py": 3,
@@ -57,8 +56,7 @@ OPERATOR_BASELINE = {
     "docs/CLI.md": 3,
     "docs/ROADMAP.md": 2,
     "docs/SESSION_LIFECYCLE.md": 4,
-    "personas/l2.md": 6,
-    "personas/l3.md": 9,
+    "personas/l2.md": 1,
     "web/src/data/api.ts": 1,
     "web/src/routes/Task.test.tsx": 1,
 }
