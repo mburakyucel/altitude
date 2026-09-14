@@ -309,6 +309,11 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 if value != "-":
                     raise ValueError("L3 questions-file input is accepted only on stdin (-)")
         _validate_l3_alt_args(args)
+        if args[:2] == ["pr", "close"]:
+            if len(args) != 3:
+                raise ValueError("alt pr close requires one positive PR number and no options")
+            result = pr_close(project, int(args[2]), actor="l3", body=stdin)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["task", "hold-merge"] and any(arg.split("=", 1)[0] == "--approval" for arg in args[3:]):
             options = merge_approval_parser().parse_args(args[2:])
             receipt = apply_recorded_merge_approval(project, **vars(options))
@@ -1458,6 +1463,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._transcribe_voice()
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
+            if parts == ["api", "pr", "close"]:
+                try:
+                    if o.keys() - {"project", "number", "body"}:
+                        raise ValueError("alt pr close: unsupported fields")
+                    return self._json(pr_close(o.get("project"), o.get("number"), actor="operator",
+                                               body=o.get("body", "")))
+                except (ValueError, KeyError, OSError, subprocess.SubprocessError) as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "issue":
                 try:
                     if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor", "incident", "url"}:
@@ -1786,6 +1799,55 @@ def repository_url(origin: str) -> str | None:
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                          r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", origin.strip(), re.I)
     return f"https://github.com/{match[1]}/{match[2]}" if match else None
+
+
+def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:
+    """Close an explicitly selected project PR; verify state without deleting its branch."""
+    if actor not in ("l3", "operator"):
+        raise ValueError("alt pr close: only L3 and the operator may close PRs")
+    if type(number) is not int or number < 1 or body != "":
+        raise ValueError("alt pr close: a positive PR number is required; no body is accepted")
+    checkout = config.project_path(project)
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
+                            capture_output=True, text=True, timeout=10)
+    repository = repository_url(origin.stdout) if origin.returncode == 0 else None
+    if not repository:
+        raise ValueError("alt pr close: checkout origin must identify a GitHub repository")
+    url = f"{repository}/pull/{number}"
+    env = engines.clean_env()
+    env.pop("GH_REPO", None)
+
+    def read_state() -> str:
+        try:
+            result = subprocess.run(["gh", "pr", "view", str(number), "--repo", repository,
+                                     "--json", "number,url,state"], cwd=checkout, env=env,
+                                    capture_output=True, text=True, timeout=30)
+            record = json.loads(result.stdout) if result.returncode == 0 else None
+            if (isinstance(record, dict) and type(record.get("number")) is int and record["number"] == number
+                    and isinstance(record.get("url"), str) and record["url"].lower() == url.lower()
+                    and record.get("state") in ("OPEN", "CLOSED", "MERGED")):
+                return record["state"]
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+        raise ValueError(f"alt pr close: PR state unconfirmed at {url}; inspect access and state before retrying")
+
+    before = read_state()
+    if before == "OPEN":
+        try:
+            subprocess.run(["gh", "pr", "close", str(number), "--repo", repository], cwd=checkout,
+                           env=env, input="", capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            pass  # A failed or timed-out write can still have reached GitHub; the read owns the verdict.
+        after = read_state()
+        if after == "OPEN":
+            raise ValueError(f"alt pr close: PR remains open at {url}; inspect GitHub access before retrying")
+    else:
+        after = before
+    result = {"number": number, "url": url, "state": after,
+              "outcome": "merged" if after == "MERGED" else "already-closed" if before == "CLOSED" else "closed"}
+    with S.project_lock(project):
+        S.project_log(project, "pr-close", actor=actor, **result)
+    return result
 
 
 ISSUE_CLOSE_REASONS = ("completed", "not-planned")

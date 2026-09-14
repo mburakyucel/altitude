@@ -81,6 +81,11 @@ until cumulative delivery satisfies its full scope and required acceptance. See
 [incremental delivery](docs/CLI.md#incremental-issue-delivery) and
 [issue closure and reconciliation](docs/CLI.md#delivery-linked-issue-completion); merge holds still apply.
 
+L3 completes authorized superseded-PR cleanup with [`alt pr close <number>`](docs/CLI.md#superseded-pr-closure).
+L2 hands over authorization and replacement-delivery evidence; L3 verifies that scope before closing.
+The command targets the project's repository, retains branches, and returns the verified PR state
+and URL. The operator can use the same verb. Unconfirmed results remain explicit.
+
 An assigned task can also [adopt an existing PR](docs/CLI.md#adopt-an-existing-pr) created outside
 Altitude: `alt land --adopt-pr <number> --expected-head <full-sha> --reason "…" --message "…"`.
 The owner inspects and incorporates its history in the task worktree first. Adoption records that
@@ -115,6 +120,9 @@ renewed requirement. Design feedback, unresolved conditions and revoked permissi
   unless scoped to a session or task; tentative suggestions and one-off exceptions stay scoped.
   L3 reports what is queued, merged and effective. Rules stay in their appropriate
   project or role source; see the [L3 persona](personas/l3.md).
+  When a missing supported capability blocks authorized completion, L3 explains the gap,
+  recommends a scoped correction and coordinates remediation through the task/PR path.
+  Permission changes retain their approval requirements.
 - **Direct ownership.** One L2 owns each task end to end. Message it directly, inspect its live
   session, and follow its PR and report. A replacing public update and recorded activity show what
   is visible from the current worker. Messages stay separate and individually removable while waiting

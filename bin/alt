@@ -289,7 +289,8 @@ def main(argv=None) -> None:
     sub.add_parser("decisions"); sub.add_parser("monitor")
     q = sub.add_parser("queue"); q.add_argument("--json", action="store_true", dest="as_json")
     rr = sub.add_parser("repo"); rr.add_argument("--json", action="store_true", dest="as_json")
-    pr = sub.add_parser("pr"); pr.add_argument("number", type=int); pr.add_argument("--json", action="store_true", dest="as_json")
+    pr = sub.add_parser("pr"); pr.add_argument("target", help="PR number to inspect, or close")
+    pr.add_argument("number", type=int, nargs="?"); pr.add_argument("--json", action="store_true", dest="as_json")
     l3p = sub.add_parser("l3"); l3s = l3p.add_subparsers(dest="l3cmd", required=True)
     lt = l3s.add_parser("tools"); lt.add_argument("--days", type=int, default=7); lt.add_argument("--json", action="store_true", dest="as_json")
     ls = l3s.add_parser("search", help="find historical project conversation and task evidence")
@@ -328,27 +329,33 @@ def main(argv=None) -> None:
         actor_command = (c, args.operation)
     if ACTOR == "l3" and actor_command not in L3_COMMANDS:
         sys.exit(f"alt {c}: not available to an L3 coordinator; use the documented inspection and task-coordination verbs")
-    if c == "issue":
+    closing_pr = c == "pr" and args.target == "close"
+    if closing_pr and (args.number is None or args.number < 1 or args.as_json):
+        ap.error("alt pr close requires one positive PR number and no options")
+    if c == "issue" or closing_pr:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if sys.stdin.isatty() and (args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
-        payload = {"project": _project(args), "operation": args.operation, "body": body,
+        body = "" if sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        payload = {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
         if ACTOR == "l3":
-            sys.exit("alt issue: L3 must use its project-bound runtime alt socket")
+            sys.exit(f"alt {c}: L3 must use its project-bound runtime alt socket")
         tls = config.TLS and all((config.TLS_DIR / name).is_file() for name in ("server.crt", "server.key"))
         context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt")) if tls else None
-        request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/issue",
+        endpoint = "pr/close" if closing_pr else "issue"
+        request = urllib.request.Request(f"{'https' if tls else 'http'}://{config.HOST}:{config.PORT}/api/{endpoint}",
                                          data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(request, context=context, timeout=130) as response:
-                out(json.load(response)["url"])
+                result = json.load(response)
+                out(result if closing_pr else result["url"])
         except urllib.error.HTTPError as exc:
-            sys.exit("alt issue: " + json.load(exc).get("error", str(exc)))
+            sys.exit(f"alt {c}: " + json.load(exc).get("error", str(exc)))
         except OSError as exc:
-            sys.exit(f"alt issue: altd unavailable: {exc}")
+            sys.exit(f"alt {c}: altd unavailable: {exc}")
         return
     if c == "machine":
         from altitude import dispatch
@@ -539,7 +546,9 @@ def main(argv=None) -> None:
         record = status.repo(_project(args)); out(record) if args.as_json else print(_repo_text(record)); return
     if c == "pr":
         from altitude import status
-        record = status.pr(_project(args), args.number); out(record) if args.as_json else print(_pr_text(record)); return
+        if args.number is not None or not args.target.isdecimal() or int(args.target) < 1:
+            ap.error("alt pr requires one positive PR number, or close NUMBER")
+        record = status.pr(_project(args), int(args.target)); out(record) if args.as_json else print(_pr_text(record)); return
     if c == "l3":
         from altitude import l3
         if args.l3cmd == "search":
