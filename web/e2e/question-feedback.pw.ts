@@ -28,8 +28,18 @@ test("mixed custom, preset and plain answers remain conversational until the own
     hidden: [card.getByText("Sent to L2", { exact: true })],
   });
   if (info.project.name === "phone") {
-    // Simulate the reduced visual viewport; this does not launch a native software keyboard.
+    // Simulate the reduced viewport and focus scrolling; no native keyboard runs here.
     await page.setViewportSize({ width: 390, height: 480 });
+    const field = retentionCard.getByRole("textbox");
+    await field.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    await expect.poll(async () => {
+      const input = await field.boundingBox();
+      const footer = await card.locator(".question-batch").boundingBox();
+      const viewport = await page.getByRole("main").boundingBox();
+      return Boolean(input && footer && viewport && input.y >= viewport.y && input.y + input.height <= footer.y);
+    }, { message: "The complete focused answer must remain above the sticky Send footer" }).toBe(true);
+    await expect(field).toHaveValue("21 days");
+    await expect(field).toBeFocused();
     await expect(card.getByRole("button", { name: "Send 2 answers", exact: true })).toBeInViewport();
     await walk.state("02b-simulated-keyboard-keeps-send-reachable", {
       visible: [retentionCard.getByRole("textbox"), card.getByRole("button", { name: "Send 2 answers", exact: true })],

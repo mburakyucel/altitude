@@ -11,9 +11,19 @@ import { installVoiceBrowser } from "./voiceTest";
 
 const capability = { available: true, max_count: 4, max_bytes: 10 << 20, max_total_bytes: 20 << 20, max_pixels: 25_000_000, max_dimension: 8192 };
 const image = () => new File(["fictional raster"], "screen.png", { type: "image/png" });
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+let capabilityRead: Promise<unknown> | undefined;
+const json = (body: unknown, status = 200) => {
+  const response = new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  if (body && typeof body === "object" && "available" in body) {
+    const parsed = response.json();
+    capabilityRead = parsed;
+    response.json = () => parsed;
+  }
+  return response;
+};
 
 function browser(available = true) {
+  capabilityRead = undefined;
   const revoke = vi.fn();
   let next = 0;
   vi.stubGlobal("URL", class extends URL {
@@ -35,6 +45,8 @@ function Harness({ initial = "Explain this", ...props }: Partial<ComposerProps> 
 }
 
 async function select(files: File[] = [image()]) {
+  // Request start does not mean the capability body has reached React yet.
+  await act(async () => { await capabilityRead; });
   fireEvent.change(screen.getByLabelText("Choose images"), { target: { files } });
   await waitFor(() => expect(screen.getByRole("button", { name: "Add images" })).toBeEnabled());
   await screen.findByLabelText("Selected images");
