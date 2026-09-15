@@ -75,15 +75,15 @@ class QuestionGroups(AltitudeCase):
         answers[0]["option_key"] = "fourteen"
         result = T.accept_questions(self.project, self.slug, group["id"], group["revision"], answers)
         questions = result["question_group"]["questions"]
-        self.assertEqual([q["status"] for q in questions], ["resolved", "resolved", "open"])
-        self.assertEqual(questions[0]["resolution"]["text"], "Keep rollback for fourteen days.")
-        self.assertEqual(questions[0]["resolution"]["option_key"], "fourteen")
+        self.assertEqual([q["status"] for q in questions], ["open", "open", "open"])
+        self.assertEqual(questions[0]["response"]["text"], "Keep rollback for fourteen days.")
+        self.assertTrue(all(q["resolution"] is None for q in questions))
         self.assertEqual(result["question_group"]["revision"], 2)
         self.assertEqual(result["question_group"]["anchor_id"], group["anchor_id"])
         [message] = T.pending(self.project, self.slug)
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 4)
         self.assertNotIn("Which team owns", message["text"])
-        self.assertEqual({q["resolution"]["message_id"] for q in questions[:2]}, {message["id"]})
+        self.assertEqual({q["response"]["message_id"] for q in questions[:2]}, {message["id"]})
         self.assertEqual(len(T.decisions(self.project)), 1)
         self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
         self.assertEqual(T.accept_questions(self.project, self.slug, group["id"], 1, list(reversed(answers))), result)
@@ -114,6 +114,83 @@ class QuestionGroups(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "group changed"):
             T.accept_questions(self.project, self.slug, group["id"], group["revision"], answers)
         self.assertEqual([q["status"] for q in self.group()["questions"]], ["open", "open", "resolved"])
+
+    def test_custom_and_preset_responses_share_attributed_message_without_resolving(self):
+        group = self.ask()
+        first, second, plain = group["questions"]
+        answers = [{"question_id": first["id"], "revision": 1, "text": "21 days"},
+                   self.answers(group, (1,))[0],
+                   {"question_id": plain["id"], "revision": 1, "text": "Which teams are available?"}]
+        result = T.accept_questions(self.project, self.slug, group["id"], 1, answers)
+        [message] = T.pending(self.project, self.slug)
+        self.assertEqual(message["role"], T.OPERATOR_MESSAGE_ROLE)
+        self.assertEqual(message["by"], T.OPERATOR_MESSAGE_ROLE)
+        self.assertEqual(message["question_refs"], [{"id": q["id"], "revision": 1} for q in group["questions"]])
+        self.assertEqual(message["text"], f"{first['question']}\n21 days\n\n{second['question']}\nRun cleanup at night."
+                         f"\n\n{plain['question']}\nWhich teams are available?")
+        self.assertEqual([q["response"]["text"] for q in result["question_group"]["questions"]],
+                         ["21 days", "Run cleanup at night.", "Which teams are available?"])
+        self.assertTrue(all(q["status"] == "open" and q["resolution"] is None for q in self.group()["questions"]))
+        self.assertEqual(T.decisions(self.project), [])
+        self.resolve(first, message, reason="Keep rollback for twenty-one days.")
+        self.resolve(second, message, reason="Run cleanup at night.")
+        self.assertEqual([q["status"] for q in self.group()["questions"]], ["resolved", "resolved", "open"])
+        self.assertIn("Interpret the response conversationally", T.group_context(S.load_task(self.project, self.slug)))
+        self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review")
+
+    def test_custom_followup_reask_restores_only_named_input_and_refuses_stale_retargeting(self):
+        group = self.ask()
+        first, second, _ = group["questions"]
+        sent = T.accept_question(self.project, self.slug, first["id"], 1, text="Why only these periods?")
+        independent = self.group()["questions"][1:]
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Set rollout details.", actor="l2")
+        self.assertEqual(self.group()["questions"][0]["response"], sent["response"])
+        T.resume(self.project, self.slug)
+        item = {"id": first["id"], "question": first["detail"]}
+        T.block(self.project, self.slug, "Set rollout details.", actor="l2", questions={"questions": [item]})
+        current = self.group()
+        self.assertEqual((current["questions"][0]["revision"], current["questions"][0]["response"]), (2, None))
+        self.assertEqual(current["questions"][0]["audience"], "operator")
+        self.assertEqual(current["questions"][0]["options"], first["options"])
+        for old, new in zip(independent, current["questions"][1:]):
+            self.assertEqual(new, {**old, "group_revision": current["revision"], "resume_after": None})
+        retry = T.accept_question_result(self.project, self.slug, first["id"], 1, text="Why only these periods?")
+        self.assertEqual(retry["question"]["response"], sent["response"])
+        self.assertEqual(retry["question_group"], current)
+        with self.assertRaisesRegex(T.TransitionError, "no longer open"):
+            T.accept_question(self.project, self.slug, first["id"], 1, text="21 days")
+        with self.assertRaisesRegex(T.TransitionError, "different question revision"):
+            self.resolve(current["questions"][0], {"id": sent["response"]["message_id"]})
+        fresh = T.accept_question(self.project, self.slug, first["id"], 2, text="21 days")
+        self.assertNotEqual(fresh["response"]["message_id"], sent["response"]["message_id"])
+        self.assertEqual([q["id"] for q in T.decisions(self.project)], [q["id"] for q in current["questions"][1:]])
+
+    def test_custom_batch_validation_and_conflict_are_atomic_and_keep_audience(self):
+        group = self.ask()
+        answer = {"question_id": group["questions"][0]["id"], "revision": 1, "text": "21 days"}
+        other = {"question_id": group["questions"][1]["id"], "revision": 1}
+        for value in ("", "  ", None, 21, {}):
+            with self.subTest(value=value), self.assertRaises(T.TransitionError):
+                T.accept_questions(self.project, self.slug, group["id"], 1, [answer, {**other, "text": value}])
+            self.assertEqual(self.group(), group)
+            self.assertEqual(T.pending(self.project, self.slug), [])
+        with self.assertRaises(T.TransitionError):
+            T.accept_questions(self.project, self.slug, group["id"], 1, [{**answer, "option_key": "seven"}])
+        sent = T.accept_questions(self.project, self.slug, group["id"], 1, [answer])
+        with self.assertRaises(T.TransitionError):
+            T.accept_questions(self.project, self.slug, group["id"], 2,
+                               [{**answer, "text": "28 days"}, {**other, "option_key": "night"}])
+        self.assertEqual(self.group(), sent["question_group"])
+
+    def test_custom_response_respects_l3_question_audience(self):
+        group = self.ask(waiting="l3")
+        question = group["questions"][0]
+        with self.assertRaisesRegex(T.TransitionError, "no longer open"):
+            T.accept_question(self.project, self.slug, question["id"], 1, text="21 days")
+        self.assertEqual(self.group(), group)
+        self.assertEqual(T.pending(self.project, self.slug), [])
+
 
     def test_one_typed_source_can_settle_members_successively_without_answering_the_rest(self):
         group = self.ask()
@@ -240,7 +317,7 @@ class QuestionGroups(AltitudeCase):
         group = self.ask()
         first = group["questions"][0]
         result = T.accept_question(self.project, self.slug, first["id"], 1, "fourteen")
-        self.assertEqual(result["resolution"]["option_key"], "fourteen")
+        self.assertEqual(result["response"]["text"], "Keep rollback for fourteen days.")
         self.assertEqual(T.accept_question(self.project, self.slug, first["id"], 1, "fourteen"), result)
         with self.assertRaises(T.TransitionError):
             T.accept_question(self.project, self.slug, first["id"], 1, "seven")
@@ -255,17 +332,19 @@ class QuestionGroups(AltitudeCase):
         message = T.message(self.project, self.slug, "burak", "No cleanup is needed.")
         self.resolve(group["questions"][1], message, disposition="superseded", reason="Managed cleanup.")
         retry = T.accept_questions(self.project, self.slug, group["id"], 1, answers)
-        self.assertEqual(retry["question"]["resolution"], first["question"]["resolution"])
+        self.assertEqual(retry["question"]["response"], first["question"]["response"])
         self.assertEqual(retry["question_group"], self.group())
         self.assertEqual(len(T.pending(self.project, self.slug)), 2)
 
     def test_group_acceptance_recovers_atomic_receipt_after_inbox_write_failure(self):
         group = self.ask()
         answers = self.answers(group)
+        answers[0] = {"question_id": group["questions"][0]["id"], "revision": 1, "text": "21 days"}
         with mock.patch.object(T, "_append_jsonl", side_effect=OSError("disk temporarily unavailable")):
             with self.assertRaises(OSError):
                 T.accept_questions(self.project, self.slug, group["id"], 1, answers)
         [message] = T.pending(self.project, self.slug)
+        self.assertIn("21 days", message["text"])
         result = T.accept_questions(self.project, self.slug, group["id"], 1, answers)
         self.assertEqual(T.pending(self.project, self.slug), [message])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 4)
@@ -275,7 +354,9 @@ class QuestionGroups(AltitudeCase):
         group = self.ask()
         T.requeue(self.project, self.slug, clear_worker=True)
         message = T.message(self.project, self.slug, "burak", "The search team may own this.")
-        result = T.accept_questions(self.project, self.slug, group["id"], 1, self.answers(group))
+        answers = self.answers(group)
+        answers[0] = {"question_id": group["questions"][0]["id"], "revision": 1, "text": "Why only seven days?"}
+        result = T.accept_questions(self.project, self.slug, group["id"], 1, answers)
         task = S.load_task(self.project, self.slug)
         self.assertEqual(task["state"], "queued")
         self.assertNotIn("resume_after", task)
@@ -285,6 +366,8 @@ class QuestionGroups(AltitudeCase):
         for question in group["questions"]:
             self.assertIn(question["id"], prompt)
         self.assertIn(message["id"], prompt)
+        self.assertIn("Why only seven days?", prompt)
+        self.assertTrue(all(q["resolution"] is None for q in result["question_group"]["questions"]))
 
     def test_original_source_authority_is_enforced_for_each_member(self):
         group = self.ask()

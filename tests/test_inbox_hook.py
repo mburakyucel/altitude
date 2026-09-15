@@ -59,7 +59,7 @@ class InboxHook(AltitudeCase):
         self.assertEqual(done.returncode, 0, done.stderr)
         context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Keep fourteen days.", context)
-        self.assertIn(receipt["resolution"]["message_id"], context)
+        self.assertIn(receipt["response"]["message_id"], context)
         T.accept_question(self.project, self.slug, question["id"], question["revision"])
         self.assertEqual(self.run_hook("Stop").stdout, "")
 

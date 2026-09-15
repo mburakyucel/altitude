@@ -240,7 +240,11 @@ class TestTaskDesign(AltitudeCase):
                 "project": self.project, "slug": self.slug, "question_id": question["id"], "revision": 1})
         self.assertEqual(status, 200, raw)
         current = S.load_task(self.project, self.slug)
-        self.assertEqual(current["questions"][-1]["status"], "resolved")
+        self.assertEqual(current["questions"][-1]["status"], "open")
+        response = current["questions"][-1]["response"]
+        T.resolve_question(self.project, self.slug, question["id"], 1, response["message_id"],
+                           disposition="answered", reason="Implement the captured layout", expected_attempt=1)
+        self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "resolved")
         self.assertEqual(current["hold_merge"], before["hold_merge"])
 
     def test_old_url_serves_its_own_version_and_points_back_to_current_question(self):
@@ -396,6 +400,8 @@ class TestTaskDesign(AltitudeCase):
         question = self.publish(recommendation="Implement the shown layout", recommendation_label="Implement")
         capture = self.capture_path(question)
         capture.unlink()
+        response = T.accept_question(self.project, self.slug, question["id"], 1,
+                                     text="The preview is unavailable; please restore it.")["response"]
         for symlink in (False, True):
             with self.subTest(symlink=symlink):
                 if symlink:
@@ -403,7 +409,8 @@ class TestTaskDesign(AltitudeCase):
                 with self.assertRaises((ValueError, OSError, T.TransitionError)):
                     T.design_image(self.project, self.slug, question["design"], capture.name)
                 with self.assertRaises(T.TransitionError):
-                    T.accept_question(self.project, self.slug, question["id"], 1)
+                    T.resolve_question(self.project, self.slug, question["id"], 1, response["message_id"],
+                                       disposition="answered", reason="Accept the design", expected_attempt=1)
                 self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "open")
 
     def test_changed_saved_proposal_is_unavailable_and_cannot_be_accepted(self):
@@ -413,8 +420,10 @@ class TestTaskDesign(AltitudeCase):
         S.save_task(self.project, task)
         status, _, raw = self.request("GET", self.api(question))
         self.assertEqual(status, 404, raw)
+        response = T.accept_question(self.project, self.slug, question["id"], 1)["response"]
         with self.assertRaises(T.TransitionError):
-            T.accept_question(self.project, self.slug, question["id"], 1)
+            T.resolve_question(self.project, self.slug, question["id"], 1, response["message_id"],
+                               disposition="answered", reason="Accept the design", expected_attempt=1)
 
     def test_conversational_answer_cannot_accept_changed_or_unavailable_evidence(self):
         first = self.publish()

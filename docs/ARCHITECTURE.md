@@ -1013,7 +1013,7 @@ and the owning chat. Partial or final answers update the same row; only completi
 moves it out of Current. Saving an answer does not assert that the worker resumed.
 
 Only global Needs you carries a numeric attention badge. Project rail and switcher rows retain
-their state dots. The badge counts unresolved operator questions plus existing operational
+their state dots. The badge counts operator questions awaiting a response plus existing operational
 attention items; Needs you and project summaries label questions and operational items separately.
 Unknown overview reads never imply zero attention. Failed refreshes identify saved counts and
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
@@ -1048,7 +1048,7 @@ sequenceDiagram
     Owner->>CLI: block with question and optional design selection
     CLI->>State: Validate owner/attempt; save capture and question revision
     App->>State: Read conversation, question and fixed preview
-    App->>State: Explicit decision OR typed message with viewed revision
+    App->>State: Selected/custom responses or chat message with viewed revision
     State->>Daemon: Durable inbox / resume request
     Daemon->>Owner: Deliver at checkpoint or resume the same session
     Owner->>CLI: Discuss, or resolve a clear answer citing its source message
@@ -1061,10 +1061,10 @@ A Claude L3's runtime command shims use that same broker. The broker fixes proje
 checks allowed coordinator verbs. MCP transports coordinator requests; it does not own dilemma,
 preview or decision state, and that L3 transport restriction does not apply to the L2 CLI path.
 
-An explicit quick choice sends the question/revision (and group revision when applicable) to
-`POST /api/decide`, which validates and saves the decision. Typed discussion uses
-`POST /api/l2/message` and stays a message until the same owner judges it as a clear answer and
-records `alt task resolve` against the original source message. Both use the durable inbox and
+Selected choices and custom responses send the question/revision (and group revision when applicable)
+to `POST /api/decide`, which validates and saves one ordinary operator message. Ordinary chat uses
+`POST /api/l2/message`. Both remain messages until the owner interprets a clear answer and records
+`alt task resolve` against the original source message. Both use the durable inbox and
 daemon wake mechanism described in [session lifecycle](SESSION_LIFECYCLE.md#messages-resume-and-stop).
 Opening a preview performs reads only; neither viewing, a follow-up nor a resume accepts a proposal.
 
@@ -1101,16 +1101,17 @@ quick alternatives. The model chooses the suitable form. Existing labelled recom
 unmarked first option never becomes an acceptance button. Pending older blocks are materialized
 before a resume can clear their operational block fields.
 
-`POST /api/decide` takes `{project, slug, question_id, revision, option_key}` for an immediate choice;
-omitting the key explicitly selects the recorded recommendation. A group sends
-`{project, slug, group_id, group_revision, answers: [{question_id, revision, option_key}]}`.
-Under the existing project lock, the whole batch is validated before any write. Only named members
-close; omitted questions remain open. One ordinary operator message and the resolutions are saved
-together, then delivered once through the existing inbox/resume path. Nothing is preselected in the
-UI. An identical retry returns its saved receipt plus the current group and repairs interrupted
-delivery; stale or conflicting submissions fail together. The UI updates Needs you and chat from
-the authoritative group, then refreshes their reads.
-**Decision recorded** means persisted; **Work resumed** requires observed running state.
+`POST /api/decide` takes `{project, slug, question_id, revision, option_key}` or an exclusive `text`
+response. Omitting the key explicitly selects the recorded recommendation. A group sends
+`{project, slug, group_id, group_revision, answers: [{question_id, revision, option_key|text}]}`;
+each member supplies exactly one response kind. The existing project lock validates the entire batch
+before saving one attributed operator message and durable delivery receipt. It records no decision.
+Each submitted question projects `response: {text, at, message_id}` and stays semantically open until
+the owner resolves it. Sent members leave Needs you; their **Sent to L2** receipts remain in the
+owning group, alongside members still awaiting input. An identical retry reuses its receipt and repairs
+interrupted delivery. Stale or conflicting submissions fail together. The response names the original
+question revisions, so the owner cannot cite it to approve replacement wording. **Sent to L2** means
+saved for delivery; **Work resumed** requires observed running state. A queued owner stays explicit.
 
 Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or
 `group_id`/`group_revision` as context. The saved message retains the viewed member references so
@@ -1138,9 +1139,13 @@ recommendation. A remainder retains the question's audience without changing ind
 capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
-The shared question component appears on Needs you and at its conversation anchor. Single choices
-act immediately. Group choices remain staged until **Send N answers**; **Use recommendations** is
-available when no manual picks exist and answers only members with explicit recommendations.
+The shared question component appears on Needs you and at its conversation anchor. Choices and custom
+text remain staged until **Send N answers**, including a single member. **Other…** opens that member's
+field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
+**Use recommendations** is available when no manual picks exist and stages only explicit recommendations.
+Edits to independent members survive another member's response; changed revisions discard their own
+stale choices without retargeting them. Explicitly republishing a responded member gives it a new revision
+and fresh input. An unchanged ordinary re-park keeps its saved response and adds no new attention.
 Needs you keeps the task's purpose, complete question, concise recommendation and material
 consequences visible before an answer. Owners write these for an operator deciding at a glance;
 clipping long technical prose is not a substitute. Additional saved question detail opens in a

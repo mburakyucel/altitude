@@ -147,7 +147,7 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual([row["text"] for row in delivered], ["Also retain the old format"])
         self.assertEqual(T.take_inbox(self.project, slug), [])
         self.assertEqual([row["text"] for row in T.task_messages(self.project, slug)],
-                         ["Use the conservative default?", "Use this approach and continue: Use the conservative default",
+                         ["Use the conservative default?", "Use the conservative default?\nUse the conservative default",
                           "Also retain the old format"])
 
     def test_question_block_survives_old_inbox_and_exit_until_a_new_answer(self):
@@ -247,7 +247,7 @@ class TestOfflineJourneys(AltitudeCase):
             self.assertTrue(server.request_task_resume(self.project, slug))
             self.assertTrue(started.wait(5))
             retried = self.request("/api/decide", body)
-            self.assertEqual(retried["decision"], accepted["decision"])
+            self.assertEqual(retried["response"], accepted["response"])
             self.assertFalse(server.request_task_resume(self.project, slug), "timer and HTTP share the active resume claim")
         finally:
             release.set()
@@ -256,7 +256,7 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual(len(self.engine.calls), 2, "one initial launch and one resume")
         self.assertEqual(T.pending(self.project, slug), [])
         operator_rows = [row for row in T.task_messages(self.project, slug) if row["role"] == T.OPERATOR_MESSAGE_ROLE]
-        self.assertEqual([row["id"] for row in operator_rows], [accepted["decision"]["message_id"]])
+        self.assertEqual([row["id"] for row in operator_rows], [accepted["response"]["message_id"]])
 
     def test_requeued_question_remains_discussable_and_reaches_the_fresh_attempt_with_its_inbox(self):
         for accept in (False, True):
@@ -276,15 +276,15 @@ class TestOfflineJourneys(AltitudeCase):
                 with mock.patch.object(server, "request_task_resume", side_effect=AssertionError("queued work uses normal dispatch")):
                     if accept:
                         response = self.request("/api/decide", target)
-                        self.assertEqual(self.request("/api/decide", target)["decision"], response["decision"])
-                        message_id = response["decision"]["message_id"]
+                        self.assertEqual(self.request("/api/decide", target)["response"], response["response"])
+                        message_id = response["response"]["message_id"]
                     else:
                         response = self.request("/api/l2/message", {**target, "text": "Can we roll back after day fourteen?"})
                         message_id = response["message"]["id"]
                 queued = S.load_task(self.project, slug)
                 self.assertEqual(queued["state"], "queued")
                 self.assertFalse(queued.get("resume_after") or queued.get("resume_request"))
-                self.assertEqual(queued["questions"][-1]["status"], "resolved" if accept else "open")
+                self.assertEqual(queued["questions"][-1]["status"], "open")
                 self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [message_id])
                 self.request("/api/task/action", {"project": self.project, "slug": slug, "action": "dispatch"})
                 fresh = self.wait_state(slug, "running")
@@ -292,7 +292,7 @@ class TestOfflineJourneys(AltitudeCase):
                 self.assertNotEqual(fresh["agent_id"], task["agent_id"])
                 self.assertIn(question["id"], self.engine.calls[-1]["prompt"])
                 self.assertIn(question["detail"], self.engine.calls[-1]["prompt"])
-                self.assertIn("is resolved" if accept else question["detail"], self.engine.calls[-1]["prompt"])
+                self.assertIn("Response received" if accept else question["detail"], self.engine.calls[-1]["prompt"])
                 # This is the existing checkpoint consumption used by native inbox delivery.
                 delivered = T.take_inbox(self.project, slug)
                 self.assertEqual([row["id"] for row in delivered], [message_id])
@@ -300,7 +300,7 @@ class TestOfflineJourneys(AltitudeCase):
                               T.render_inbox(delivered))
                 self.assertEqual(T.take_inbox(self.project, slug), [])
                 if accept:
-                    self.assertEqual(self.request("/api/decide", target)["decision"], response["decision"])
+                    self.assertEqual(self.request("/api/decide", target)["response"], response["response"])
                     self.assertEqual(T.pending(self.project, slug), [])
                 T.reject(self.project, slug, "Fixture complete")
 

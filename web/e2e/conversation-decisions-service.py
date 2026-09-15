@@ -41,7 +41,19 @@ class ConversationOwner(FakeL2):
         message = next(row for row in reversed(T.task_messages("atlas", slug))
                        if row["role"] == T.OPERATOR_MESSAGE_ROLE)
         text = message["text"]
-        if slug == "review-revised-rollout":
+        submitted = [q for q in T.question_group_view("atlas", task)["questions"]
+                     if q["status"] == "open" and q.get("response")]
+        if submitted:
+            # This explicit fixture checkpoint models interpretation of known quick answers.
+            # HTTP submission alone never invokes resolution or grants authorization.
+            for question in submitted:
+                response = question["response"]
+                assert response["text"] in {o["text"] for o in question["options"]}
+                T.resolve_question("atlas", slug, question["id"], question["revision"],
+                                   response["message_id"], disposition="answered", reason=response["text"],
+                                   expected_attempt=task["attempt"])
+            answer = "The submitted choices are recorded. I will continue within that direction."
+        elif slug == "review-revised-rollout":
             if text == "What does the rollback choice cover?":
                 answer = "Only the rollback window. The reviewed rollout and merge choice are unchanged."
             elif text == "Audit the rollout wording before merge.":

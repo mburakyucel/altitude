@@ -94,6 +94,8 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const reason = str(task["blocked_reason"]);
   const waitsOnL3 = state === "blocked" && !held && !faultKind && str(task["waiting_on"]) === "l3";
   const finished = state === "done" || state === "rejected";
+  const awaitingAnswer = (task.question_group?.questions ?? (task.question ? [task.question] : []))
+    .some((question) => question.status === "open" && !question.response && question.audience !== "l3");
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
   const engineLabel = overview?.engines.find((e) => e.engine === engineId)?.label ?? engineId;
@@ -120,7 +122,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
   const label = task.steering?.state === "stopped" ? "Stopped" : task.steering?.state === "stopping" ? "Stopping…"
     : task.steering?.state === "resuming" ? "Waiting to resume" : held ? "Queued" : state === "blocked"
-    ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : task.question?.status === "open" ? "Needs your answer" : "Paused"
+    ? faultKind ? "Blocked by a fault" : waitsOnL3 ? "Waits for L3" : awaitingAnswer ? "Needs your answer" : task.question?.response ? "Waiting for L2" : "Paused"
     : sentence(state || "unknown");
   const dot: Facts["dot"] =
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
@@ -190,7 +192,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
-  const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open");
+  const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];
   const scroller = useRef<HTMLDivElement>(null);
   const viewportHeight = useRef(0);
@@ -315,7 +317,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       const withdrawn = question.resolution?.disposition === "withdrawn";
       const content = <>
         {!withdrawn ? <p className="text-meta text-muted">{question.asked_by === "l3" ? "L3 brought this question to the L2" : "L2"}</p> : null}
-        <Question key={`${question.id}:${question.revision}:${accessRefresh}`} decision={question} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <Question key={`${question.id}:${question.revision}`} decision={question} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </>;
       rows.push(<div key={`${key}-question`} className="conversation-question" data-historical={historical || undefined} tabIndex={-1} ref={(node) => {
         const id = `${question.id}:${question.revision}`;
@@ -336,7 +338,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         });
       }}>
         {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
-        <QuestionSet key={`${group.id}:${accessRefresh}`} decisions={group.questions} group={group} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
@@ -353,7 +355,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   return (
     <section className="convo" aria-label="Task conversation">
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
-        {denied ? "You cannot send or record a decision here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
+        {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
       </p> : null}
       {questionId && !target ? <p className="conversation-notice" role="status">This question is unavailable. The task conversation is below.</p> : null}
@@ -370,7 +372,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
           {pending ? <Bubble text={pending.text} at={new Date().toISOString()} pending images={<PendingImages images={pending.images} />} /> : null}
-          {task.question?.status === "resolved" && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
+          {(task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
@@ -539,7 +541,8 @@ function TaskPage({
   const back = useTaskBack(project);
   const projectQuery = useProject(project);
   const facts = taskFacts(task, overview.data, project, projectQuery.data?.repository);
-  const decision = task.question?.status === "open" ? task.question : undefined;
+  const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
+    .find((question) => question.status === "open" && !question.response);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingMessage | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);

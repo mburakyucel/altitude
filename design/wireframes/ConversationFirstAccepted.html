@@ -13,33 +13,37 @@ const params=new URLSearchParams(location.search), mobile=location.pathname.spli
 const scene=location.pathname.split('ConversationFirst').pop().split('.')[0], state=params.get('state')||'loading';
 const dest=(name,condition='')=>(mobile?'Mobile':'')+'ConversationFirst'+name+'.html'+(condition?'?state='+condition:'');
 const read=key=>{try{return sessionStorage.getItem('cf-current-'+key)||''}catch{return ''}},write=(key,value)=>{try{sessionStorage.setItem('cf-current-'+key,value)}catch{}};
-if(params.has('reset')){['answers','draft','single','answer'].forEach(k=>write(k,''));params.delete('reset');history.replaceState(null,'',location.pathname+(params.size?'?'+params:''))}
+if(params.has('reset')){['answers','responses','draft','single','answer'].forEach(k=>write(k,''));params.delete('reset');history.replaceState(null,'',location.pathname+(params.size?'?'+params:''))}
 const templates=document.querySelectorAll('template[data-state]');if(templates.length){const t=[...templates].find(t=>t.dataset.state===state)||templates[0];document.querySelector('[data-stage]').replaceChildren(t.content.cloneNode(true))}
-let answers=JSON.parse(read('answers')||'{}'),picks={};
+let answers=JSON.parse(read('answers')||'{}'),responses=JSON.parse(read('responses')||'{}'),picks={};
 if(scene==='Partial'&&!Object.keys(answers).length)answers={retention:'14 days',region:'Closed: snapshots replace the regional backup'};
 function render(){
  if(read('single')&&(scene==='Question'||scene==='States'&&!['archived','revised','missing','accepted-waiting'].includes(state))){location.replace(dest('Accepted'));return}
- document.querySelectorAll('[data-item]').forEach(row=>row.hidden=Boolean(answers[row.dataset.item]));
- const left=['retention','region','owner'].filter(id=>!answers[id]);
+ const members=document.querySelector('.cf-group')?['retention','region','owner']:['retention'];
+ document.querySelectorAll('[data-item]').forEach(row=>{const id=row.dataset.item;row.hidden=Boolean(answers[id]);if(responses[id]){row.querySelectorAll('.cf-choices,.cf-answer,.cf-recommendation').forEach(e=>e.hidden=true);if(!row.querySelector('.cf-receipt')){const receipt=document.createElement('div');receipt.className='cf-receipt';receipt.innerHTML='<b>Sent to L2</b><p></p>';receipt.querySelector('p').textContent=responses[id];row.append(receipt)}}});
+ const left=members.filter(id=>!answers[id]&&!responses[id]);
  if(['NeedsYou','Group','Partial','Followup'].includes(scene))document.querySelectorAll('[data-attention]').forEach(e=>{e.textContent=left.length;e.hidden=!left.length});
- if(scene==='NeedsYou'){document.querySelector('[data-summary]').textContent=left.length?left.length+' question'+(left.length===1?'':'s')+' across 1 project':'All caught up';if(!left.length){document.querySelector('.cf-column').innerHTML='<div class="cf-empty"><h2>Nothing needs you.</h2><p>The recorded answers stay in the L2 conversation.</p><a class="cf-link" href="'+dest('Accepted')+'">View conversation</a></div>';return}}
+ if(scene==='NeedsYou'){document.querySelector('[data-summary]').textContent=left.length?left.length+' question'+(left.length===1?'':'s')+' across 1 project':'All caught up';if(!left.length){document.querySelector('.cf-column').innerHTML='<div class="cf-empty"><h2>Nothing needs you.</h2><p>The sent responses stay in the L2 conversation.</p><a class="cf-link" href="'+dest('Group')+'">View conversation</a></div>';return}}
  document.querySelectorAll('.cf-open-count').forEach(e=>e.textContent=left.length+' question'+(left.length===1?'':'s')+' need'+(left.length===1?'s':'')+' you');
- const count=Object.keys(picks).length;
- const rec=document.querySelector('[data-recommendations]');if(rec)rec.hidden=Boolean(count||answers.retention&&answers.region);
- const send=document.querySelector('[data-send-answers]');if(send){send.disabled=!count;send.hidden=!count;send.classList.toggle('primary',Boolean(count));send.textContent='Send '+count+' answer'+(count===1?'':'s')}
- const note=document.querySelector('.cf-group-note');if(note)note.textContent=Object.keys(picks).length?'Your picks are not sent yet.':Object.keys(answers).length?'Only the remaining questions need an answer.':'Nothing is selected. Recommendations answer the first two; the report recipient stays open.';
+ const count=Object.values(picks).filter(value=>value.trim()).length;
+ document.querySelectorAll('[data-pick]').forEach(b=>b.setAttribute('aria-pressed',String(picks[b.dataset.pick]===b.dataset.value)));
+ const rec=document.querySelector('[data-recommendations]');if(rec)rec.hidden=Boolean(Object.keys(picks).length||!left.some(id=>document.querySelector('[data-pick="'+id+'"]')));
+ const send=document.querySelector('[data-send-answers]');if(send){send.disabled=!count;send.hidden=!left.length;send.textContent=count?'Send '+count+' answer'+(count===1?'':'s'):'Send answers'}
+ const note=document.querySelector('.cf-group-note');if(note)note.textContent=count?'Only these answers will be sent. You can answer the rest later.':left.length?'Choose an answer or write your own. Follow-up questions are welcome.':'Responses sent. The L2 continues the conversation.';
  const closed=document.querySelector('[data-closed]');if(closed){closed.replaceChildren();const title=document.createElement('b');title.textContent='Recorded';closed.append(title);for(const [key,value] of Object.entries(answers)){const p=document.createElement('p');p.textContent=({retention:'Retention',region:'Backup region',owner:'Report recipient'}[key])+': '+value+'.';closed.append(p)}}
- if(!left.length&&['Group','Partial'].includes(scene)){location.replace(dest('Accepted'))}
+ if(!left.length&&scene!=='NeedsYou'&&document.querySelector('[data-send-answers]')&&!document.querySelector('[data-owner-example]')){const discussion=Object.values(responses).some(text=>text.includes('?'));const link=document.createElement('a');link.className='cf-link';link.dataset.ownerExample='';link.href=dest(discussion?'Followup':'Accepted');link.textContent=discussion?'Design example: later L2 reply':'Design example: later L2 decision';document.querySelector('.cf-column').append(link)}
 }
-render();addEventListener('pageshow',()=>{answers=JSON.parse(read('answers')||JSON.stringify(answers));render()});
+render();addEventListener('pageshow',()=>{answers=JSON.parse(read('answers')||JSON.stringify(answers));responses=JSON.parse(read('responses')||JSON.stringify(responses));render()});
 const save=()=>write('answers',JSON.stringify(answers));
-document.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{const key=b.dataset.pick,value=b.dataset.value;if(picks[key]===value)delete picks[key];else picks[key]=value;document.querySelectorAll('[data-pick="'+key+'"]').forEach(p=>p.setAttribute('aria-pressed',String(picks[key]===p.dataset.value)));render()});
-document.querySelector('[data-send-answers]')?.addEventListener('click',()=>{Object.assign(answers,picks);save();location.href=dest('Partial')});
-document.querySelector('[data-recommendations]')?.addEventListener('click',()=>{if(!answers.retention)answers.retention='7 days';if(!answers.region)answers.region='West';save();location.href=dest('Partial')});
-document.querySelectorAll('[data-single]').forEach(b=>b.onclick=()=>{write('single',b.dataset.single);write('answer',b.dataset.single+' days');location.href=dest('Accepted')});
+document.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{const key=b.dataset.pick,value=b.dataset.value;if(picks[key]===value)delete picks[key];else picks[key]=value;const field=document.querySelector('[data-answer-field="'+key+'"]');field.hidden=true;field.value='';document.querySelector('[data-other="'+key+'"]')?.setAttribute('aria-pressed','false');render()});
+document.querySelectorAll('[data-other]').forEach(b=>b.onclick=()=>{const key=b.dataset.other,field=document.querySelector('[data-answer-field="'+key+'"]');field.hidden=!field.hidden;field.value='';delete picks[key];if(!field.hidden){picks[key]='';field.focus()}b.setAttribute('aria-pressed',String(!field.hidden));render()});
+document.querySelectorAll('[data-answer-field]').forEach(field=>field.oninput=()=>{picks[field.dataset.answerField]=field.value;render()});
+document.querySelector('[data-send-answers]')?.addEventListener('click',()=>{Object.assign(responses,Object.fromEntries(Object.entries(picks).filter(([,value])=>value.trim())));write('responses',JSON.stringify(responses));picks={};render()});
+document.querySelector('[data-recommendations]')?.addEventListener('click',()=>{for(const [key,value] of Object.entries({retention:'7 days',region:'West'}))if(!answers[key]&&!responses[key]&&document.querySelector('[data-pick="'+key+'"]'))picks[key]=value;render()});
 if(scene==='Accepted'&&read('single')){document.querySelector('[data-outcome]').textContent='Old index retention resolved.';document.querySelector('[data-answer]').textContent=read('answer');document.querySelector('[data-ack]').textContent='I’ll keep the old index for '+read('single')+' days, then delete it.'}
 else if(scene==='Accepted'&&Object.keys(answers).length){document.querySelector('[data-answer]').textContent=read('answer')||'Use the recorded answers.';document.querySelector('[data-ack]').textContent='I’ll keep the index for '+answers.retention+', '+(answers.region.startsWith('Closed:')?'use snapshots':'keep the backup in '+answers.region)+', and send the report to '+answers.owner+'.'}
-const field=document.querySelector('textarea'),send=document.querySelector('form [aria-label="Send"]');
+else if(scene==='Accepted'&&Object.keys(responses).length){document.querySelector('[data-outcome]').textContent='Example: the L2 interprets the submitted answers.';document.querySelector('[data-answer]').textContent=Object.entries(responses).map(([key,value])=>key+': '+value).join('\n');document.querySelector('[data-ack]').textContent='I’ll use these answers for the rollout. A follow-up question would continue our discussion instead.'}
+const field=document.querySelector('textarea[aria-label="Message the L2"]'),send=document.querySelector('form [aria-label="Send"]');
 if(field&&!field.disabled){if(params.has('draft'))field.value=params.get('draft');else if(read('draft'))field.value=read('draft');if(state==='dictated')field.value=(params.get('draft')||'Keep it for 14 days,')+' then delete it. Go ahead.';const update=()=>send.disabled=!field.value.trim();update();field.addEventListener('input',()=>{write('draft',field.value);update()})}
 document.querySelectorAll('[data-voice]').forEach(b=>b.onclick=()=>location.href=dest('States','listening')+'&draft='+encodeURIComponent(field?.value||''));
 document.querySelectorAll('[data-voice-cancel]').forEach(a=>a.href+='?draft='+encodeURIComponent(params.get('draft')||''));

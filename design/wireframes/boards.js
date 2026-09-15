@@ -4,7 +4,7 @@
  * A listed file that is missing renders as a visible warning tile, never a blank one. */
 window.WIREFRAME_BOARDS = [
   { label: 'Conversation · Needs you · questions upfront', desktop: 'ConversationFirstNeedsYou.html', mobile: 'MobileConversationFirstNeedsYou.html' },
-  { label: 'Conversation · One question · immediate quick choices', desktop: 'ConversationFirstQuestion.html', mobile: 'MobileConversationFirstQuestion.html' },
+  { label: 'Conversation · One question · answer in place', desktop: 'ConversationFirstQuestion.html', mobile: 'MobileConversationFirstQuestion.html' },
   { label: 'Conversation · Choose answers · send once', desktop: 'ConversationFirstGroup.html', mobile: 'MobileConversationFirstGroup.html' },
   { label: 'Conversation · Discuss without deciding', desktop: 'ConversationFirstFollowup.html', mobile: 'MobileConversationFirstFollowup.html' },
   { label: 'Conversation · Keep only what still needs an answer', desktop: 'ConversationFirstPartial.html', mobile: 'MobileConversationFirstPartial.html' },

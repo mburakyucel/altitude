@@ -54,12 +54,12 @@ class TestRecordedMergeApproval(AltitudeCase):
         if quick:
             decision = T.accept_question(self.project, self.slug, self.question["id"], self.question["revision"])
             self.approval = next(r for r in T.task_messages(self.project, self.slug)
-                                 if r["id"] == decision["resolution"]["message_id"])
+                                 if r["id"] == decision["response"]["message_id"])
         else:
             self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Yes, ship the reviewed PR.")
-            T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"],
-                               self.approval["id"], disposition="answered", reason="Merge the reviewed PR",
-                               expected_attempt=1)
+        T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"],
+                           self.approval["id"], disposition="answered", reason="Merge the reviewed PR",
+                           expected_attempt=1)
 
     def request(self, args=None, **extra):
         S.write_json(self.gh / "prs.json", {"235": self.pull})
@@ -368,7 +368,7 @@ class TestRecordedMergeApproval(AltitudeCase):
                 receipt = json.loads(self.request()["stdout"])
                 self.assertEqual((receipt["question"], receipt["revision"], receipt["approval"]),
                                  (self.question["id"], self.question["revision"], self.approval["id"]))
-                self.assertEqual(receipt["option_key"], "recommended" if quick else None)
+                self.assertIsNone(receipt["option_key"])
 
     def test_question_binding_cannot_be_omitted_or_replaced_by_a_different_decision(self):
         self.decide()
@@ -416,7 +416,10 @@ class TestRecordedMergeApproval(AltitudeCase):
                            recommendation="Implement this design; retain the merge hold.")
         self.question = asked["questions"][-1]
         self.at = "2026-09-07T20:07:00+00:00"
-        T.accept_question(self.project, self.slug, self.question["id"], self.question["revision"])
+        response = T.accept_question(self.project, self.slug, self.question["id"], self.question["revision"])["response"]
+        T.resolve_question(self.project, self.slug, self.question["id"], self.question["revision"],
+                           response["message_id"], disposition="answered", reason="Implement the design",
+                           expected_attempt=1)
         design = copy.deepcopy(S.load_task(self.project, self.slug)["questions"][-1])
         self.at = "2026-09-07T20:09:00+00:00"
         self.approval = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "You can merge it", wake_blocked=False)
