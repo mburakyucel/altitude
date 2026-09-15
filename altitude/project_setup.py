@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import os
 import subprocess
 import uuid
 from contextlib import contextmanager
@@ -105,7 +106,7 @@ def _repository(project: str) -> tuple[dict, bool]:
     if not repo.is_dir():
         return _step("repository", "Git repository", "failed", "The registered folder is unavailable.", action="discuss"), False
     result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=10)
+                            capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
     if result.returncode:
         if "not a git repository" in result.stderr.lower():
             return _step("repository", "Git repository", "not_applicable",
