@@ -20,10 +20,13 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   let uploaded!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const upload = new Promise<void>((resolve) => { uploaded = resolve; });
+  let transcriptions = 0;
+  // Keep interception active while completing transcription starts the message POST.
   await page.route("**/api/transcribe", async (route) => {
+    transcriptions++;
     uploaded(); await gate;
     await route.fulfill({ json: { text: "Include the failure reason." } });
-  }, { times: 1 });
+  });
   const posts: { url: string; project: string; slug?: string; text: string }[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url()).pathname;
@@ -51,6 +54,7 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
   await walk.state("02-l2-message-delivered-once", { visible: [conversation.getByText(finalText, { exact: true }), field], hidden: [page.getByText("Transcribing…", { exact: true })] });
   await expect(field).toHaveValue("");
+  expect(transcriptions).toBe(1);
   expect(posts).toHaveLength(1);
   expect(posts[0]).toMatchObject({ url: "/api/l2/message", project: "atlas", slug, text: finalText });
   const workers = await (await request.get("/fixture/workers")).json();

@@ -408,14 +408,17 @@ for (const result of ["success", "failure", "cancel"] as const) {
     const transcript = deferred();
     const uploaded = deferred();
     const delivered = deferred();
+    let transcriptions = 0;
+    // Keep interception active while completing transcription starts the message POST.
     await page.route("**/api/transcribe", async (route) => {
+      transcriptions++;
       uploaded.release();
       await transcript.promise;
       await route.fulfill(result === "failure"
         ? { status: 503, json: { error: "Deterministic transcription failure" } }
         : { json: { text: "dictated instruction" } }).catch(() => {});
       delivered.release();
-    }, { times: 1 });
+    });
     const posts: { project: string; text: string }[] = [];
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/chat" && request.method() === "POST") posts.push(request.postDataJSON());
@@ -462,6 +465,7 @@ for (const result of ["success", "failure", "cancel"] as const) {
       visible: [v.field("alpha"), ...(result === "success" ? [v.text("Alpha original draft dictated instruction")] : result === "failure" ? [v.convo.getByRole("alert").filter({ hasText: "Could not transcribe" })] : [])],
       hidden: [v.text("Transcribing…"), cancel],
     });
+    expect(transcriptions).toBe(1);
     expect(posts.map(({ project, text }) => ({ project, text }))).toEqual(result === "success" ? [{ project: "alpha", text: "Alpha original draft dictated instruction" }] : []);
     expect((await (await request.get(`${service}/fixture/calls`)).json()).calls.map((row: { project: string; text: string }) => ({ project: row.project, text: row.text }))).toEqual(posts.map(({ project, text }) => ({ project, text })));
     expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
