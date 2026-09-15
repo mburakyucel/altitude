@@ -181,11 +181,49 @@ class TestAmendIndex(AltitudeCase):
         per_project = (config.project_dir(PROJECT) / "incidents.jsonl").read_text().splitlines()
         self.assertEqual([json.loads(l)["cause"] for l in per_project], ["the remote base was fetched too late"])
 
-    def test_amending_an_unindexed_field_leaves_the_row_alone(self):
+    def test_status_projection_keeps_the_indexed_cause(self):
         incidents.amend_incident(PROJECT, self.inc["id"], status="closed", reason="fixed")
         rows = [r for r in incidents.index() if r["id"] == self.inc["id"]]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["cause"], "the worktree base was not refreshed")
+        self.assertEqual(rows[0]["status"], "closed")
+
+    def test_recovered_role_incident_keeps_prevention_visible_across_reads(self):
+        evidence = "Recovered: owner withdrew redundant checkpoint. Prevention: https://github.com/example/altitude/issues/42; owner task role-guidance; pending delivery."
+        incidents.amend_incident(PROJECT, self.inc["id"], status="watch", evidence=evidence,
+                               reason="Recovery verified; durable prevention remains pending")
+        for project in (PROJECT, None):
+            row = next(r for r in incidents.index(project) if r["id"] == self.inc["id"])
+            self.assertEqual(row["status"], "watch")
+            self.assertEqual(row["evidence"], evidence)
+        summary = S.regen_state_md(PROJECT)
+        self.assertIn(evidence, summary)
+        self.assertNotIn("events.log 00:15:07", summary)
+        incidents.amend_incident(PROJECT, self.inc["id"], status="closed",
+                               evidence="Recovered; prevention delivered and effective in PR #43.", reason="Verified")
+        self.assertNotIn(evidence, S.regen_state_md(PROJECT))
+        self.assertIn("PR #43", incidents.index(PROJECT)[0]["evidence"])
+
+    def test_no_change_disposition_is_retained_without_publication_or_new_notifications(self):
+        from altitude import l3
+        before = l3.queued(PROJECT)
+        evidence = "Recovered: valid refusal explained. Prevention: no change; fixture confirms requested scope was unapproved."
+        incidents.amend_incident(PROJECT, self.inc["id"], status="closed", evidence=evidence,
+                               reason="Evidence establishes no system or role defect")
+        self.assertEqual(incidents.index(PROJECT)[0]["evidence"], evidence)
+        self.assertNotIn(self.inc["id"], S.regen_state_md(PROJECT))
+        self.assertEqual(l3.queued(PROJECT), before)
+
+    def test_summary_bounds_evidence_and_keeps_unavailable_records_explicit(self):
+        from pathlib import Path
+        incidents.amend_incident(PROJECT, self.inc["id"], evidence="x" * 1000, reason="Long evidence")
+        summary = S.regen_state_md(PROJECT)
+        self.assertIn("x" * 600 + " [truncated]", summary)
+        self.assertNotIn("x" * 601, summary)
+        Path(self.inc["path"]).unlink()
+        row = incidents.index(PROJECT)[0]
+        self.assertEqual(row["status"], "unavailable")
+        self.assertIn("Incident evidence unavailable", S.regen_state_md(PROJECT))
 
 
 class TestAmendCLI(AltitudeCase):

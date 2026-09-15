@@ -144,7 +144,8 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
                              f"Incident {target}/{rec['incident']} holds the evidence. Inspect current task status for the full "
                              "blocker and amend the incident only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
-                             "the cause is gone. Answer in one or two plain sentences.\n\n"
+                             "the cause is gone. Keep recovery and prevention evidence/ownership separate; "
+                             "unchanged follow-through stays quiet.\n\n"
                              + upstream_summary(target), trigger="incident")
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
@@ -160,8 +161,9 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     if not repair:
         l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
                          f"Its task is blocked and incident {target}/{inc['id']} holds the evidence. Read the evidence, record "
-                         "what you learned with `alt incident amend`, then fix the cause directly if that is trivial or "
-                         "create one ordinary task. Answer in two or three plain sentences.\n\n"
+                         "verified recovery and prevention follow-through with `alt incident amend`. Unblock affected "
+                         "work first through supported recovery; promptly report/reuse an issue for actionable system "
+                         "or role defects, record prevention ownership or reporting failure, and give one concise FYI.\n\n"
                          + upstream_summary(target), trigger="incident")
     return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
 
@@ -177,6 +179,15 @@ def index(project: str | None = None) -> list[dict]:
             row = json.loads(line)
         except ValueError:
             continue
+        try:
+            body = (config.project_dir(row["project"]) / "incidents" / f"{row['id']}.md").read_text()
+            spans = _field_spans(body, row["id"])
+            for key, label in (("status", "status"), ("evidence", "evidence"), ("cause", "root cause")):
+                if label in spans:
+                    start, end = spans[label]
+                    row[key] = body[start:end]
+        except (OSError, ValueError):
+            row.update(status="unavailable", evidence="Incident evidence unavailable; inspect the local record.")
         if "system-fault" in row.get("tags", []):
             row["upstream"] = (faults.get(row.get("fault_key"), {}).get("upstream") or
                                {"status": "missing", "url": None,
@@ -216,13 +227,23 @@ def upstream_delivery(project: str, incident: str, *, outcome: dict | None = Non
 
 
 def upstream_summary(project: str) -> str:
-    """Bounded current fault-kind outcomes; the full incident list remains the audit surface."""
-    rows = {row.get("fault_key") or row["id"]: row for row in index(project) if "upstream" in row}
+    """Current incident follow-through and fault-kind reports, from existing local evidence."""
+    current = index(project)
+    pending = [row for row in reversed(current) if row.get("status") != "closed"]
+    lines = []
+    if pending:
+        lines.append(f"Incident follow-through: {len(pending)} not closed (recovery is separate from prevention).")
+        for row in pending[:5]:
+            evidence = " ".join(row.get("evidence", "Evidence unavailable; inspect the local record.").split())
+            lines.append(f"- {row['id']}: {row.get('status', 'unavailable')} — {evidence[:600]}"
+                         + (" [truncated]" if len(evidence) > 600 else ""))
+        lines.append("Inspect full evidence with `alt incident list`; historical records do not authorize publication.")
+    rows = {row.get("fault_key") or row["id"]: row for row in current if "upstream" in row}
     if not rows:
-        return ""
+        return "\n".join(lines)
     counts = {status: sum(row["upstream"]["status"] == status for row in rows.values())
               for status in ("missing", "failed", "uncertain", "confirmed")}
-    lines = ["Upstream reports: " + ", ".join(f"{status}={count}" for status, count in counts.items())]
+    lines.append("Upstream reports: " + ", ".join(f"{status}={count}" for status, count in counts.items()))
     ordered = sorted(reversed(list(rows.values())), key=lambda row: row["upstream"]["status"] == "confirmed")
     for row in ordered[:5]:
         outcome = row["upstream"]

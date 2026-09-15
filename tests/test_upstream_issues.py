@@ -232,7 +232,13 @@ class TestUpstreamIssues(AltitudeCase):
     def test_two_faults_one_report_remains_visible_and_reuses_link_after_restart_and_new_window(self):
         first, second = self.fault("resume"), self.fault("dispatch")
         self.assertEqual([row["upstream"]["status"] for row in incidents.index(self.project)], ["missing", "missing"])
+        victim = next(row["task"] for row in incidents.index(self.project) if row["id"] == first)
+        T.resume(self.project, victim)
+        self.assertNotEqual(S.load_task(self.project, victim)["state"], "blocked")
         self.tracked(first)
+        prevention = "Recovered: original session continues. Prevention: issue 42; owner role-correction; delivery pending."
+        incidents.amend_incident(self.project, first, evidence=prevention, status="watch",
+                                 reason="Local recovery does not complete prevention")
         self.assertEqual(self.delivery(first)["url"], TARGET + "/issues/42")
         self.assertEqual(self.delivery(second)["status"], "missing")
         self.assertIn("Check existing upstream issues", self.delivery(second)["reason"])
@@ -251,6 +257,9 @@ class TestUpstreamIssues(AltitudeCase):
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)[0]["upstream"], self.delivery(first))
+        self.assertEqual(json.loads(result.stdout)[0]["evidence"], prevention)
+        self.assertEqual(json.loads(result.stdout)[0]["status"], "watch")
+        self.assertIn(prevention, restarted)
         self.tracked(first)
         repeat = self.fault("resume")
         self.assertEqual(repeat, first)
@@ -267,6 +276,7 @@ class TestUpstreamIssues(AltitudeCase):
         self.assertEqual(self.delivery(second)["status"], "missing")
         self.assertNotIn("Private fictional diagnostic", self.writes[0][1]["input"])
         self.assertNotIn(first, self.writes[0][1]["input"])
+        self.assertNotIn(prevention, self.writes[0][1]["input"])
 
     def test_prepublication_failure_is_actionable_and_can_be_explicitly_retried(self):
         incident = self.fault("configuration")

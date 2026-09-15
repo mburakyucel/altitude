@@ -402,6 +402,14 @@ issue closure and unrelated restarts do not establish repair. Coordinator messag
 remain readable without waking them; direct operator discussion remains available. Landing checks
 and merge holds still apply.
 
+Recovery and recurrence prevention are separate responsibilities. L3 first unblocks affected work,
+then promptly reports/reuses a sanitized issue for actionable system or role defects and records
+prevention ownership and next action. Existing incident evidence and `watch` status keep pending
+follow-through visible in coordinator state even after recovery or confirmed publication. A concise
+FYI states recovery and follow-through; unchanged repeats remain quiet. Closure records verified
+prevention or an evidence-backed no-change disposition. The development coordinator triages reports
+under its own authority, on any installation. See [incident follow-through](docs/CLI.md#incident-recovery-and-prevention).
+
 For an external CI wait, L3 records one bounded [CI recheck](docs/CLI.md#durable-ci-recheck) on the
 existing fault-blocked task. Status names its next action and time. The daemon follows relevant fresh
 CI or submits one selected run rerun, preserves uncertain submission evidence, and delivers changed

@@ -281,6 +281,34 @@ entry naming the issue, merged PR and proof that all acceptance scope is satisfi
 in the owning project. An issue umbrella remains open if only a part shipped. This reconciliation
 completes authorized work; it grants no automatic backlog intake or general L2 issue-write authority.
 
+### Incident recovery and prevention
+
+L3 first verifies local recovery and unblocks affected work, preserving the original session and
+holds. It separately assesses recurrence, including role/procedure failures when a tool correctly
+refuses an action. For each newly investigated actionable Altitude defect, promptly create/reuse a
+sanitized upstream issue and record the prevention owner/next action or concrete reporting failure.
+An evidence-backed non-defect/no-change disposition is valid. Use the existing incident fields:
+
+```sh
+alt incident amend I-20260908-123456 --status watch --reason "Recovery verified; prevention pending" \
+  --evidence "Recovered: original owner continues. Prevention: https://github.com/example/altitude/issues/42; development coordinator owns triage; delivery pending."
+alt fyi "The task is unblocked. Prevention is tracked at https://github.com/example/altitude/issues/42; the development coordinator owns triage."
+```
+
+These are fictional examples; use the actual local incident and verified public link. Keep concise
+recovery and prevention evidence together, including delivery/effectiveness verification when known.
+`watch` retains pending reporting, delivery or effectiveness; `closed` records verified prevention
+or the reason no change is warranted. Closure alone proves neither. `alt incident list` returns
+current Markdown status/evidence/cause; unavailable records stay explicit. Coordinator state shows
+the latest five incidents not closed, with evidence limited to 600 characters and marked truncation,
+separately from upstream report outcomes. Read the full list for omitted evidence.
+
+Give one meaningful recovery/follow-through FYI and update it only when evidence or action changes.
+Unchanged repeats reuse confirmed links and remain quiet. Failed publication retains a concrete
+next action; uncertain publication is reconciled by verified linkage without duplicate creation.
+The receiving development coordinator promptly triages under its own project authority; public
+reporting grants no cross-project task control. Historical visibility authorizes no bulk backfill.
+
 ### Upstream Altitude defects
 
 ```sh
@@ -673,6 +701,14 @@ resolve an operator question or release a merge hold. Existing resume/recovery a
 Archive and worktree cleanup retain the image with the conversation.
 
 ### Conversational decisions
+
+Before republishing a question or preview, the owner reads original answers and later guidance.
+Wording-only clarification of approved scope belongs in the conversation/docs without a new approval
+checkpoint. If republication races an answer, the owner compares scope, cites the original source
+in its reply/checkpoint, and withdraws only the redundant current question with that citation in
+`--reason`. Withdrawal does not accept a stale answer against a new revision. Materially revised
+decisions still require their own answer; original authority, existing receipts and merge holds
+remain intact. A later reaffirmation already recorded needs no further reconciliation.
 
 `block` is the current L2's question to L3; its operator flag uses the operator audience. L3 can
 `escalate` the actual dilemma and explicit recommendation. Both publish into the owning L2 human
