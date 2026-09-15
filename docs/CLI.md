@@ -287,6 +287,9 @@ L3 first verifies local recovery and unblocks affected work, preserving the orig
 holds. It separately assesses recurrence, including role/procedure failures when a tool correctly
 refuses an action. For each newly investigated actionable Altitude defect, promptly create/reuse a
 sanitized upstream issue and record the prevention owner/next action or concrete reporting failure.
+Establish current relevance and underlying cause before selecting repair. Prefer a simple shared
+correction for evidenced related failures; explain a narrow fix when generalization adds complexity
+without value. Old incidents may be stale and do not authorize historical repair.
 An evidence-backed non-defect/no-change disposition is valid. Use the existing incident fields:
 
 ```sh
