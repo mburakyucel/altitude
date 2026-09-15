@@ -107,9 +107,10 @@ switcher, or a project route. Needs you is the cross-project attention inbox; Wo
 selected project. Opening a question selects its project. Project navigation retains state dots;
 the global Needs you badge is the only numeric attention badge.
 
-Switching projects opens that project's conversation and discards the unsent draft and transient
+Switching projects opens that project's conversation, retains its own unsent text and clears transient
 composer/response state. Accepted turns and waiting messages remain owned by the source project;
-switching back reads its saved history, queue and active turn (§3.3). No draft is saved on leaving.
+switching back reads its saved history, queue and active turn (§3.3), alongside its retained draft.
+Unsent project text stays in this client session across route remounts until reload. Clearing it stays cleared.
 
 ## 3. Components
 
@@ -230,10 +231,10 @@ on both, including switching back before or after a response finishes:
 | State when leaving Alpha for Beta | What appears and disappears |
 | --- | --- |
 | Empty, loading or reading history | Beta loads or shows only its cached rows, queue and active turn; Alpha's rows leave. |
-| Typing an unsent draft | Beta's composer is empty. Returning to Alpha does not restore its unsent draft. |
+| Typing an unsent draft | Beta shows its own draft, initially empty. Returning to Alpha restores Alpha's text; copying and pasting between projects preserves both drafts. |
 | Send pending or reply streaming | Alpha's local prompt, typing indicator and streamed text leave. The accepted turn finishes in Alpha; Beta can send independently. |
 | Both projects have sent a turn | Each conversation shows only its own turn. Either completion order preserves the other project's draft and reply. |
-| Late HTTP refusal or stream error | Beta's draft and send state stay its own; no Alpha error or Retry appears there. An unaccepted draft is not saved after leaving. |
+| Late HTTP refusal or stream error | Beta's draft and send state stay its own; no Alpha error or Retry appears there. Submitted-text recovery returns only to Alpha, alongside its retained newer text. |
 | Switch back to a failed accepted turn | Alpha's stored prompt and failed-turn Retry appear only in Alpha; Retry resends that prompt to Alpha. |
 | Listening, transcribing or microphone denied | Leaving stops recording, releases microphone tracks and cancels transcription; late results cannot fill Beta's draft. The new composer has its own microphone state. |
 
@@ -319,7 +320,11 @@ announced. A draft starts at 44px and grows to the lesser of 120px and 25% of th
 viewport, with a 44px minimum, then scrolls internally. Mic and send remain at the field's bottom.
 
 Keyboard: Enter sends (while listening, stops, transcribes, and sends at once), Shift+Enter inserts
-a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a recording.
+a newline while editing, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels voice input.
+During voice input, keyboard, paste and cut cannot mutate the text; selection and copying remain available.
+`web/e2e/conversation.pw.ts` and `project-isolation.pw.ts` walk these states, delayed success,
+failure/cancel, Stop versus Send, independent project drafts and navigation during transcription
+at both phone and desktop widths.
 
 | State | What is on screen | What changes |
 | --- | --- | --- |
@@ -329,8 +334,9 @@ a newline, Ctrl/⌘+M starts the microphone or stops to the draft, Esc cancels a
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
-| Listening | Cancel, Stop, and the same arrow, live waveform and timer share one row without wrapping at 390px; the placeholder disappears and the draft stays as it was | Cancel or Esc: back to the previous state, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; the arrow or Enter: transcribe and send at once |
-| Transcribing | the waveform freezes, "Transcribing…" in the hint, mic and arrow disabled, the field stays editable | after Stop: Landed; after Send: append the transcript to the draft and send through Typing → Sending (Busy queues); failure: hint reads "Could not transcribe. Typing works.", draft unchanged, nothing sent; empty transcript: send nothing, return to Idle or Typing |
+| Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only | Cancel or Esc restores editing; denial or failure preserves the draft |
+| Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. Cancel, Stop, arrow, waveform and timer share a separate row without wrapping at 390px | Cancel or Esc: back to editing, nothing added; Stop or Ctrl/⌘+M: transcribe to the draft; the arrow or Enter: transcribe and send at once |
+| Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works."; empty transcript: send nothing, return to Idle or Typing |
 | Landed | the transcript is appended to the draft, cursor at the end, arrow enabled; nothing else appears (no transcript box, issue #195) | the operator edits or sends as with a typed draft |
 | Denied | mic shows disabled; hint reads "Microphone blocked in the browser. Typing works." | stays until the page reloads with permission |
 | Unavailable | mic hidden; hint reads "Voice needs HTTPS" on an insecure origin, or nothing when the browser lacks recording | typing unaffected |
@@ -361,7 +367,7 @@ local until Send; leaving the conversation releases it and late results cannot f
 | Sent / viewer | Thumbnails belong to the saved message. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus. Archived tasks retain viewing without a composer. |
 | Loading / missing / denied | Image-sized placeholder names loading or the error; Retry repeats only the private read, never the send. Text remains readable. |
 | Capability unavailable | Add images explains why input is unavailable. Known converter refusal restores selections; removing them allows text. |
-| Voice / scope changes | Listening/transcribing retain previews. Cancel preserves current text edits; empty/failed transcription sends nothing. Successful voice Send clears text and images together. Navigation discards only unsent selection. |
+| Voice / scope changes | Listening/transcribing retain previews and lock text editing. Cancel preserves preexisting text; empty/failed transcription sends nothing. Successful voice Send clears text and images together. Navigation discards only unsent image selection. |
 
 The approved [image interaction contract](IMAGE_INPUT.md) explains retention and private
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic

@@ -51,6 +51,98 @@ function stubTranscribe(text: string | null, gate?: Promise<void>) {
 }
 
 describe("Composer", () => {
+  it("keeps text selectable but rejects typing and paste throughout microphone startup and listening", async () => {
+    const { getUserMedia } = installVoiceBrowser();
+    const stream = await getUserMedia();
+    let open!: (stream: MediaStream) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => { open = resolve; }));
+    const { user, field } = mount({ initial: "Keep this text" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    for (const status of ["Opening microphone…", "Listening… Stop to add text, or Send."]) {
+      expect(screen.getByRole("status")).toHaveTextContent(status);
+      expect(screen.getByRole("status").closest(".composer-box")).not.toBeNull();
+      expect(field).toHaveAttribute("readonly");
+      await user.click(field);
+      await user.keyboard("mutated{Backspace}");
+      await user.paste("pasted text");
+      expect(field).toHaveValue("Keep this text");
+      await act(async () => open(stream));
+    }
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
+    await user.type(field, " edited");
+    expect(field).toHaveValue("Keep this text edited");
+  });
+
+  it.each(["resolve", "reject"])("ignores cancelled microphone acquisition %s after a new recording starts", async (result) => {
+    const { getUserMedia } = installVoiceBrowser();
+    const audioSession = { type: "playback" };
+    Object.defineProperty(navigator, "audioSession", { value: audioSession });
+    const stopOld = vi.fn();
+    let open!: (stream: MediaStream) => void;
+    let reject!: (error: Error) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve, fail) => { open = resolve; reject = fail; }));
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await act(async () => result === "resolve" ? open({ getTracks: () => [{ stop: stopOld }] } as unknown as MediaStream) : reject(new DOMException("Late denial", "NotAllowedError")));
+    expect(stopOld).toHaveBeenCalledTimes(result === "resolve" ? 1 : 0);
+    expect(audioSession.type).toBe("play-and-record");
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(field).toHaveValue("Draft");
+    expect(field).toHaveAttribute("readonly");
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+  });
+
+  it.each(["resolve", "reject"])("a cancelled transcription cannot %s into a newer recording", async (result) => {
+    installVoiceBrowser();
+    let resolve!: (response: Response) => void;
+    let reject!: (error: Error) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((done, fail) => { resolve = done; reject = fail; })));
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Original", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Transcribing…");
+    await user.click(field);
+    await user.keyboard("{Enter}changed");
+    await user.paste("pasted");
+    expect(field).toHaveValue("Original");
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(field).not.toHaveAttribute("readonly");
+    await user.type(field, " edited");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await act(async () => result === "resolve" ? resolve(jsonResponse({ text: "stale transcript" })) : reject(new Error("stale failure")));
+    expect(screen.getByRole("status")).toHaveTextContent("Listening…");
+    expect(field).toHaveValue("Original edited");
+    expect(field).toHaveAttribute("readonly");
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+  });
+
+  it("a transcription timeout restores usable editing and the preexisting draft without sending", async () => {
+    installVoiceBrowser();
+    vi.stubGlobal("fetch", vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Timed out", "AbortError")));
+    })));
+    const onSubmit = vi.fn();
+    const { user, field } = mount({ initial: "Keep this", onSubmit });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => { screen.getByRole("button", { name: "Send" }).click(); });
+      expect(field).toHaveAttribute("readonly");
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+      expect(field).not.toHaveAttribute("readonly");
+      expect(field).toHaveValue("Keep this");
+      expect(onSubmit).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+    await user.type(field, " editing works");
+    expect(field).toHaveValue("Keep this editing works");
+  });
+
   it("delivers a late failure to the remounted composer while retaining its newer draft", async () => {
     let reject!: (error: Error) => void;
     const onSubmit = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
@@ -363,7 +455,7 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "Stop voice input" })).toBeNull();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(field).toBeEnabled();
+    expect(field).toHaveAttribute("readonly");
 
     release();
     await waitFor(() => expect(field).toHaveValue("Fix the timer and the tests"));

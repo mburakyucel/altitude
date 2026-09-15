@@ -1993,6 +1993,13 @@
   padding: 0 18px;
   font-size: 12px;
 }
+.composer-box > .composer-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 0;
+}
 .shell[data-phone] .composer-box {
   min-height: 54px;
   flex-direction: row;
@@ -2023,13 +2030,13 @@
 .shell[data-phone] .composer-pill,
 .shell[data-phone] .composer-spacer,
 .shell[data-phone] .composer-hint[data-routine],
-.shell[data-phone] .composer-voice[data-frozen],
-.shell[data-phone] .composer[data-phase="starting"] .composer-field,
-.shell[data-phone] .composer[data-phase="listening"] .composer-field {
+.shell[data-phone] .composer-voice[data-frozen] .composer-wave,
+.shell[data-phone] .composer-voice[data-frozen] .composer-timer {
   display: none;
 }
 .shell[data-phone] .composer[data-phase="starting"] .composer-row,
-.shell[data-phone] .composer[data-phase="listening"] .composer-row {
+.shell[data-phone] .composer[data-phase="listening"] .composer-row,
+.shell[data-phone] .composer[data-phase="transcribing"] .composer-row {
   width: 100%;
 }
 .shell[data-phone] .composer-hint {

@@ -540,6 +540,7 @@ const FAKE_MIC = `
     configurable: true,
     // A fresh stream per call, as a real microphone gives: the composer stops the tracks it got.
     value: async () => {
+      await window.fixtureMicGate;
       await context.resume();
       const destination = context.createMediaStreamDestination();
       oscillator.connect(destination);
@@ -548,16 +549,35 @@ const FAKE_MIC = `
   });
 `;
 
-test("voice: listening, cancelled, transcribing, landed (nothing else appears), failed", async ({ page, request }, info) => {
+/** Use actual browser typing and clipboard input, both blocked by a voice-owned read-only draft. */
+async function expectVoiceDraftLocked(page: Page, field: Locator, text: string) {
+  await expect(field).toBeVisible();
+  await expect(field).not.toBeEditable();
+  await field.focus();
+  await page.keyboard.press("Control+a");
+  await page.keyboard.type("unwanted keyboard edit");
+  await page.keyboard.press("Backspace");
+  await page.evaluate(() => navigator.clipboard.writeText("unwanted clipboard edit"));
+  await page.keyboard.press("Control+v");
+  await expect(field).toHaveValue(text);
+}
+
+test("voice: starting, listening, cancelled, transcribing, landed (nothing else appears), failed", async ({ page, context, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await page.addInitScript(FAKE_MIC);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
   let answer: "ok" | "fail" = "ok";
   let release: () => void = () => {};
   let gate = new Promise<void>((resolve) => (release = resolve));
   const uploads: string[] = [];
+  const posts: string[] = [];
+  await page.route((url) => url.pathname === "/api/chat", (route) => {
+    posts.push(route.request().postData() ?? "");
+    return route.fulfill({ status: 409, json: { error: "Unexpected send" } });
+  });
   await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
     uploads.push(route.request().headers()["content-type"] ?? "");
     await gate;
@@ -569,13 +589,22 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
 
   await walk.open(project.path);
   await v.field.fill("Keep the draft");
-  await walk.state("01-listening-three-controls-overlay", {
+  await page.evaluate("window.fixtureMicGate = new Promise(resolve => { window.releaseFixtureMic = resolve; }); void 0");
+  await walk.state("00-starting-overlay", {
     action: () => v.mic.click(),
-    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint],
-    hidden: [v.mic, transcribing, ...(v.phone ? [v.field] : [])],
+    visible: [v.main.locator(".composer-box").getByText("Opening microphone…"), v.main.locator(".composer-box .spinner"), v.field, v.cancel],
+    hidden: [transcribing],
+  });
+  await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  await page.evaluate("window.releaseFixtureMic()");
+  await walk.state("01-listening-three-controls-overlay", {
+    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field],
+    hidden: [v.mic, transcribing],
   });
   await expect(v.hint).toHaveText("Listening… Stop to add text, or Send.");
   await expect(v.hint).toHaveAttribute("role", "status");
+  await expect(v.main.locator(".composer-box .composer-hint")).toContainText("Listening…");
+  await expectVoiceDraftLocked(page, v.field, "Keep the draft");
   await expect(v.field).toHaveValue("Keep the draft");
   await expect(v.field).toHaveAttribute("placeholder", "");
   await expect(timer).toHaveText(/^0:0\d$/);
@@ -602,6 +631,7 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
     hidden: [v.stop, v.cancel, wave, timer, transcribing, ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.field).toHaveValue("Keep the draft");
+  await expect(v.field).toBeEditable();
   expect(uploads).toEqual([]);
 
   await v.mic.click();
@@ -609,21 +639,23 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
   await page.waitForTimeout(700);
   await walk.state("03-transcribing-overlay", {
     action: () => v.stop.click(),
-    visible: [transcribing, v.field, ...(!v.phone ? [wave] : [])],
-    hidden: [v.stop, v.cancel, ...(v.phone ? [wave] : [])],
+    visible: [transcribing, v.field, v.cancel, v.main.locator(".composer-box .spinner"), ...(!v.phone ? [wave] : [])],
+    hidden: [v.stop, ...(v.phone ? [wave] : [])],
   });
   await expect(v.mic).toBeDisabled();
   await expect(v.send).toBeDisabled();
-  await expect(v.field).toBeEnabled();
-  await v.field.fill("Keep the edited draft");
+  await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  await page.keyboard.press("Enter");
+  expect(posts).toEqual([]);
   release();
   await walk.state("04-landed-overlay", {
-    action: () => expect(v.field).toHaveValue("Keep the edited draft and walk every state"),
+    action: () => expect(v.field).toHaveValue("Keep the draft and walk every state"),
     visible: [v.mic, v.send],
     hidden: [transcribing, wave, timer, v.main.getByText("and walk every state", { exact: true }), v.main.getByRole("region", { name: /transcript/i }), ...(v.phone ? [v.hint] : [])],
   });
   await expect(v.send).toBeEnabled();
   await expect(v.mic).toBeEnabled();
+  await expect(v.field).toBeEditable();
   expect(await v.main.locator(".composer button").allInnerTexts()).not.toContain("Undo");
   await expect(v.hint).toHaveText("L3 answers or creates one task. Shift + Enter for a new line.");
   expect(uploads[0]).toMatch(/^audio\//);
@@ -639,15 +671,18 @@ test("voice: listening, cancelled, transcribing, landed (nothing else appears), 
     visible: [failure, v.mic],
     hidden: [transcribing, v.stop],
   });
-  await expect(v.field).toHaveValue("Keep the edited draft and walk every state");
+  await expect(v.field).toHaveValue("Keep the draft and walk every state");
+  await expect(v.field).toBeEditable();
   await expect(v.mic).toBeEnabled();
+  expect(posts).toEqual([]);
 });
 
-test("voice: Send at once transcribes the draft into the normal pending bubble", async ({ page, request }, info) => {
+test("voice: Send at once transcribes the draft into the normal pending bubble", async ({ page, context, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
   await page.addInitScript(FAKE_MIC);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
   let releaseTranscript: () => void = () => {};
   let releaseSend: () => void = () => {};
@@ -674,12 +709,14 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   const transcribing = v.main.getByText("Transcribing…", { exact: true });
   await walk.state("01-send-at-once-transcribing-overlay", {
     action: () => v.send.click(),
-    visible: [transcribing, v.field, ...(!v.phone ? [v.main.locator(".composer-wave")] : [])],
-    hidden: [v.stop, v.cancel, ...(v.phone ? [v.main.locator(".composer-wave")] : [])],
+    visible: [transcribing, v.field, v.cancel, v.main.locator(".composer-box .spinner"), ...(!v.phone ? [v.main.locator(".composer-wave")] : [])],
+    hidden: [v.stop, ...(v.phone ? [v.main.locator(".composer-wave")] : [])],
   });
   await expect(v.send).toBeDisabled();
   await expect(v.mic).toBeDisabled();
   await expect(v.field).toHaveValue("Keep the draft");
+  await expectVoiceDraftLocked(page, v.field, "Keep the draft");
+  await page.keyboard.press("Enter");
   expect(posts).toEqual([]);
   const pending = v.convo.locator(".msg-row[data-pending]");
   releaseTranscript();
@@ -695,6 +732,57 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
     visible: [v.convo.getByText("Received the voice message.", { exact: true })],
     hidden: [pending, transcribing],
   });
+  expect(posts).toEqual(["Keep the draft and send this now"]);
+});
+
+test("voice: cancelling delayed Send transcription restores editing and ignores its late result", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await page.addInitScript(FAKE_MIC);
+  await overlayChat(page, project.name, (live) => ({ ...live, active: null, busy: false, queued: [] }));
+  let release!: () => void;
+  let uploaded!: () => void;
+  let delivered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const upload = new Promise<void>((resolve) => { uploaded = resolve; });
+  const delivery = new Promise<void>((resolve) => { delivered = resolve; });
+  const posts: string[] = [];
+  await page.route((url) => url.pathname === "/api/transcribe", async (route) => {
+    uploaded();
+    await gate;
+    await route.fulfill({ json: { text: "cancelled late transcript" } }).catch(() => {});
+    delivered();
+  });
+  await page.route((url) => url.pathname === "/api/chat", (route) => {
+    posts.push(route.request().postData() ?? "");
+    return route.fulfill({ status: 409, json: { error: "Unexpected send" } });
+  });
+  await walk.open(project.path);
+  await v.field.fill("Keep the preexisting draft");
+  await v.mic.click();
+  await expect(v.stop).toBeVisible();
+  await page.waitForTimeout(500);
+  await v.send.click();
+  await upload;
+  await walk.state("01-pending-send-can-cancel-overlay", {
+    visible: [v.cancel, v.field, v.main.locator(".composer-box .spinner")], hidden: [v.stop],
+  });
+  await expect(v.field).not.toBeEditable();
+  await walk.state("02-cancelled-transcription-editable-overlay", {
+    action: () => v.cancel.click(), visible: [v.field, v.mic, v.send],
+    hidden: [v.cancel, v.main.getByText("Transcribing…", { exact: true }), v.main.locator(".composer-box .spinner")],
+  });
+  await expect(v.field).toHaveValue("Keep the preexisting draft");
+  await expect(v.field).toBeEditable();
+  await v.field.fill("Edited after cancellation");
+  release();
+  await delivery;
+  await walk.state("03-late-cancelled-result-ignored-overlay", {
+    visible: [v.field], hidden: [v.bubble("cancelled late transcript"), v.main.locator(".msg-row[data-pending]")],
+  });
+  await expect(v.field).toHaveValue("Edited after cancellation");
+  expect(posts).toEqual([]);
 });
 
 test("voice: denied and unavailable", async ({ page, request }, info) => {
@@ -717,6 +805,7 @@ test("voice: denied and unavailable", async ({ page, request }, info) => {
   });
   await expect(v.mic).toBeDisabled();
   await expect(v.field).toHaveValue("Typing still works");
+  await expect(v.field).toBeEditable();
   await expect(v.send).toBeEnabled();
 
   const insecure = await page.context().newPage();

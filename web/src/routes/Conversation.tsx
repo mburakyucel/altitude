@@ -173,7 +173,12 @@ export default function Conversation({
   const scroller = useRef<HTMLDivElement>(null);
   const following = useRef(true);
   const viewportHeight = useRef(0);
-  const [draft, setDraft] = useState("");
+  const [draft, updateDraft] = useState(() => queryClient.getQueryData<string>(["project-draft", name]) ?? "");
+  const setDraft = useCallback((text: string) => {
+    queryClient.setQueryDefaults(["project-draft", name], { gcTime: Infinity });
+    queryClient.setQueryData(["project-draft", name], text);
+    updateDraft(text);
+  }, [name, queryClient]);
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
   const { phone } = useViewport();

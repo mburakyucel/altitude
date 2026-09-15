@@ -179,6 +179,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     await screen.findByText("alpha-project history");
     await user.type(field("alpha"), "Please inspect the sample project");
     await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field("alpha"), "Alpha next draft");
     await act(() => router.navigate("/projects/beta-project"));
     await screen.findByText("beta-project history");
     await user.type(field("beta"), "Keep this new draft");
@@ -187,10 +188,14 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(screen.queryByRole("alert")).toBeNull();
     await act(() => router.navigate("/projects/alpha-project"));
     await screen.findByText("alpha-project history");
-    expect(field("alpha")).toHaveValue("Please inspect the sample project");
+    expect(field("alpha")).toHaveValue("Please inspect the sample project\nAlpha next draft");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
+    await act(() => router.navigate("/projects/beta-project"));
+    expect(field("beta")).toHaveValue("Keep this new draft");
+    await act(() => router.navigate("/projects/alpha-project"));
+    expect(field("alpha")).toHaveValue("Please inspect the sample project\nAlpha next draft");
   });
 
   it("polls accepted text after returning before the original send receives its turn receipt", async () => {
@@ -239,7 +244,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([]);
   });
 
-  it("discards unsent drafts on switching either direction while retaining only the project's history", async () => {
+  it("retains independent drafts across project and route remounts, including manual clearing", async () => {
     projectChats(() => { throw new Error("No draft should be submitted"); });
     setViewport(width);
     const { router, user } = renderApp({ route: "/projects/alpha-project" });
@@ -252,8 +257,16 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     await user.type(field("beta"), "Beta private draft");
     await act(() => router.navigate("/projects/alpha-project"));
     await screen.findByText("alpha-project history");
-    expect(field("alpha")).toHaveValue("");
+    expect(field("alpha")).toHaveValue("Alpha private draft");
     expect(screen.queryByText("beta-project history")).toBeNull();
+    await user.clear(field("alpha"));
+    await act(() => router.navigate("/projects/beta-project"));
+    expect(field("beta")).toHaveValue("Beta private draft");
+    await act(() => router.navigate("/monitor"));
+    await act(() => router.navigate("/projects/beta-project"));
+    expect(field("beta")).toHaveValue("Beta private draft");
+    await act(() => router.navigate("/projects/alpha-project"));
+    expect(field("alpha")).toHaveValue("");
   });
 
   it("removes a pending send on switching and keeps a late refusal out of the destination draft", async () => {
