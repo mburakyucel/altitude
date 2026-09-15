@@ -150,6 +150,44 @@ web page to answer from a new process. The prior bundle is restored if verificat
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
 
+## Preserve source TLS before upgrading
+
+An existing source deployment that relies on implicit certificate discovery needs an explicit TLS
+setting before upgrading. Keep its current certificate directory and trust; this is not an archive
+migration. Run as the operator from a supported Linux host with visibility into its own `/proc`
+process/socket records. This operation handles legacy external certificate pairs, a concrete IP binding and a direct
+source `bin/alt serve` unit (optionally invoked with Python 3). Managed Altitude CA directories,
+wildcard/DNS bindings, environment files and foreign drop-ins require separate reconciliation.
+
+Obtain the reviewed installer, archive and verified checksum, then inspect:
+
+```sh
+python3.12 install.py --archive altitude-v0.1.0-rc.1.tar.gz --sha256 '<release SHA-256>' \
+  --prepare-source-tls /absolute/path/to/existing-certificates
+```
+
+The version is illustrative. The command verifies the archive and checks the active source unit,
+effective process settings, listener ownership and the exact served certificate. It prints the
+single service override without writing it. After reviewing that output, repeat with `--apply`.
+With a CLI containing this operation, the equivalent is:
+
+```sh
+alt service prepare-tls --directory /absolute/path/to/existing-certificates
+alt service prepare-tls --directory /absolute/path/to/existing-certificates --apply
+```
+
+Apply reloads the unit definition and verifies the loaded TLS-directory setting, unchanged daemon
+PID and HTTPS identity. It does not restart the service, change binding or certificates, install
+the archive, or alter device trust. Changed/ambiguous ownership or identity refuses preparation;
+failed reload/verification restores only the unchanged owned override and reports any unconfirmed
+restoration. Existing custom overrides need deliberate reconciliation. Save the successful result
+privately and verify normal activation after the separately authorized upgrade. L2 and L3 cannot
+run preparation, and a passing fixture test is not evidence that a production unit is prepared.
+If interrupted after writing the override, inspect that file and any other pending unit changes
+before running `systemctl --user daemon-reload` from the operator terminal. This reloads definitions
+without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
+never counts as successful preservation.
+
 ## Voice input on iPhone
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a

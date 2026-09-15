@@ -274,6 +274,10 @@ L3 can request bounded repair even when tasks cannot launch, and programmatic ch
 result before a step is complete. Custom hooks require your integration choice. See
 [project setup and repair](docs/SETUP.md#project-setup-and-repair).
 
+Existing source deployments can [prepare their current TLS setting](docs/OPERATIONS.md#preserve-source-tls-before-upgrading)
+from the verified archive before upgrading. The operator reviews and explicitly applies one service
+override; preparation preserves the running process, certificate identity and network binding.
+
 Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
 to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
 deletions remain blocked.

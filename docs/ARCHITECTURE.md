@@ -194,6 +194,14 @@ including binding and runtime paths, against ambient user-manager values. Source
 receipt fences new work through the existing restart admission check until activation or recovery succeeds. Worker authority and
 containment remain in the common engine contract. macOS runtime acceptance remains pending.
 
+`source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
+The operator selects its existing certificate directory; native unit/process/listener evidence and
+a verified HTTPS handshake bind that selection to the running source deployment. Check-only shows
+the fixed TLS-directory override. Explicit apply writes only that owned drop-in, reloads the unit
+definition and verifies the unchanged process and identity; failed verification restores the owned
+override or reports unconfirmed recovery. The verified archive installer exposes the same operation
+before installation. It adds no L2/L3 service authority, daemon endpoint or certificate migration.
+
 Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA and
 server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,
 with private directories and keys. Startup validates identity and hostname; the existing daily

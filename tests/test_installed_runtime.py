@@ -252,6 +252,7 @@ class InstalledRuntime(AltitudeCase):
             ["install", "--archive", str(self.tmp / "does-not-exist.tar"), "--sha256", "0" * 64],
             ["update", "--archive", str(self.tmp / "does-not-exist.tar"), "--sha256", "0" * 64],
             ["uninstall"], ["recover"], ["service", "start"], ["service", "stop"],
+            ["service", "prepare-tls", "--directory", str(self.tmp / "tls"), "--apply"],
         ]
         for actor in ("l2", "l3"):
             for args in commands:

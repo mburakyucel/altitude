@@ -450,9 +450,14 @@ def main() -> None:
     mode.add_argument("--recover", action="store_true")
     parser.add_argument("--sha256")
     parser.add_argument("--prefix", type=Path)
+    parser.add_argument("--prepare-source-tls", type=Path, metavar="DIRECTORY",
+                        help="verify the active source deployment's existing TLS; do not install")
+    parser.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     args = parser.parse_args()
     if os.environ.get("ALTITUDE_ACTOR") in ("l2", "l3"):
         parser.error("Application installation is an operator operation")
+    if (args.prepare_source_tls and (args.recover or args.prefix)) or (args.apply and not args.prepare_source_tls):
+        parser.error("--prepare-source-tls uses --archive/--sha256 without --prefix; --apply requires it")
     try:
         if args.recover:
             prefix = (args.prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
@@ -466,7 +471,18 @@ def main() -> None:
         else:
             if not args.sha256:
                 parser.error("--archive requires --sha256 from the release")
-            result = install(args.archive, args.sha256, args.prefix)
+            if args.prepare_source_tls:
+                with tempfile.TemporaryDirectory(prefix="altitude-tls-review-") as folder:
+                    stage = Path(folder)
+                    extract(args.archive, args.sha256, stage)
+                    if not (stage / "altitude/source_tls.py").is_file():
+                        raise ValueError("This archive has no source TLS preparation; obtain a newer reviewed archive")
+                    sys.dont_write_bytecode = True
+                    sys.path.insert(0, str(stage))
+                    from altitude import source_tls
+                    result = source_tls.prepare(args.prepare_source_tls, apply=args.apply)
+            else:
+                result = install(args.archive, args.sha256, args.prefix)
         print(json.dumps(result, indent=2))
     except (ValueError, RuntimeError, OSError) as exc:
         parser.exit(1, f"Installation failed: {exc}\n")

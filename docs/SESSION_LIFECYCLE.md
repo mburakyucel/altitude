@@ -170,6 +170,11 @@ Uninstall refuses while unfinished tasks own worker inputs and retains versions 
 by registered project guards. [Operations](OPERATIONS.md#installed-application-lifecycle) describes
 the operator commands and retention. This does not establish native macOS confinement or reboot evidence.
 
+Source TLS preparation checks the existing process, listener and certificate before setting its
+explicit TLS-directory service override. It reloads the user-unit definition without restarting
+the daemon or its workers; task ownership, sessions, messages and holds are unaffected. Actual
+source preparation is a separate operator action from archive installation and code activation.
+
 L3 or the operator can request `alt task preserve-checkout <slug> --reason "…"` for an unlaunched
 blocked task. Altd requires dirty main exactly at fetched `origin/main`, preserves staged,
 unstaged and untracked changes on a local `archive/checkout-<request-id>` branch, and records

@@ -330,7 +330,9 @@ def main(argv=None) -> None:
         if verb == "install":
             installer.add_argument("--prefix", type=Path)
     service = sub.add_parser("service", help="manage the installed application user service")
-    service.add_argument("operation", choices=("start", "stop", "status", "logs"))
+    service.add_argument("operation", choices=("start", "stop", "status", "logs", "prepare-tls"))
+    service.add_argument("--directory", type=Path, help="existing source deployment certificate directory")
+    service.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
     ti = sub.add_parser("tls-init"); ti.add_argument("--ip")
 
     args = ap.parse_args(argv)
@@ -390,7 +392,15 @@ def main(argv=None) -> None:
                 prefix = installation._prefix() if c == "update" else args.prefix
                 result = installation.install(args.archive, args.sha256, prefix)
             elif c == "service":
-                result = installation.service(args.operation)
+                if args.operation == "prepare-tls":
+                    if args.directory is None:
+                        ap.error("service prepare-tls requires --directory")
+                    from altitude import source_tls
+                    result = source_tls.prepare(args.directory, apply=args.apply)
+                else:
+                    if args.directory is not None or args.apply:
+                        ap.error("--directory and --apply require service prepare-tls")
+                    result = installation.service(args.operation)
             else:
                 result = getattr(installation, c)()
             out(result)
