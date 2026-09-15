@@ -117,14 +117,19 @@ class TestProjectRegistry(AltitudeCase):
     def test_sept7_http_registration_and_daemon_set_share_one_project_transaction(self):
         dispatch.request_setting(self.project, "wip", 5, "test", actor="l3")
         entered, release, set_finished = threading.Event(), threading.Event(), threading.Event()
-        def prepare(_project):
-            entered.set()
-            self.assertTrue(release.wait(3))
+        from contextlib import contextmanager
+        register = config.add_project
+        @contextmanager
+        def prepare(*args, **kwargs):
+            with register(*args, **kwargs) as entry:
+                entered.set()
+                self.assertTrue(release.wait(3))
+                yield entry
         def set_wip():
             result = dispatch.run_settings(self.project)
             set_finished.set()
             return result
-        with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=prepare), ThreadPoolExecutor() as pool:
+        with mock.patch.object(config, "add_project", side_effect=prepare), ThreadPoolExecutor() as pool:
             add = pool.submit(self.post, "add", name=self.project, path=str(self.repo))
             self.assertTrue(entered.wait(3))
             setting = pool.submit(set_wip)
@@ -139,18 +144,17 @@ class TestProjectRegistry(AltitudeCase):
             self.post("remove", name=self.project)
         self.assertNotIn(self.project, config.load_projects())
 
-    def test_sept7_registration_rollback_preserves_other_projects_and_engine_pins(self):
-        original = config.project(self.project)
+    def test_setup_failure_retains_registration_and_preserves_other_projects_and_engine_pins(self):
         other = self.project + "-other"
         self.register(other, wip=5)
         def failed_setup(_project):
             config.set_l3_engine(other, config.ENGINES[0])
             raise RuntimeError("test broker unavailable")
         with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=failed_setup):
-            with self.assertRaises(urllib.error.HTTPError) as error:
-                self.post("add", name=self.project, path=str(self.repo), wip=4)
-        self.assertEqual(error.exception.code, 500)
-        self.assertEqual(config.project(self.project), original)
+            self.assertTrue(self.post("add", name=self.project, path=str(self.repo), wip=4)["ok"])
+            server.project_setup.run(self.project)
+        self.assertEqual(config.project(self.project)["wip"], 4)
+        self.assertEqual(server.project_setup.observe(self.project)["operation"]["state"], "failed")
         self.assertEqual(config.project(other)["wip"], 5)
         self.assertEqual(config.project(other)["l3_engine"], config.ENGINES[0])
 

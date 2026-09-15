@@ -48,6 +48,34 @@ For first-run configuration, Auto preferences and explicit pins, see [setup](SET
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.
 
+## Project setup and recovery
+
+The project's **Setup** checklist observes current configuration throughout its lifetime.
+Adding a folder registers it and requests programmatic setup: reuse the repository and instructions,
+install or refresh owned Git guards, and establish L3's supported command connection. The first
+conversation uses an agent and shows its actual pending, running, ready or failed result. Existing
+conversations are reused without another introductory model call. A ready command connection
+does not establish model authentication or prove a first reply occurred.
+Failed or interrupted introductory calls wait for an explicit Retry; maintenance does not
+repeat agent calls automatically.
+
+Setup operations and results survive refresh and reconnection. Interrupted operations are checked
+against current configuration before retry; healthy effects are reused. Maintenance evaluates
+current requirements for existing projects without reattachment, session rotation or lost history.
+Saved task-worktree overrides are checked too. Routine guard repair also runs before affected launches and preserves custom hooks unless the
+operator explicitly chooses supported integration.
+
+**Retry** repeats the supported programmatic operation. L3 receives configuration faults and can
+investigate or request repair through `alt project setup <name> --repair --reason "…"` even when
+no task can start. **Discuss with L3** opens the existing conversation; it sends no message and
+starts no extra repair agent. Source fixes follow the ordinary task and PR path. Programmatic
+checks verify every repair before the checklist reports completion.
+
+L3 verifies active source and actual cause removal before reason-bearing resume of affected
+tasks. Checks and repairs retain task sessions, worktrees, questions and merge holds; unaffected
+tasks continue. They do not reset L3 or detach the project. See
+[project setup and guard recovery](CLI.md#project-setup-and-guard-recovery).
+
 ## Repository instructions
 
 Both roles explicitly read project rules before proceeding. Each fresh or resumed L2 worker receives

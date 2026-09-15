@@ -416,7 +416,7 @@ describe("Project page", () => {
     renderApp({ route: "/projects/altitude" });
 
     await screen.findByText("Altitude found 2 folders under ~/Projects");
-    expect(screen.getAllByRole("button", { name: "Start L3" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(3);
     expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();
   });
 });

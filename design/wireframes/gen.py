@@ -501,13 +501,13 @@ first_inner = (
     '<div style="width:100%;max-width:560px;display:flex;flex-direction:column;gap:20px;margin-top:-60px">'
     f'<div style="display:flex;justify-content:center">{MARK.replace("mark", "mark", 1).replace("width:26px;height:26px", "")}</div>'
     '<div style="text-align:center"><h1 style="font-size:24px;font-weight:600;margin:0">Point Altitude at a project</h1>'
-    '<p style="font-size:15px;color:var(--text-secondary);margin:8px 0 0;line-height:1.55">Altitude runs an L3 for each project you manage. Pick a folder and it starts a conversation about that project; work it creates lands as reviewed pull requests.</p></div>'
+    '<p style="font-size:15px;color:var(--text-secondary);margin:8px 0 0;line-height:1.55">Altitude runs an L3 for each project you manage. Pick a folder to open Setup and see configuration progress while L3 prepares its first reply. Work lands as reviewed pull requests.</p></div>'
     '<div class="card" style="padding:6px 8px">'
-    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">career-platform</div><div class="tm">~/Projects · git repository · 214 commits</div></div><div class="r"><span class="btn primary">Start L3</span></div></div>'
-    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">job-search-assistant</div><div class="tm">~/Projects · git repository · 61 commits</div></div><div class="r"><span class="btn primary">Start L3</span></div></div>'
+    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">career-platform</div><div class="tm">~/Projects · git repository · 214 commits</div></div><div class="r"><span class="btn primary">Add project</span></div></div>'
+    f'<div class="srow"><span class="ib" style="color:var(--text-muted)">{I("folder")}</span><div><div class="tt" style="font-size:15px">job-search-assistant</div><div class="tm">~/Projects · git repository · 61 commits</div></div><div class="r"><span class="btn primary">Add project</span></div></div>'
     f'<div class="srow" style="min-height:48px"><span class="ib" style="color:var(--text-muted)">{I("plus")}</span><div class="tt" style="font-size:14px;font-weight:500;color:var(--text-secondary)">Choose another folder…</div></div>'
     '</div>'
-    '<p style="text-align:center;font-size:13px;color:var(--text-muted);margin:0">One engine is connected: Claude Code. Altitude works with one engine alone; add Codex later under Monitor.</p>'
+    '<p style="text-align:center;font-size:13px;color:var(--text-muted);margin:0">One engine is connected. Altitude works with one engine alone; additional engines are optional.</p>'
     '</div></main></div>'
 )
 board("FirstRun", 1440, 900, first_inner)
@@ -561,8 +561,8 @@ def mobile_chat(sheet=False):
             f'<div class="srow sel"><span class="dot held"></span><div><div class="tt">altitude</div><div class="tm">L3 ready</div></div><div class="r">{I("check")}</div></div>'
             '<div class="srow"><span class="dot idle"></span><div><div class="tt">voice-tutor</div><div class="tm">L3 idle since yesterday</div></div></div>'
             '<div style="height:1px;background:var(--hairline);margin:8px 8px"></div>'
-            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">career-platform</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Start L3</span></div></div>'
-            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">job-search-assistant</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Start L3</span></div></div>'
+            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">career-platform</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Add project</span></div></div>'
+            f'<div class="srow"><span class="ib" style="color:var(--text-muted);width:auto">{I("folder")}</span><div><div class="tt" style="font-size:15px;font-weight:500">job-search-assistant</div><div class="tm">not managed</div></div><div class="r"><span class="btn" style="height:36px;font-size:13px">Add project</span></div></div>'
             '</div>'
         )
     return inner
@@ -749,7 +749,7 @@ state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
     ("Denied", "keep confirmation with an actionable reason", '<p class="danger">Finish or reject the 1 unfinished task(s) first: existing-work.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
     ("Failed", "retry remains in the confirmation", '<p class="danger">Could not remove the project. Try again.</p><span class="btn primary">Remove</span> <span class="btn">Cancel</span>'),
     ("Removed", "managed row and old views leave", '<h3>Needs you</h3><p class="muted">A remaining project is selected. With none managed, First run offers the retained folder.</p><h3>Project not managed</h3><p class="muted">Select a project or add its folder again.</p>'),
-    ("Attach L3 again", "existing folder-add flow restores history", '<p>example <span class="btn primary">Start L3</span></p><p class="muted">L3 is starting…</p><p class="danger">Registration unavailable. Try again.</p><span class="btn">Retry</span>'),
+    ("Attach L3 again", "existing folder-add flow restores history", '<p>example <span class="btn primary">Add project</span></p><p class="muted">Setup shows current configuration and progress.</p><p class="danger">Registration unavailable. Try again.</p><span class="btn">Retry</span>'),
     ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
 ], 1400)
 

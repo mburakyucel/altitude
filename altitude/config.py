@@ -35,6 +35,7 @@ SCHEMAS = SOURCE / "schemas"
 TEMPLATES = SOURCE / "templates"
 WEB_DIST = REPO / "web" / "dist"
 HOOKS = SOURCE / "hooks"
+WORKTREE_ROOT = Path(".claude/worktrees")
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(HOME / ".local/bin/claude"))
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")

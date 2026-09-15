@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import os
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -21,6 +23,13 @@ from typing import Any, Sequence
 
 DEFAULT_BASE = "main"
 REQUIRED_HOOKS = ("pre-commit", "pre-merge-commit", "pre-push", "reference-transaction")
+# Git's hook events, including events owned only by an existing integration.
+HOOK_EVENTS = (*REQUIRED_HOOKS, "applypatch-msg", "pre-applypatch", "post-applypatch",
+               "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout",
+               "post-merge", "pre-receive", "update", "proc-receive", "post-receive", "post-update",
+               "push-to-checkout", "pre-auto-gc", "post-rewrite", "sendemail-validate",
+               "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+               "p4-pre-submit", "post-index-change")
 
 
 class GitPolicyError(RuntimeError):
@@ -213,11 +222,7 @@ def activate_source() -> None:
 
     repo = config.REPO
     head = service_preflight(repo).head
-    installed = _configured_hooks_path(repo)
-    old_hooks = _resolve_hooks_path(repo, installed) if installed else _active_hooks().resolve()
-    if old_hooks not in ((repo / "hooks").resolve(), _active_hooks().resolve()):
-        raise GitPolicyError("installation Git guards belong to another hook owner")
-    require_hooks_installed(repo, old_hooks)
+    repair_hooks(repo)
     root = repo / ".altitude-source"
     root.mkdir(exist_ok=True)
     source = root / head
@@ -240,18 +245,16 @@ def activate_source() -> None:
     config.TEMPLATES, config.HOOKS = source / "templates", source / "hooks"
     # Later imports use the same committed code as the modules loaded at clean startup.
     sys.modules[__package__].__path__ = [str(source / "altitude")]
-    # Only Altitude's existing guard installation moves; a custom hook owner is untouched.
-    _output(_run(repo, "config", "--local", "core.hooksPath", str(current / "hooks")), "cannot activate Git guards")
+    repair_hooks(repo)
     for project in config.load_projects():
         repository = config.project_path(project)
         if repository == repo:
             continue
         try:
-            installed = _configured_hooks_path(repository)
-            if installed and _resolve_hooks_path(repository, installed) in (
-                    (repo / "hooks").resolve(), old_hooks, config.HOOKS.resolve()):
-                _output(_run(repository, "config", "--local", "core.hooksPath", str(current / "hooks")),
-                        "cannot activate Git guards")
+            probe = _run(repository, "rev-parse", "--git-dir", env={**os.environ, "LC_ALL": "C"})
+            if repository.is_dir() and "not a git repository" in probe.stderr:
+                continue  # Conversation-only folders have no applicable Git guards.
+            repair_hooks(repository)
         except GitPolicyError as exc:
             from . import incidents
             incidents.system_fault("launch-source", f"{project}: {exc}", project=project)
@@ -318,7 +321,7 @@ def service_preflight(repo: str | Path, base: str = DEFAULT_BASE) -> RepositoryS
 
 
 def _configured_hooks_path(repo: Path) -> str | None:
-    result = _run(repo, "config", "--local", "--get", "core.hooksPath")
+    result = _run(repo, "config", "--get", "core.hooksPath")
     if result.returncode == 1:
         return None
     return _output(result, "cannot read core.hooksPath") or None
@@ -335,36 +338,230 @@ def _active_hooks() -> Path:
     return current if current.is_dir() else config.HOOKS
 
 
-def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
-    """Install the tracked guard hooks through this repository's local config.
-
-    A pre-existing different ``core.hooksPath`` may represent another safety
-    system, so it is never replaced implicitly.
-    """
-    root = Path(repo).resolve()
-    _git_dir(root)
-    desired = Path(hooks_dir or _active_hooks()).absolute()
+def _verify_hook_files(desired: Path) -> None:
     missing = [name for name in REQUIRED_HOOKS if not (desired / name).is_file()]
     if missing:
         raise GitPolicyError(f"hook directory {desired} is missing: {', '.join(missing)}")
     not_executable = [name for name in REQUIRED_HOOKS if not os.access(desired / name, os.X_OK)]
     if not_executable:
         raise GitPolicyError(f"hook directory {desired} has non-executable hooks: {', '.join(not_executable)}")
-    current = _configured_hooks_path(root)
-    if current is not None:
-        resolved = _resolve_hooks_path(root, current)
-        if resolved != desired.resolve():
-            raise GitPolicyError(
-                f"core.hooksPath is already {current!r}; refusing to overwrite it with {str(desired)!r}"
-            )
-        return desired
-    result = _run(root, "config", "--local", "core.hooksPath", str(desired))
-    _output(result, "cannot install Git policy hooks")
+
+
+def _owned_hooks(path: Path) -> bool:
+    """Only this installation's checkout or committed export namespace is ours."""
+    from . import config
+    if path == (config.REPO / "hooks").resolve():
+        return True
+    source = config.REPO / ".altitude-source"
+    try:
+        relative = path.relative_to(source.resolve())
+    except ValueError:
+        return False
+    if len(relative.parts) != 2 or relative.parts[1] != "hooks":
+        return False
+    sha = relative.parts[0]
+    return (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha)
+            and _run(config.REPO, "cat-file", "-e", f"{sha}:hooks/pre-commit").returncode == 0)
+
+
+def _common_git_dir(repo: Path) -> Path:
+    common = _output(_run(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+                     "cannot resolve shared Git directory")
+    return Path(common).resolve()
+
+
+def _composition_path(repo: Path) -> Path:
+    from . import config
+    identity = hashlib.sha256(str(_common_git_dir(repo)).encode()).hexdigest()
+    # #348 review: workers can write .git and runtime state, but cannot grant integration consent.
+    # The wrapper generation and its original-selection receipt share the trusted source boundary.
+    return config.REPO / ".altitude-source" / "git-guards" / identity
+
+
+def _hook_contents(path: Path) -> list[list[str]]:
+    return [[p.name, hashlib.sha256(p.read_bytes()).hexdigest()] for p in sorted(path.iterdir())
+            if p.name in HOOK_EVENTS and p.is_file() and os.access(p, os.X_OK)] if path.is_dir() else []
+
+
+def _integration_support(path: Path, contents: list[list[str]], selection: str | None) -> tuple[bool, str]:
+    if not path.is_dir():
+        return False, "The original hook directory is unavailable; L3 needs to inspect it."
+    if selection is not None and not Path(os.path.expanduser(selection)).is_absolute():
+        return False, "Relative hook paths can select different hooks across worktrees and events; review integration with L3."
+    for name, _ in contents:
+        source = (path / name).read_bytes()
+        if b"core.hooksPath" in source or b"husky" in source.lower():
+            return False, f"The {name} hook uses a hook manager or the hook selection itself; review integration with L3."
+    return True, "Existing hooks need your integration choice."
+
+
+def _composed_hook(name: str, original: Path, guards: Path, contents: list[list[str]]) -> str:
+    return ("#!/usr/bin/env python3\nimport sys\n"
+            f"sys.path.insert(0, {str(guards.parent)!r})\n"
+            "from altitude.git_policy import combined_hook\n"
+            f"raise SystemExit(combined_hook({name!r}, {str(original)!r}, {str(guards)!r}, {dict(contents).get(name)!r}))\n")
+
+
+def _composition(repo: Path, path: Path) -> dict | None:
+    if path.parent != _composition_path(repo):
+        return None
+    try:
+        saved = json.loads((path / "original.json").read_text())
+        if path.name != hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest():
+            return None
+        original, guards = Path(saved["path"]), Path(saved["guards"])
+        owner = _git_dir(repo) if saved["scope"] == "worktree" else _common_git_dir(repo)
+        if saved["owner"] != str(owner):
+            return None
+        if original == path or not original.is_absolute() or not guards.is_absolute():
+            return None
+        if not _owned_hooks(guards.resolve()) and guards.resolve() != _active_hooks().resolve():
+            return None
+        if any((path / name).is_symlink() or not os.access(path / name, os.X_OK)
+               or (path / name).read_text() != _composed_hook(name, original, guards, saved["original_contents"])
+               for name in HOOK_EVENTS):
+            return None
+        return saved
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _selection(repo: Path) -> tuple[str | None, str, Path]:
+    _git_dir(repo)
+    selected = _run(repo, "config", "--show-scope", "--get", "core.hooksPath")
+    if selected.returncode != 1:
+        _output(selected, "cannot read core.hooksPath")
+        scope, raw = selected.stdout.removesuffix("\n").split("\t", 1)
+        return raw, scope, _resolve_hooks_path(repo, raw)
+    default = _output(_run(repo, "rev-parse", "--path-format=absolute", "--git-path", "hooks"),
+                      "cannot resolve default hooks")
+    return None, "local", Path(default).resolve()
+
+
+def inspect_hooks(repo: str | Path) -> dict:
+    """Observe actual hook ownership; no registration or repair is implied by this read."""
+    root = Path(repo).resolve()
+    try:
+        raw, scope, path = _selection(root)
+        desired = _active_hooks()
+        _verify_hook_files(desired)
+        contents = _hook_contents(path)
+        owner = _git_dir(root) if scope == "worktree" else _common_git_dir(root)
+        fingerprint = hashlib.sha256(json.dumps([str(owner), raw, scope, str(path), contents]).encode()).hexdigest()
+        result = {"hooks_path": str(path), "fingerprint": fingerprint, "can_combine": False,
+                  "selection": raw, "scope": scope, "owner": str(owner), "original_contents": contents}
+        saved = _composition(root, path)
+        if saved:
+            original = Path(saved["path"])
+            actual = _hook_contents(original)
+            result.update(original_hooks=str(original), original_contents=actual,
+                          fingerprint=hashlib.sha256(json.dumps([fingerprint, actual]).encode()).hexdigest())
+            supported, reason = _integration_support(original, actual, saved["selection"])
+            if actual != saved["original_contents"] or not supported:
+                return {**result, "status": "conflict", "can_combine": supported,
+                        "detail": "The original hooks changed; review the updated integration." if supported else reason}
+            return {**result, "status": "ready" if Path(saved["guards"]).resolve() == desired.resolve() else "stale",
+                    "detail": "Both hook sets are configured.", "original_hooks": saved["path"]}
+        if raw is not None and path == desired.resolve():
+            return {**result, "status": "ready", "detail": "Git guards are already configured."}
+        if raw is not None and _owned_hooks(path):
+            return {**result, "status": "stale", "detail": "Git guards need an update."}
+        if raw is None and not contents:
+            return {**result, "status": "missing", "detail": "Git guards are not installed."}
+        # #348: foreign hooks cannot be disabled as a side effect of repairing stale guards.
+        # Managers that redirect through another hooksPath need their own integration review.
+        supported, reason = _integration_support(path, contents, raw)
+        if path.parent == _composition_path(root) or path == _composition_path(root):
+            supported, reason = False, "The managed hook files changed; L3 needs to inspect them."
+        return {**result, "status": "conflict", "can_combine": supported,
+                "original_hooks": str(path), "detail": ("Existing hooks need your integration choice." if supported else
+                reason)}
+    except (GitPolicyError, OSError, ValueError) as exc:
+        return {"status": "error", "detail": str(exc), "can_combine": False}
+
+
+def repair_hooks(repo: str | Path, *, combine: bool = False, expected: str | None = None) -> dict:
+    """Install/refresh owned guards; combining a foreign owner requires its observed identity."""
+    try:
+        return _repair_hooks(repo, combine=combine, expected=expected)
+    except OSError as exc:
+        raise GitPolicyError(f"Cannot update Git guards: {exc}") from exc
+
+
+def _repair_hooks(repo: str | Path, *, combine: bool, expected: str | None) -> dict:
+    root = Path(repo).resolve()
+    observed = inspect_hooks(root)
+    if observed["status"] == "ready":
+        return {**observed, "action": "reused"}
+    if observed["status"] == "error":
+        raise GitPolicyError(observed["detail"])
+    desired = _active_hooks().absolute()
+    raw, scope, path = observed["selection"], observed["scope"], Path(observed["hooks_path"])
+    saved = _composition(root, path)
+    action = "updated" if observed["status"] == "stale" else "installed"
+    if observed["status"] == "conflict":
+        if not combine or not observed["can_combine"]:
+            raise GitPolicyError(f"{observed['detail']} refusing to overwrite existing hooks; review project Setup.")
+        if expected != observed["fingerprint"]:
+            raise GitPolicyError("Hook ownership changed; check project Setup and review the current integration.")
+        saved = {**(saved or {"path": str(path), "selection": raw, "scope": scope, "owner": observed["owner"]}),
+                 "guards": str(desired), "approved_fingerprint": expected,
+                 "original_contents": observed["original_contents"]}
+        action = "combined"
+    if saved:
+        saved["guards"] = str(desired)
+        directory = _composition_path(root)
+        if directory.is_symlink():
+            raise GitPolicyError("The integration directory is a symlink; inspect it with L3 before retrying.")
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest()
+        previous = _composition(root, target) if target.exists() else None
+        if target.exists() and (previous is None or previous["path"] != saved["path"]):
+            raise GitPolicyError("The integration destination already exists; inspect it with L3 before retrying.")
+        # #348: a config-write failure retains a complete, verifiable composition for retry.
+        with tempfile.TemporaryDirectory(dir=target.parent, prefix=".altitude-hooks-") as temporary:
+            staged = Path(temporary) / "hooks"
+            staged.mkdir()
+            for name in HOOK_EVENTS:
+                wrapper = staged / name
+                wrapper.write_text(_composed_hook(name, Path(saved["path"]), desired, saved["original_contents"]))
+                wrapper.chmod(0o755)
+            (staged / "original.json").write_text(json.dumps(saved) + "\n")
+            if not target.exists():
+                staged.rename(target)
+        desired = target
+    if inspect_hooks(root).get("fingerprint") != observed["fingerprint"]:
+        raise GitPolicyError("Hook ownership changed during repair; check project Setup and retry.")
+    _output(_run(root, "config", "--worktree" if scope == "worktree" else "--local", "core.hooksPath", str(desired)),
+            "cannot install Git policy hooks")
+    final = inspect_hooks(root)
+    if final["status"] != "ready":
+        raise GitPolicyError(final["detail"])
+    return {**final, "action": action}
+
+
+def install_hooks(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
+    if hooks_dir is None:
+        return Path(repair_hooks(repo)["hooks_path"])
+    # Explicit directories are used by isolated hook-policy fixtures and installation tooling.
+    root, desired = Path(repo).resolve(), Path(hooks_dir).absolute()
+    _verify_hook_files(desired)
+    raw, scope, path = _selection(root)
+    if raw is not None and path != desired.resolve():
+        raise GitPolicyError(f"core.hooksPath is already {raw!r}; refusing to overwrite it")
+    _output(_run(root, "config", "--worktree" if scope == "worktree" else "--local", "core.hooksPath", str(desired)),
+            "cannot install Git policy hooks")
     return desired
 
 
 def require_hooks_installed(repo: str | Path, hooks_dir: str | Path | None = None) -> Path:
     """Verify the complete tracked guard set without changing repository configuration."""
+    if hooks_dir is None:
+        observed = inspect_hooks(repo)
+        if observed["status"] != "ready":
+            raise GitPolicyError("Git guards are not installed or current; " + observed["detail"]
+                                 + " L3 can run project setup repair; review custom hooks in Setup.")
+        return Path(observed["hooks_path"])
     root = Path(repo).resolve()
     _git_dir(root)
     desired = Path(hooks_dir or _active_hooks()).resolve()
@@ -379,6 +576,27 @@ def require_hooks_installed(repo: str | Path, hooks_dir: str | Path | None = Non
         )
         raise GitPolicyError(f"Git guard installation is incomplete: {'; '.join(detail)}")
     return desired
+
+
+def combined_hook(name: str, original: str, guards: str, expected: str | None) -> int:
+    """Preserve Git's invocation, and give both guarded hooks their complete input."""
+    foreign = Path(original) / name
+    actual = hashlib.sha256(foreign.read_bytes()).hexdigest() if foreign.is_file() and os.access(foreign, os.X_OK) else None
+    if actual != expected:
+        print("Altitude Git policy: original hooks changed; review the integration in project Setup.", file=sys.stderr)
+        return 1
+    if name not in REQUIRED_HOOKS:
+        if foreign.is_file() and os.access(foreign, os.X_OK):
+            os.execv(str(foreign), [str(foreign), *sys.argv[1:]])
+        return 0
+    data = sys.stdin.buffer.read() if name in ("pre-push", "reference-transaction") else None
+    for hook in (Path(guards) / name, foreign):
+        if hook == foreign and not (hook.is_file() and os.access(hook, os.X_OK)):
+            continue
+        result = subprocess.run([str(hook), *sys.argv[1:]], input=data)
+        if result.returncode:
+            return result.returncode
+    return 0
 
 
 def _current_branch(repo: Path) -> str | None:

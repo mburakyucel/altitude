@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, quota_codex, route, state as S, tasks as T, transcript, verify
+from . import config, digest, dispatch, engines, git_policy, images, incidents, l3, monitor, project_setup, quota_codex, route, state as S, tasks as T, transcript, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -309,6 +309,19 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 if value != "-":
                     raise ValueError("L3 questions-file input is accepted only on stdin (-)")
         _validate_l3_alt_args(args)
+        if args[:2] == ["project", "setup"]:
+            options = project_setup.parser().parse_args(args[2:])
+            if options.name != project or stdin:
+                raise ValueError("The setup command is bound to this project's coordinator; no input body is accepted.")
+            if options.repair:
+                if not options.reason or not options.reason.strip():
+                    raise ValueError("Setup repair requires --reason.")
+                result = request_project_setup(project, "repair", actor="l3", reason=options.reason)
+            else:
+                if options.reason is not None:
+                    raise ValueError("--reason applies to --repair.")
+                result = project_setup.observe(project)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["pr", "close"]:
             if len(args) != 3:
                 raise ValueError("alt pr close requires one positive PR number and no options")
@@ -612,14 +625,29 @@ def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
 
 
 def start_l3(project: str) -> None:
-    if l3.queued(project):
-        request_l3_drain(project)
+    if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
+            and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
+        if l3.queued(project):
+            request_l3_drain(project)
         return
-    # The start reply is a conversation with Burak, not a turn log.
-    server_l3_turn(project, "You have just been started for this project. Read the repository rules named in this turn, the state file, and the repo's README (skim), "
-                            "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from Burak. "
+    # The start reply belongs to the operator's conversation.
+    project_setup.save(project, intro={"state": "running", "at": S.now()})
+    result = server_l3_turn(project, "You have just been started for this project. Read the repository rules named in this turn, the state file, and the repo's README (skim), "
+                            "then answer in a few plain sentences: what this project is, what is in flight, and what you would need from the operator. "
                             "Keep operational details in the task record rather than dumping them into chat. Run no other commands.",
                    trigger="start")
+    project_setup.save(project, intro={"state": "complete" if result.get("completed") else "failed",
+                                      "at": S.now(), "error": result.get("error")})
+
+
+def request_project_setup(project: str, action: str, *, actor: str, expected: str | None = None,
+                          reason: str = "Project setup") -> dict:
+    result = project_setup.request(project, action, actor=actor, expected=expected, reason=reason)
+    try:
+        spawn(f"setup:{project}", project_setup.run, project)
+    except Exception as exc:
+        log(f"[{project}] setup request saved; immediate wake failed: {exc}")
+    return result
 
 
 def restart_notice() -> None:
@@ -1052,6 +1080,10 @@ def tick() -> None:
 
 
 def tick_project(project: str) -> None:
+    try:
+        project_setup.maintain(project)
+    except (OSError, ValueError, RuntimeError) as exc:
+        log(f"[{project}] setup check unavailable: {exc}")
     # Activation: a sole running worker's merge must activate without another dispatch or report.
     try:
         with dispatch.publication_settlement(project):
@@ -1421,6 +1453,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._images(parts, q)
             if api == "overview":
                 return self._json(overview())
+            if api == "setup" and len(parts) == 3:
+                try:
+                    return self._json(project_setup.observe(parts[2]))
+                except KeyError:
+                    return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]))
             if api == "task" and len(parts) > 3:
@@ -1481,19 +1518,30 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"url": url})
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "project", "setup"]:
+                try:
+                    if o.keys() - {"project", "action", "expected", "reason"}:
+                        raise ValueError("Unsupported setup fields.")
+                    return self._json(request_project_setup(o["project"], o["action"], actor="operator", expected=o.get("expected"),
+                                                           reason=o.get("reason") or "Project setup"))
+                except PermissionError as exc:
+                    return self._json({"error": str(exc)}, 403)
+                except (ValueError, KeyError) as exc:
+                    return self._json({"error": str(exc)}, 409)
             if api == "project" and len(parts) > 2 and parts[2] == "add":
                 name = o["name"]
                 restoring = name not in config.load_projects() and bool(l3.chat_history(name, 1))
                 try:
                     with config.add_project(name, path=o.get("path"), approval=o.get("approval") or "default",
                                             wip=o.get("wip")) as entry:
-                        ensure_l3_verb_broker(name)
+                        pass
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 except (OSError, RuntimeError) as exc:
-                    return self._json({"error": f"cannot establish the L3 verb boundary: {exc}"}, 500)
+                    return self._json({"error": f"cannot register the project: {exc}"}, 500)
                 S.regen_state_md(name)
-                spawn(f"start:{name}", start_l3, name)
+                project_setup.registered(name, start=True)
+                request_project_setup(name, "repair", actor="altd")
                 return self._json({"ok": True, "project": entry, "restored": restoring})
             if api == "project" and len(parts) > 2 and parts[2] == "remove":
                 try:

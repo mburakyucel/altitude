@@ -1,19 +1,25 @@
 """Repository policy tests use real repositories, refs, hooks, and pushes."""
 import json
+import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.support import git, make_repo
-from altitude import git_policy
+from altitude import config, git_policy
 
 
 class TestGitPolicy(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="alt-git-policy-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        installation = mock.patch.object(config, "REPO", self.tmp / "installation")
+        installation.start()
+        self.addCleanup(installation.stop)
         self.repo = make_repo(self.tmp / "repo")
         self.remote = self.tmp / "origin.git"
         self.configure(self.repo)
@@ -254,6 +260,207 @@ class TestGitPolicy(unittest.TestCase):
         self.git("config", "--local", "core.hooksPath", ".git/other-hooks")
         with self.assertRaisesRegex(git_policy.GitPolicyError, "refusing to overwrite"):
             git_policy.install_hooks(self.repo)
+
+    def custom_hooks(self, directory=None):
+        directory = directory or self.tmp / "custom-hooks"
+        directory.mkdir(exist_ok=True)
+        hook = directory / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        hook.chmod(0o755)
+        return directory
+
+    def test_default_and_inherited_hooks_are_preserved_until_explicit_combination(self):
+        default = self.custom_hooks(self.repo / ".git/hooks")
+        before = (default / "pre-commit").read_bytes()
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        self.assertTrue(observed["can_combine"])
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "ownership changed"):
+            git_policy.repair_hooks(self.repo, combine=True, expected="old observation")
+        result = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual((result["status"], result["action"]), ("ready", "combined"))
+        self.assertEqual((default / "pre-commit").read_bytes(), before)
+        self.assertEqual(git_policy.repair_hooks(self.repo)["action"], "reused")
+        git_policy.require_hooks_installed(self.repo)
+        self.git("config", "--unset", "core.hooksPath")
+        global_file = self.tmp / "global.gitconfig"
+        custom = self.custom_hooks()
+        global_file.write_text(f'[core]\n\thooksPath = {custom}\n')
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(global_file)}):
+            observed = git_policy.inspect_hooks(self.repo)
+            self.assertEqual(observed["status"], "conflict")
+            self.assertEqual(observed["hooks_path"], str(custom))
+            with self.assertRaises(git_policy.GitPolicyError):
+                git_policy.repair_hooks(self.repo)
+        self.assertEqual(global_file.read_text(), f'[core]\n\thooksPath = {custom}\n')
+
+    def test_worktree_hook_override_is_inspected_and_not_replaced_implicitly(self):
+        git_policy.install_hooks(self.repo)
+        self.git("config", "extensions.worktreeConfig", "true")
+        custom = self.custom_hooks()
+        self.git("config", "--worktree", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(self.repo)
+        result = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(result["action"], "combined")
+        self.assertEqual(self.git("config", "--worktree", "--get", "core.hooksPath").stdout.strip(), result["hooks_path"])
+        self.assertEqual(self.git("config", "--local", "--get", "core.hooksPath").stdout.strip(), str(git_policy._active_hooks()))
+
+    def test_combination_preserves_arguments_input_environment_and_both_rejections(self):
+        custom = self.custom_hooks()
+        trace = self.tmp / "hooks.jsonl"
+        for name in ("pre-push", "reference-transaction", "post-checkout"):
+            hook = custom / name
+            hook.write_text("#!/usr/bin/env python3\nimport json, os, sys\n"
+                            f"with open({str(trace)!r}, 'a') as output:\n"
+                            f"    output.write(json.dumps([{name!r}, sys.argv[1:], "
+                            "sys.stdin.read(), os.getcwd(), os.environ.get('HOOK_FIXTURE')]) + '\\n')\n"
+                            "raise SystemExit(int(os.environ.get('HOOK_REJECT', '0')))\n")
+            hook.chmod(0o755)
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        path = Path(git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"])
+        env = {**os.environ, "HOOK_FIXTURE": "kept"}
+        tip = self.git("rev-parse", "HEAD").stdout.strip()
+        for name, args, data in (("pre-push", ["origin", "fixture"], f"refs/heads/topic {tip} refs/heads/topic {tip}\n"),
+                                 ("reference-transaction", ["prepared"], f"{tip} {tip} refs/heads/topic\n"),
+                                 ("post-checkout", [tip, tip, "1"], "other event input\n")):
+            with self.subTest(name=name):
+                result = subprocess.run([str(path / name), *args], input=data, text=True,
+                                        cwd=self.repo, env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(trace.read_text().splitlines()[-1]),
+                                 [name, args, data, str(self.repo), "kept"])
+        denied = subprocess.run([str(path / "pre-push"), "origin", "fixture"],
+                                input=f"refs/heads/topic {tip} refs/heads/main {tip}\n", text=True,
+                                cwd=self.repo, env=env, capture_output=True)
+        self.assertNotEqual(denied.returncode, 0)
+        rejected = subprocess.run([str(path / "pre-push"), "origin", "fixture"],
+                                  input=f"refs/heads/topic {tip} refs/heads/topic {tip}\n", text=True,
+                                  cwd=self.repo, env={**env, "HOOK_REJECT": "17"}, capture_output=True)
+        self.assertEqual(rejected.returncode, 17)
+        # Actual Git still invokes the protected guard, while other original events remain active.
+        (self.repo / "blocked.txt").write_text("blocked\n")
+        self.git("add", "blocked.txt")
+        self.assertIn("pre-commit", self.git("commit", "-m", "blocked", check=False).stderr)
+        (path / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "conflict")
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(self.repo)
+
+    def test_combine_refuses_changed_original_and_retries_failed_config_write(self):
+        custom = self.custom_hooks()
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "ownership changed"):
+            git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        observed = git_policy.inspect_hooks(self.repo)
+        real = git_policy._run
+
+        def denied(repo, *args, **kwargs):
+            if args[:3] == ("config", "--local", "core.hooksPath"):
+                raise git_policy.GitPolicyError("configuration permission denied")
+            return real(repo, *args, **kwargs)
+
+        with mock.patch.object(git_policy, "_run", side_effect=denied):
+            with self.assertRaisesRegex(git_policy.GitPolicyError, "permission denied"):
+                git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), str(custom))
+        result = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(result["status"], "ready")
+
+    def test_forged_git_metadata_does_not_supply_operator_consent(self):
+        custom = self.custom_hooks()
+        saved = {"path": str(custom), "selection": str(custom), "scope": "local",
+                 "owner": str(self.repo / ".git"), "guards": str(git_policy._active_hooks()),
+                 "approved_fingerprint": "forged", "original_contents": git_policy._hook_contents(custom)}
+        digest = hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest()
+        forged = self.repo / ".git/altitude-hooks" / digest
+        forged.mkdir(parents=True)
+        for name in git_policy.HOOK_EVENTS:
+            hook = forged / name
+            hook.write_text(git_policy._composed_hook(name, custom, git_policy._active_hooks(), saved["original_contents"]))
+            hook.chmod(0o755)
+        (forged / "original.json").write_text(json.dumps(saved))
+        self.git("config", "core.hooksPath", str(forged))
+        self.assertEqual(git_policy.inspect_hooks(self.repo)["status"], "conflict")
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(self.repo)
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        self.assertFalse(git_policy._composition_path(self.repo).exists())
+
+    def test_changed_original_requires_fresh_consent_without_recursive_composition(self):
+        custom = self.custom_hooks()
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        first = Path(git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"])
+        self.assertTrue(first.is_relative_to(config.REPO / ".altitude-source"))
+        (custom / "pre-commit").write_text("#!/bin/sh\nexit 7\n")
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        self.assertTrue(observed["can_combine"])
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo)
+        # The installed wrapper also refuses a changed original before launching it.
+        attempt = subprocess.run([str(first / "pre-commit")], cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(attempt.returncode, 1)
+        self.assertIn("original hooks changed", attempt.stderr)
+        second = Path(git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])["hooks_path"])
+        self.assertNotEqual(first, second)
+        saved = json.loads((second / "original.json").read_text())
+        self.assertEqual(saved["path"], str(custom))
+        self.assertEqual(saved["original_contents"], git_policy._hook_contents(custom))
+        git_policy.require_hooks_installed(self.repo)
+        saved["path"] = str(self.tmp / "forged-original")
+        (second / "original.json").write_text(json.dumps(saved))
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(self.repo)
+
+    def test_worktree_consent_cannot_be_reused_by_a_sibling_worktree(self):
+        git_policy.install_hooks(self.repo)
+        self.git("config", "extensions.worktreeConfig", "true")
+        sibling = self.tmp / "sibling"
+        self.git("worktree", "add", "-q", "-b", "sibling", str(sibling))
+        custom = self.custom_hooks()
+        self.git("config", "--worktree", "core.hooksPath", str(custom))
+        git("config", "--worktree", "core.hooksPath", str(custom), cwd=sibling)
+        own = git_policy.inspect_hooks(self.repo)
+        other = git_policy.inspect_hooks(sibling)
+        self.assertNotEqual(own["fingerprint"], other["fingerprint"])
+        approved = git_policy.repair_hooks(self.repo, combine=True, expected=own["fingerprint"])
+        git("config", "--worktree", "core.hooksPath", approved["hooks_path"], cwd=sibling)
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.require_hooks_installed(sibling)
+        git_policy.require_hooks_installed(self.repo)
+
+    def test_unsupported_hook_manager_stays_actionable_and_unchanged(self):
+        custom = self.custom_hooks()
+        (custom / "pre-commit").write_text('#!/bin/sh\ngit config --get core.hooksPath\n')
+        self.git("config", "core.hooksPath", str(custom))
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        self.assertFalse(observed["can_combine"])
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), str(custom))
+
+    def test_relative_custom_selection_is_not_redirected_to_one_worktrees_directory(self):
+        custom = self.custom_hooks(self.repo / "custom-hooks")
+        self.git("config", "core.hooksPath", "custom-hooks")
+        observed = git_policy.inspect_hooks(self.repo)
+        self.assertEqual(observed["status"], "conflict")
+        self.assertFalse(observed["can_combine"])
+        self.assertIn("Relative hook paths", observed["detail"])
+        with self.assertRaises(git_policy.GitPolicyError):
+            git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+        self.assertEqual(self.git("config", "--get", "core.hooksPath").stdout.strip(), "custom-hooks")
+        self.assertEqual((custom / "pre-commit").read_text(), "#!/bin/sh\nexit 0\n")
 
     def test_pre_commit_and_pre_merge_hooks_block_main_and_master_but_allow_topic(self):
         initial = self.git("rev-parse", "HEAD").stdout.strip()

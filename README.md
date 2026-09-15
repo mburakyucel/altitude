@@ -268,6 +268,15 @@ for routing preferences, project Git guards and a foreground localhost server. T
 source-checked commands from the remaining clean-machine setup verification. No open-source
 license has been selected; public release is a separate milestone.
 
+Each project's **Setup** status opens a revisitable checklist of its folder, repository,
+instructions, Git guards and coordinator. Altitude performs routine setup automatically and
+shows what it created, reused or could not complete. Existing projects receive current checks
+and missing requirements without losing their conversations or repeating healthy setup.
+**Retry** repeats supported setup; **Discuss with L3** opens the existing conversation for help.
+L3 can request bounded repair even when tasks cannot launch, and programmatic checks verify the
+result before a step is complete. Custom hooks require your integration choice. See
+[project setup and repair](docs/SETUP.md#project-setup-and-repair).
+
 Git guards allow reference packing and fetch housekeeping while local main waits to fast-forward
 to fetched `origin/main`. Packing preserves branch tips; unauthorized protected branch moves and
 deletions remain blocked.

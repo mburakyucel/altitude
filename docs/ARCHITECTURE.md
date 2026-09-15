@@ -169,11 +169,50 @@ On successful service startup, Altitude exports its committed installation HEAD 
 deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots and remain available to existing workers. Managed
-Git guards use `.altitude-source/current/hooks`; startup updates only known installation hook paths
-and preserves unrelated custom configurations. Task inputs use activated source independently of
+Git guards use `.altitude-source/current/hooks`; setup and launch preflight refresh recognized
+Altitude-owned paths from earlier exports, including skipped versions, and preserve custom hooks.
+Task inputs use activated source independently of
 uncommitted deployment files or newer code awaiting activation.
 An unavailable project guard update reports a project fault without stopping service startup;
 that project's launch waits for trusted guards while other projects continue.
+
+### Project setup
+
+`project_setup.py` owns the concrete folder, repository, instructions, guards and coordinator
+checks. Registration requests routine setup; maintenance and project reads inspect current
+requirements for every registered project. There is no permanent onboarding-complete flag.
+Existing configuration is reused. A non-Git folder supports conversation with Git tasks
+unavailable; setup never initializes Git or creates or overwrites project instructions.
+
+The daemon persists operation identity, progress and guard receipts in the project's `setup.json`.
+Reads combine these records with current filesystem, hook and coordinator evidence. A released
+operation lock exposes an interrupted runner; retry rechecks completed effects before writing.
+Pending, running, created, reused, not-applicable, failed and input-needed results come from
+observed work. A queued notification or saved start request never proves an agent is running.
+Recorded task worktrees expose their own hook overrides; inherited healthy guards share the
+project result. Launch repair checks only the project and the launching task's checkout.
+
+The permanent **Setup** control opens these results and actions. Programmatic repair installs or
+refreshes owned guards and establishes the coordinator command connection. **Retry** requests that
+same bounded work. Configuration faults notify the existing L3; **Discuss with L3** opens its conversation
+without sending a message or launching another repair agent. L3 investigates with its existing
+tools and can request project-scoped daemon repair through `alt project setup`, independently of
+worker dispatch. An agent's claim of repair does not complete a step: current checks verify it.
+Failed or interrupted introductory calls wait for an explicit Retry, including during routine
+guard maintenance; timer checks do not repeat model calls.
+
+Custom hooks remain intact. The operator can explicitly choose **Use both hook sets** for a
+supported ordinary hook directory; the choice binds to the inspected hook configuration.
+Its approved composition and original-hook hashes live outside worker-writable metadata in the
+daemon-owned installation boundary. Changed custom hooks require a renewed choice.
+The choice discloses the original directory/events and authorizes normal hook execution with
+Altitude's Git permissions, outside the worker sandbox. Entrypoint hashes detect changed hooks;
+they do not sandbox code, verify its dependencies, or eliminate a concurrent replacement race.
+The managed composition preserves other hook events and gives both sets the same arguments and
+input; either can reject an operation. Unsupported hook managers and relative custom hook selections remain actionable
+conflicts. Routine repair and L3 cannot authorize composition. Task sessions, worktrees, questions
+and merge holds survive checks and repair; only tasks whose cause is verified fixed are resumed.
+See [the supported recovery procedure](CLI.md#project-setup-and-guard-recovery).
 
 The [project seams rule](../AGENTS.md#seams) owns operator, engine and machine assumptions.
 `tests/test_project_layers.py` ratchets names outside those boundaries and project policy in personas.

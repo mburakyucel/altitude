@@ -50,8 +50,7 @@ record its build/test and delivery expectations there if they are not already do
 ```sh
 cd /absolute/path/to/example-project
 
-# Installs this repository's commit/push guards; project registration alone does not.
-alt install-git-guards
+# Registers this existing folder; the running daemon performs routine setup.
 alt project add example --path "$PWD"
 alt project list
 
@@ -59,9 +58,10 @@ alt project list
 ALTITUDE_HOST=127.0.0.1 ALTITUDE_PORT=18890 ALTITUDE_TLS=0 alt serve
 ```
 
-The guards configure that project's `core.hooksPath`. If another hook system is already
-configured, installation refuses; agree how to integrate it before continuing, rather than
-overwriting or disabling it. Auto skips missing CLIs and known exhausted or rejected options.
+Open the project's **Setup** checklist to inspect its results. Altitude automatically configures
+missing or stale guards that it owns. If another hook system is present, **Review integration**
+offers a supported way to use both sets or leaves the current setup intact for discussion.
+Auto skips missing CLIs and known exhausted or rejected options.
 Its default ties Codex's default model and Claude Fable, with Claude Opus in the next tier. One
 installed engine is enough. Availability of a model is unverified until supported evidence says
 otherwise; a subscription's plan name is not evidence of model access.
@@ -90,14 +90,59 @@ allowance or incur its normal charges.
 Register before starting this foreground server when you want to use `alt chat` immediately:
 startup creates the project's coordinator broker. Web conversations also create the broker on
 demand, so a project registered after startup can start from the web app. Its First run / Add
-project flow can register folders and start the
-coordinator while the server is running, using Auto and the project's preferences. A CLI conversation
+project flow registers the folder and opens Setup immediately, using Auto and the project's
+preferences. Closing the checklist leaves accepted work running. A CLI conversation
 also works from another terminal with
 the same PATH and Altitude home while the server is running:
 
 ```sh
 alt --project example chat "Describe this project and suggest one small improvement."
 ```
+
+## Project setup and repair
+
+**Altitude performs routine setup automatically. If a step fails, L3 helps investigate, and
+Altitude checks the result before marking it complete.** The project header's permanent **Setup**
+status opens its checklist on phone and desktop. It shows the latest observations, with **Check
+again** for a fresh check and relevant actions on incomplete rows.
+
+| Step | What happens |
+| --- | --- |
+| Project folder | Register the selected folder or reuse its existing registration and history. |
+| Git repository | Detect an existing repository and task-delivery prerequisites. A non-Git folder supports conversation with Git tasks unavailable. |
+| Project instructions | Show the existing instruction file selected by the rule loader, or explain that none exists. Setup creates or overwrites no instructions. |
+| Git guards | Install missing owned guards, refresh stale Altitude guards, or show the custom-hook integration choice. Non-Git folders show Not applicable. |
+| Coordinator | Establish the command connection; show the first conversation's actual progress or reuse the existing conversation. |
+
+The checklist distinguishes pending, running, completed, already configured, not applicable and
+failed/input-needed outcomes. It reports creation only after an actual write; detection is reuse.
+Ready describes these project checks, not every future remote operation or model's authentication.
+Setup never initializes Git. Optional capabilities such as voice do not prevent readiness.
+
+Existing projects receive the same current checks as new projects. Missing requirements introduced
+by an update appear without detach/reattach or repeating healthy work. Routine maintenance and
+launch checks refresh recognized owned guard paths to the active source; saved task-worktree
+overrides receive the same checks. Failed or interrupted introductory
+agent calls wait for an explicit Retry; routine maintenance does not repeat them. Refresh, reconnection
+and interruption retain operation records; observations reconcile completed writes before retry.
+Unconfirmed results remain unknown until checked.
+
+**Retry** requests the supported programmatic operation again. L3 receives configuration faults and can
+investigate with its existing tools or request bounded daemon repair, even when no task can launch.
+**Discuss with L3** opens the existing project conversation; it does not send a message or start
+another agent. Code fixes follow the usual task/PR process. L3's explanation cannot turn a row
+green: programmatic checks verify the actual result.
+
+For supported ordinary custom-hook directories, **Review integration → Use both hook sets** is
+an explicit operator choice. Original hook files remain intact; both sets receive the same input
+and either can reject the Git operation. **Keep current setup** leaves the conflict unresolved.
+Review the displayed hook directory and events. Only combine trusted hooks: they and programs
+they call run with Altitude's Git permissions, outside the task agent's sandbox. File checks
+detect changed hook scripts; they do not establish the safety of their dependencies.
+Changed custom hooks require a renewed choice. Unsupported hook managers and relative custom
+hook selections stay unchanged with an explanation and discussion action. Routine
+repair cannot make this choice for you. See the
+[coordinator repair command and verification procedure](CLI.md#project-setup-and-guard-recovery).
 
 ## Configuration and limits
 
