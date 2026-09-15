@@ -104,7 +104,7 @@ export function useImageDraft(scope?: ImageScope) {
         reader.onload = () => resolve({ name: image.name, data: String(reader.result).split(",")[1] ?? "" });
         reader.readAsDataURL(image.file);
       })));
-      return { request_id: crypto.randomUUID(), images, previews: originals.map(({ name, url }) => ({ name, url })) };
+      return { request_id: crypto.randomUUID(), images, previews: originals.map(({ name, file }, index) => ({ name, url: `data:${file.type};base64,${images[index]!.data}` })) };
     },
   };
 }

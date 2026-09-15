@@ -21,7 +21,9 @@ const TRANSCRIBE_TIMEOUT_MS = 60_000;
 const WAVE_BARS = 28;
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
-type SendFailure = "refused" | "unconfirmed" | null;
+type SendFailure = "refused" | "unconfirmed" | "transcription" | null;
+type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; cancel: () => void };
+const voiceSends = new Map<string, VoiceSend>();
 
 // #320: only submitted text lives beyond a composer. These records never initiate a send.
 type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure };
@@ -29,7 +31,8 @@ const liveSubmissions = new Set<string>();
 // A failed update retains the current recovery within this document. The stored bytes identify
 // the copy it supersedes; clearing/replacing browser storage also discards that fallback.
 const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
-const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean) => void }>();
+const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean) => void;
+  voice: (send: VoiceSend | null) => void; submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => Promise<void> }>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -42,7 +45,7 @@ function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = 
   const key = recoveryKey(conversation);
   const stored = sessionStorage.getItem(key);
   try {
-    if (saved.text || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
+    if (saved.text || saved.failure === "transcription" || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
     else sessionStorage.removeItem(key);
     unwrittenRecovery.delete(conversation);
   } catch (error) {
@@ -50,7 +53,15 @@ function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = 
     throw error;
   }
 }
-function settleSubmitted(conversation: string, id: string, text: string, failure: SendFailure) {
+function beginSubmitted(conversation: string, text: string, id: string = crypto.randomUUID(), preserve = false) {
+  const saved = readSubmitted(conversation);
+  saved.pending[id] = text;
+  if (!preserve) { saved.text = ""; saved.failure = null; }
+  saveSubmitted(conversation, saved, true);
+  liveSubmissions.add(id);
+  return id;
+}
+function settleSubmitted(conversation: string, id: string, text: string, failure: SendFailure, restore = false) {
   if (!liveSubmissions.delete(id)) return;
   let saved: SubmittedText;
   let readable = true;
@@ -58,14 +69,14 @@ function settleSubmitted(conversation: string, id: string, text: string, failure
   catch { readable = false; saved = { pending: {}, text: "", failure: null }; }
   delete saved.pending[id];
   const view = recoveryViews.get(conversation);
-  if (failure) {
+  if (failure || restore) {
     saved.text = [text, view?.draft() ?? saved.text].filter(Boolean).join("\n");
-    saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : "refused";
+    saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : failure ?? view?.failure() ?? saved.failure;
   }
   // If browser storage stops accepting writes after admission, its earlier pending copy remains
   // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
   try { if (readable) saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
-  if (failure) view?.restore(saved, !readable || unwrittenRecovery.has(conversation));
+  if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation));
 }
 
 export interface ComposerProps {
@@ -76,6 +87,8 @@ export interface ComposerProps {
   /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
    * transport/server failure restores it with a reminder to check the conversation first. */
   onSubmit: (text: string, onAccepted: () => void, images?: ImageSubmission) => void | Promise<void>;
+  /** Freeze any reply context when Send is requested, before asynchronous voice preparation. */
+  prepareSubmit?: () => ComposerProps["onSubmit"];
   imageScope?: ImageScope;
   placeholder: string;
   ariaLabel: string;
@@ -234,6 +247,7 @@ export default function Composer({
   value,
   onChange,
   onSubmit,
+  prepareSubmit,
   placeholder,
   ariaLabel,
   busy = false,
@@ -252,14 +266,14 @@ export default function Composer({
   const images = useImageDraft(imageScope);
   const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
   const admitting = useRef(false);
-  const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string } | null>(null);
+  const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string; send: ComposerProps["onSubmit"]; preserveDraft: boolean } | null>(null);
   const deferredRecovery = useRef<SubmittedText | null>(null);
   const [refusalReason, setRefusalReason] = useState("");
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const cancelled = useRef(false);
   const stopRequested = useRef(false);
-  const sendAfterTranscribing = useRef(false);
+  const sendAfterTranscribing = useRef<VoiceSend | null>(null);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
@@ -267,7 +281,10 @@ export default function Composer({
   const draft = useRef(value);
   draft.current = value;
 
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [capturePhase, setPhase] = useState<Phase>("idle");
+  const [voiceSend, setVoiceSend] = useState(() => voiceSends.get(conversation) ?? null);
+  const phase = voiceSend ? "transcribing" : capturePhase;
+  const displayedDraft = voiceSend?.text ?? value;
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [denied, setDenied] = useState(false);
@@ -299,7 +316,7 @@ export default function Composer({
       observer?.disconnect();
       window.removeEventListener("resize", sizeField);
     };
-  }, [value, phase]);
+  }, [displayedDraft, phase]);
 
   useEffect(() => {
     onEscapeOwnership?.(phase !== "idle");
@@ -314,9 +331,11 @@ export default function Composer({
     return () => {
       mounted.current = false;
       if (capTimer.current) clearTimeout(capTimer.current);
-      abort.current?.abort();
+      const sending = sendAfterTranscribing.current;
+      const retained = sending && voiceSends.get(conversation) === sending;
+      if (!retained) abort.current?.abort();
       const active = recorder.current;
-      recorder.current = null;
+      if (!retained) recorder.current = null;
       try {
         if (active && active.state !== "inactive") active.stop();
       } catch {
@@ -343,6 +362,8 @@ export default function Composer({
 
   useEffect(() => {
     const view = {
+      voice: (send: VoiceSend | null) => { setVoiceSend(send); if (!send) setPhase("idle"); },
+      submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => currentSubmit.current(text, retry, voice),
       draft: () => deferredRecovery.current?.text ?? draft.current,
       failure: () => failure.current,
       restore: (saved: SubmittedText, unavailable = false) => {
@@ -365,7 +386,7 @@ export default function Composer({
         saved.failure = "unconfirmed";
         delete saved.pending[id];
       }
-      if (saved.text) {
+      if (saved.text || saved.failure === "transcription") {
         saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
         view.restore(saved);
         try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
@@ -387,14 +408,14 @@ export default function Composer({
     onChange(text);
     try {
       const saved = readSubmitted(conversation);
-      if (saved.failure) {
+      if (saved.failure || saved.text) {
         saved.text = saved.failure === "unconfirmed" ? text : "";
-        if (saved.failure === "refused") saved.failure = null;
+        if (saved.failure !== "unconfirmed") saved.failure = null;
         saveSubmitted(conversation, saved);
       }
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
-    if (failure.current === "refused") { failure.current = null; setSendFailure(null); }
+    if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
   }, [conversation, onChange]);
 
   const releaseStream = useCallback((released: MediaStream | null) => {
@@ -405,32 +426,29 @@ export default function Composer({
 
   // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
   const submit = useCallback(
-    async (text: string, retry?: ImageSubmission) => {
+    async (text: string, retry?: ImageSubmission, voice?: VoiceSend) => {
       const ready = text.trim();
-      const withImages = Boolean(retry || images.selected.length);
-      if ((!ready && !withImages) || disabled || sendDisabled || images.checking || (admitting.current && !retry)) return;
-      if (withImages && !retry && !images.capability?.available) {
+      const preserveDraft = Boolean(voice || (retry && retryImage.current?.preserveDraft));
+      const send = voice?.send ?? (retry ? retryImage.current?.send : undefined) ?? onSubmit;
+      const withImages = Boolean(retry || (voice ? voice.images : images.selected.length));
+      if (!voice && ((!ready && !withImages) || disabled || sendDisabled || images.checking || (admitting.current && !retry))) return;
+      if (withImages && !retry && !voice && !images.capability?.available) {
         images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
         return;
       }
-      const id = retry && retryImage.current ? retryImage.current.recoveryId : crypto.randomUUID();
+      const id = voice?.id ?? (retry && retryImage.current ? retryImage.current.recoveryId : crypto.randomUUID());
       try {
-        const saved = readSubmitted(conversation);
-        saved.pending[id] = text;
-        saved.text = "";
-        saved.failure = null;
-        saveSubmitted(conversation, saved, true);
+        beginSubmitted(conversation, text, id, preserveDraft);
       } catch {
+        if (voice) settleSubmitted(conversation, id, text, "refused");
         setVoiceFailure("Could not save message recovery. Your message was not sent.");
         return;
       }
-      liveSubmissions.add(id);
-      failure.current = null;
-      setSendFailure(null); setRecoveryUnavailable(false); setRefusalReason("");
+      if (!preserveDraft) { failure.current = null; setSendFailure(null); }
+      setRecoveryUnavailable(false); setRefusalReason("");
       setVoiceFailure(""); images.setError("");
       if (withImages) { admitting.current = true; setAdmission("sending"); }
-      draft.current = "";
-      onChange("");
+      if (!preserveDraft) { draft.current = ""; onChange(""); }
       let accepted = false;
       const accept = () => {
         accepted = true;
@@ -439,14 +457,14 @@ export default function Composer({
       let submission = retry;
       try {
         if (withImages) {
-          submission ??= await images.submission();
-          if (!mounted.current) {
+          submission ??= await (voice?.images ?? images.submission());
+          if (!mounted.current && !voice) {
             settleSubmitted(conversation, id, text, "refused");
             return;
           }
-          retryImage.current = { text, submission, recoveryId: id };
-          await onSubmit(ready, accept, submission);
-        } else await onSubmit(ready, accept);
+          retryImage.current = { text, submission, recoveryId: id, send, preserveDraft };
+          await send(ready, accept, submission);
+        } else await send(ready, accept);
         accept();
       } catch (error) {
         if (!accepted) {
@@ -480,9 +498,16 @@ export default function Composer({
     },
     [conversation, disabled, sendDisabled, focusField, images, onChange, onSubmit],
   );
-  // A recording can outlive the render that supplied its submit callback or disabled state.
+  // A returning source view owns admission UI; an explicit voice Send retains its captured transport.
   const currentSubmit = useRef(submit);
   currentSubmit.current = submit;
+
+  const endVoiceSend = useCallback((sending: VoiceSend, problem?: "transcription") => {
+    if (voiceSends.get(conversation) !== sending) return;
+    voiceSends.delete(conversation);
+    recoveryViews.get(conversation)?.voice(null);
+    settleSubmitted(conversation, sending.id, sending.text, sending.failure === "unconfirmed" ? "unconfirmed" : problem ?? sending.failure, true);
+  }, [conversation]);
 
   // ---- voice: listening, transcribing, landed; every failure is one hint and an unchanged draft ----
   const finish = useCallback(
@@ -492,11 +517,13 @@ export default function Composer({
       stopRequested.current = false;
       if (capTimer.current) clearTimeout(capTimer.current);
       capTimer.current = null;
-      releaseStream(used);
+      if (mounted.current) releaseStream(used);
+      else used?.getTracks().forEach((track) => track.stop());
       const parts = chunks.current;
       chunks.current = [];
-      if (!mounted.current) return;
-      if (cancelled.current) {
+      const sending = sendAfterTranscribing.current;
+      if (!mounted.current && !sending) return;
+      if (cancelled.current || sending?.controller.signal.aborted) {
         setPhase("idle");
         focusField();
         return;
@@ -504,25 +531,34 @@ export default function Composer({
       const type = finished.mimeType || recordingMimeType() || "application/octet-stream";
       const audio = parts.length ? new Blob(parts, { type }) : null;
       if (!audio?.size || audio.size > MAX_UPLOAD_BYTES) {
+        if (sending) { endVoiceSend(sending, "transcription"); return; }
         setPhase("idle");
         setVoiceFailure("Could not transcribe. Typing works.");
         focusField();
         return;
       }
-      const request = new AbortController();
+      const request = sending?.controller ?? new AbortController();
       abort.current = request;
       const timeout = setTimeout(() => request.abort(), TRANSCRIBE_TIMEOUT_MS);
       setPhase("transcribing");
       try {
         const text = await transcribeVoice(audio, request.signal);
-        if (!mounted.current || request.signal.aborted) return;
+        if ((!mounted.current && !sending) || request.signal.aborted) return;
+        if (sending) {
+          if (!text.trim()) { endVoiceSend(sending); return; }
+          voiceSends.delete(conversation);
+          const view = recoveryViews.get(conversation);
+          view?.voice(null);
+          void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
+          return;
+        }
         // Landed: appended to the draft, cursor at the end, nothing else on screen (issue #195).
         const next = combineDraft(draft.current, text);
         editDraft(next);
         setPhase("idle");
-        if (sendAfterTranscribing.current && text.trim()) void currentSubmit.current(next);
-        else focusField(next.length);
+        focusField(next.length);
       } catch {
+        if (sending) { endVoiceSend(sending, "transcription"); return; }
         if (!mounted.current || cancelled.current || abort.current !== request) return;
         setPhase("idle");
         setVoiceFailure("Could not transcribe. Typing works.");
@@ -532,14 +568,40 @@ export default function Composer({
         if (abort.current === request) abort.current = null;
       }
     },
-    [editDraft, focusField, releaseStream],
+    [conversation, editDraft, endVoiceSend, focusField, releaseStream],
   );
 
   const stop = useCallback((send = false) => {
     const active = recorder.current;
     if (!active || stopRequested.current) return;
+    if (send) {
+      if (disabled || sendDisabled || images.checking || (images.selected.length && !images.capability?.available)) return;
+      let id: string;
+      const priorFailure = failure.current;
+      try { id = beginSubmitted(conversation, draft.current); }
+      catch { setVoiceFailure("Could not save message recovery. Your message was not sent."); return; }
+      failure.current = null;
+      setSendFailure(null);
+      setRecoveryUnavailable(false);
+      const sending: VoiceSend = { id, text: draft.current, failure: priorFailure, controller: new AbortController(), send: prepareSubmit?.() ?? onSubmit,
+        images: images.selected.length ? images.submission() : undefined,
+        cancel: () => {
+          sending.controller.abort();
+          if (recorder.current === active) { recorder.current = null; chunks.current = []; }
+          active.stream.getTracks().forEach((track) => track.stop());
+          if (capTimer.current) clearTimeout(capTimer.current);
+          endVoiceSend(sending);
+        },
+      };
+      // Image reads start now, while the selected Files and reply context still belong to this Send.
+      void sending.images?.catch(() => undefined);
+      sendAfterTranscribing.current = sending;
+      voiceSends.set(conversation, sending);
+      recoveryViews.get(conversation)?.voice(sending);
+      draft.current = "";
+      onChange("");
+    }
     stopRequested.current = true;
-    sendAfterTranscribing.current = send;
     setPhase("transcribing");
     try {
       if (active.state !== "inactive") active.stop();
@@ -547,16 +609,15 @@ export default function Composer({
     } catch {
       void finish(active, stream);
     }
-  }, [finish, stream]);
+  }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, sendDisabled, stream]);
 
   const start = useCallback(async () => {
     if (unavailable || denied || disabled || admitting.current || phase !== "idle") return;
     setVoiceFailure("");
-    setSendFailure((current) => current === "unconfirmed" ? current : null);
     setElapsed(0);
     cancelled.current = false;
     stopRequested.current = false;
-    sendAfterTranscribing.current = false;
+    sendAfterTranscribing.current = null;
     chunks.current = [];
     setPhase("starting");
     const opening = new AbortController();
@@ -574,10 +635,11 @@ export default function Composer({
       const used = opened;
       recorder.current = active;
       active.ondataavailable = (event) => {
-        if (event.data.size) chunks.current.push(event.data);
+        if (recorder.current === active && event.data.size) chunks.current.push(event.data);
       };
       active.onstop = () => void finish(active, used);
       active.onerror = () => {
+        if (recorder.current !== active) return;
         cancelled.current = false;
         chunks.current = [];
         try {
@@ -612,6 +674,8 @@ export default function Composer({
 
   /** Esc while listening: back to the previous state, nothing added (SPEC.md §3.6). */
   const cancel = useCallback(() => {
+    const sending = voiceSends.get(conversation);
+    if (sending) { sending.cancel(); return; }
     cancelled.current = true;
     if (capTimer.current) clearTimeout(capTimer.current);
     capTimer.current = null;
@@ -633,7 +697,7 @@ export default function Composer({
     releaseStream(stream);
     setPhase("idle");
     focusField();
-  }, [focusField, releaseStream, stream]);
+  }, [conversation, focusField, releaseStream, stream]);
 
   useEffect(() => {
     if (phase === "idle") return;
@@ -698,6 +762,10 @@ export default function Composer({
   } else if (admission === "sending") {
     hintRole = "status";
     hintText = "Sending images…";
+  } else if (sendFailure === "transcription") {
+    hintTone = "danger";
+    hintRole = "alert";
+    hintText = "Could not transcribe. Typing works.";
   } else if (sendFailure === "refused" && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
@@ -759,7 +827,7 @@ export default function Composer({
         {images.selected.length && !admission ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
           <div className="image-draft-item" key={image.key}>
             <img src={image.url} alt={image.name} />
-            <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled} onClick={() => images.remove(image.key)}><CloseIcon /></button>
+            <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled || phase !== "idle"} onClick={() => images.remove(image.key)}><CloseIcon /></button>
           </div>)}</div> : null}
         <textarea
           ref={field}
@@ -767,7 +835,7 @@ export default function Composer({
           aria-label={ariaLabel}
           aria-describedby={hintText ? hintId : undefined}
           placeholder={listening ? "" : placeholder}
-          value={value}
+          value={displayedDraft}
           rows={1}
           disabled={disabled || Boolean(admission)}
           readOnly={phase !== "idle"}

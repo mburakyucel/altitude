@@ -254,7 +254,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [updateQuestionVisibility]);
-  const send = async (text: string, onAccepted: () => void, images?: ImageSubmission) => {
+  const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
     const currentBounds = currentNode?.getBoundingClientRect();
@@ -262,36 +262,38 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     // A historical URL does not keep replies attached to an old revision after the reader scrolls
     // to the current question. Merely having a newer record offscreen does not retarget a reply.
     const context = following.current || viewingCurrent ? current ?? target : target ?? current;
-    following.current = true;
-    setLatest(false);
-    const preview = { text, images: images?.previews };
-    setPending(preview);
-    try {
-      const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text,
-        ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
-        ...(images ? { request_id: images.request_id, images: images.images } : {}),
-        ...(group && group.questions.length > 1 && context && inGroup(context)
-          ? { group_id: group.id, group_revision: group.revision }
-          : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) };
-      if (images) submission.current = input;
-      const row = await sendL2Message(input);
-      onAccepted();
-      await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
-      queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
-        cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
-      if (images && submission.current?.request_id === images.request_id) submission.current = null;
-      if (mounted.current) setPending((current) => current === preview ? null : current);
-    } catch (error) {
-      if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
-      if (mounted.current && (!images || imageSendRefused(error))) {
+    return async (text: string, onAccepted: () => void, images?: ImageSubmission) => {
+      following.current = true;
+      setLatest(false);
+      const preview = { text, images: images?.previews };
+      setPending(preview);
+      try {
+        const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text,
+          ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
+          ...(images ? { request_id: images.request_id, images: images.images } : {}),
+          ...(group && group.questions.length > 1 && context && inGroup(context)
+            ? { group_id: group.id, group_revision: group.revision }
+            : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) };
+        if (images) submission.current = input;
+        const row = await sendL2Message(input);
+        onAccepted();
+        await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
+        queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
+          cached ? { ...cached, messages: [...(cached.messages ?? []).filter((m) => m.id !== row.id), row] } : cached,
+        );
+        void queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] });
+        void queryClient.invalidateQueries({ queryKey: ["overview"] });
         if (images && submission.current?.request_id === images.request_id) submission.current = null;
-        setPending((current) => current === preview ? null : current);
+        if (mounted.current) setPending((current) => current === preview ? null : current);
+      } catch (error) {
+        if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+        if (mounted.current && (!images || imageSendRefused(error))) {
+          if (images && submission.current?.request_id === images.request_id) submission.current = null;
+          setPending((current) => current === preview ? null : current);
+        }
+        throw error;
       }
-      throw error;
-    }
+    };
   };
   const rows: ReactNode[] = [];
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
@@ -386,7 +388,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           <button type="button" className="link" onClick={showLive}>View live session</button>
           <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />
         </div> : null}
-        <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={send} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        <Composer conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(...args) => prepareSend()(...args)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}

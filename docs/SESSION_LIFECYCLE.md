@@ -419,8 +419,10 @@ and an L2 message follows the same checkpoint/resume rules. Cancel, permission d
 transcription failure create no conversation or queue record and preserve the typed draft.
 During microphone startup, listening and transcription, the shared text field is read-only and keeps
 existing text visible, with an indeterminate activity indicator and status inside the composer box.
-Cancel and timeout restore editing. Navigation cancels voice input; late results cannot fill or send
-to another conversation, including after a new recording starts.
+Cancel and timeout restore editing. Navigation cancels ordinary unsent voice input. An explicit Send
+retains its original conversation, text and images while transcription completes; leaving a project
+or task does not cancel that requested send. Returning shows its pending state or recovered failure.
+Late cancelled results cannot fill or send to another conversation, including after a new recording starts.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
@@ -727,8 +729,10 @@ streamed text and local errors leave the screen. Concurrent sends and late respo
 original project; returning reads that project's history, queue and active turn. A stored failed
 turn offers Retry only in its owning conversation. Each project's unsent text returns across switches
 and route remounts within the current client session.
-Leaving a voice composer stops its recorder, releases microphone tracks and cancels transcription;
-an outstanding microphone permission or transcription result cannot populate the new conversation.
+Leaving a voice composer releases microphone tracks and cancels recording or Stop-to-edit transcription.
+An explicit voice Send completes for its original project or task despite navigation; pending status
+and any recoverable failure stay in that source conversation. Outstanding microphone permissions and
+transcription results cannot populate a different conversation.
 L3 runs headless, so its only checkpoint is the turn boundary: a message Burak
 sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in

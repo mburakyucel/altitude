@@ -512,7 +512,7 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(!initial);
   });
 
-  it.each([false, true])("Send at once uses the current submit callback and disabled=%s after transcription", async (disabled) => {
+  it.each([false, true])("explicit voice Send retains its requested destination when later props change, disabled=%s", async (disabled) => {
     installVoiceBrowser();
     let release: () => void = () => {};
     stubTranscribe("the transcript", new Promise<void>((resolve) => (release = resolve)));
@@ -527,14 +527,162 @@ describe("Composer", () => {
     rerender(<Harness onSubmit={latest} disabled={disabled} />);
     release();
     await waitFor(() => expect(screen.queryByText("Transcribing…")).toBeNull());
-    expect(original).not.toHaveBeenCalled();
-    if (disabled) {
-      expect(latest).not.toHaveBeenCalled();
-      expect(screen.getByRole("textbox")).toHaveValue("Keep the transcript");
-    } else {
-      expect(latest).toHaveBeenCalledExactlyOnceWith("Keep the transcript", expect.any(Function));
-      expect(screen.getByRole("textbox")).toHaveValue("");
-    }
+    expect(original).toHaveBeenCalledExactlyOnceWith("Keep the transcript", expect.any(Function));
+    expect(latest).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue("");
+  });
+
+  it("voice Send owns recorder completion before unmount, restores pending source UI, and preserves its next draft", async () => {
+    installVoiceBrowser();
+    let emit!: () => void;
+    const stopRecording = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementation(function (this: FakeMediaRecorder) {
+      this.state = "inactive";
+      emit = () => { this.ondataavailable?.({ data: new Blob(["voice"], { type: this.mimeType }) }); this.onstop?.(); };
+    });
+    let release!: () => void;
+    stubTranscribe("dictated", new Promise<void>((resolve) => { release = resolve; }));
+    let accept!: () => void;
+    let complete!: () => void;
+    const original = vi.fn((_text: string, accepted: () => void) => { accept = accepted; return new Promise<void>((resolve) => { complete = resolve; }); });
+    const other = vi.fn();
+    const first = mount({ initial: "Original", onSubmit: original });
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    const destination = mount({ conversation: "project/beta", initial: "Independent", onSubmit: other });
+    await act(async () => emit());
+    stopRecording.mockRestore();
+    expect(destination.field).toHaveValue("Independent");
+    expect(destination.field).not.toHaveAttribute("readonly");
+    destination.unmount();
+    const source = mount({ onSubmit: other });
+    expect(source.field).toHaveValue("Original");
+    expect(source.field).toHaveAttribute("readonly");
+    expect(screen.getByRole("status")).toHaveTextContent("Transcribing…");
+    await act(async () => release());
+    expect(original).toHaveBeenCalledExactlyOnceWith("Original dictated", expect.any(Function));
+    expect(other).not.toHaveBeenCalled();
+    await source.user.type(source.field, "Next draft");
+    await act(async () => { accept(); complete(); });
+    expect(source.field).toHaveValue("Next draft");
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
+  });
+
+  it.each(["failure", "cancel"])("voice %s restores its source draft after navigation without sending", async (outcome) => {
+    installVoiceBrowser();
+    let release!: () => void;
+    stubTranscribe(null, new Promise<void>((resolve) => { release = resolve; }));
+    const onSubmit = vi.fn();
+    const first = mount({ initial: "Source text", onSubmit });
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    if (outcome === "failure") await act(async () => release());
+    const source = mount({ onSubmit });
+    if (outcome === "cancel") {
+      await source.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+      await act(async () => release());
+    } else expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(source.field).toHaveValue("Source text");
+    expect(source.field).not.toHaveAttribute("readonly");
+    expect(onSubmit).not.toHaveBeenCalled();
+    await source.user.clear(source.field);
+    source.unmount();
+    expect(mount().field).toHaveValue("");
+  });
+
+  it("a voice-only transcription failure remains visible when returning after completion", async () => {
+    installVoiceBrowser();
+    let release!: () => void;
+    stubTranscribe(null, new Promise<void>((resolve) => { release = resolve; }));
+    const first = mount();
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    await act(async () => release());
+    const source = mount();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not transcribe. Typing works.");
+    expect(source.field).toHaveValue("");
+    expect(source.field).not.toHaveAttribute("readonly");
+    await source.user.type(source.field, "New text");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
+  });
+
+  it("Cancel before recorder completion releases that microphone and isolates a restarted recording", async () => {
+    const { track } = installVoiceBrowser();
+    const deferredStop = vi.spyOn(FakeMediaRecorder.prototype, "stop").mockImplementationOnce(function (this: FakeMediaRecorder) { this.state = "inactive"; });
+    stubTranscribe("new recording");
+    const { user, field } = mount({ initial: "Draft" });
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    const old = FakeMediaRecorder.instances[0]!;
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    expect(track.stop).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await act(async () => {
+      old.ondataavailable?.({ data: new Blob(["stale audio"]) });
+      old.onerror?.();
+      old.onstop?.();
+    });
+    expect(field).toHaveAttribute("readonly");
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Draft new recording"));
+    const upload = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes("transcribe"));
+    expect((upload?.[1]?.body as Blob).size).toBe(new Blob(["aac recording"]).size);
+    deferredStop.mockRestore();
+  });
+
+  it.each(["refused", "unconfirmed"].flatMap((failure) => ["success", "failure", "cancel", "empty"].map((outcome) => ({ failure, outcome }))))("transfers existing $failure recovery once into a voice Send that ends in $outcome", async ({ failure, outcome }) => {
+    installVoiceBrowser();
+    sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: {}, text: "Recovered request", failure }));
+    let release!: () => void;
+    stubTranscribe(outcome === "failure" ? null : outcome === "empty" ? "" : "dictated", new Promise<void>((resolve) => { release = resolve; }));
+    const onSubmit = vi.fn();
+    const first = mount({ onSubmit });
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    const source = mount({ onSubmit });
+    expect(source.field).toHaveValue("Recovered request");
+    if (outcome === "cancel") await source.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    await act(async () => release());
+    expect(source.field).toHaveValue(outcome === "success" ? "" : "Recovered request");
+    expect(onSubmit).toHaveBeenCalledTimes(outcome === "success" ? 1 : 0);
+    const warning = failure === "unconfirmed" ? "Could not confirm delivery. Check the conversation before sending again."
+      : outcome === "failure" ? "Could not transcribe. Typing works." : "Not sent.";
+    if (outcome === "success") expect(screen.queryByRole("alert")).toBeNull();
+    else expect(screen.getByRole("alert")).toHaveTextContent(warning);
+    source.unmount();
+    expect(mount().field).toHaveValue(outcome === "success" ? "" : "Recovered request");
+    if (outcome !== "success") expect(screen.getByRole("alert")).toHaveTextContent(warning);
+  });
+
+  it.each([false, true])("an earlier failed send remains unsent while voice Send finishes; failure after remount=%s", async (afterRemount) => {
+    installVoiceBrowser();
+    let release!: () => void;
+    let refuse!: (error: Error) => void;
+    stubTranscribe("dictated", new Promise<void>((resolve) => { release = resolve; }));
+    const onSubmit = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { refuse = reject; }));
+    const first = mount({ initial: "Earlier request", onSubmit });
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    await first.user.type(first.field, "Voice request");
+    await first.user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    if (!afterRemount) await act(async () => refuse(new ApiError(409, "Refused")));
+    const source = mount({ onSubmit });
+    if (afterRemount) await act(async () => refuse(new ApiError(409, "Refused")));
+    expect(source.field).toHaveValue("Voice request");
+    expect(source.field).toHaveAttribute("readonly");
+    await act(async () => release());
+    expect(onSubmit).toHaveBeenNthCalledWith(2, "Voice request dictated", expect.any(Function));
+    expect(source.field).toHaveValue("Earlier request");
+    expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
+    source.unmount();
+    const returned = mount({ onSubmit });
+    expect(returned.field).toHaveValue("Earlier request");
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it.each(["Stop voice input", "Send"])("failure after %s: the hint reports it, the draft is unchanged, nothing sends", async (control) => {

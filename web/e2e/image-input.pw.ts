@@ -241,6 +241,97 @@ for (const scope of ["project", "task"] as const) {
     await v.send.click();
     await expect(page.locator(".bubble").filter({ hasText: "Plain text still works." })).toBeVisible();
   });
+
+  test(`${scope}: voice Send carries its image and caption to the original conversation after navigation`, async ({ page, request }, info) => {
+    await page.addInitScript(FAKE_MIC);
+    const walk = walkthrough(page, info);
+    await open(page, scope, info);
+    const v = controls(page, scope);
+    await v.picker.setInputFiles(await screenshotFile(page));
+    await v.field.fill(caption);
+    let release!: () => void;
+    let uploaded!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const upload = new Promise<void>((resolve) => { uploaded = resolve; });
+    await page.route("**/api/transcribe", async (route) => {
+      uploaded(); await gate;
+      await route.fulfill({ json: { text: "Please inspect the attached screenshot." } });
+    }, { times: 1 });
+    const submitted: { url: string; project: string; slug?: string; text: string; images: unknown[] }[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url()).pathname;
+      if (["/api/chat", "/api/l2/message"].includes(url) && request.method() === "POST") submitted.push({ url, ...request.postDataJSON() });
+    });
+    const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+    const selectProject = async (name: string) => {
+      if (info.project.name === "phone") {
+        await page.locator(".phone-title-button").click();
+        await page.getByRole("dialog", { name: "Switch project" }).getByRole("link", { name, exact: true }).click();
+      } else await nav.getByRole("link", { name, exact: true }).click();
+    };
+    const leave = async () => {
+      if (scope === "task") await nav.locator('a[href="/projects/alpha"]').click();
+      else await selectProject("beta");
+    };
+    const returnToSource = async () => {
+      if (scope === "task") {
+        if (info.project.name === "phone") await nav.getByRole("link", { name: "Work", exact: true }).click();
+        await page.locator('a[href="/projects/alpha/tasks/image-task"]').first().click();
+      } else await selectProject("alpha");
+    };
+    await v.composer.getByRole("button", { name: "Start voice input" }).click();
+    await expect(v.composer.getByRole("button", { name: "Stop voice input" })).toBeVisible();
+    await page.waitForTimeout(500);
+    await v.send.click();
+    await upload;
+    await leave();
+    const destination = scope === "task" ? "alpha" : "beta";
+    const destinationField = page.getByRole("textbox", { name: `Message L3 about ${destination}`, exact: true });
+    await destinationField.fill("Independent destination draft");
+    await walk.state("01-destination-draft-during-image-transcription", {
+      visible: [destinationField], hidden: [page.getByText("Transcribing…", { exact: true }), v.strip, v.preview],
+    });
+    await returnToSource();
+    await expect(v.field).toHaveValue(caption);
+    await expect(v.field).not.toBeEditable();
+    await walk.state("02-source-pending-image-voice-send", {
+      visible: [v.field, page.getByText("Transcribing…", { exact: true }), v.composer.getByRole("button", { name: "Cancel voice input" })], hidden: [],
+    });
+    await leave();
+    release();
+    const readSource = async () => (await (await request.get(scope === "task" ? "/api/task/alpha/image-task" : "/api/chat/alpha")).json());
+    const finalText = `${caption} Please inspect the attached screenshot.`;
+    const sentRows = async () => {
+      const view = await readSource();
+      return (scope === "task" ? view.messages : [...view.history, ...(view.queued ?? [])]).filter((row: { text: string }) => row.text === finalText);
+    };
+    await expect.poll(async () => (await sentRows()).length).toBe(1);
+    const [row] = await sentRows();
+    expect(row.images).toHaveLength(1);
+    expect(row.images[0].name).toBe("timer.png");
+    await expect(destinationField).toHaveValue("Independent destination draft");
+    const destinationView = await (await request.get(`/api/chat/${destination}`)).json();
+    expect([...destinationView.history, ...(destinationView.queued ?? [])].some((row: { text: string; images?: unknown[] }) => row.text === finalText || row.images?.length)).toBe(false);
+    await returnToSource();
+    await walk.state("03-original-image-and-caption-sent-once", {
+      visible: [v.preview], hidden: [v.strip, page.getByText("Transcribing…", { exact: true })],
+    });
+    await expect(v.field).toHaveValue("");
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toMatchObject({ url: endpoint(scope), project: "alpha", text: finalText, ...(scope === "task" ? { slug: "image-task" } : {}) });
+    expect(submitted[0]!.images).toHaveLength(1);
+    if (scope === "task") {
+      const delivered = await request.post("/fixture/task-deliver");
+      expect(delivered.ok()).toBe(true);
+      expect(await delivered.json()).toEqual({ images: [row.images[0].id], texts: [finalText] });
+    } else {
+      await expect.poll(async () => (await (await request.get("/fixture/calls")).json()).calls.length).toBe(1);
+      const [call] = (await (await request.get("/fixture/calls")).json()).calls;
+      expect(call).toMatchObject({ project: "alpha", text: finalText });
+      expect(call.images).toHaveLength(1);
+      expect(call.images[0].id).toBe(row.images[0].id);
+    }
+  });
 }
 
 test("project: busy queue preserves images, removal cancels one message, and failure Retry reuses bytes", async ({ page, request }, info) => {

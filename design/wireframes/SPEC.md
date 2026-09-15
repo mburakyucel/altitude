@@ -236,7 +236,8 @@ on both, including switching back before or after a response finishes:
 | Both projects have sent a turn | Each conversation shows only its own turn. Either completion order preserves the other project's draft and reply. |
 | Late HTTP refusal or stream error | Beta's draft and send state stay its own; no Alpha error or Retry appears there. Submitted-text recovery returns only to Alpha, alongside its retained newer text. |
 | Switch back to a failed accepted turn | Alpha's stored prompt and failed-turn Retry appear only in Alpha; Retry resends that prompt to Alpha. |
-| Listening, transcribing or microphone denied | Leaving stops recording, releases microphone tracks and cancels transcription; late results cannot fill Beta's draft. The new composer has its own microphone state. |
+| Listening, Stop-to-edit transcription or microphone denied | Leaving stops recording, releases microphone tracks and cancels unsent transcription; late results cannot fill Beta's draft. The new composer has its own microphone state. |
+| Send requested while recording | Transcription and send complete for Alpha even after navigation. Returning while pending shows its original text, Transcribing and Cancel; failure restores Alpha's text. Beta's draft and send remain independent. The same rule applies when leaving a task for project chat. |
 
 `web/e2e/project-isolation.pw.ts` walks these transitions with fictional projects and a disposable
 file-backed service; delayed refusals and microphone results are controlled browser overlays.
@@ -344,6 +345,9 @@ at both phone and desktop widths.
 
 Voice is capped just under ten minutes: the client stops at 9:55 to stay under the server’s ten-minute limit, and transcription times out after 60 seconds.
 The timer turns `--danger` in the last minute. Audio never becomes part of task or chat state.
+Explicit Send retains its transcription operation through route navigation in the current document;
+returning to its source shows the pending text and Cancel. Stop-to-edit transcription cancels on leaving.
+Reloading or closing the document ends client voice processing; it does not replay audio later.
 An explicit refusal also preserves any newly typed draft after the refused text on a new line;
 Retry submits that recoverable draft. Combined failed drafts stay unconfirmed if any send lacks a receipt,
 so Retry cannot duplicate or discard uncertain text. A later callback from an earlier send cannot change a newer
@@ -367,7 +371,7 @@ local until Send; leaving the conversation releases it and late results cannot f
 | Sent / viewer | Thumbnails belong to the saved message. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus. Archived tasks retain viewing without a composer. |
 | Loading / missing / denied | Image-sized placeholder names loading or the error; Retry repeats only the private read, never the send. Text remains readable. |
 | Capability unavailable | Add images explains why input is unavailable. Known converter refusal restores selections; removing them allows text. |
-| Voice / scope changes | Listening/transcribing retain previews and lock text editing. Cancel preserves preexisting text; empty/failed transcription sends nothing. Successful voice Send clears text and images together. Navigation discards only unsent image selection. |
+| Voice / scope changes | Listening/transcribing retain previews and lock text editing. Cancel preserves preexisting text; empty/failed transcription sends nothing. Explicit voice Send captures its images and completes for the original conversation after navigation. Other unsent image selection is released on leaving. |
 
 The approved [image interaction contract](IMAGE_INPUT.md) explains retention and private
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
