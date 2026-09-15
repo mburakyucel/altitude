@@ -319,7 +319,7 @@ for (const nextDraft of ["", "A new draft while the accepted turn answers"]) {
   });
 }
 
-test("listening, late Send transcription and denied microphone reset without crossing project drafts", async ({ page, request, service }, info) => {
+test("listening, late Stop transcription and denied microphone reset without crossing project drafts", async ({ page, request, service }, info) => {
   const walk = walkthrough(page, info);
   const v = views(page);
   // Browser overlay: real MediaRecorder records a synthetic tone; no device or speech service is used.
@@ -361,7 +361,7 @@ test("listening, late Send transcription and denied microphone reset without cro
   await mic.click();
   await expect(stop).toBeVisible();
   await page.waitForTimeout(500); // MediaRecorder needs a non-empty audio chunk.
-  await v.send.click();
+  await stop.click();
   await uploaded.promise;
   await walk.state("03-alpha-transcribing-overlay", { visible: [v.text("Transcribing…"), v.field("alpha"), ...(info.project.name === "phone" ? [] : [wave])], hidden: [stop, ...(info.project.name === "phone" ? [wave] : [])] });
   await expect(v.field("alpha")).not.toBeEditable();
@@ -387,6 +387,86 @@ test("listening, late Send transcription and denied microphone reset without cro
   expect((await (await request.get(`${service}/fixture/calls`)).json()).calls).toEqual([]);
   expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
 });
+
+for (const result of ["success", "failure", "cancel"] as const) {
+  test(`voice Send retains its original project through navigation and ${result}`, async ({ page, request, service }, info) => {
+    const walk = walkthrough(page, info);
+    const v = views(page);
+    await page.addInitScript(`
+      const context = new AudioContext();
+      const oscillator = context.createOscillator(); oscillator.start();
+      Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+        await context.resume(); const destination = context.createMediaStreamDestination(); oscillator.connect(destination); return destination.stream;
+      }});
+      // Encode real audio, then defer the recorder completion callback until after navigation.
+      const stopped = Object.getOwnPropertyDescriptor(MediaRecorder.prototype, "onstop");
+      Object.defineProperty(MediaRecorder.prototype, "onstop", { configurable: true,
+        get: stopped.get,
+        set(handler) { stopped.set.call(this, event => { window.fixtureFinishRecorder = () => handler.call(this, event); }); },
+      });
+    `);
+    const transcript = deferred();
+    const uploaded = deferred();
+    const delivered = deferred();
+    await page.route("**/api/transcribe", async (route) => {
+      uploaded.release();
+      await transcript.promise;
+      await route.fulfill(result === "failure"
+        ? { status: 503, json: { error: "Deterministic transcription failure" } }
+        : { json: { text: "dictated instruction" } }).catch(() => {});
+      delivered.release();
+    }, { times: 1 });
+    const posts: { project: string; text: string }[] = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/chat" && request.method() === "POST") posts.push(request.postDataJSON());
+    });
+    await walk.open(`${service}/projects/alpha`);
+    await v.field("alpha").fill("Alpha original draft");
+    await v.convo.getByRole("button", { name: "Start voice input" }).click();
+    await expect(v.convo.getByRole("button", { name: "Stop voice input" })).toBeVisible();
+    await page.waitForTimeout(500);
+    await v.send.click();
+    await switchProject(page, info, "beta");
+    await v.field("beta").fill("Beta independent draft");
+    await expect.poll(() => page.evaluate("typeof window.fixtureFinishRecorder")).toBe("function");
+    await page.evaluate("window.fixtureFinishRecorder()");
+    await uploaded.promise;
+    await walk.state("01-navigation-before-recorder-stop-stays-in-source", {
+      visible: [v.field("beta")], hidden: [v.text("Transcribing…"), v.text("Alpha original draft")],
+    });
+    await switchProject(page, info, "alpha");
+    await expect(v.field("alpha")).toHaveValue("Alpha original draft");
+    await expect(v.field("alpha")).not.toBeEditable();
+    const cancel = v.convo.getByRole("button", { name: "Cancel voice input" });
+    await walk.state("02-source-return-shows-pending-send", {
+      visible: [v.field("alpha"), cancel, v.text("Transcribing…")], hidden: [],
+    });
+    await expect(v.send).toBeDisabled();
+    if (result === "cancel") {
+      await cancel.click();
+      await expect(v.field("alpha")).toHaveValue("Alpha original draft");
+      await expect(v.field("alpha")).toBeEditable();
+      await v.field("alpha").fill("Alpha edited after cancellation");
+    }
+    await switchProject(page, info, "beta");
+    transcript.release();
+    await delivered.promise;
+    if (result === "success") {
+      await expect.poll(async () => (await (await request.get(`${service}/api/chat/alpha`)).json()).history.filter((row: { role: string; text: string }) => row.role === "user" && row.text === "Alpha original draft dictated instruction").length).toBe(1);
+    }
+    await expect(v.field("beta")).toHaveValue("Beta independent draft");
+    await switchProject(page, info, "alpha");
+    await expect(v.field("alpha")).toHaveValue(result === "success" ? "" : result === "cancel" ? "Alpha edited after cancellation" : "Alpha original draft");
+    await expect(v.field("alpha")).toBeEditable();
+    await walk.state(`03-original-conversation-${result}`, {
+      visible: [v.field("alpha"), ...(result === "success" ? [v.text("Alpha original draft dictated instruction")] : result === "failure" ? [v.convo.getByRole("alert").filter({ hasText: "Could not transcribe" })] : [])],
+      hidden: [v.text("Transcribing…"), cancel],
+    });
+    expect(posts.map(({ project, text }) => ({ project, text }))).toEqual(result === "success" ? [{ project: "alpha", text: "Alpha original draft dictated instruction" }] : []);
+    expect((await (await request.get(`${service}/fixture/calls`)).json()).calls.map((row: { project: string; text: string }) => ({ project: row.project, text: row.text }))).toEqual(posts.map(({ project, text }) => ({ project, text })));
+    expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);
+  });
+}
 
 test("immediate navigation preserves ordered L3 admission, queue and active history", async ({ page, request, context, service }, info) => {
   const walk = walkthrough(page, info);

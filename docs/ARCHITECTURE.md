@@ -859,8 +859,10 @@ client query cache under `project-draft` and the project name, without timed evi
 reload. Every draft change, including manual clearing and send admission, updates that entry.
 Submitted-text recovery
 retains its original conversation identity. Composer
-unmount stops the recorder and releases its microphone tracks through the recorder's own stream;
-pending transcription is cancelled and cannot update the destination draft. Outstanding
+unmount stops ordinary unsent recording and releases its microphone tracks through the recorder's own stream.
+Explicit voice Send belongs to its original conversation beyond component unmount: its captured text,
+images, destination and task reply context stay together until transcription and admission finish. A remounted source
+composer shows the pending operation, while another conversation keeps its own draft. Outstanding
 callbacks and cache updates retain the source project. The destination renders its own history,
 queue and active turn; switching back reconstructs those server records, including Retry for a
 failed turn, alongside its retained draft. `GET /api/chat` reports the server-owned active turn as a stable id, start time,
@@ -956,6 +958,12 @@ The shared textarea is read-only during microphone startup, listening and transc
 selectable and readable at both viewports. The voice status and indeterminate spinner appear inside
 the composer box. Cancel remains available during transcription. Each cancelled microphone acquisition
 or transcription keeps its cancellation identity, so late results cannot interfere with a new recording.
+Stop transcribes for editing and cancels on leaving; Send retains its operation through navigation,
+including leaving before the recorder emits its stop event. Failure returns the preexisting text to
+the source conversation. Recovery arriving from an earlier send remains a separate unsent draft;
+it is not appended to the captured voice Send. Image Retry retains the captured request context.
+This client operation lasts within the current document; it adds no streaming
+transcription service or server-side audio queue.
 The composer owns microphone
 permission, MediaRecorder state, a 595-second client stop below the server's 600-second
 decoded-audio limit, transcription, cancellation, and focus. A landed transcript is appended to the

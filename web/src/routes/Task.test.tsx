@@ -542,6 +542,31 @@ describe("Task on desktop", () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Typed context. spoken detail" });
   });
 
+  it("voice Send retains its task question context when returning to a newer question before transcription finishes", async () => {
+    installVoiceBrowser();
+    const task = { ...stuck, question: { ...decision } };
+    const originalFetch = stub(task);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/api/transcribe")) await gate;
+      return originalFetch(input, init);
+    }));
+    const { user, router } = renderApp({ route: `${route}?question=q-timer&revision=1` });
+    await user.type(await screen.findByLabelText("Message the L2"), "Original question reply");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(() => router.navigate("/monitor"));
+    task.question = { ...decision, id: "q-other", revision: 2, question: "A newer unrelated question?" };
+    await act(() => router.navigate(`${route}?question=q-other&revision=2`));
+    await screen.findByText("A newer unrelated question?");
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("Original question reply");
+    await act(async () => release());
+    await waitFor(() => expect(originalFetch.mock.calls.some(([url]) => String(url).includes("/api/l2/message"))).toBe(true));
+    const request = originalFetch.mock.calls.find(([url]) => String(url).includes("/api/l2/message"));
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ project: "altitude", slug: "fix-timer", text: "Original question reply spoken detail", question_id: "q-timer", revision: 1 });
+  });
+
   it("resets the composer when navigating between cached tasks", async () => {
     installVoiceBrowser();
     const other = { ...running, slug: "other-task", title: "Other task", messages: [] };

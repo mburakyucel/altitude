@@ -12,16 +12,19 @@ Native selection and desktop image-file
 paste add screenshots/photos to one short preview strip; ordinary text paste is unchanged. Each
 preview has a named 44px Remove target. Four previews fit at phone width, and removing the last
 one removes the entire strip. Empty composers have no attachment row or permanent limits banner.
-Selection stays in the mounted conversation; leaving releases it, and late reads or uploads cannot
+Unsent selection stays in the mounted conversation; leaving releases it, and late reads or uploads cannot
 fill another project's/task's draft. Nothing is uploaded until Send.
 Submitted captions share the existing text recovery across navigation and reload. Image bytes
-and immutable image retries remain in the mounted conversation; after leaving, check saved history
+and immutable image retries ordinarily remain in the mounted conversation; after leaving, check saved history
 and reselect images if the message was not accepted.
 
 The operator can send images alone or with typed/dictated text. Voice Cancel preserves current
 edits and selected images; Stop appends the transcript; voice Send transcribes and sends them
 together. Empty or failed transcription sends nothing, including selected images. No separate
 transcript box appears. The image strip adds about one thumbnail's height to the composer.
+An explicit voice Send captures its images before transcription. That operation completes for the
+original project or task after route navigation; returning while it is pending shows its status.
+It remains client-side within the current document, without an audio replay or persistent image queue.
 
 Send shows a pending bubble and freezes that submission's text/image/microphone controls until
 admission is known. Acceptance clears the selection and releases the composer before the agent

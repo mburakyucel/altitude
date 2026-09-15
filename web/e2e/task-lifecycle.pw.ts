@@ -4,6 +4,60 @@ import { walkthrough } from "./walkthrough";
 
 test.use({ scenario: "tasks" });
 
+test("voice Send finishes in its original L2 conversation while viewing L3", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const slug = "prepare-index-migration";
+  const task = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json());
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
+  await page.addInitScript(`
+    const context = new AudioContext(); const oscillator = context.createOscillator(); oscillator.start();
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+      await context.resume(); const destination = context.createMediaStreamDestination(); oscillator.connect(destination); return destination.stream;
+    }});
+  `);
+  let release!: () => void;
+  let uploaded!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const upload = new Promise<void>((resolve) => { uploaded = resolve; });
+  await page.route("**/api/transcribe", async (route) => {
+    uploaded(); await gate;
+    await route.fulfill({ json: { text: "Include the failure reason." } });
+  }, { times: 1 });
+  const posts: { url: string; project: string; slug?: string; text: string }[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url()).pathname;
+    if (["/api/chat", "/api/l2/message"].includes(url) && request.method() === "POST") posts.push({ url, ...request.postDataJSON() });
+  });
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  await field.fill("Keep retry bounded.");
+  await conversation.getByRole("button", { name: "Start voice input" }).click();
+  await expect(conversation.getByRole("button", { name: "Stop voice input" })).toBeVisible();
+  await page.waitForTimeout(500);
+  await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  await upload;
+  const nav = page.getByRole("navigation", { name: info.project.name === "phone" ? "Primary" : "Rail", exact: true });
+  await nav.locator('a[href="/projects/atlas"]').click();
+  const projectField = page.getByRole("textbox", { name: "Message L3 about atlas", exact: true });
+  await projectField.fill("Unsent project draft.");
+  await walk.state("01-project-draft-while-l2-transcribes", { visible: [projectField], hidden: [conversation, page.getByText("Transcribing…", { exact: true })] });
+  release();
+  const finalText = "Keep retry bounded. Include the failure reason.";
+  await expect.poll(async () => (await task()).messages.filter((row: { text: string }) => row.text === finalText).length).toBe(1);
+  await expect(projectField).toHaveValue("Unsent project draft.");
+  const project = await (await request.get("/api/chat/atlas")).json();
+  expect([...project.history, ...(project.queued ?? [])].some((row: { text: string }) => row.text === finalText)).toBe(false);
+  if (info.project.name === "phone") await nav.getByRole("link", { name: "Work", exact: true }).click();
+  await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
+  await walk.state("02-l2-message-delivered-once", { visible: [conversation.getByText(finalText, { exact: true }), field], hidden: [page.getByText("Transcribing…", { exact: true })] });
+  await expect(field).toHaveValue("");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toMatchObject({ url: "/api/l2/message", project: "atlas", slug, text: finalText });
+  const workers = await (await request.get("/fixture/workers")).json();
+  expect(workers.pending[slug].filter((row: { text: string }) => row.text === finalText)).toHaveLength(1);
+  expect(workers.calls).toEqual([]);
+});
+
 // No HTTP overlays: real browser -> Handler -> task/inbox/daemon request -> Git provenance -> fake engine.
 test("L2 messaging resumes its saved session, queues later input, stops and archives with a durable reason", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);

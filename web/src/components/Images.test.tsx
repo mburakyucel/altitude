@@ -41,6 +41,42 @@ async function select(files: File[] = [image()]) {
 }
 
 describe("image draft admission", () => {
+  it("voice navigation retains image bytes and the original retry callback without clearing another draft", async () => {
+    browser();
+    installVoiceBrowser();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("transcribe")) { await gate; return json({ text: "spoken" }); }
+      return json(capability);
+    }));
+    const original = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission) => {
+      if (original.mock.calls.length === 1) throw new TypeError("Lost image receipt");
+    });
+    const destination = vi.fn();
+    const user = userEvent.setup();
+    const first = render(<Harness onSubmit={original} />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await select();
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    render(<Harness initial="Other unsent recovery" onSubmit={destination} />);
+    expect(screen.getByRole("textbox")).toHaveValue("Explain this");
+    await act(async () => release());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm send.");
+    expect(original).toHaveBeenCalledOnce();
+    const sent = original.mock.calls[0]?.[2];
+    expect(sent?.images).toEqual([{ name: "screen.png", data: btoa("fictional raster") }]);
+    expect(sent?.previews[0]?.url).toBe(`data:image/png;base64,${btoa("fictional raster")}`);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+    expect(original).toHaveBeenCalledTimes(2);
+    expect(original.mock.calls[1]?.[2]).toBe(sent);
+    expect(destination).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue("Other unsent recovery");
+  });
+
   it("keeps selection local, removes the strip and URLs, and leaves text intact", async () => {
     const revoke = browser();
     const user = userEvent.setup();
