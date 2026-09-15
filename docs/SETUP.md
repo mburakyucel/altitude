@@ -41,6 +41,8 @@ alt doctor
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
 migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
+An initial custom `--prefix` must be empty; updates retain customized hook launchers and refuse
+to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
 It checks GitHub authentication without a provider request; repository permissions, model access
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.

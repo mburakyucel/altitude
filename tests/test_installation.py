@@ -285,6 +285,24 @@ class Installation(unittest.TestCase):
         self.assertEqual(self.actions, [])
         self.assertIn("other-command", self.launcher.read_text())
 
+    def test_initial_prefix_and_customized_installed_hooks_are_not_overwritten(self):
+        self.prefix.mkdir(parents=True)
+        existing = self.prefix / "unrelated.txt"
+        existing.write_text("unrelated data")
+        with self.assertRaisesRegex(RuntimeError, "empty application prefix"):
+            self.install()
+        self.assertEqual(existing.read_text(), "unrelated data")
+        self.assertEqual(self.actions, [])
+        existing.unlink()
+        self.install()
+        hook = self.prefix / "hooks/pre-commit"
+        hook.write_text("custom integration")
+        self.actions.clear()
+        with self.assertRaisesRegex(RuntimeError, "wrapper was customized"):
+            self.install("v0.1.1")
+        self.assertEqual(hook.read_text(), "custom integration")
+        self.assertEqual(self.actions, [])
+
     def test_merely_mentioning_installation_prefix_does_not_claim_custom_resources(self):
         self.unit.parent.mkdir(parents=True)
         self.unit.write_text(f"# Example path: {self.prefix}/current/bin/alt\n[Service]\nExecStart=/usr/bin/other\n")

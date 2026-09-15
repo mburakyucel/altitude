@@ -312,6 +312,8 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
             raise RuntimeError("Installation configuration must be outside the removable application prefix")
         if settings.exists():
             _require_saved_environment(json.loads(settings.read_text()))
+        elif prefix.exists() and any(path.name != "install.lock" for path in prefix.iterdir()):
+            raise RuntimeError("Initial installation needs an empty application prefix; existing files are retained")
         for protected in (config.ROOT, config.TLS_DIR, *config.PROJECT_ROOTS,
                           *(Path(project["path"]).expanduser() for project in registered.values())):
             if prefix.is_relative_to(protected.resolve()) or protected.resolve().is_relative_to(prefix):
@@ -346,6 +348,13 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
                 raise RuntimeError("Existing Altitude service belongs to another installation or was customized; migration must be explicit")
             if launcher.exists() and (launcher.is_symlink() or launcher.read_text() != command):
                 raise RuntimeError("Existing alt command belongs to another installation; leave it in place")
+            wrappers = {prefix / "launchers" / release["version"] / "alt":
+                        _launcher(prefix, saved, settings, f"versions/{release['version']}/bin/alt")}
+            wrappers.update({prefix / "hooks" / hook: _launcher(prefix, saved, settings, f"current/hooks/{hook}")
+                             for hook in ("pre-commit", "pre-push", "pre-merge-commit", "reference-transaction")})
+            for path, content in wrappers.items():
+                if path.is_symlink() or (path.exists() and path.read_text() != content):
+                    raise RuntimeError("An installation wrapper was customized; existing files are retained")
             if not settings.exists():
                 atomic(settings, json.dumps(saved, indent=2) + "\n")
             destination = _version_path(prefix, f"versions/{release['version']}")
@@ -355,10 +364,8 @@ def install(archive: Path, checksum: str, prefix: Path | None = None) -> dict:
                     raise RuntimeError("A version is immutable; this version already has different contents")
             else:
                 shutil.copytree(stage, destination)
-            atomic(prefix / "launchers" / release["version"] / "alt",
-                   _launcher(prefix, saved, settings, f"versions/{release['version']}/bin/alt"), 0o755)
-            for hook in ("pre-commit", "pre-push", "pre-merge-commit", "reference-transaction"):
-                atomic(prefix / "hooks" / hook, _launcher(prefix, saved, settings, f"current/hooks/{hook}"), 0o755)
+            for path, content in wrappers.items():
+                atomic(path, content, 0o755)
             tls.initialize()
             # This is the same narrow gate used by dispatch, resume, L3 and report verification.
             deadline = time.monotonic() + 60
