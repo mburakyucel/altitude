@@ -307,7 +307,7 @@ Markdown record, excluding amendment history; unreadable records explicitly rema
 The summary counts incidents not closed and shows the latest five with up to 600 characters of
 current evidence each, marking truncation and pointing to the full list. This includes role-only
 incidents and confirmed reports whose prevention remains pending. Separately it counts missing,
-failed, uncertain and confirmed fault-kind reports and shows five outcomes with gaps first.
+failed, uncertain and confirmed incident reports and shows five outcomes with gaps first.
 No second prevention record or automatic action is created. Archived tasks and full incident history remain audit
 evidence available through inspection commands.
 
@@ -371,7 +371,10 @@ the action before saving its text; after acceptance, wake failures retain the sa
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
 messages return to the ordinary resume path. Report application, verifier faults, stranded-report
 recovery, automatic completion and report-turn receipts reject superseded work. The existing report
-file remains readable until replaced, but cannot verify a later continuation. Done/archived/rejected
+file remains readable until replaced, but cannot verify a later continuation. The shared L2 persona
+and runtime resume prompt require fresh verified reporting even when guidance is already incorporated
+and no new work is needed. The owner preserves every delivery, exact remaining scope and holds;
+chat acknowledgement does not complete a turn. Done/archived/rejected
 tasks remain outside continuation: archived worktrees may have been removed, and restoring their
 execution context and ownership requires a separate product decision.
 Report freshness includes the current delivery timestamp. Verification requires all recorded PRs,
@@ -672,12 +675,16 @@ another notification. `received` means the queue consumer claimed it, not that a
 an exit after dequeue retains the existing queue's delivery limits. Ordinary queue/chat surfaces show
 the notification, with no new page or task lifecycle. A receipt grants no repair or resume authority.
 
-`--incident <id>` binds reporting to a system incident in the calling project's index. System incidents
-carry a `fault_key` to the existing source-project/kind ledger record; its `upstream` outcome retains
-status, URL, reason, actor, timestamp and the incident that recorded it. Incident inspection projects
-this shared outcome onto each linked incident. The identity is the existing fault kind, not inferred
-semantic matching; repeated notifications and later incident windows retain the same linkage.
-Unlinked historical incidents show missing delivery without inferred linkage or bulk backfill.
+`--incident <id>` binds reporting to a system incident in the calling project's index. Its `fault_key`
+establishes source ownership; publication belongs to the source project and `upstream.incident`
+named in the receipt. A uniform ledger lookup retains existing receipts in their original slots;
+new receipts use `[source, kind, incident]` slots in the same fault ledger. Receipt-only rows are
+excluded from fault counters. Each outcome retains status, URL, reason, actor and timestamp.
+Inspection and summaries show outcomes per incident. L3 judges matching causes and uses the existing
+create or verified-link operation; fault kinds do not determine issue identity. Repeated calls for
+one incident reuse its outcome, including uncertainty. Prior attribution and evidence remain intact.
+Unlinked historical incidents stay missing without bulk backfill. Incident creation still groups
+same-kind observations within its existing window; this reporting change does not split those records.
 
 A short fault lock compares and saves the outcome before external IO. A persisted uncertain receipt
 precedes creation, so interruption, timeout, nonzero exit or an unconfirmed response blocks another

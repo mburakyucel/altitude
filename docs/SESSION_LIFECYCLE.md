@@ -299,7 +299,10 @@ or uncertain provider launch uses the existing claim recovery, without duplicati
 
 Follow-ups also win against worker-exit/report-handoff races. Verification is bound to owner identity,
 worker start, block identity and the follow-up timestamp; stale verification, fault effects, archive
-callbacks and report-turn receipts cannot conclude resumed work. Resumed work writes a fresh report.
+callbacks and report-turn receipts cannot conclude resumed work. Every resumed code-owner turn
+rechecks delivery and writes a fresh report, even when replayed guidance adds no work. The shared
+persona and runtime resume prompt require all prior deliveries, exact remaining scope and holds
+to survive; chat acknowledgement cannot substitute for reporting.
 The old report file remains readable until replacement, with its historical copy retained in events.
 Archived/done/rejected tasks remain read-only; archived restoration is not part of this lifecycle.
 
@@ -640,9 +643,11 @@ write commands are absent; `alt issue new` and `alt issue comment` publish reque
 create-only product target and a fictional/redacted JSON reproduction on stdin. No additional GitHub
 write tool or cross-project task authority is granted. Altd validates the public fields and returns
 an issue URL or an actionable failure; the successful receipt stays in the calling project's log.
-For system incidents, `--incident <id>` retains delivery on the existing source-project/fault-kind
-record and exposes it through incident inspection and coordinator state. A confirmed URL survives
-repeated notifications, new incident windows and daemon restart. Uncertain is persisted before
+For system incidents, `--incident <id>` retains delivery for the source incident named by its receipt
+in the existing fault ledger, exposed through incident inspection and coordinator state. L3 judges
+whether another incident shares a cause and uses the existing verified-link or create operation.
+A confirmed URL survives repeated calls and daemon restart; a failure label cannot assign it to a
+different incident. Existing receipts retain their attribution. Uncertain is persisted before
 creation and retained after interruption, timeout, nonzero exit or unconfirmed output; creation
 cannot be repeated for that identity. The operator checks existing upstream issues, and L3 can
 attach a verified match with `--incident <id> --url <url>`, which performs only a GitHub read.

@@ -68,7 +68,9 @@ report covers all of them. See [continuation after merge](docs/CLI.md#continue-a
 A reported owner with an open PR remains reachable in its task conversation. Send a follow-up to
 continue that owner's session, attempt and worktree with the same PR, objective and review holds.
 L3 can also request continuation with `alt task resume <slug> --reason "…"`. The previous report
-stays in task history; resumed work needs a fresh report. A saved message is not proof that the
+stays in task history. Every resumed code-owner turn rechecks delivery and writes a fresh report,
+including replayed guidance that adds no work, retaining all deliveries and exact remaining scope.
+A chat acknowledgement cannot complete that turn. A saved message is not proof that the
 worker has restarted: capacity and recovery waits remain visible. Done, archived and rejected tasks
 remain read-only; reopening their lifecycle is a separate, unsettled product decision.
 An exited worker whose transient unit has been collected can resume once systemd confirms it is
@@ -436,8 +438,11 @@ any implementation separately; reporting never creates, reuses, or resumes a rec
 
 For a system incident, include `--incident <id>` to track a confirmed upstream URL or a missing,
 failed, or uncertain delivery with an actionable reason. `alt incident list`, coordinator state,
-and restart summaries expose the gaps. Known links survive repeat faults and restarts; an uncertain
-attempt blocks another creation until the operator checks existing issues. The coordinator can
+and restart summaries expose the gaps. Reporting belongs to the incident named in its receipt;
+L3 judges whether a separate incident shares a cause and links a matching issue or creates one
+through the existing command. A broad failure label does not select an issue. Known links survive
+repeated calls and restarts; an uncertain attempt blocks another creation until the operator checks
+existing issues. The coordinator can
 attach a verified match with `alt issue upstream --incident <id> --url <url>`. Reporting remains
 explicitly authorized; historical publication/backfill is a separate decision.
 Local notification status is separate from publication status in incident inspection and coordinator

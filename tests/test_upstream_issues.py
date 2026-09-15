@@ -269,10 +269,13 @@ class TestUpstreamIssues(AltitudeCase):
         S.write_json(incidents.FAULTS, faults)
         later = self.fault("resume")
         self.assertNotEqual(first, later)
-        self.assertEqual(self.delivery(later), self.delivery(first))
-        self.assertEqual(self.delivery(later)["incident"], first)
+        self.assertEqual(self.delivery(later)["status"], "missing")
+        self.link(later)  # L3 establishes a matching cause; the failure label cannot decide it.
+        self.assertEqual(self.delivery(later)["url"], self.delivery(first)["url"])
+        self.assertEqual(self.delivery(later)["incident"], later)
         self.tracked(later)
-        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(len(self.writes), 2)
+        self.assertEqual(self.writes[-1][0][1:3], ["issue", "view"])
         self.assertEqual(self.delivery(second)["status"], "missing")
         self.assertNotIn("Private fictional diagnostic", self.writes[0][1]["input"])
         self.assertNotIn(first, self.writes[0][1]["input"])
@@ -294,6 +297,63 @@ class TestUpstreamIssues(AltitudeCase):
                 self.tracked(incident)
         self.assertEqual(self.delivery(incident)["status"], "failed")
         self.assertNotIn("private executable path", self.delivery(incident)["reason"])
+
+    def test_existing_receipts_keep_their_incident_when_a_later_cause_publishes(self):
+        for status in ("confirmed", "uncertain"):
+            with self.subTest(status=status):
+                kind = "worker-exit-" + status
+                first = self.fault(kind)
+                key = json.dumps([self.project, kind])
+                receipt = {"status": status, "url": TARGET + "/issues/42" if status == "confirmed" else None,
+                           "incident": first, "at": S.now(), "actor": "l3",
+                           "reason": "Fictional publication receipt; check existing issues before retrying."}
+                faults = S.read_json(incidents.FAULTS)
+                faults[key].update(upstream=receipt, last="2000-01-01T00:00:00+00:00")
+                S.write_json(incidents.FAULTS, faults)
+                self.assertEqual(self.delivery(first), receipt)
+
+                later = self.fault(kind)
+                self.assertNotEqual(first, later)
+                self.assertEqual(self.delivery(later)["status"], "missing")
+                with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], 0, TARGET + "/issues/43\n", "")) as publish:
+                    self.assertEqual(self.tracked(later)["stdout"], TARGET + "/issues/43\n")
+                    self.tracked(later)
+                publish.assert_called_once()
+                self.assertEqual(publish.call_args.args[0][1:3], ["issue", "create"])
+                self.assertEqual(self.delivery(later)["incident"], later)
+                self.assertEqual(self.delivery(first), receipt)
+                self.assertEqual(S.read_json(incidents.FAULTS)[key]["upstream"], receipt)
+                if status == "uncertain":
+                    with self.assertRaisesRegex(ValueError, "before retrying"):
+                        self.tracked(first)
+                    self.assertEqual(self.delivery(first), receipt)
+                else:
+                    self.assertEqual(self.tracked(first)["stdout"], TARGET + "/issues/42\n")
+                self.assertEqual(self.writes, [])
+
+    def test_projectless_and_project_receipts_with_same_incident_id_stay_separate(self):
+        self.register("altitude", path=self.repo)
+        with mock.patch.object(incidents, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            machine = incidents.system_fault("machine-exit", "Fictional machine failure")["incident"]
+            local = self.fault("worker-exit")
+        self.assertEqual(machine, local)
+        faults = S.read_json(incidents.FAULTS)
+        faults["unscoped"] = {"upstream": {"status": "confirmed", "incident": machine,
+                                            "url": TARGET + "/issues/99"}}
+        S.write_json(incidents.FAULTS, faults)
+        self.assertEqual(incidents.upstream_delivery("altitude", machine)["status"], "missing")
+        result = server.l3_verb_request("altitude", {"kind": "alt", "args": [
+            "issue", "upstream", "--incident", machine, "--url", TARGET + "/issues/42"]})
+        self.assertEqual(result["stdout"], TARGET + "/issues/42\n")
+        self.assertEqual(self.delivery(local)["status"], "missing")
+        with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, TARGET + "/issues/43\n", "")):
+            self.tracked(local)
+        self.assertEqual(self.delivery(local)["url"], TARGET + "/issues/43")
+        self.assertEqual(incidents.upstream_delivery("altitude", machine)["url"], TARGET + "/issues/42")
+        self.assertEqual(S.read_json(incidents.FAULTS)["unscoped"], faults["unscoped"])
 
     def test_potentially_delivered_failures_latch_uncertainty_and_never_retry_creation(self):
         failures = [OSError("private pipe failure after launch"), subprocess.TimeoutExpired("gh", 120),
