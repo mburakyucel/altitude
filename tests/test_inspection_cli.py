@@ -215,6 +215,9 @@ class TestInspectionCLI(AltitudeCase):
         S.write_json(incidents.FAULTS, {"restart": {"count": 3, "last": S.now(), "incident": "I-1",
                                                            "detail": "private", "project": self.project},
                                       '["foreign", "fault"]': {"count": 2, "incident": "I-foreign", "project": "foreign"},
+                                      '["test", "restart", "I-1"]': {"project": self.project,
+                                          "upstream": {"status": "confirmed", "incident": "I-1",
+                                                       "url": "https://github.com/example/altitude/issues/42"}},
                                       "legacy": {"count": 1, "incident": "I-unscoped"}})
         service = {"unit": "altitude.service", "state": "active", "substate": "running", "pid": 321,
                    "last_restart": "Thu 2026-09-04 00:00:00 PDT", "error": None}

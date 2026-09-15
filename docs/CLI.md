@@ -370,7 +370,7 @@ upstream repository for ambiguous historical text.
 With `--incident`, the outcome is durable: `confirmed` carries a URL; `missing`, `failed`, and
 `uncertain` carry an actionable reason. `alt incident list` and project API incident rows include an
 `upstream` object with status, URL and reason, plus actor, timestamp and source incident for recorded
-outcomes. Coordinator state and fault/restart messages summarize fault-kind counts and up to five
+outcomes. Coordinator state and fault/restart messages summarize incident reporting counts and up to five
 outcomes, showing gaps first. Inspect the full list for the remaining rows.
 
 The separate `upstream.notification` object reports `queued` (accepted by the local queue), `received`
@@ -389,10 +389,13 @@ the confirmed incident command to retry notification only; no second issue is po
 report still returns its successful URL and leaves a local FYI on queue failure; do not repeat creation.
 No historical notification backfill runs when a development project is registered later.
 
-Confirmed links are reused without another creation, including after restart or a later incident
-window for the same source project/fault kind. Different kinds share a report only through an
-explicit verified link. The daemon saves uncertainty before publication: a timeout, interrupted
-request, nonzero GitHub exit or unconfirmed response may have created the issue and prevents another
+Confirmed links are reused for the same incident without another creation, including after restart.
+L3 investigates whether separate incidents share a cause, then uses `--url` to attach a matching
+issue or the ordinary create form to report a different defect. A shared fault kind does not select
+an issue. Outcomes remain attributed to the source incident in their receipt, including existing
+confirmed and uncertain publications; no historical bulk repair runs. The daemon saves uncertainty
+before publication: a timeout, interrupted request, nonzero GitHub exit or unconfirmed response may
+have created the issue and prevents another
 create. Local validation, configuration or executable failures are `failed`; a caller can explicitly
 try again after correcting those prepublication failures. No outcome triggers an automatic retry.
 
@@ -639,7 +642,9 @@ state or a capacity/recovery wait. Repeating the same outstanding coordinator re
 its receipt. Separate messages remain separate, even when their text matches.
 
 The prior report and verification remain in `report-superseded` task events. The current owner must
-write a fresh report before completion; old verifier or archive callbacks cannot finish its
+recheck delivery and write a fresh report before completion, including a replay/no-change turn.
+Preserve all previous deliveries, exact remaining scope and holds; chat acknowledgement is not
+completion. Old verifier or archive callbacks cannot finish its
 continuation. Done, archived and rejected tasks cannot be resumed or messaged through this path.
 Archived restoration remains a separate product decision because execution context may be removed.
 

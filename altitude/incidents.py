@@ -168,11 +168,18 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
     return {"kind": kind, "incident": inc["id"], "count": rec["count"]}
 
 
+def _upstream_records(faults: dict) -> dict:
+    """Publication belongs to the source incident named by its receipt, regardless of ledger slot."""
+    return {(record["project"], outcome["incident"]): (key, outcome)
+            for key, record in faults.items() if "project" in record
+            and (outcome := record.get("upstream")) and outcome.get("incident")}
+
+
 def index(project: str | None = None) -> list[dict]:
     path = config.project_dir(project) / "incidents.jsonl" if project else config.INCIDENT_INDEX
     if not path.exists():
         return []
-    faults = S.read_json(FAULTS, {}) or {}
+    deliveries = _upstream_records(S.read_json(FAULTS, {}) or {})
     out = []
     for line in path.read_text().splitlines():
         try:
@@ -189,16 +196,17 @@ def index(project: str | None = None) -> list[dict]:
         except (OSError, ValueError):
             row.update(status="unavailable", evidence="Incident evidence unavailable; inspect the local record.")
         if "system-fault" in row.get("tags", []):
-            row["upstream"] = (faults.get(row.get("fault_key"), {}).get("upstream") or
-                               {"status": "missing", "url": None,
-                                "reason": "No linked report. Check existing upstream issues; report only with authorization."})
+            source = json.loads(row["fault_key"])[0] if row.get("fault_key") else row["project"]
+            row["upstream"] = deliveries.get((source, row["id"]), (None, {
+                "status": "missing", "url": None,
+                "reason": "No linked report. Check existing upstream issues; report only with authorization."}))[1]
         out.append(row)
     return out
 
 
 def upstream_delivery(project: str, incident: str, *, outcome: dict | None = None,
                       expected: dict | None = None, notification: dict | None = None) -> dict:
-    """Read or compare-and-save delivery on the incident's existing project/kind fault identity."""
+    """Read or compare-and-save publication for one incident; L3 judges which issues match."""
     if not isinstance(incident, str) or not re.fullmatch(r"I-\d{8}-\d{6}(?:-\d+)?", incident):
         raise ValueError("alt issue upstream: invalid incident id")
     with _fault_lock():
@@ -219,7 +227,9 @@ def upstream_delivery(project: str, incident: str, *, outcome: dict | None = Non
             return current
         if current != expected:
             raise ValueError("alt issue upstream: delivery changed; inspect `alt incident list` before trying again")
-        faults[key]["upstream"] = outcome
+        receipt_key = _upstream_records(faults).get((source, incident),
+                                                  (json.dumps([source, json.loads(key)[1], incident]), None))[0]
+        faults.setdefault(receipt_key, {"project": source})["upstream"] = outcome
         S.write_json(FAULTS, faults)
     S.project_log(project, "incident-upstream", id=incident, **outcome)
     S.regen_state_md(project)
@@ -227,7 +237,7 @@ def upstream_delivery(project: str, incident: str, *, outcome: dict | None = Non
 
 
 def upstream_summary(project: str) -> str:
-    """Current incident follow-through and fault-kind reports, from existing local evidence."""
+    """Current incident follow-through and publication outcomes, from existing local evidence."""
     current = index(project)
     pending = [row for row in reversed(current) if row.get("status") != "closed"]
     lines = []
@@ -238,7 +248,7 @@ def upstream_summary(project: str) -> str:
             lines.append(f"- {row['id']}: {row.get('status', 'unavailable')} — {evidence[:600]}"
                          + (" [truncated]" if len(evidence) > 600 else ""))
         lines.append("Inspect full evidence with `alt incident list`; historical records do not authorize publication.")
-    rows = {row.get("fault_key") or row["id"]: row for row in current if "upstream" in row}
+    rows = {row["id"]: row for row in current if "upstream" in row}
     if not rows:
         return "\n".join(lines)
     counts = {status: sum(row["upstream"]["status"] == status for row in rows.values())

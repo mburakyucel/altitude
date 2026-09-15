@@ -1040,6 +1040,12 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None) ->
         raise record_resume_failure(project, slug, claim["id"], exc) from exc
     rows = claim["messages"]
     prompt = T.render_inbox(rows) or "Continue from your progress file."
+    prompt += ("\n\nBefore ending this resumed turn, recheck the guidance and current delivery. "
+               "For code work, write a fresh schema-valid report.json in your task folder even if "
+               "the guidance is already incorporated and no new work is needed. Preserve every prior "
+               "delivery, exact remaining scope and holds. A chat acknowledgement or an earlier report "
+               "does not complete this turn; report current verified results or explicitly block. "
+               "For no-repository-change work, use the persona's explicit completion path.")
     if task.get("questions"):
         prompt += "\n\n" + T.group_context(task)
     worker = {}

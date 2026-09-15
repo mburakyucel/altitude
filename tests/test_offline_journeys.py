@@ -81,6 +81,15 @@ class TestOfflineJourneys(AltitudeCase):
         return task
 
     def test_delivery_through_http_dispatch_real_git_landing_verified_report_and_archive(self):
+        self.delivery()
+
+    def test_replayed_guidance_completes_with_fresh_report_and_no_new_delivery(self):
+        self.delivery(continuation="fresh")
+
+    def test_replayed_guidance_acknowledgement_cannot_complete_with_stale_report(self):
+        self.delivery(continuation="stale")
+
+    def delivery(self, continuation=None):
         git("config", f"url.{self.tmp / 'origin.git'}.insteadOf", "https://github.com/team/demo.git", cwd=self.repo)
         git("remote", "set-url", "origin", "https://github.com/team/demo.git", cwd=self.repo)
         task = self.launch(self.queue("Deliver one change"))
@@ -112,13 +121,43 @@ class TestOfflineJourneys(AltitudeCase):
         finished = dispatch.poll(self.project)
         self.assertEqual(len(finished), 1)
         self.assertFalse(finished[0].get("died"))
+        if continuation:
+            T.message(self.project, slug, "l3", "Keep the validated change; this guidance is already incorporated.", by="l3")
+            server.on_l2_finished(self.project, finished[0])
+            blocked = S.load_task(self.project, slug)
+            self.assertEqual(blocked["state"], "blocked")
+            self.assertTrue(blocked.get("report_after"))
+            self.assertEqual(next(e["report"] for e in S.read_events(self.project, slug)
+                                  if e["kind"] == "report-superseded"), report)
+            dispatch.resume(self.project, slug)
+            resumed = S.load_task(self.project, slug)
+            for key in ("session_id", "attempt", "worktree", "branch"):
+                self.assertEqual(resumed[key], task[key])
+            self.assertEqual(resumed["prs"], [101])
+            self.assertIn("write a fresh schema-valid report.json", self.engine.calls[-1]["prompt"])
+            self.assertIn("no new work is needed", self.engine.calls[-1]["prompt"])
+            self.assertFalse(T.report_current(resumed, S.task_dir(self.project, slug) / "report.json"))
+            T.message(self.project, slug, "l2", "Guidance already incorporated; delivery is unchanged.", by="l2")
+            if continuation == "fresh":
+                S.write_json(S.task_dir(self.project, slug) / "report.json", report)
+            self.engine.workers[resumed["agent_id"]].update(state="done", status="exited")
+            finished = dispatch.poll(self.project)
+            self.assertEqual(len(finished), 1)
+            self.assertEqual(bool(finished[0].get("died")), continuation == "stale")
+            self.assertEqual(len([c for c in self.gh_log() if c[:2] == ["pr", "create"]]), 1)
+            if continuation == "stale":
+                server.on_l2_finished(self.project, finished[0])
+                self.assertEqual(S.load_task(self.project, slug)["fault"], "l2-died")
+                self.assertEqual(S.task_dir(self.project, slug).parent, S.tasks_dir(self.project))
+                return
         server.on_l2_finished(self.project, finished[0])
         archived = self.request(f"/api/task/{self.project}/{slug}")
         self.assertEqual(archived["state"], "done")
         self.assertEqual(archived["verified"]["verdict"], "ok")
         self.assertEqual(S.task_dir(self.project, slug).parent, S.archive_dir(self.project))
         self.assertIn("PR #101", (S.task_dir(self.project, slug) / "digest.md").read_text())
-        self.assertEqual(len(self.engine.calls), 1, "mechanically clean delivery needs no further provider turn")
+        self.assertEqual(len(self.engine.calls), 2 if continuation else 1)
+        self.assertEqual(S.read_json(S.task_dir(self.project, slug) / "report.json"), report)
 
     def test_decision_resume_keeps_session_and_late_http_message_for_next_checkpoint(self):
         task = self.launch(self.queue("Resume with steering"))
